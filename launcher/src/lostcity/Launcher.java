@@ -38,7 +38,7 @@ import javax.swing.SwingUtilities;
 //   java -jar Death-Plateau-Launcher.jar           update if needed, then play
 //   java -jar Death-Plateau-Launcher.jar --check   update if needed, then exit (for testing)
 //
-// Any -Dlostcity.* property given to the launcher (lostcity.host, lostcity.webport) is passed on to
+// Any -Dlostcity.* property given to the launcher (lostcity.host, .port, .webhost, .webport) is passed on to
 // the client. Java 8, no dependencies: the one thing a player needs is the Java they already have.
 public final class Launcher {
     private static final String REPO = "coreysho/DeathPlateau-Client";
