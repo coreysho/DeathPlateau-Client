@@ -13166,6 +13166,19 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a(IILEWIXBTLV;II)V")
 	public void drawInterface(int arg0, int arg1, Component arg2, int arg3) {
+		// the outermost call draws the tooltip a component queued (queueTooltip), after everything else
+		this.tooltipDepth++;
+		try {
+			this.drawInterfaceLayer(arg0, arg1, arg2, arg3);
+		} finally {
+			this.tooltipDepth--;
+			if (this.tooltipDepth == 0) {
+				this.drawQueuedTooltip();
+			}
+		}
+	}
+
+	private void drawInterfaceLayer(int arg0, int arg1, Component arg2, int arg3) {
 		if (arg2.type != 0 || arg2.children == null || arg2.hide && this.viewportHoveredInterfaceIndex != arg2.id && this.sidebarHoveredInterfaceIndex != arg2.id && this.chatHoveredInterfaceIndex != arg2.id) {
 			return;
 		}
@@ -13192,7 +13205,11 @@ public class Client extends GameShell {
 					var14.field713 = 0;
 				}
 				this.drawInterface(var16, var15, var14, var14.field713);
-				if (var14.scroll > var14.height) {
+				// A HIDDEN scroll layer draws no scrollbar. 377 drew one for every layer with a scroll
+				// height whether or not the layer itself was showing, and a window that swaps between
+				// hidden lists (the drop table's five lengths, npc_drops.if) stacked all five bars on
+				// the same spot: the one on top was the longest list's, which never moved.
+				if (var14.scroll > var14.height && this.isLayerShown(var14)) {
 					this.drawScrollbar(var14.field713, var14.width + var15, var14.height, var14.scroll, var16);
 				}
 			} else if (var14.type != 1) {
@@ -13331,6 +13348,12 @@ public class Client extends GameShell {
 						Pix2D.fillRectTrans(var32, var16, var14.width, var14.height, 256 - (var14.trans & 0xFF), var15);
 					} else {
 						Pix2D.drawRectTrans(var15, var14.width, var32, var14.height, var16, 256 - (var14.trans & 0xFF));
+					}
+				} else if (var14.type == 4 && (var14.clientCode == 331 || var14.clientCode == 329 || var14.clientCode == 332)) {
+					// the skill tab's hover (see OSRS TOOLTIPS): a box, not text on the tab. 332 is a line
+					// the 331 before it takes in (tooltipWords) and draws nothing of its own.
+					if (var14.clientCode != 332) {
+						this.queueTooltip(this.tooltipWords(arg2, var11, var14), var15, var16, var14.width, var14.height, Math.max(arg1, 0), Math.max(arg0, 0), Math.min(arg2.width + arg1, Pix2D.width2d), Math.min(arg2.height + arg0, Pix2D.height2d));
 					}
 				} else if (var14.type == 4) {
 					PixFont var33 = var14.font;
@@ -13522,61 +13545,149 @@ public class Client extends GameShell {
 						}
 					}
 					if (var14.type == 8 && (this.field580 == var14.id || this.field340 == var14.id || this.field425 == var14.id) && this.field189 == 100) {
-						int var62 = 0;
-						int var63 = 0;
-						PixFont var64 = this.fontPlain12;
-						String var65 = var14.text;
-						while (var65.length() > 0) {
-							int var72 = var65.indexOf("\\n");
-							String var73;
-							if (var72 == -1) {
-								var73 = var65;
-								var65 = "";
-							} else {
-								var73 = var65.substring(0, var72);
-								var65 = var65.substring(var72 + 2);
-							}
-							int var74 = var64.stringWidTag(var73);
-							if (var74 > var62) {
-								var62 = var74;
-							}
-							var63 += var64.height + 1;
-						}
-						var62 += 6;
-						var63 += 7;
-						int var66 = var14.width + var15 - 5 - var62;
-						int var67 = var14.height + var16 + 5;
-						if (var66 < var15 + 5) {
-							var66 = var15 + 5;
-						}
-						if (var62 + var66 > arg2.width + arg1) {
-							var66 = arg2.width + arg1 - var62;
-						}
-						if (var63 + var67 > arg2.height + arg0) {
-							var67 = arg2.height + arg0 - var63;
-						}
-						Pix2D.fillRect(var63, var67, 16777120, var62, var66);
-						Pix2D.drawRect(var67, var63, 0, var66, var62);
-						String var68 = var14.text;
-						int var69 = var64.height + var67 + 2;
-						while (var68.length() > 0) {
-							int var70 = var68.indexOf("\\n");
-							String var71;
-							if (var70 == -1) {
-								var71 = var68;
-								var68 = "";
-							} else {
-								var71 = var68.substring(0, var70);
-								var68 = var68.substring(var70 + 2);
-							}
-							var64.drawStringTag(0, var66 + 3, var69, false, var71);
-							var69 += var64.height + 1;
-						}
+						// OSRS's tooltip box and placement (see OSRS TOOLTIPS), inside the layer AND the area it
+						// is drawn on: a side tab's root is 512x334 to the packer, and 377 clamped to that.
+						this.queueTooltip(var14.text, var15, var16, var14.width, var14.height, Math.max(arg1, 0), Math.max(arg0, 0), Math.min(arg2.width + arg1, Pix2D.width2d), Math.min(arg2.height + arg0, Pix2D.height2d));
 					}
 				}
 			}
 		}
 		Pix2D.setClipping(var7, var6, var9, var8);
+	}
+
+	// Whether drawInterface draws this layer: not hidden, or hidden but raised by a hover (overlayer).
+	private boolean isLayerShown(Component com) {
+		return !com.hide || this.viewportHoveredInterfaceIndex == com.id || this.sidebarHoveredInterfaceIndex == com.id || this.chatHoveredInterfaceIndex == com.id;
+	}
+
+	// ---- OSRS TOOLTIPS ------------------------------------------------------------------------------
+	// OSRS draws every hover box the same way (its client scripts 2344 and 9444, read out of the
+	// current cache): a 0xFFFFA0 box with a 1px black edge, black p12 text 12px a line, 2px in from
+	// the left edge and the first line's cell 1px below the top, 4px wider than the widest line and
+	// 12 * lines + 7 tall. It sits 5px right of the hovered thing's left edge and 5px below its bottom;
+	// if that runs off the right of the layer it is pushed back in, and if it runs off the bottom it
+	// goes ABOVE the hovered thing instead (5px clear of its top) rather than over it.
+	//
+	// A line may have two columns, "label|value": the value is right-aligned 4px clear of the label,
+	// as the skill tab's "Attack XP:   13,034,431" is.
+	//
+	// Used by 377's own tooltip component (type 8), whose box was 377's - wider, 13px lines, and
+	// clamped to the ROOT, which for a side tab is the 512x334 the packer gives every root, so a
+	// prayer's tooltip ran off the right of the tab and over the prayers below - and by a text
+	// component with client code 331 (or 329, the Total level's), which is the skill tab's hover.
+	private String tooltipText;
+	private int tooltipX;
+	private int tooltipY;
+	private int tooltipDepth;
+
+	private static final int TOOLTIP_BG = 0xFFFFA0;
+	private static final int TOOLTIP_LINE = 12;
+
+	// Lay the box out now (the bounds are the layer's, which only this call knows) and draw it when
+	// the outermost drawInterface finishes, so nothing drawn after it in child order - the prayer
+	// points under the grid, a later layer - lands on top of it.
+	private void queueTooltip(String text, int ax, int ay, int aw, int ah, int boundL, int boundT, int boundR, int boundB) {
+		if (text == null || text.length() == 0) {
+			return;
+		}
+		PixFont font = this.fontPlain12;
+		String[] lines = splitTooltip(text);
+		int widest = 0;
+		for (String line : lines) {
+			widest = Math.max(widest, tooltipLineWidth(font, line));
+		}
+		int w = widest + 4;
+		int h = lines.length * TOOLTIP_LINE + 7;
+		int x = ax + 5;
+		int y = ay + ah + 5;
+		if (x + w > boundR) {
+			x = boundR - w;
+		}
+		if (x < boundL) {
+			x = boundL;
+		}
+		if (y + h > boundB) {
+			y = ay - h - 5;
+		}
+		if (y < boundT) {
+			y = boundT;
+		}
+		this.tooltipText = text;
+		this.tooltipX = x;
+		this.tooltipY = y;
+	}
+
+	private void drawQueuedTooltip() {
+		String text = this.tooltipText;
+		this.tooltipText = null;
+		if (text == null) {
+			return;
+		}
+		PixFont font = this.fontPlain12;
+		String[] lines = splitTooltip(text);
+		int widest = 0;
+		for (String line : lines) {
+			widest = Math.max(widest, tooltipLineWidth(font, line));
+		}
+		int w = widest + 4;
+		int h = lines.length * TOOLTIP_LINE + 7;
+		int x = this.tooltipX;
+		int y = this.tooltipY;
+		Pix2D.fillRect(h, y, TOOLTIP_BG, w, x);
+		Pix2D.drawRect(y, h, 0, x, w);
+		int baseline = y + 1 + font.height;
+		for (String line : lines) {
+			int bar = line.indexOf('|');
+			if (bar == -1) {
+				font.drawStringTag(0, x + 2, baseline, false, line);
+			} else {
+				String value = line.substring(bar + 1);
+				font.drawStringTag(0, x + 2, baseline, false, line.substring(0, bar));
+				font.drawStringTag(0, x + w - 2 - font.stringWidTag(value), baseline, false, value);
+			}
+			baseline += TOOLTIP_LINE;
+		}
+	}
+
+	private static String[] splitTooltip(String text) {
+		return text.split("\\\\n");
+	}
+
+	private static int tooltipLineWidth(PixFont font, String line) {
+		int bar = line.indexOf('|');
+		if (bar == -1) {
+			return font.stringWidTag(line);
+		}
+		return font.stringWidTag(line.substring(0, bar)) + 4 + font.stringWidTag(line.substring(bar + 1));
+	}
+
+	// A client-code-331 text's words: its active text while its scripts' comparators hold (the skill
+	// tab: "below 99" shows the next-level lines), %1..%5 filled in from its scripts with thousands
+	// commas, then the non-empty text of every client-code-332 text after it in the same layer - the
+	// XP lock's "XP locked", which the server sets and clears with if_settext.
+	private String tooltipWords(Component layer, int index, Component com) {
+		String text = this.fillTooltipNumbers(com, this.executeInterfaceScript(com) && com.activeText != null && com.activeText.length() > 0 ? com.activeText : com.text);
+		for (int i = index + 1; i < layer.children.length; i++) {
+			Component extra = Component.get(layer.children[i]);
+			if (extra != null && extra.type == 4 && extra.clientCode == 332 && extra.text != null && extra.text.length() > 0) {
+				text = text + "\\n" + this.fillTooltipNumbers(extra, extra.text);
+			}
+		}
+		return text;
+	}
+
+	private String fillTooltipNumbers(Component com, String text) {
+		if (text == null) {
+			return "";
+		}
+		for (int n = 1; n <= 5; n++) {
+			String tag = "%" + n;
+			int at;
+			while ((at = text.indexOf(tag)) != -1) {
+				text = text.substring(0, at) + String.format(java.util.Locale.US, "%,d", this.executeClientScript(n - 1, com)) + text.substring(at + 2);
+			}
+		}
+		return text;
 	}
 
 	@ObfuscatedName("client.a(ZIIIII)V")
@@ -13976,7 +14087,9 @@ public class Client extends GameShell {
 			}
 			if (var13.type == 0) {
 				this.handleInterfaceInput(var15, var13, arg2, var13.field713, var14, arg5, arg7);
-				if (var13.scroll > var13.height) {
+				// ...nor takes scroll input: a hidden list ahead of the shown one in child order ate the
+				// wheel (it zeroes mouseScrollDelta) and its bar answered drags over the same pixels
+				if (var13.scroll > var13.height && this.isLayerShown(var13)) {
 					this.handleScrollInput(var13.scroll, var15, var13, arg7, arg2, arg5, var13.height, var13.width + var14);
 					// QoL: mouse wheel scrolls any scrollable interface panel (e.g. bank) when hovering over it
 					if (QolSettings.on(QolSettings.WHEEL_INTERFACE) && super.mouseScrollDelta != 0 && arg5 >= var14 && arg7 >= var15 && arg5 < var13.width + var14 && arg7 < var13.height + var15) {
@@ -14508,15 +14621,26 @@ public class Client extends GameShell {
 				for (int i = 0; i < this.skillExperience.length; i++) {
 					total += this.skillExperience[i];
 				}
-				arg1.text = "Total XP: " + String.format("%,d", total);
+				arg1.text = "Total XP:|" + String.format(java.util.Locale.US, "%,d", total);
 			} else if (var4 == 328) {
 				// 474's Equipment Stats: you, standing in what you wear, idling
 				if (localPlayer != null) {
 					arg1.modelType = 6;
 					arg1.model = (int) (localPlayer.field1676 ^ localPlayer.field1676 >>> 32) & 0x7FFF;
-					arg1.anim = localPlayer.field1181;
-					// and turning, as OSRS's Equipment Stats model does: a full turn about every 14s
-					arg1.yan = loopCycle * 3 & 0x7FF;
+					// A new stance (a weapon changed while the window is open) starts at its first frame:
+					// the frame counter belongs to the old one and can run past the new one's end.
+					if (arg1.anim != localPlayer.field1181) {
+						arg1.anim = localPlayer.field1181;
+						arg1.field717 = 0;
+						arg1.field709 = 0;
+					}
+					// The camera OSRS's client gives content type 328 (and 327, the character design
+					// screen below): looking down at you from 150 (26 degrees), rocking 45 degrees either
+					// side of facing you, one sway about every five seconds. OSRS's own 84:4 is zoom 550,
+					// every angle 0, and leaves the angles to this. It was a steady full turn at eye
+					// level, which put the camera at your feet and showed your back half the time.
+					arg1.xan = 150;
+					arg1.yan = (int) (Math.sin((double) loopCycle / 40.0D) * 256.0D) & 0x7FF;
 				}
 			} else if (var4 == 327) {
 				arg1.xan = 150;
