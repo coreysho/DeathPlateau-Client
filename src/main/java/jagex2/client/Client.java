@@ -2098,18 +2098,29 @@ public class Client extends GameShell {
 	@ObfuscatedName("client.sc")
 	public static int nodeId = 10;
 
-	// Server address the standalone client connects to. Override at launch with
-	// -Dlostcity.host=... / -Dlostcity.webport=... (or LOSTCITY_HOST / LOSTCITY_WEBPORT
-	// env vars) so friends outside the LAN can point at your public DuckDNS domain
-	// instead of the LXC's internal IP, without touching source.
 	// The server's name and slogan, wherever the client says them: the window, the login screen and
 	// the loading and error messages. (The logo is an image, content/title/logo.png.)
 	public static final String SERVER_NAME = "Death Plateau";
 	public static final String SLOGAN = "The true golden era.";
 	public static final int SLOGAN_COLOUR = 0xE8C35A;
 
-	public static String SERVER_HOST = System.getProperty("lostcity.host", System.getenv().getOrDefault("LOSTCITY_HOST", "rsps-project-lost-city.duckdns.org"));
-	public static int WEB_PORT = Integer.parseInt(System.getProperty("lostcity.webport", System.getenv().getOrDefault("LOSTCITY_WEBPORT", "8888")));
+	// Server address the standalone client connects to. Override at launch with -Dlostcity.host /
+	// lostcity.port / lostcity.webhost / lostcity.webport (or the LOSTCITY_HOST, LOSTCITY_PORT,
+	// LOSTCITY_WEBHOST, LOSTCITY_WEBPORT env vars), without touching source.
+	// (2026-09-27) The public way in is a playit.gg tunnel in front of the home server, so the home IP is
+	// never handed out: one tunnel for the game (TCP 43594 on the server) and one for the web/cache
+	// server (TCP 8888), each with its own host and port. Point lostcity.host at the server directly
+	// (e.g. -Dlostcity.host=192.168.4.97 on the LAN) and both ports fall back to the server's own
+	// 43594 and 8888, and the web host follows the game host, unless they are given too.
+	private static String setting(String property, String env) {
+		String value = System.getProperty(property);
+		return value != null ? value : System.getenv(env);
+	}
+	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
+	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
+	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -3116,7 +3127,7 @@ public class Client extends GameShell {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL("http://" + SERVER_HOST + ":" + WEB_PORT);
+				return new URL("http://" + WEB_HOST + ":" + WEB_PORT);
 			}
 		} catch (Exception var1) {
 		}
@@ -4261,7 +4272,7 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Connecting to server...";
 				this.drawTitle();
 			}
-			this.stream = new ClientStream(this.openSocket(portOffset + 43594), this);
+			this.stream = new ClientStream(this.openSocket(portOffset + GAME_PORT), this);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
