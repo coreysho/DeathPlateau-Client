@@ -3521,8 +3521,17 @@ public class Client extends GameShell {
 				}
 			}
 
-			for (int i = 0; i < 5; i++) {
-				this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+			// 0-4 are 377's own (block, damage, poison, and the two disease splats); 5-7 are Old School's
+			// venom, heal and max hit, at the numbers Old School gives the first two. A server whose media
+			// stops at 4 leaves the rest null, and the draw falls back to the plain damage splat.
+			for (int i = 0; i < 8; i++) {
+				try {
+					this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+				} catch (Exception e) {
+					if (i < 5) {
+						throw e;
+					}
+				}
 			}
 
 			for (int i = 0; i < 6; i++) {
@@ -4312,7 +4321,10 @@ public class Client extends GameShell {
 				// "your client is out of date". 378 = the walk-merge skeleton guard. 379 = P_DIALOGPROMPT,
 				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
 				this.login.p2(380);
-				this.login.p1(lowMem ? 1 : 0);
+				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
+				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
+				// instead, so a jar from before them keeps working rather than being turned away.
+				this.login.p1((lowMem ? 1 : 0) | 0x2);
 				for (int var11 = 0; var11 < 9; var11++) {
 					this.login.p4(this.jagChecksum[var11]);
 				}
@@ -8307,7 +8319,18 @@ public class Client extends GameShell {
 					}
 				}
 				var2.method272(this.sceneDelta);
-				this.scene.method285(-1, var2, (int) var2.field976, (int) var2.field978, false, 0, this.currentLevel, 60, (int) var2.field977, var2.field983);
+				// A projectile belongs to the one tile its centre is over (padding 0), not every tile within
+				// 60 units of it as 377 had. A dart leaving a player who stands against a wall sits within 60
+				// of the tile edge, so it spanned the wall's tile as well, and a sprite spanning two tiles
+				// makes the scene hold back the walls of both until it is drawn - which reordered them: the
+				// wall BEHIND an open door came out after the door and painted over it, so the door seemed
+				// to vanish for the first ticks of every toxic blowpipe shot (reported with a video,
+				// 2026-09-27). Any projectile did it near a wall; the blowpipe fires from beside one four
+				// times as often. With a one-tile span the scene's order is exactly what it is with no
+				// projectile at all (tools/clienttests/run_projectilespantest.py: 194k frames, no wall moved,
+				// against 30k that moved at 60). A projectile is small; the cost is at most a sliver of dart
+				// overdrawn by a wall on the next tile for a frame.
+				this.scene.method285(-1, var2, (int) var2.field976, (int) var2.field978, false, 0, this.currentLevel, 0, (int) var2.field977, var2.field983);
 			}
 			var2 = (ClientProj) this.projectiles.next();
 		}
@@ -8601,7 +8624,11 @@ public class Client extends GameShell {
 								this.projectX += 15;
 								this.projectY -= 10;
 							}
-							this.imageHitmarks[var19.field1178[var25]].plotSprite(this.projectY - 12, this.projectX - 12);
+							int hitmark = var19.field1178[var25];
+							if (hitmark < 0 || hitmark >= this.imageHitmarks.length || this.imageHitmarks[hitmark] == null) {
+								hitmark = 1; // a type this media has no splat for draws as ordinary damage, not a crash
+							}
+							this.imageHitmarks[hitmark].plotSprite(this.projectY - 12, this.projectX - 12);
 							this.fontPlain11.centreString(this.projectX, this.projectY + 4, 0, String.valueOf(var19.field1177[var25]));
 							this.fontPlain11.centreString(this.projectX - 1, this.projectY + 3, 16777215, String.valueOf(var19.field1177[var25]));
 						}
