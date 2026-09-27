@@ -2090,7 +2090,10 @@ public class Client extends GameShell {
 	public int nextMidiSong = -1;
 
 	@ObfuscatedName("client.N")
-	public static BigInteger LOGIN_RSAN = new BigInteger("7162900525229798032761816791230527296329313291232324290237849263501208207972894053929065636522363163621000728841182238772712427862772219676577293600221789");
+	// The public half of the server's login RSA key (engine: `npm run rsa`, data/config/login-rsa.pem).
+	// Rotated 2026-09-27: the old 512-bit key's private half was public on GitHub. Change these only
+	// together with the server's key AND the p2(...) build number in login() below.
+	public static BigInteger LOGIN_RSAN = new BigInteger("153884090520538728936878302027910202920542948295897114523288142356390821628154839790201213541418821317049841112218678628942025501794640330604458662944406617266109433307208963311978451516363571029097291301242557629716636019046289026568724861317137936845248862778762767562566708241027964593626362603622200050473");
 
 	@ObfuscatedName("client.sc")
 	public static int nodeId = 10;
@@ -3002,7 +3005,7 @@ public class Client extends GameShell {
 			var2 += var2;
 		}
 		DESIGN_HAIR_COLOUR = new int[] { 9104, 10275, 7595, 3610, 7975, 8526, 918, 38802, 24466, 10145, 58654, 5027, 1457, 16565, 34991, 25486 };
-		LOGIN_RSAE = new BigInteger("58778699976184461502525193738213253649000149147835990136706041084440742975821");
+		LOGIN_RSAE = new BigInteger("65537");
 	}
 
 	// ----
@@ -4296,8 +4299,8 @@ public class Client extends GameShell {
 				// Build handshake, not the RS protocol revision - must match
 				// Environment.ENGINE_REVISION on the server, or login is refused with
 				// "your client is out of date". 378 = the walk-merge skeleton guard. 379 = P_DIALOGPROMPT,
-				// server prot 9, which an older client has no length for.
-				this.login.p2(379);
+				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
+				this.login.p2(380);
 				this.login.p1(lowMem ? 1 : 0);
 				for (int var11 = 0; var11 < 9; var11++) {
 					this.login.p4(this.jagChecksum[var11]);
