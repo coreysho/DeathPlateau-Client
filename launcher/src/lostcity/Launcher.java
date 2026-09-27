@@ -58,12 +58,12 @@ public final class Launcher {
     private static final String API = "https://api.github.com/repos/" + REPO + "/releases/latest";
 
     // The dev world's playit.gg tunnels - one to the dev game port (43595 on the server) and one to its
-    // web port (8889), made like World 1's (Client.SERVER_HOST / WEB_HOST). Empty until they exist: the
-    // dev world is then reachable only with lostcity.host (or lostcity.dev.host) given.
-    private static final String DEV_TUNNEL_HOST = "";
-    private static final int DEV_TUNNEL_PORT = 0;
-    private static final String DEV_TUNNEL_WEBHOST = "";
-    private static final int DEV_TUNNEL_WEBPORT = 0;
+    // web port (8889), made like World 1's (Client.SERVER_HOST / WEB_HOST). With lostcity.host given (the
+    // LAN or Tailscale) the server's own ports are used instead, and lostcity.dev.* overrides either.
+    private static final String DEV_TUNNEL_HOST = "carolyn-sternness.tun.ply.gg";
+    private static final int DEV_TUNNEL_PORT = 55662;
+    private static final String DEV_TUNNEL_WEBHOST = "carolyn-adapt.tun.ply.gg";
+    private static final int DEV_TUNNEL_WEBPORT = 55673;
 
     // the 377 client's own node ids: World 1 is 10, the dev world 11 ("World 2" in the friends list)
     private static final int DEV_NODE_ID = 11;
