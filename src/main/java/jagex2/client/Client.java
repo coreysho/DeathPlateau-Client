@@ -1289,7 +1289,11 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** Consumes a click while the swaps panel is open, on the same terms as the settings panel. */
 	private void handleSwapPanelInput() {
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
+		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
+		// counting it here closed this panel on its own and swallowed the click, all through the
+		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.swapPanelOpen = false;
 			return;
 		}
@@ -1392,7 +1396,11 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** Consumes a click while the ground item panel is open, on the same terms as the other two. */
 	private void handleGiPanelInput() {
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
+		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
+		// counting it here closed this panel on its own and swallowed the click, all through the
+		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.giPanelOpen = false;
 			return;
 		}
