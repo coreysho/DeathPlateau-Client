@@ -4473,6 +4473,11 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Please reload this page.";
 				if (this.relaunchForUpdate()) {
 					this.loginMessage1 = "Updating - restarting in a moment...";
+				} else if (System.getProperty(UPDATE_ATTEMPT) != null) {
+					// already came back from the launcher with the newest client and the server still
+					// says no: it is the SERVER that is mid-update, so there is nothing to download
+					this.loginMessage0 = "Already up to date.";
+					this.loginMessage1 = "Please try again in a few minutes.";
 				}
 			} else if (var8 == 7) {
 				this.loginMessage0 = "This world is full.";
@@ -15419,7 +15424,17 @@ public class Client extends GameShell {
 	// -Dlostcity.* settings, which downloads the new client and opens it, and then this one exits.
 	// Any other jar - a dev build run from build/libs, say - is left alone, so a developer's own
 	// client is never swapped for the release. Returns whether a restart is on its way.
+	// set on the client the launcher starts after an update relaunch - see relaunchForUpdate
+	private static final String UPDATE_ATTEMPT = "lostcity.updateattempt";
+
 	private boolean relaunchForUpdate() {
+		// ONCE PER CHAIN. The launcher hands the new client this property, so a client that has already
+		// been through it does not go round again: between a client release and the server's deploy the
+		// newest client IS refused (the server takes only its own revision), and without this the pair
+		// looped - refused, relaunch, download nothing new, refused - with no way out but killing it.
+		if (System.getProperty(UPDATE_ATTEMPT) != null) {
+			return false;
+		}
 		try {
 			java.io.File jar = new java.io.File(Client.class.getProtectionDomain().getCodeSource().getLocation().toURI());
 			java.io.File userHome = new java.io.File(System.getProperty("user.home"));
@@ -15447,6 +15462,7 @@ public class Client extends GameShell {
 			// replace client.jar - so it must not be running out of it.
 			java.io.File copy = new java.io.File(home, "launcher-run.jar");
 			java.nio.file.Files.copy(jar.toPath(), copy.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			cmd.add("-D" + UPDATE_ATTEMPT + "=1"); // the launcher passes every -Dlostcity.* on to the client
 			cmd.add("-cp");
 			cmd.add(copy.getAbsolutePath());
 			cmd.add("lostcity.Launcher");
