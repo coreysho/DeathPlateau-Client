@@ -106,14 +106,17 @@ public final class Layout {
 	private static final int[] MODERN_SIDEBAR = { 522, 205, 241, 261 };
 
 	/**
-	 * How much of each panel is drawn in modern, out of 256. The art in the 377 cache is opaque and
-	 * was drawn for the fixed frame, so this is the whole panel faded rather than Old School's own
-	 * semi-transparent backgrounds - see the note on presentGame(). The minimap stays solid, as Old
-	 * School's does; the chatbox and the panel let a quarter of the scene through, enough to see it
-	 * moving behind them without costing the text any legibility; the tab rows are nearly solid
-	 * because they are what the mouse aims at.
+	 * How much of each panel is drawn in modern, out of 256 - SOLID, every one of them (owner, 2026-09-28,
+	 * looking at it in game: "the modern client layout has an opacity to it").
+	 *
+	 * Old School fades only the BACKGROUND of a panel and leaves its icons and text solid, because its
+	 * panel art carries its own per-pixel transparency. The art in the 377 cache is opaque everywhere,
+	 * so anything less than solid here fades the whole panel, writing and icons included - which is what
+	 * the owner saw. Faithful transparency needs Old School's panel sprites imported into the cache (new
+	 * sprites, new ids, a cache rebuild); until that happens modern is the full-window viewport with the
+	 * panels moved, and nothing is washed out. blendRect and panelAlpha stay, so it is one table away.
 	 */
-	private static final int[] MODERN_ALPHA = { 192, OPAQUE, 192, 232, 232 };
+	private static final int[] MODERN_ALPHA = { OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE };
 
 	/** FIXED, CLASSIC or MODERN. */
 	public final int mode;

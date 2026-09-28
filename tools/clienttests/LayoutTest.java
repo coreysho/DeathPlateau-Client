@@ -150,9 +150,15 @@ public class LayoutTest {
 		boolean order = md.panelScreenY(Layout.SIDEBAR) < md.panelScreenY(Layout.TABS_TOP)
 			&& md.panelScreenY(Layout.TABS_TOP) < md.panelScreenY(Layout.TABS_BOTTOM);
 		check(order, "and on screen they run panel, top row, bottom row, downwards");
-		check(md.panelAlpha(Layout.MINIMAP) == Layout.OPAQUE && md.panelAlpha(Layout.CHAT) < Layout.OPAQUE
-			&& c.panelAlpha(Layout.CHAT) == Layout.OPAQUE && Layout.fixed().panelAlpha(Layout.CHAT) == Layout.OPAQUE,
-			"modern shows the scene through the chatbox, classic and fixed do not");
+		boolean solid = true;
+		for (int p = 0; p < Layout.PANELS; p++) {
+			solid &= md.panelAlpha(p) == Layout.OPAQUE && c.panelAlpha(p) == Layout.OPAQUE
+				&& Layout.fixed().panelAlpha(p) == Layout.OPAQUE;
+		}
+		// Fading the 377 cache's opaque art fades a panel's writing and icons with it, so every panel is
+		// solid in every mode until Old School's own part-transparent panel sprites are in the cache
+		// (Layout.MODERN_ALPHA says so at more length).
+		check(solid, "no panel is washed out, in any layout");
 
 		System.out.println();
 		System.out.println("7. the projection grows with the window, never below 512");
