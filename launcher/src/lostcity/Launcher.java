@@ -376,6 +376,22 @@ public final class Launcher {
         }
         log("running " + cmd);
         new ProcessBuilder(cmd).directory(dir).start();
+        // ...and this window goes now, not whenever the JVM gets round to exiting: the game's own
+        // window takes a few seconds to appear, and a launcher still on screen beside it looks like a
+        // second client (reported from play 2026-09-27)
+        hide();
+    }
+
+    // take the window down at once, from whichever thread
+    private void hide() {
+        JFrame f = frame;
+        frame = null;
+        if (f != null) {
+            run(() -> {
+                f.setVisible(false);
+                f.dispose();
+            });
+        }
     }
 
     private static String javaBinary() {
@@ -442,6 +458,7 @@ public final class Launcher {
             frame.getContentPane().add(worlds, BorderLayout.CENTER);
             frame.getContentPane().add(bar, BorderLayout.SOUTH);
             frame.getRootPane().setDefaultButton(world1Button); // Enter plays World 1
+            frame.setResizable(false); // the game's window is fixed; two resizable windows read as two clients
             frame.setPreferredSize(new Dimension(360, 140));
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.pack();

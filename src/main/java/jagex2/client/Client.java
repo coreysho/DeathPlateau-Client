@@ -15470,6 +15470,12 @@ public class Client extends GameShell {
 			Thread t = new Thread(() -> {
 				try {
 					Thread.sleep(2000); // long enough to read the message
+					// this window goes before the launcher's opens, so there are never two on screen
+					ViewBox self = this.frame; // null as an applet, where there is no window of ours
+					if (self != null) {
+						self.setVisible(false);
+						self.dispose();
+					}
 					new ProcessBuilder(cmd).directory(dir).start();
 				} catch (Exception e) {
 					e.printStackTrace();
