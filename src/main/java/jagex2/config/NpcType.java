@@ -34,6 +34,12 @@ public class NpcType {
 	@ObfuscatedName("SLDUQHOR.p")
 	public boolean field1439 = true;
 
+	// Config code 108, added by this server (Engine-TS tools/pack/config/NpcConfig.ts, "follower=yes"):
+	// this npc is somebody's pet. Old School gives a follower no minimap dot - hence field1439 going
+	// false with it, which is the cache's own "no minimap dot" flag - and shows its right-click options
+	// to its owner alone. Client.addNpcOptions does the second half.
+	public boolean follower = false;
+
 	@ObfuscatedName("SLDUQHOR.q")
 	public int field1440 = -1;
 
@@ -215,6 +221,9 @@ public class NpcType {
 				}
 			} else if (var4 == 107) {
 				this.field1434 = false;
+			} else if (var4 == 108) {
+				this.follower = true;
+				this.field1439 = false;
 			}
 		}
 	}

@@ -13064,6 +13064,12 @@ public class Client extends GameShell implements PixMap.Target {
 		this.redrawSidebar = true;
 	}
 
+	// The npc index of the local player's own follower, or -1 for none. The server keeps it in the
+	// follower slot's own varp - content scripts/quests/quest_fluffs/configs/quest_fluffs.varp,
+	// [follower_uid], transmitted with clientcode 12 - whose value is the pet's uid,
+	// (npc type << 16) | npc index. Set in updateVarp(); read by addNpcOptions() below.
+	public int followerNpcIndex = -1;
+
 	@ObfuscatedName("client.a(LSLDUQHOR;IIIB)V")
 	public void addNpcOptions(NpcType arg0, int arg1, int arg2, int arg3) {
 		if (this.menuSize >= 400) {
@@ -13073,6 +13079,13 @@ public class Client extends GameShell implements PixMap.Target {
 			arg0 = arg0.method476();
 		}
 		if (arg0 == null || !arg0.field1434) {
+			return;
+		}
+		// A pet's options belong to its owner. Old School has hidden them from everyone else since
+		// 15 May 2014 - "The options on other players' pets are no longer visible" - so somebody
+		// else's pet gets no menu entries at all, not even Examine, and left-clicking through it
+		// walks you there. Your own follower is the npc followerNpcIndex names and is untouched.
+		if (arg0.follower && arg3 != this.followerNpcIndex) {
 			return;
 		}
 		String var6 = arg0.field1455;
@@ -14540,6 +14553,12 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		int var4 = this.varps[arg1];
+		if (var3 == 12) {
+			// The follower slot: the uid of the pet following you, (npc type << 16) | npc index, or
+			// null (-1) when nothing is. Only the index is wanted here - which npc in this.npcs[] is
+			// mine - and 0 means the slot has never been written this session.
+			this.followerNpcIndex = var4 <= 0 ? -1 : var4 & 0xFFFF;
+		}
 		if (var3 == 1) {
 			if (var4 == 1) {
 				Pix3D.initColourTable(0.9D);
