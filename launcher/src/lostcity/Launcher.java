@@ -71,6 +71,33 @@ public final class Launcher {
     private static final long CHOICE_MILLIS = 3000;
     private static final String WORLD_1 = "1", DEV = "dev";
 
+    // SELF-UPDATE. The launcher is compiled into client.jar as well as into its own jar (build.gradle),
+    // so the newest launcher is already on the player's disk the moment the client updates - it is just
+    // not the copy they double-click. So once client.jar is current, a launcher that differs from the
+    // one inside it hands over: it starts THAT launcher and steps aside. Players keep the jar they have
+    // for good, and a launcher change reaches everybody the way a client change does.
+    // The handed-over launcher carries this property, so it never hands over again.
+    private static final String HANDOFF = "lostcity.launcherhandoff";
+    /**
+     * Bump this whenever the launcher changes in a way players should get. It is the ONLY thing that
+     * moves them onto a new launcher, so a change left unbumped simply never reaches them (which is
+     * where they stood before any of this - nothing breaks).
+     *
+     * The number is read back OUT OF THE CLASS FILE inside client.jar, by finding STAMP's text in it:
+     * javac folds the two constants below into that one string literal, and a literal sits in the
+     * constant pool verbatim whichever compiler built the jar (gradle's and the release workflow's
+     * javac disagree on everything else in there, so comparing the class bytes would hand over on
+     * every single start). Nothing is loaded out of that jar to read it.
+     *
+     *   1  the launcher as first released
+     *   2  hands over to the launcher inside client.jar; World 1 / Dev world buttons; its window closes
+     *      as the game opens, and cannot be resized
+     */
+    private static final int VERSION = 2;
+    private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
+    @SuppressWarnings("unused") // read out of the compiled class, not called
+    private static final String STAMP = STAMP_PREFIX + VERSION;
+
     private static final Pattern TAG = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"");
     private static final Pattern URL_ = Pattern.compile("\"browser_download_url\"\\s*:\\s*\"([^\"]*/" + Pattern.quote(ASSET) + ")\"");
 
@@ -125,7 +152,10 @@ public final class Launcher {
         }
         migrate();
 
-        try {
+        if (System.getProperty(HANDOFF) != null) {
+            // the launcher that handed over checked and downloaded a moment ago
+            log("handed over to: skipping the update check");
+        } else try {
             status("Checking for updates...");
             String json = fetch(API);
             Matcher tag = TAG.matcher(json);
@@ -149,6 +179,10 @@ public final class Launcher {
         }
 
         if (check) {
+            System.exit(0);
+        }
+
+        if (handOver()) {
             System.exit(0);
         }
 
@@ -334,6 +368,115 @@ public final class Launcher {
         }
         Files.write(version.toPath(), tag.getBytes(StandardCharsets.UTF_8));
         log("updated to " + tag);
+    }
+
+    /**
+     * Start the launcher inside client.jar and step aside, when it is not the one running. Returns
+     * whether it has taken over. Anything at all goes wrong - no jar, no launcher in it, no reading it,
+     * no starting it - and this one simply carries on, because a launcher that cannot start the game is
+     * the one failure a player cannot fix for themselves.
+     */
+    private boolean handOver() {
+        if (System.getProperty(HANDOFF) != null) {
+            return false; // already the newest: it was handed to us
+        }
+        try {
+            if (!jar.isFile()) {
+                return false;
+            }
+            int theirs = stampIn(entry(jar, "lostcity/Launcher.class"));
+            if (theirs <= VERSION) {
+                // the same launcher, an older one, or a client.jar from before stamps: stay here.
+                // NEVER hand over to an older one - that is how two launchers hand a player back and
+                // forth for ever.
+                return false;
+            }
+            log("the launcher in " + jar.getName() + " is version " + theirs + ", this one is " + VERSION);
+            // from a COPY: on Windows a running jar is locked, and client.jar has to stay replaceable
+            File copy = new File(dir, "launcher-run.jar");
+            Files.copy(jar.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            List<String> cmd = new ArrayList<>();
+            cmd.add(javaBinary());
+            for (String key : System.getProperties().stringPropertyNames()) {
+                if (key.startsWith("lostcity.")) {
+                    cmd.add("-D" + key + "=" + System.getProperty(key));
+                }
+            }
+            String world;
+            synchronized (choiceLock) {
+                world = choice;
+            }
+            if (world != null) {
+                cmd.add("-Dlostcity.world=" + world); // --dev / --world=, as a property it reads back
+            }
+            cmd.add("-D" + HANDOFF + "=1");
+            cmd.add("-cp");
+            cmd.add(copy.getAbsolutePath());
+            cmd.add("lostcity.Launcher");
+            log("handing over to the launcher in " + jar.getName() + ": " + cmd);
+            new ProcessBuilder(cmd).directory(dir).start();
+            hide(); // its window opens in a moment; two would look like two launchers
+            return true;
+        } catch (Throwable e) {
+            log("hand-over failed, carrying on with this launcher: " + e);
+            return false;
+        }
+    }
+
+    /** The launcher version stamped into a compiled Launcher.class, or -1 if it carries none. */
+    private static int stampIn(byte[] clazz) {
+        if (clazz == null) {
+            return -1;
+        }
+        byte[] want = STAMP_PREFIX.getBytes(StandardCharsets.US_ASCII);
+        for (int i = 0; i + want.length < clazz.length; i++) {
+            int j = 0;
+            while (j < want.length && clazz[i + j] == want[j]) {
+                j++;
+            }
+            if (j < want.length) {
+                continue;
+            }
+            int n = 0, at = i + want.length;
+            while (at < clazz.length && clazz[at] >= '0' && clazz[at] <= '9') {
+                n = n * 10 + (clazz[at++] - '0');
+                if (n > 1000000) {
+                    n = -1; // not a version number
+                    break;
+                }
+            }
+            if (at > i + want.length && n >= 0) {
+                return n;
+            }
+            // the prefix on its own is in the pool too (stampIn asks for it by name): keep looking for
+            // the one the number is written on the end of
+        }
+        return -1;
+    }
+
+    private static byte[] entry(File jarFile, String name) {
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(jarFile)) {
+            java.util.zip.ZipEntry e = zip.getEntry(name);
+            return e == null ? null : read(zip.getInputStream(e));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static byte[] read(InputStream in) {
+        if (in == null) {
+            return null;
+        }
+        try (InputStream open = in) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            for (int n = open.read(buf); n > 0; n = open.read(buf)) {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     // dev: devEndpoint()'s answer for the dev world, null for World 1 (the client's defaults, as ever)
