@@ -145,6 +145,34 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	public int rawClickX;
 	public int rawClickY;
 
+	// A press is written by the AWT thread into the next* fields and copied out by the game thread,
+	// which clears the button as it goes. Those are six separate writes and six separate reads: a
+	// press that landed between the game thread reading nextMouseClickButton and clearing it had its
+	// button wiped before any update() saw it, and the press it interrupted was left holding the new
+	// press's coordinates. Both sides do it under this lock now, so a press is latched whole or not
+	// at all. (It also gives the game thread a guaranteed-fresh read of fields the AWT thread wrote.)
+	private final Object clickLock = new Object();
+
+	// The press update() did not take, kept until draw() has had its look at it.
+	//
+	// The click latch above lives for exactly one update(), which is fine while there is one update
+	// per frame: the game's own click handling all runs in update(), and the few readers that run in
+	// draw() (Client's own F9 settings panel, the menu swapper, the ground item controls) see the
+	// same press the update just saw. But when a frame takes longer than the 20ms tick the catch-up
+	// loop in run() runs two or three updates per frame, and the press latched by the first of them
+	// was cleared by the second - by the time draw() looked, the click was gone. At 1920x1080, where
+	// a frame costs 35-60ms, that lost one click in two to two in three.
+	//
+	// So: whatever is still in the latch when update() returns is held here, and put back for the
+	// one draw() at the end of the frame. Held, not re-latched - update() still sees each press
+	// exactly once, so nothing can walk the player or use an item twice.
+	private int heldClickButton;
+	private int heldClickX;
+	private int heldClickY;
+	private long heldClickTime;
+	private int heldRawClickX;
+	private int heldRawClickY;
+
 	@ObfuscatedName("JWWAIQPI.a(III)V")
 	public void initApplication(int height, int width) {
 		this.setPreferredSize(new Dimension(width, height));
@@ -259,16 +287,30 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 			}
 
 			while (count < 256) {
-				this.mouseClickButton = this.nextMouseClickButton;
-				this.mouseClickX = this.nextMouseClickX;
-				this.mouseClickY = this.nextMouseClickY;
-				this.mouseClickTime = this.nextMouseClickTime;
-				this.rawClickX = this.nextRawClickX;
-				this.rawClickY = this.nextRawClickY;
-				this.nextMouseClickButton = 0;
+				synchronized (this.clickLock) {
+					this.mouseClickButton = this.nextMouseClickButton;
+					this.mouseClickX = this.nextMouseClickX;
+					this.mouseClickY = this.nextMouseClickY;
+					this.mouseClickTime = this.nextMouseClickTime;
+					this.rawClickX = this.nextRawClickX;
+					this.rawClickY = this.nextRawClickY;
+					this.nextMouseClickButton = 0;
+				}
 
 				this.mapInput();
 				this.update();
+
+				// Anything update() left in the latch is still unclaimed - hold it for draw(). The
+				// readers that consume a click in update() zero the button as they take it, so a
+				// press this update acted on for good is not held. See heldClickButton.
+				if (this.mouseClickButton != 0) {
+					this.heldClickButton = this.mouseClickButton;
+					this.heldClickX = this.mouseClickX;
+					this.heldClickY = this.mouseClickY;
+					this.heldClickTime = this.mouseClickTime;
+					this.heldRawClickX = this.rawClickX;
+					this.heldRawClickY = this.rawClickY;
+				}
 
 				this.keyQueueReadPos = this.keyQueueWritePos;
 				count += ratio;
@@ -278,6 +320,19 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 			if (this.deltime > 0) {
 				this.fps = ratio * 1000 / (this.deltime * 256);
+			}
+
+			// Give the held press back before mapInput(), which is what turns a raw canvas point
+			// into the coordinates the client reads (resizable mode). With one update per frame
+			// these are the values the latch already holds and this changes nothing.
+			if (this.heldClickButton != 0) {
+				this.mouseClickButton = this.heldClickButton;
+				this.mouseClickX = this.heldClickX;
+				this.mouseClickY = this.heldClickY;
+				this.mouseClickTime = this.heldClickTime;
+				this.rawClickX = this.heldRawClickX;
+				this.rawClickY = this.heldRawClickY;
+				this.heldClickButton = 0;
 			}
 
 			this.mapInput();
@@ -375,14 +430,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		int y = e.getY();
 
 		this.idleCycles = 0;
-		this.nextRawClickX = x;
-		this.nextRawClickY = y;
-		this.nextMouseClickX = x;
-		this.nextMouseClickY = y;
-		this.nextMouseClickTime = System.currentTimeMillis();
 
 		// QoL: middle-mouse-button camera drag. Track it separately and don't let it fall through
-		// to the normal left/right click handling below (middle click isn't a game click).
+		// to the normal left/right click handling below (middle click isn't a game click). Checked
+		// before the latch below rather than after, so a middle press cannot move the coordinates of
+		// a left or right press the game thread has not read yet - that used to make the pending
+		// click act wherever the middle button happened to go down.
 		if (e.getButton() == MouseEvent.BUTTON2) {
 			this.middleMouseDown = true;
 			this.middleMouseLastX = x;
@@ -390,23 +443,24 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 			return;
 		}
 
+		int button;
 		try {
 			// Java >8 no longer uses "isMetaDown" for right clicks
-			if (e.getButton() == MouseEvent.BUTTON3) {
-				this.nextMouseClickButton = 2;
-				this.mouseButton = 2;
-			} else {
-				this.nextMouseClickButton = 1;
-				this.mouseButton = 1;
-			}
+			button = e.getButton() == MouseEvent.BUTTON3 ? 2 : 1;
 		} catch (NoSuchMethodError ex) {
-			if (e.isMetaDown()) {
-				this.nextMouseClickButton = 2;
-				this.mouseButton = 2;
-			} else {
-				this.nextMouseClickButton = 1;
-				this.mouseButton = 1;
-			}
+			button = e.isMetaDown() ? 2 : 1;
+		}
+		this.mouseButton = button;
+
+		// One press, one latch - see clickLock. The button goes in last, as it always did: it is
+		// what tells the game thread there is a press to take.
+		synchronized (this.clickLock) {
+			this.nextRawClickX = x;
+			this.nextRawClickY = y;
+			this.nextMouseClickX = x;
+			this.nextMouseClickY = y;
+			this.nextMouseClickTime = System.currentTimeMillis();
+			this.nextMouseClickButton = button;
 		}
 	}
 

@@ -11,8 +11,13 @@ and that engine's login key's modulus in a file (the client's built-in one is th
 
     python3 tools/clienttests/run_resizableshots.py --rsan rsan.txt --out shots [--base old-client.jar]
 
-It builds nothing: it runs build/libs/rs2client-dev.jar (gradlew.bat build first). Each run logs in
-as a fresh throwaway account on the local server. What it does:
+It builds nothing: it runs build/libs/rs2client-dev.jar (gradlew.bat build first), or --jar. Each run
+logs in as a fresh throwaway account on the local server. What it does:
+  - clicks at a held frame rate (--clicks runs only this): 16 clicks on a row of the F9 panel at each
+    of four frame rates, counting how many took effect, and at the slowest of them that a click acts
+    once - six clicks bank six items, eight clicks on the scene run eight menu options. A panel row
+    is read in the DRAW phase, which is where GameShell's catch-up loop used to lose a press: before
+    the fix this was 16/16 at 20ms a frame, 7/16 at 31ms and 0/16 at 48ms and 65ms
   - draw distance: a 1920x1080 frame at each step of the F9 row, the ms/frame each one costs, and a
     click on the row stepping it on
   - each resizable layout (classic and modern) at 1280x800 and 1920x1080: the title screen centred,
@@ -95,9 +100,14 @@ def main():
     ap.add_argument('--rsan', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--base')
+    ap.add_argument('--jar', help='client jar to drive (default build/libs/rs2client-dev.jar)')
+    ap.add_argument('--clicks', action='store_true', help='only the click-rate check')
     ap.add_argument('--port', type=int, default=43694)
     ap.add_argument('--webport', type=int, default=8694)
     a = ap.parse_args()
+    global JAR
+    if a.jar:
+        JAR = os.path.abspath(a.jar)
     out = os.path.abspath(a.out)
     if a.base:
         a.base = os.path.abspath(a.base)
@@ -112,6 +122,16 @@ def main():
         return 1
     tag = str(int(time.time()) % 100000)
     ok = True
+    # How many clicks land, at each frame rate. Fixed 765x503, where the rate is set by padding the
+    # frame rather than by the window size, so it is the same on any machine (and can be held at a
+    # 1920x1080 frame rate without a 1920x1080 window). --clicks stops here.
+    print('clicks at a held frame rate')
+    ok &= java(['clicks', '765', '503', 'ck' + tag, 'clicks'], JAR, classes, out, rsan, a.port, a.webport,
+               ['shots.noflames=true', 'shots.tele=0,51,45,36,20'])
+    if a.clicks:
+        print()
+        print('ALL PASS' if ok else 'FAILURES above')
+        return 0 if ok else 1
     for w, h in ((1280, 800), (1920, 1080)):
         print('resizable %dx%d' % (w, h))
         ok &= java(['resizable', str(w), str(h), 'rz%d%s' % (w, int(tag) % 1000)], JAR, classes, out, rsan, a.port,
