@@ -853,8 +853,8 @@ public class Client extends GameShell implements PixMap.Target {
 	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
 	// The last two rows of the panel are not QolSettings switches: they are the window and the draw
 	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
-	// are about this machine's screen and what it can push. The window is a switch like the rest;
-	// the draw distance steps through its values, so its row shows the value instead of a box.
+	// are about this machine's screen and what it can push. Neither is a switch: both step through
+	// their values, so each keeps the tick box its neighbours have and spells out what it is on.
 	private static final int ROW_WINDOW = QolSettings.COUNT;
 	private static final int ROW_DRAW_DISTANCE = QolSettings.COUNT + 1;
 	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 2;
@@ -893,20 +893,25 @@ public class Client extends GameShell implements PixMap.Target {
 				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
 			}
 			int baseline = rowY + QOL_PANEL_ROW_H - 4;
+			// The two stepping rows keep the same box the switches have, so the column still lines up;
+			// it is ticked when the row is on anything other than the client's old behaviour, and what
+			// it is on is spelled out in the label.
 			if (i == ROW_DRAW_DISTANCE) {
-				// the box stays the same shape as every other row's; the value is in the label, because
-				// this row steps 25 -> 35 -> 45 -> 52 -> 25 rather than switching on and off
 				int tiles = DisplaySettings.drawDistance();
 				boolean far = tiles > DisplaySettings.DRAW_DISTANCES[0];
 				this.fontPlain12.drawString(x + 10, far ? 0x00C000 : 0x707070, baseline, far ? "[X]" : "[  ]");
 				this.fontPlain12.drawString(x + 36, far ? 0xFFFFFF : 0x909090, baseline, "Draw distance: " + tiles + " tiles");
 				continue;
 			}
-			boolean window = i == ROW_WINDOW;
-			boolean on = window ? this.wantResizable : QolSettings.on(i);
-			String label = window ? "Resizable window (drag or maximise it)" : QolSettings.label(i);
+			if (i == ROW_WINDOW) {
+				boolean sized = this.wantMode != Layout.FIXED;
+				this.fontPlain12.drawString(x + 10, sized ? 0x00C000 : 0x707070, baseline, sized ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, sized ? 0xFFFFFF : 0x909090, baseline, "Window: " + Layout.modeName(this.wantMode));
+				continue;
+			}
+			boolean on = QolSettings.on(i);
 			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, label);
+			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, QolSettings.label(i));
 		}
 
 		String hint = "Click a row to change it. Saved on this computer.";
@@ -918,9 +923,14 @@ public class Client extends GameShell implements PixMap.Target {
 	 * meant for a toggle can never also walk the player or open a menu behind the panel.
 	 */
 	private void handleQolPanelInput() {
-		// The server can push an interface at any time (a dialogue, a trade request). If one appears
-		// it would draw over the panel, so stand down rather than keep swallowing input underneath it.
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// The server can push an interface at any time (a bank, a trade request). One of those draws
+		// over the panel, so stand down rather than keep swallowing input underneath it.
+		//
+		// A CHATBOX interface does not: it draws in the chatbox, where the panel is not. It used to be
+		// in this list, which made F9 useless anywhere the server keeps a chatbox interface up - the
+		// whole tutorial, every quest dialogue - because the panel closed itself again a tick after it
+		// opened, sometimes between the click landing and the frame that would have read it.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.qolPanelOpen = false;
 			return;
 		}
@@ -941,8 +951,8 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		if (row == ROW_WINDOW) {
-			this.setResizable(!this.wantResizable);
-			DevLog.log("QOL", "Resizable window -> " + (this.wantResizable ? "on" : "off"));
+			this.setDisplayMode(DisplaySettings.nextMode(this.wantMode));
+			DevLog.log("QOL", "Window -> " + Layout.modeName(this.wantMode));
 			return;
 		}
 		if (row == ROW_DRAW_DISTANCE) {
@@ -3264,10 +3274,10 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.a()V")
 	public void load() {
-		// A player who left the window resizable gets it back. Only a standalone client has a window
-		// to resize; an applet is the size its page makes it.
+		// A player who left the window resizable gets it back, in the layout they left it in. Only a
+		// standalone client has a window to resize; an applet is the size its page makes it.
 		if (super.frame != null && DisplaySettings.resizable()) {
-			this.setResizable(true);
+			this.setDisplayMode(DisplaySettings.mode());
 		}
 		this.drawProgress(20, "Starting up");
 
@@ -16429,7 +16439,7 @@ public class Client extends GameShell implements PixMap.Target {
 
 	private Layout layout = Layout.fixed();
 	/** What the player asked for; the layout follows it at the next frame (syncLayout). */
-	private boolean wantResizable;
+	private int wantMode = Layout.FIXED;
 	/** The fixed frame the panels are cut from, in resizable mode. */
 	private int[] frameBuffer;
 	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
@@ -16451,23 +16461,37 @@ public class Client extends GameShell implements PixMap.Target {
 	private long layoutChangedAt;
 	private boolean layoutSettled = true;
 
-	/** Switch the window between fixed and resizable, and remember it. Takes effect at the next frame. */
-	public void setResizable(boolean on) {
-		this.wantResizable = on;
-		DisplaySettings.setResizable(on);
+	/**
+	 * Move the window to one of the three display modes (Layout.FIXED/CLASSIC/MODERN) and remember
+	 * it. Takes effect at the next frame. The window itself only has two states - the fixed 765x503
+	 * or free to be dragged - so switching between the two resizable layouts leaves it alone and
+	 * only the panels move.
+	 */
+	public void setDisplayMode(int mode) {
+		this.wantMode = mode < Layout.FIXED || mode >= Layout.MODES ? Layout.FIXED : mode;
+		DisplaySettings.setMode(this.wantMode);
 		if (super.frame != null) {
-			super.frame.setMode(on, DisplaySettings.width(), DisplaySettings.height(), DisplaySettings.maximized());
+			super.frame.setMode(this.wantMode != Layout.FIXED, DisplaySettings.width(), DisplaySettings.height(), DisplaySettings.maximized());
 		}
+	}
+
+	/** Fixed or the classic layout; kept for what only wants to know whether the window is free. */
+	public void setResizable(boolean on) {
+		this.setDisplayMode(on ? Layout.CLASSIC : Layout.FIXED);
 	}
 
 	public boolean isResizable() {
 		return this.layout.resizable;
 	}
 
+	public int displayMode() {
+		return this.layout.mode;
+	}
+
 	/** Bring the layout into line with the request and the window's size. Game thread only. */
 	public void syncLayout() {
 		Layout next;
-		if (!this.wantResizable) {
+		if (this.wantMode == Layout.FIXED) {
 			if (!this.layout.resizable) {
 				return;
 			}
@@ -16479,7 +16503,7 @@ public class Client extends GameShell implements PixMap.Target {
 			if (w <= 0 || h <= 0) {
 				return;
 			}
-			next = Layout.resizable(w, h);
+			next = Layout.resizable(this.wantMode, w, h);
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -16736,7 +16760,18 @@ public class Client extends GameShell implements PixMap.Target {
 		return true;
 	}
 
-	/** The panels over the viewport, an open viewport menu over them, and the lot onto the screen. */
+	/**
+	 * The panels over the viewport, an open viewport menu over them, and the lot onto the screen.
+	 *
+	 * In the modern layout a panel is mixed with the scene behind it rather than laid on top of it
+	 * (Layout.panelAlpha). Old School does that with panel art drawn to be see-through; the art in
+	 * the 377 cache is the fixed screen's, which is solid, so what happens here is the whole panel
+	 * faded - its text and its icons along with its background. That is why the chatbox and the
+	 * inventory only give up a quarter of themselves and the tab rows almost nothing: any more and
+	 * the things a player reads and aims at start to swim in the scene behind them. Faithful
+	 * transparency needs Old School's own panel sprites in the cache, which is a content change, not
+	 * a client one.
+	 */
 	private void presentGame(boolean menu) {
 		if (this.areaViewport == null || this.frameBuffer == null) {
 			return;
@@ -16744,8 +16779,15 @@ public class Client extends GameShell implements PixMap.Target {
 		int[] dst = this.areaViewport.data;
 		int dw = this.areaViewport.width;
 		int dh = this.areaViewport.height;
-		for (int p = 0; p < Layout.PANELS; p++) {
-			copyRect(this.frameBuffer, Layout.FIXED_W, Layout.panelFixedX(p), Layout.panelFixedY(p), Layout.panelWidth(p), Layout.panelHeight(p), dst, dw, dh, this.layout.panelScreenX(p) - this.layout.vpScreenX, this.layout.panelScreenY(p) - this.layout.vpScreenY);
+		for (int p = 0; p < this.layout.panels; p++) {
+			int alpha = this.layout.panelAlpha(p);
+			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
+			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
+			if (alpha >= Layout.OPAQUE) {
+				copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
+			} else {
+				blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+			}
 		}
 		if (menu && this.menuVisible && this.menuArea == 0) {
 			this.areaViewport.bind();
@@ -16754,6 +16796,47 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		if (this.screenGraphics != null) {
 			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+		}
+	}
+
+	/**
+	 * The same block, mixed with what is already there: alpha parts of the source to 256 - alpha of
+	 * the destination, per channel, the way Pix2D's own translucent fills do it. Used for the modern
+	 * layout's panels, so the scene shows through them.
+	 */
+	private static void blendRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy, int alpha) {
+		if (dx < 0) {
+			sx -= dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			sy -= dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		int rest = 256 - alpha;
+		for (int row = 0; row < h; row++) {
+			int from = (sy + row) * sw + sx;
+			int to = (dy + row) * dw + dx;
+			for (int col = 0; col < w; col++) {
+				int a = src[from + col];
+				int b = dst[to + col];
+				// red and blue in one multiply, green in another. The red-and-blue sum reaches
+				// 0xFF00FF00, which is a negative int, so it is shifted back with >>> and not >>.
+				int rb = ((a & 0xFF00FF) * alpha + (b & 0xFF00FF) * rest) >>> 8 & 0xFF00FF;
+				int g = ((a & 0xFF00) * alpha + (b & 0xFF00) * rest) >>> 8 & 0xFF00;
+				dst[to + col] = rb | g;
+			}
 		}
 	}
 

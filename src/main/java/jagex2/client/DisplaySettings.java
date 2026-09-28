@@ -8,8 +8,8 @@ import java.io.OutputStream;
 import java.util.Properties;
 
 /**
- * The window: fixed or resizable, how big a resizable window was left, and how far the scene is
- * drawn.
+ * The window: which of the three display modes, how big a resizable window was left, and how far
+ * the scene is drawn.
  *
  * Kept in ~/.deathplateau/display.properties - the folder the launcher keeps the game in - rather
  * than beside QolSettings in the cache folder, because it is about this machine's screen and not
@@ -22,7 +22,7 @@ public final class DisplaySettings {
 	private static final String FILE_NAME = "display.properties";
 
 	private static boolean loaded;
-	private static boolean resizable;
+	private static int mode = Layout.FIXED;
 	private static int width = 1024;
 	private static int height = 768;
 	private static boolean maximized;
@@ -52,7 +52,7 @@ public final class DisplaySettings {
 			in = new FileInputStream(f);
 			Properties p = new Properties();
 			p.load(in);
-			resizable = "resizable".equals(p.getProperty("mode", "fixed").trim());
+			mode = modeFor(p.getProperty("mode", "fixed").trim());
 			width = Math.max(Layout.MIN_W, Integer.parseInt(p.getProperty("width", "" + width).trim()));
 			height = Math.max(Layout.MIN_H, Integer.parseInt(p.getProperty("height", "" + height).trim()));
 			maximized = "true".equals(p.getProperty("maximized", "false").trim());
@@ -68,11 +68,34 @@ public final class DisplaySettings {
 		}
 	}
 
-	public static synchronized boolean resizable() {
+	/**
+	 * The file says fixed, classic or modern. It said "resizable" before there were two resizable
+	 * layouts, and a file that still does means the classic one - which is the layout that shipped
+	 * under that name, so nobody's window changes under them.
+	 */
+	private static int modeFor(String name) {
+		if ("modern".equals(name)) {
+			return Layout.MODERN;
+		}
+		if ("classic".equals(name) || "resizable".equals(name)) {
+			return Layout.CLASSIC;
+		}
+		return Layout.FIXED;
+	}
+
+	private static String nameFor(int mode) {
+		return mode == Layout.MODERN ? "modern" : mode == Layout.CLASSIC ? "classic" : "fixed";
+	}
+
+	public static synchronized int mode() {
 		if (!loaded) {
 			load();
 		}
-		return resizable;
+		return mode;
+	}
+
+	public static synchronized boolean resizable() {
+		return mode() != Layout.FIXED;
 	}
 
 	public static synchronized int width() {
@@ -135,14 +158,26 @@ public final class DisplaySettings {
 		return best;
 	}
 
-	public static synchronized void setResizable(boolean on) {
+	public static synchronized void setMode(int next) {
 		if (!loaded) {
 			load();
 		}
-		if (resizable != on) {
-			resizable = on;
+		if (next < Layout.FIXED || next >= Layout.MODES) {
+			next = Layout.FIXED;
+		}
+		if (mode != next) {
+			mode = next;
 			save();
 		}
+	}
+
+	public static synchronized void setResizable(boolean on) {
+		setMode(on ? Layout.CLASSIC : Layout.FIXED);
+	}
+
+	/** The next mode after this one, wrapping: what clicking the F9 row does. */
+	public static int nextMode(int mode) {
+		return (mode + 1) % Layout.MODES;
 	}
 
 	/** The size a resizable window was left at, to open at next time. Saved only when it changes. */
@@ -174,13 +209,13 @@ public final class DisplaySettings {
 				return;
 			}
 			Properties p = new Properties();
-			p.setProperty("mode", resizable ? "resizable" : "fixed");
+			p.setProperty("mode", nameFor(mode));
 			p.setProperty("width", "" + width);
 			p.setProperty("height", "" + height);
 			p.setProperty("maximized", "" + maximized);
 			p.setProperty("drawdistance", "" + drawDistance);
 			out = new FileOutputStream(f);
-			p.store(out, "Death Plateau window: mode=fixed|resizable (F9 in game switches it)");
+			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it)");
 		} catch (Exception ignored) {
 		} finally {
 			try {

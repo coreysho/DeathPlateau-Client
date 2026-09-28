@@ -197,6 +197,47 @@ public class ResizableShots extends Client {
 		waitFrames(3);
 	}
 
+	/**
+	 * A click on a row of the F9 panel, retried until something changes. The panel reads the mouse in
+	 * the DRAW phase (handleInput is called from drawGame), and GameShell's catch-up loop can run
+	 * update() twice between two frames when the frame rate is low - 1920x1080 is low enough - which
+	 * clears the press before the frame that would have read it. 377 has always done this; a player
+	 * sees a click go nowhere now and then and clicks again, which is what this does. At 60ms a frame
+	 * - two other clients on the same machine - the loop runs three updates a frame and only one in
+	 * three clicks survives, hence eight tries and not two.
+	 */
+	static boolean clickSettingsRow(int row, String field) throws Exception {
+		Object was = call(field);
+		int hdr = ((Number) staticField("QOL_PANEL_HEADER_H")).intValue();
+		int rh = ((Number) staticField("QOL_PANEL_ROW_H")).intValue();
+		for (int tries = 0; tries < 8; tries++) {
+			openSettings();
+			int x = ((Number) call("qolPanelX")).intValue() + ((Number) layoutField("vpScreenX")).intValue() + 60;
+			int y = ((Number) call("qolPanelY")).intValue() + ((Number) layoutField("vpScreenY")).intValue() + hdr + row * rh + rh / 2;
+			click(x, y, false);
+			waitFrames(20);
+			if (!was.equals(call(field))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * F9 until the settings panel is actually open. It closes itself whenever an interface it would
+	 * be buried under appears, so a panel opened twenty frames ago may not be there any more.
+	 */
+	static void openSettings() throws Exception {
+		for (int i = 0; i < 4; i++) {
+			if (((Boolean) get("qolPanelOpen")).booleanValue()) {
+				return;
+			}
+			key(KeyEvent.VK_F9, (char) 0);
+			waitFrames(4);
+		}
+		say("FAIL the F9 settings panel would not stay open");
+	}
+
 	static void key(int code, char ch) {
 		app.keyPressed(new KeyEvent(app, KeyEvent.KEY_PRESSED, System.currentTimeMillis(), 0, code, ch));
 		app.keyReleased(new KeyEvent(app, KeyEvent.KEY_RELEASED, System.currentTimeMillis(), 0, code, ch));
@@ -315,7 +356,9 @@ public class ResizableShots extends Client {
 		String user = args[4];
 		String prefix = args.length > 5 ? args[5] : mode + "_" + w + "x" + h;
 		log = new PrintWriter(new FileWriter(new File(out, prefix + ".log")));
-		boolean resizable = mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title");
+		// "modern" is the same run as "resizable", in Old School's modern layout instead of its classic one
+		boolean modern = mode.equals("modern");
+		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title");
 		pinPitch = Integer.getInteger("shots.pitch", mode.equals("compare") ? 383 : 300);
 
 		seedRandom(377);
@@ -340,7 +383,8 @@ public class ResizableShots extends Client {
 			}
 		}
 		if (resizable) {
-			call("setResizable", true);
+			// Layout.CLASSIC is 1, Layout.MODERN 2
+			call("setDisplayMode", Integer.valueOf(modern ? 2 : 1));
 		}
 		waitFor("the title screen", 120000, () -> geti("titleScreenState") == 0 && frames > 20 && get("imageTitle4") != null);
 		waitFrames(10);
@@ -460,7 +504,7 @@ public class ResizableShots extends Client {
 		}
 
 		if (resizable) {
-			resizableChecks(w, h);
+			resizableChecks(w, h, prefix);
 		}
 		say("done");
 		log.close();
@@ -604,32 +648,36 @@ public class ResizableShots extends Client {
 	}
 
 	// The panels' geometry, asked of Layout itself rather than written down again here, so the
-	// harness follows the client when a panel's rectangle changes. CHAT 0, MINIMAP 1, SIDEBAR 2.
-	static final int CHAT = 0;
-	static final int MINIMAP = 1;
+	// harness follows the client when a panel's rectangle changes. CHAT 0, MINIMAP 1, SIDEBAR 2,
+	// and in the modern layout TABS_TOP 3 and TABS_BOTTOM 4 as well.
 	static final int SIDEBAR = 2;
-
-	static int layoutStatic(String method, int panel) throws Exception {
-		Class<?> c = get("layout").getClass();
-		return ((Number) c.getMethod(method, int.class).invoke(null, Integer.valueOf(panel))).intValue();
-	}
 
 	static int layoutOn(String method, int panel) throws Exception {
 		Object layout = get("layout");
 		return ((Number) layout.getClass().getMethod(method, int.class).invoke(layout, Integer.valueOf(panel))).intValue();
 	}
 
-	/** A point of the fixed frame, in window coordinates: where its panel put it. */
-	static int panelWinX(int panel, int fixedX) throws Exception {
-		return layoutOn("panelScreenX", panel) + fixedX - layoutStatic("panelFixedX", panel);
-	}
-
-	static int panelWinY(int panel, int fixedY) throws Exception {
-		return layoutOn("panelScreenY", panel) + fixedY - layoutStatic("panelFixedY", panel);
+	/**
+	 * A point of the fixed 765x503 frame, in window coordinates: whichever panel holds it, wherever
+	 * this layout put that panel. Asked of Layout rather than written down here, so the harness
+	 * follows the client between the classic layout and the modern one, where the tab rows are
+	 * panels of their own.
+	 */
+	static int[] windowOf(int fixedX, int fixedY) throws Exception {
+		Object layout = get("layout");
+		int panels = layout.getClass().getField("panels").getInt(layout);
+		for (int p = 0; p < panels; p++) {
+			int px = layoutOn("panelFixedX", p);
+			int py = layoutOn("panelFixedY", p);
+			if (fixedX >= px && fixedX < px + layoutOn("panelWidth", p) && fixedY >= py && fixedY < py + layoutOn("panelHeight", p)) {
+				return new int[] { layoutOn("panelScreenX", p) + fixedX - px, layoutOn("panelScreenY", p) + fixedY - py };
+			}
+		}
+		throw new RuntimeException("no panel holds the fixed point " + fixedX + "," + fixedY);
 	}
 
 	/** The panels take the clicks meant for them, and the scene the rest, however big the window. */
-	static void resizableChecks(int w, int h) throws Exception {
+	static void resizableChecks(int w, int h, String prefix) throws Exception {
 		int ok = 0;
 		int bad = 0;
 		// 1. a tab button in the bottom-right panel: the Stats tab (second in the top row, fixed x 560..593, y 168..204)
@@ -645,19 +693,22 @@ public class ResizableShots extends Client {
 		int col = want % 7;
 		int fx0 = col == 0 ? 522 : 560 + (col - 1) * 33;
 		int fy0 = want < 7 ? 168 : 466;
-		click(panelWinX(SIDEBAR, fx0 + 10), panelWinY(SIDEBAR, fy0 + 15), false);
+		int[] tabAt = windowOf(fx0 + 10, fy0 + 15);
+		click(tabAt[0], tabAt[1], false);
 		int tabAfter = geti("selectedTab");
 		boolean t = tabAfter == want;
 		say((t ? "ok   " : "FAIL ") + "a click on tab " + want + "'s button in the bottom-right panel selects it (" + tabBefore + " -> " + tabAfter + ")");
 		if (t) ok++; else bad++;
-		shot("resizable_" + w + "x" + h + "_tab");
+		shot(prefix + "_tab");
 		// 2. hover the inventory: the menu is the sidebar's
-		hover(panelWinX(SIDEBAR, 560), panelWinY(SIDEBAR, 230));
+		int[] invAt = windowOf(560, 230);
+		hover(invAt[0], invAt[1]);
 		waitFrames(5);
 		say("hover over the inventory's first slot: " + menu());
 		// 3. the minimap: a click walks, setting the flag
 		set("flagSceneTileX", 0);
-		click(panelWinX(MINIMAP, 545 + 25 + 73 + 30), panelWinY(MINIMAP, 4 + 5 + 75 + 10), false);
+		int[] mapAt = windowOf(545 + 25 + 73 + 30, 4 + 5 + 75 + 10);
+		click(mapAt[0], mapAt[1], false);
 		waitFrames(3);
 		boolean m = geti("flagSceneTileX") != 0;
 		say((m ? "ok   " : "FAIL ") + "a click on the minimap in the top-right walks there (flag at " + geti("flagSceneTileX") + ")");
@@ -678,14 +729,14 @@ public class ResizableShots extends Client {
 		boolean where = cx - vpX == fx && cy - vpY == fy;
 		say((c && where ? "ok   " : "FAIL ") + "a left click on the scene at " + fx + "," + fy + " (outside the fixed 512x334) is taken by the scene there (cross " + crossMode + " at viewport " + (cx - vpX) + "," + (cy - vpY) + ")");
 		if (c && where) ok++; else bad++;
-		shot("resizable_" + w + "x" + h + "_walk");
+		shot(prefix + "_walk");
 		waitFrames(100);
 		// 5. mouse picking across the whole window: sweep a grid, count points where the scene
 		//    under the mouse offered something other than Walk here
 		int found = 0;
 		int far = 0;
 		String sample = null;
-		int sideW = layoutStatic("panelWidth", SIDEBAR) + 11;
+		int sideW = layoutOn("panelWidth", SIDEBAR) + 11;
 		for (int y = 20; y < h - 180; y += 40) {
 			for (int x = 20; x < w - sideW; x += 40) {
 				hover(x, y);
@@ -709,7 +760,7 @@ public class ResizableShots extends Client {
 			String[] xy = sample.substring(0, sample.indexOf(' ')).split(",");
 			click(Integer.parseInt(xy[0]), Integer.parseInt(xy[1]), true);
 			say("menu on it: area " + get("menuArea") + " " + menu());
-			shot("resizable_" + w + "x" + h + "_pickmenu");
+			shot(prefix + "_pickmenu");
 			set("menuVisible", false);
 		}
 		// 5b. walkable overlays: the wilderness level keeps to the bottom-right corner of the open
@@ -721,7 +772,7 @@ public class ResizableShots extends Client {
 				set("viewportOverlayInterfaceId", overlays[i]);
 			}
 			waitFrames(10);
-			shot("resizable_" + w + "x" + h + "_" + names[i]);
+			shot(prefix + "_" + names[i]);
 		}
 		synchronized (LOCK) {
 			set("viewportOverlayInterfaceId", -1);
@@ -732,7 +783,7 @@ public class ResizableShots extends Client {
 			set("fullscreenInterfaceId0", bankId);
 		}
 		waitFrames(20);
-		shot("resizable_" + w + "x" + h + "_fullscreen");
+		shot(prefix + "_fullscreen");
 		synchronized (LOCK) {
 			set("fullscreenInterfaceId0", -1);
 			set("redrawFrame", true);
@@ -743,41 +794,45 @@ public class ResizableShots extends Client {
 		boolean fs = vpw == w;
 		say((fs ? "ok   " : "FAIL ") + "after a fullscreen interface the viewport is the window's width again (" + vpw + ")");
 		if (fs) ok++; else bad++;
-		// 7. the F9 panel, drawn and clickable in the middle of the open area: its last row switches
-		//    to the fixed screen, and clicking it again (where it now is) switches back
-		key(KeyEvent.VK_F9, (char) 0);
+		// 7. the F9 panel, drawn and clickable in the middle of the open area: its window row steps
+		//    fixed -> classic -> modern -> fixed, and every mode draws
+		openSettings();
 		waitFrames(5);
-		shot("resizable_" + w + "x" + h + "_settings");
-		int rows = ((Number) staticField("QOL_PANEL_ROWS")).intValue();
+		shot(prefix + "_settings");
 		int windowRow = ((Number) staticField("ROW_WINDOW")).intValue();
-		int panelH = 24 + rows * 15 + 22;
-		int px = ((Number) layoutField("mainX")).intValue() + (512 - 320) / 2 + 60;
-		int py = ((Number) layoutField("mainY")).intValue() + (334 - panelH) / 2 + 24 + windowRow * 15 + 7;
-		click(px, py, false);
-		waitFrames(10);
-		boolean off = !((Boolean) call("isResizable"));
-		say((off ? "ok   " : "FAIL ") + "clicking 'Resizable window' in the F9 panel switches to the fixed screen");
-		if (off) ok++; else bad++;
-		shot("resizable_" + w + "x" + h + "_switchedfixed");
-		px = (512 - 320) / 2 + 60 + 4;
-		py = (334 - panelH) / 2 + 24 + windowRow * 15 + 7 + 4;
-		click(px, py, false);
-		waitFrames(10);
-		boolean on = (Boolean) call("isResizable");
-		say((on ? "ok   " : "FAIL ") + "...and clicking it again on the fixed screen switches back");
-		if (on) ok++; else bad++;
+		int started = ((Number) call("displayMode")).intValue();
+		clickSettingsRow(windowRow, "displayMode");
+		int next = ((Number) call("displayMode")).intValue();
+		boolean stepsOn = next == (started + 1) % 3;
+		say((stepsOn ? "ok   " : "FAIL ") + "a click on the F9 window row steps the display mode on ("
+			+ started + " -> " + next + ", of fixed 0, classic 1, modern 2)");
+		if (stepsOn) ok++; else bad++;
+		// and each of the three draws: switched here rather than clicked, because a click that lands
+		// in the wrong frame is lost (see clickSettingsRow) and this is about the drawing, not the row
+		for (int dm = 0; dm < 3; dm++) {
+			synchronized (LOCK) {
+				call("setDisplayMode", Integer.valueOf(dm));
+			}
+			waitFrames(30);
+			int now = ((Number) call("displayMode")).intValue();
+			say((now == dm ? "ok   " : "FAIL ") + "display mode " + dm + " (" + (now == dm ? "drawn" : "did not take, at " + now) + ")");
+			if (now == dm) ok++; else bad++;
+			shot(prefix + (dm == 0 ? "_switchedfixed" : "_switched" + dm));
+		}
+		synchronized (LOCK) {
+			call("setDisplayMode", Integer.valueOf(started));
+		}
+		waitFrames(30);
 		// 8. the draw distance row, under it: a click steps it on to the next value and saves it
 		int[] steps = (int[]) Class.forName("jagex2.client.DisplaySettings").getField("DRAW_DISTANCES").get(null);
 		int distRow = ((Number) staticField("ROW_DRAW_DISTANCE")).intValue();
 		int before = ((Number) call("drawDistance")).intValue();
-		click(((Number) layoutField("mainX")).intValue() + (512 - 320) / 2 + 60,
-			((Number) layoutField("mainY")).intValue() + (334 - panelH) / 2 + 24 + distRow * 15 + 7, false);
-		waitFrames(20);
+		clickSettingsRow(distRow, "drawDistance");
 		int after = ((Number) call("drawDistance")).intValue();
 		boolean stepped = before == steps[0] && after == steps[1];
 		say((stepped ? "ok   " : "FAIL ") + "clicking the draw distance row steps it on (" + before + " -> " + after + " tiles)");
 		if (stepped) ok++; else bad++;
-		shot("resizable_" + w + "x" + h + "_drawdistance");
+		shot(prefix + "_drawdistance");
 		synchronized (LOCK) {
 			call("setDrawDistance", Integer.valueOf(steps[0]));
 		}
