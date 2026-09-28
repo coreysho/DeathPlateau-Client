@@ -12,7 +12,10 @@ public class Pix3D extends Pix2D {
 	public static boolean jagged = true;
 
 	@ObfuscatedName("YIBHWZVJ.G")
-	public static int[] divTable = new int[512];
+	// 2048, not 512: the gouraud and texture spans index it by span / 4 and span / 8, and a span can be
+	// as wide as the viewport. 512 covered the fixed 512px viewport; resizable mode draws the scene
+	// as wide as the window. Entries below 512 are unchanged.
+	public static int[] divTable = new int[2048];
 
 	@ObfuscatedName("YIBHWZVJ.H")
 	public static int[] divTable2 = new int[2048];
@@ -60,6 +63,15 @@ public class Pix3D extends Pix2D {
 
 	@ObfuscatedName("YIBHWZVJ.D")
 	public static int field1593;
+
+	/**
+	 * The projection's scale: a point (x, y, z) in camera space lands at x * zoom / z + centerX.
+	 * 377 wrote it as << 9 everywhere, so 512 - which is still what it is outside resizable mode,
+	 * and x * 512 is x << 9 bit for bit, so the fixed screen is drawn exactly as it was. Resizable
+	 * mode raises it with the window (see Layout.zoomFor) so a big window shows a bigger world
+	 * rather than the same world with a lot more of it at the edges.
+	 */
+	public static int zoom = 512;
 
 	@ObfuscatedName("YIBHWZVJ.E")
 	public static int centerX;
@@ -1480,6 +1492,18 @@ public class Pix3D extends Pix2D {
 		int var32 = var21 * var23 - var20 * var24 << 14;
 		int var33 = var22 * var24 - var21 * var25 << 8;
 		int var34 = var20 * var25 - var22 * var23 << 5;
+		if (zoom != 512) {
+			// The << 14 terms are the depth terms and carry the projection's 512 (<< 5 << 9); the
+			// << 8 and << 5 terms are per screen pixel. A ray through pixel (dx, dy) is
+			// (dx, dy, zoom), and scaling the per-pixel terms by 512 / zoom instead of the depth
+			// terms by zoom / 512 is the same ratio with no chance of overflowing.
+			var27 = (int) ((long) var27 * 512 / zoom);
+			var28 = (int) ((long) var28 * 512 / zoom);
+			var30 = (int) ((long) var30 * 512 / zoom);
+			var31 = (int) ((long) var31 * 512 / zoom);
+			var33 = (int) ((long) var33 * 512 / zoom);
+			var34 = (int) ((long) var34 * 512 / zoom);
+		}
 		int var35 = 0;
 		int var36 = 0;
 		if (arg0 != arg1) {
@@ -2453,7 +2477,7 @@ public class Pix3D extends Pix2D {
 	}
 
 	static {
-		for (int var0 = 1; var0 < 512; var0++) {
+		for (int var0 = 1; var0 < 2048; var0++) {
 			divTable[var0] = 32768 / var0;
 		}
 		for (int var1 = 1; var1 < 2048; var1++) {

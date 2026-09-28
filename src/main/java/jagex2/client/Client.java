@@ -67,7 +67,7 @@ import java.util.Date;
 import java.util.zip.CRC32;
 import sign.signlink;
 
-public class Client extends GameShell {
+public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.K")
 	public int[] jagChecksum = new int[9];
@@ -340,11 +340,10 @@ public class Client extends GameShell {
 	//
 	// Drawn into areaViewport rather than over the whole screen, because drawGame() has no single
 	// fullscreen buffer - it composes the frame out of separate bound surfaces (viewport, sidebar,
-	// chatback, backbase) and blits each one. The viewport is 512x334 at screen offset (4,4), which
-	// is where the XP drops already draw, so the panel is laid out in viewport-local coordinates and
-	// QOL_PANEL_ORIGIN is added back when hit-testing against the screen-space mouse position.
+	// chatback, backbase) and blits each one. The panel is laid out in viewport-local coordinates,
+	// centred where a main interface would be (layout.mainX/mainY), and the viewport's origin in the
+	// mouse's coordinates (layout.vpX/vpY: 4,4 on the fixed screen) is added back when hit-testing.
 	private static final int QOL_PANEL_KEY = 1016; // F9
-	private static final int QOL_PANEL_ORIGIN = 4;
 	private static final int QOL_PANEL_W = 320;
 	private static final int QOL_PANEL_ROW_H = 15;
 	private static final int QOL_PANEL_HEADER_H = 24;
@@ -849,16 +848,20 @@ public class Client extends GameShell {
 	// near the top-right of the viewport (same anchor the ::fpson debug counter uses, offset
 	// below it when that's also on). Newest drop is always at index 0/top, since addXpDrop()
 	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
+	// The last row of the panel is not a QolSettings switch: it is the window (DisplaySettings),
+	// which is kept with the launcher's files rather than the cache, and switched with setResizable.
+	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 1;
+
 	private int qolPanelHeight() {
-		return QOL_PANEL_HEADER_H + QolSettings.COUNT * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
+		return QOL_PANEL_HEADER_H + QOL_PANEL_ROWS * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
 	}
 
 	private int qolPanelX() {
-		return (512 - QOL_PANEL_W) / 2;
+		return this.layout.mainX + (512 - QOL_PANEL_W) / 2;
 	}
 
 	private int qolPanelY() {
-		return (334 - this.qolPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.qolPanelHeight()) / 2;
 	}
 
 	/** Called with areaViewport bound, so coordinates here are viewport-local. */
@@ -874,21 +877,23 @@ public class Client extends GameShell {
 		String close = "F9 / Esc to close";
 		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
-		for (int i = 0; i < QolSettings.COUNT; i++) {
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
+		for (int i = 0; i < QOL_PANEL_ROWS; i++) {
 			int rowY = y + QOL_PANEL_HEADER_H + i * QOL_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + QOL_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + QOL_PANEL_ROW_H;
 			if (hovered) {
 				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
 			}
-			boolean on = QolSettings.on(i);
+			boolean window = i == QolSettings.COUNT;
+			boolean on = window ? this.wantResizable : QolSettings.on(i);
+			String label = window ? "Resizable window (drag or maximise it)" : QolSettings.label(i);
 			int baseline = rowY + QOL_PANEL_ROW_H - 4;
 			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, QolSettings.label(i));
+			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, label);
 		}
 
-		String hint = "Click a row to toggle. Saved to the client cache folder.";
+		String hint = "Click a row to toggle. Saved on this computer.";
 		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
 	}
 
@@ -906,8 +911,8 @@ public class Client extends GameShell {
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.qolPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.qolPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.qolPanelX() + this.layout.vpX;
+		int y = this.qolPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -916,7 +921,12 @@ public class Client extends GameShell {
 			return;
 		}
 		int row = (clickY - (y + QOL_PANEL_HEADER_H)) / QOL_PANEL_ROW_H;
-		if (clickY < y + QOL_PANEL_HEADER_H || row < 0 || row >= QolSettings.COUNT) {
+		if (clickY < y + QOL_PANEL_HEADER_H || row < 0 || row >= QOL_PANEL_ROWS) {
+			return;
+		}
+		if (row == QolSettings.COUNT) {
+			this.setResizable(!this.wantResizable);
+			DevLog.log("QOL", "Resizable window -> " + (this.wantResizable ? "on" : "off"));
 			return;
 		}
 		QolSettings.toggle(row);
@@ -1229,11 +1239,11 @@ public class Client extends GameShell {
 	}
 
 	private int swapPanelX() {
-		return (512 - SWAP_PANEL_W) / 2;
+		return this.layout.mainX + (512 - SWAP_PANEL_W) / 2;
 	}
 
 	private int swapPanelY() {
-		return (334 - this.swapPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.swapPanelHeight()) / 2;
 	}
 
 	/** Called with areaViewport bound, so coordinates here are viewport-local. */
@@ -1250,8 +1260,8 @@ public class Client extends GameShell {
 		String close = "F10 / Esc to close";
 		this.fontPlain12.drawString(x + SWAP_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < rows; i++) {
 			int rowY = y + SWAP_PANEL_HEADER_H + i * SWAP_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + SWAP_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
@@ -1286,8 +1296,8 @@ public class Client extends GameShell {
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.swapPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.swapPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.swapPanelX() + this.layout.vpX;
+		int y = this.swapPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1311,11 +1321,11 @@ public class Client extends GameShell {
 	}
 
 	private int giPanelX() {
-		return (512 - GI_PANEL_W) / 2;
+		return this.layout.mainX + (512 - GI_PANEL_W) / 2;
 	}
 
 	private int giPanelY() {
-		return (334 - this.giPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.giPanelHeight()) / 2;
 	}
 
 	/** Money the way a player reads it, for the value-floor row. */
@@ -1346,8 +1356,8 @@ public class Client extends GameShell {
 		String close = "F11 / Esc to close";
 		this.fontPlain12.drawString(x + GI_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < rows; i++) {
 			int rowY = y + GI_PANEL_HEADER_H + i * GI_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + GI_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + GI_PANEL_ROW_H;
@@ -1389,8 +1399,8 @@ public class Client extends GameShell {
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.giPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.giPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.giPanelX() + this.layout.vpX;
+		int y = this.giPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1439,8 +1449,8 @@ public class Client extends GameShell {
 	 * click is spent and must not also walk the player.
 	 */
 	private boolean handleGroundItemClick() {
-		int x = super.mouseClickX - QOL_PANEL_ORIGIN;
-		int y = super.mouseClickY - QOL_PANEL_ORIGIN;
+		int x = super.mouseClickX - this.layout.vpX;
+		int y = super.mouseClickY - this.layout.vpY;
 		for (int i = 0; i < this.giZoneCount; i++) {
 			if (y < this.giZoneTop[i] || y > this.giZoneBottom[i]) {
 				continue;
@@ -1602,7 +1612,7 @@ public class Client extends GameShell {
 				// -1 means behind the camera. The generous box around the 512x334 viewport is not
 				// for correctness - plotLetter() clips - but so a tile off to the side costs one
 				// comparison instead of an ObjType decode and a string build per row.
-				if (this.projectX <= -1 || this.projectX > 640 || this.projectY < -64 || this.projectY > 400) {
+				if (this.projectX <= -1 || this.projectX > this.layout.vpW + 128 || this.projectY < -64 || this.projectY > this.layout.vpH + 66) {
 					continue;
 				}
 				// PASS ONE: what each tracked row would look like, and how many rows there are to
@@ -1785,8 +1795,8 @@ public class Client extends GameShell {
 		if (super.mouseScrollDelta == 0 || !QolSettings.on(QolSettings.GROUND_ITEMS)) {
 			return false;
 		}
-		int x = super.mouseX - QOL_PANEL_ORIGIN;
-		int y = super.mouseY - QOL_PANEL_ORIGIN;
+		int x = super.mouseX - this.layout.vpX;
+		int y = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < this.giPileCount; i++) {
 			if (this.giPileRows[i] <= GI_ROWS_SHOWN) {
 				continue;                                    // nothing to scroll: leave it to zoom
@@ -1827,7 +1837,7 @@ public class Client extends GameShell {
 		if (!showTracker && this.xpDrops.isEmpty()) {
 			return;
 		}
-		int rightX = 507;
+		int rightX = this.layout.openW - 5;
 		int y = displayFps ? 68 : 22;
 
 		// The tracker panel: skill icon + that skill's total xp + a bar showing progress to the next
@@ -3233,6 +3243,11 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a()V")
 	public void load() {
+		// A player who left the window resizable gets it back. Only a standalone client has a window
+		// to resize; an applet is the size its page makes it.
+		if (super.frame != null && DisplaySettings.resizable()) {
+			this.setResizable(true);
+		}
 		this.drawProgress(20, "Starting up");
 
 		if (signlink.sunjava) {
@@ -3736,6 +3751,12 @@ public class Client extends GameShell {
 			}
 
 			World3D.init(334, distance, 800, 500, 512);
+			this.sceneDistances = distance;
+			this.sceneVisW = 512;
+			this.sceneVisH = 334;
+			this.sceneVisZoom = 512;
+			// A window already resizable when the game started was laid out before these existed.
+			this.updateSceneVisibility();
 			WordFilter.unpack(jagWordenc);
 
 			this.mouseTracking = new MouseTracking(this);
@@ -3775,6 +3796,10 @@ public class Client extends GameShell {
 		}
 
 		drawCycle++;
+
+		if (this.layout.resizable) {
+			this.prepareResizableFrame();
+		}
 
 		if (this.ingame) {
 			this.drawGame();
@@ -3922,6 +3947,12 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a(IZLjava/lang/String;)V")
 	public void drawProgress(int percent, String message) {
+		// load() draws these before the game loop has started, so nothing else has looked at the
+		// window yet: a resizable window is centred here rather than at the first game frame.
+		this.syncLayout();
+		if (this.layout.resizable) {
+			this.prepareResizableFrame();
+		}
 		this.lastProgressPercent = percent;
 		this.lastProgressMessage = message;
 		this.loadTitle();
@@ -4631,7 +4662,7 @@ public class Client extends GameShell {
 		Pix2D.cls();
 		this.imageMapback.plotSprite(0, 0);
 		this.areaSidebar = new PixMap(261, this.getBaseComponent(), 190);
-		this.areaViewport = new PixMap(334, this.getBaseComponent(), 512);
+		this.createViewportArea();
 		Pix2D.cls();
 		this.areaBackbase1 = new PixMap(23, this.getBaseComponent(), 519);
 		this.areaBackbase2 = new PixMap(37, this.getBaseComponent(), 246);
@@ -5670,11 +5701,11 @@ public class Client extends GameShell {
 		this.handlePrivateChatInput();
 		this.lastHoveredInterfaceId = 0;
 		this.field611 = 0;
-		if (super.mouseX > 4 && super.mouseY > 4 && super.mouseX < 516 && super.mouseY < 338) {
+		if (this.layout.inViewport(super.mouseX, super.mouseY)) {
 			if (this.viewportInterfaceId == -1) {
 				this.handleViewportOptions();
 			} else {
-				this.handleInterfaceInput(4, Component.get(this.viewportInterfaceId), 0, 0, 4, super.mouseX, super.mouseY);
+				this.handleInterfaceInput(this.layout.vpY + this.layout.mainY, Component.get(this.viewportInterfaceId), 0, 0, this.layout.vpX + this.layout.mainX, super.mouseX, super.mouseY);
 			}
 		}
 		if (this.viewportHoveredInterfaceIndex != this.lastHoveredInterfaceId) {
@@ -5769,13 +5800,13 @@ public class Client extends GameShell {
 					var6 = var6.substring(ChatIcons.leading(var6).length());
 				}
 				if ((var5 == 3 || var5 == 7) && (var5 == 7 || this.chatPrivateMode == 0 || this.chatPrivateMode == 1 && this.isFriend(var6))) {
-					int var10 = 329 - var3 * 13;
-					if (super.mouseX > 4 && super.mouseY - 4 > var10 - 10 && super.mouseY - 4 <= var10 + 3) {
+					int var10 = this.layout.openH - 5 - var3 * 13;
+					if (super.mouseX > this.layout.vpX && super.mouseY - this.layout.vpY > var10 - 10 && super.mouseY - this.layout.vpY <= var10 + 3) {
 						int var11 = this.fontPlain12.stringWidTag("From:  " + var6 + this.messageText[var4]) + 25;
 						if (var11 > 450) {
 							var11 = 450;
 						}
-						if (super.mouseX < var11 + 4) {
+						if (super.mouseX < var11 + this.layout.vpX) {
 							if (this.staffmodlevel >= 1) {
 								this.menuOption[this.menuSize] = "Report abuse @whi@" + var6;
 								this.menuAction[this.menuSize] = 2507;
@@ -6135,8 +6166,8 @@ public class Client extends GameShell {
 			int var3 = super.mouseX;
 			int var4 = super.mouseY;
 			if (this.menuArea == 0) {
-				var3 -= 4;
-				var4 -= 4;
+				var3 -= this.layout.vpX;
+				var4 -= this.layout.vpY;
 			}
 			if (this.menuArea == 1) {
 				var3 -= SIDE_X;
@@ -6163,8 +6194,8 @@ public class Client extends GameShell {
 			int var8 = super.mouseClickX;
 			int var9 = super.mouseClickY;
 			if (this.menuArea == 0) {
-				var8 -= 4;
-				var9 -= 4;
+				var8 -= this.layout.vpX;
+				var9 -= this.layout.vpY;
 			}
 			if (this.menuArea == 1) {
 				var8 -= SIDE_X;
@@ -6666,7 +6697,7 @@ public class Client extends GameShell {
 			// a thing you are pointing at, the camera is what is left.
 			this.handleMenuScroll();
 			this.handleGroundItemScroll();
-			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && super.mouseX > 4 && super.mouseY > 4 && super.mouseX < 516 && super.mouseY < 338) {
+			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
 				if (QolSettings.on(QolSettings.WHEEL_ZOOM)) {
 					this.cameraZoomOffset -= super.mouseScrollDelta * 40;
 				}
@@ -8129,6 +8160,9 @@ public class Client extends GameShell {
 			Pix3D.lineOffset = this.areaViewportOffset;
 		}
 		this.sceneDelta = 0;
+		if (this.layout.resizable) {
+			this.presentGame(true);
+		}
 	}
 
 	@ObfuscatedName("client.L(I)V")
@@ -8201,9 +8235,13 @@ public class Client extends GameShell {
 		int var11 = Pix3D.cycle;
 		Model.checkHover = true;
 		Model.pickedCount = 0;
-		Model.mouseX = super.mouseX - 4;
-		Model.mouseY = super.mouseY - 4;
+		Model.mouseX = super.mouseX - this.layout.vpX;
+		Model.mouseY = super.mouseY - this.layout.vpY;
 		Pix2D.cls();
+		// The scene and what is drawn over it at a projected point (names, hitsplats, ground items)
+		// at the layout's projection. Everything after - interfaces, whose models are drawn at 377's
+		// fixed scale - at 512.
+		Pix3D.zoom = this.layout.zoom;
 		this.scene.draw(this.cameraX, var4, this.cameraY, this.cameraZ, this.cameraYaw, this.cameraPitch);
 		this.scene.clearLocChanges();
 		// QoL: ground item names, see drawGroundItems(). Here and not in draw3DEntityElements() so
@@ -8214,8 +8252,13 @@ public class Client extends GameShell {
 		this.draw2DEntityElements();
 		this.drawTileHint();
 		this.updateTextures(var11);
+		Pix3D.zoom = 512;
 		this.draw3DEntityElements();
-		this.areaViewport.draw(4, 4, super.graphics);
+		// In resizable mode the viewport is put on the screen once, at the end of drawGame(), with
+		// the panels and an open menu laid over it.
+		if (!this.layout.resizable) {
+			this.areaViewport.draw(4, 4, super.graphics);
+		}
 		this.cameraX = var5;
 		this.cameraY = var6;
 		this.cameraZ = var7;
@@ -8717,7 +8760,7 @@ public class Client extends GameShell {
 				if (this.chatEffect[var3] == 4) {
 					int var14 = this.fontBold12.stringWid(var9);
 					int var15 = (150 - this.chatTimer[var3]) * (var14 + 100) / 150;
-					Pix2D.setClipping(0, this.projectX - 50, 334, this.projectX + 50);
+					Pix2D.setClipping(0, this.projectX - 50, this.layout.vpH, this.projectX + 50);
 					this.fontBold12.drawString(this.projectX + 50 - var15, 0, this.projectY + 1, var9);
 					this.fontBold12.drawString(this.projectX + 50 - var15, var10, this.projectY, var9);
 					Pix2D.resetClipping();
@@ -8730,7 +8773,7 @@ public class Client extends GameShell {
 					} else if (var16 > 125) {
 						var17 = var16 - 125;
 					}
-					Pix2D.setClipping(this.projectY - this.fontBold12.height - 1, 0, this.projectY + 5, 512);
+					Pix2D.setClipping(this.projectY - this.fontBold12.height - 1, 0, this.projectY + 5, this.layout.vpW);
 					this.fontBold12.centreString(this.projectX, this.projectY + 1 + var17, 0, var9);
 					this.fontBold12.centreString(this.projectX, this.projectY + var17, var10, var9);
 					Pix2D.resetClipping();
@@ -8777,8 +8820,8 @@ public class Client extends GameShell {
 		int var16 = var7 * var10 - var9 * var14 >> 16;
 		int var17 = var7 * var9 + var10 * var14 >> 16;
 		if (var17 >= 50) {
-			this.projectX = (var13 << 9) / var17 + Pix3D.centerX;
-			this.projectY = (var16 << 9) / var17 + Pix3D.centerY;
+			this.projectX = var13 * Pix3D.zoom / var17 + Pix3D.centerX;
+			this.projectY = var16 * Pix3D.zoom / var17 + Pix3D.centerY;
 		} else {
 			this.projectX = -1;
 			this.projectY = -1;
@@ -8831,31 +8874,32 @@ public class Client extends GameShell {
 	public void draw3DEntityElements() {
 		this.drawPrivateMessages();
 		if (this.crossMode == 1) {
-			this.imageCross[this.crossCycle / 100].plotSprite(this.crossY - 8 - 4, this.crossX - 8 - 4);
+			this.imageCross[this.crossCycle / 100].plotSprite(this.crossY - 8 - this.layout.vpY, this.crossX - 8 - this.layout.vpX);
 		}
 		if (this.crossMode == 2) {
-			this.imageCross[this.crossCycle / 100 + 4].plotSprite(this.crossY - 8 - 4, this.crossX - 8 - 4);
+			this.imageCross[this.crossCycle / 100 + 4].plotSprite(this.crossY - 8 - this.layout.vpY, this.crossX - 8 - this.layout.vpX);
 		}
 		if (this.viewportOverlayInterfaceId != -1) {
 			this.updateInterfaceAnimation(this.sceneDelta, this.viewportOverlayInterfaceId);
-			this.drawInterface(0, 0, Component.get(this.viewportOverlayInterfaceId), 0);
+			this.drawViewportOverlay(Component.get(this.viewportOverlayInterfaceId));
 		}
 		if (this.viewportInterfaceId != -1) {
 			this.updateInterfaceAnimation(this.sceneDelta, this.viewportInterfaceId);
-			this.drawInterface(0, 0, Component.get(this.viewportInterfaceId), 0);
+			this.drawInterface(this.layout.mainY, this.layout.mainX, Component.get(this.viewportInterfaceId), 0);
 		}
 		this.updateWorldLocation();
 		if (!this.menuVisible) {
 			this.handleInput();
 			this.drawTooltip();
-		} else if (this.menuArea == 0) {
+		} else if (this.menuArea == 0 && !this.layout.resizable) {
+			// (resizable: presentGame() draws it, over the panels as well as the scene)
 			this.drawMenu();
 		}
 		if (this.inMultizone == 1) {
-			this.imageOverlayMultiway.plotSprite(296, 472);
+			this.imageOverlayMultiway.plotSprite(this.layout.openH - 38, this.layout.openW - 40);
 		}
 		if (displayFps) {
-			short var2 = 507;
+			int var2 = this.layout.openW - 5;
 			byte var3 = 20;
 			int var4 = 16776960;
 			if (super.fps < 30 && lowMem) {
@@ -8897,9 +8941,9 @@ public class Client extends GameShell {
 			int var11 = var10 / 60;
 			int var12 = var10 % 60;
 			if (var12 < 10) {
-				this.fontPlain12.drawString(4, 16776960, 329, "System update in: " + var11 + ":0" + var12);
+				this.fontPlain12.drawString(4, 16776960, this.layout.openH - 5, "System update in: " + var11 + ":0" + var12);
 			} else {
-				this.fontPlain12.drawString(4, 16776960, 329, "System update in: " + var11 + ":" + var12);
+				this.fontPlain12.drawString(4, 16776960, this.layout.openH - 5, "System update in: " + var11 + ":" + var12);
 			}
 			cyclelogic3++;
 			if (cyclelogic3 > 112) {
@@ -8931,7 +8975,7 @@ public class Client extends GameShell {
 					var6 = var6.substring(var7.length());
 				}
 				if ((var5 == 3 || var5 == 7) && (var5 == 7 || this.chatPrivateMode == 0 || this.chatPrivateMode == 1 && this.isFriend(var6))) {
-					int var8 = 329 - var3 * 13;
+					int var8 = this.layout.openH - 5 - var3 * 13;
 					if (this.messageCont[var4]) {
 						var2.drawString(4 + this.messageIndent[var4], 0, var8, this.messageText[var4]);
 						var2.drawString(4 + this.messageIndent[var4], 65535, var8 - 1, this.messageText[var4]);
@@ -8957,7 +9001,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (var5 == 5 && this.chatPrivateMode < 2) {
-					int var11 = 329 - var3 * 13;
+					int var11 = this.layout.openH - 5 - var3 * 13;
 					var2.drawString(4, 0, var11, this.messageText[var4]);
 					var2.drawString(4, 65535, var11 - 1, this.messageText[var4]);
 					var3++;
@@ -8966,7 +9010,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (var5 == 6 && this.chatPrivateMode < 2) {
-					int var12 = 329 - var3 * 13;
+					int var12 = this.layout.openH - 5 - var3 * 13;
 					String toLine = this.messageCont[var4] ? this.messageText[var4] : "To " + var6 + ": " + this.messageText[var4];
 					int toX = this.messageCont[var4] ? 4 + this.messageIndent[var4] : 4;
 					var2.drawString(toX, 0, var12, toLine);
@@ -9033,8 +9077,8 @@ public class Client extends GameShell {
 		int var7 = super.mouseX;
 		int var8 = super.mouseY;
 		if (this.menuArea == 0) {
-			var7 -= 4;
-			var8 -= 4;
+			var7 -= this.layout.vpX;
+			var8 -= this.layout.vpY;
 		}
 		if (this.menuArea == 1) {
 			var7 -= SIDE_X;
@@ -12031,23 +12075,24 @@ public class Client extends GameShell {
 		// and the rest of it drawn off the bottom, where the raster clips it: invisible rows that
 		// cannot be clicked. Each area caps at its own height - 20 rows in the viewport, 15 in the
 		// sidebar, 4 in the chatbox - and menuScroll moves the window.
-		if (super.mouseClickX > 4 && super.mouseClickY > 4 && super.mouseClickX < 516 && super.mouseClickY < 338) {
+		if (this.layout.inViewport(super.mouseClickX, super.mouseClickY)) {
 			// A menu wider than its area used to be pushed off the left edge and clipped - "Uncharge
 			// Trident of the Seas" in the 190-wide sidebar lost its first letters. The width is capped
 			// to the area now, and drawMenu() shortens any row that does not fit with "...".
-			var2 = Math.min(var2, 512);
-			int rows0 = this.menuRowsFor(334);
+			// (The viewport is 512x334 on the fixed screen and the whole window when resizable.)
+			var2 = Math.min(var2, this.layout.vpW);
+			int rows0 = this.menuRowsFor(this.layout.vpH);
 			int var4 = rows0 * MENU_ROW_H + MENU_CHROME_H;
-			int var5 = super.mouseClickX - 4 - var2 / 2;
-			if (var2 + var5 > 512) {
-				var5 = 512 - var2;
+			int var5 = super.mouseClickX - this.layout.vpX - var2 / 2;
+			if (var2 + var5 > this.layout.vpW) {
+				var5 = this.layout.vpW - var2;
 			}
 			if (var5 < 0) {
 				var5 = 0;
 			}
-			int var6 = super.mouseClickY - 4;
-			if (var4 + var6 > 334) {
-				var6 = 334 - var4;
+			int var6 = super.mouseClickY - this.layout.vpY;
+			if (var4 + var6 > this.layout.vpH) {
+				var6 = this.layout.vpH - var4;
 			}
 			if (var6 < 0) {
 				var6 = 0;
@@ -12395,9 +12440,9 @@ public class Client extends GameShell {
 		}
 		if (var5 == 14) {
 			if (this.menuVisible) {
-				this.scene.method312(var3 - 4, var4 - 4);
+				this.scene.method312(var3 - this.layout.vpX, var4 - this.layout.vpY);
 			} else {
-				this.scene.method312(super.mouseClickX - 4, super.mouseClickY - 4);
+				this.scene.method312(super.mouseClickX - this.layout.vpX, super.mouseClickY - this.layout.vpY);
 			}
 		}
 		if (var5 == 903) {
@@ -16193,16 +16238,17 @@ public class Client extends GameShell {
 		if (this.areaViewport != null) {
 			this.areaViewport.bind();
 			Pix3D.lineOffset = this.areaViewportOffset;
-			int var4 = 151;
+			int var4 = this.layout.mainY + 151;
+			int cx = this.layout.mainX + 256;
 			if (arg1 != null) {
 				var4 -= 7;
 			}
-			this.fontPlain12.centreString(257, var4, 0, arg2);
-			this.fontPlain12.centreString(256, var4 - 1, 16777215, arg2);
+			this.fontPlain12.centreString(cx + 1, var4, 0, arg2);
+			this.fontPlain12.centreString(cx, var4 - 1, 16777215, arg2);
 			var4 += 15;
 			if (arg1 != null) {
-				this.fontPlain12.centreString(257, var4, 0, arg1);
-				this.fontPlain12.centreString(256, var4 - 1, 16777215, arg1);
+				this.fontPlain12.centreString(cx + 1, var4, 0, arg1);
+				this.fontPlain12.centreString(cx, var4 - 1, 16777215, arg1);
 			}
 			this.areaViewport.draw(4, 4, super.graphics);
 		} else if (super.drawArea != null) {
@@ -16251,5 +16297,368 @@ public class Client extends GameShell {
 		this.areaBackmid1 = null;
 		super.drawArea = new PixMap(503, this.getBaseComponent(), 765);
 		this.redrawFrame = true;
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Resizable mode (F9, "Resizable window"). Layout says where everything goes and why; this is the
+	// client's side of it.
+	//
+	// In fixed mode none of this runs: the layout is Layout.fixed(), PixMap.target is null, the mouse
+	// is AWT's, and every area goes on the screen where 377 put it.
+	//
+	// In resizable mode the areas of the fixed frame (the stone, the sidebar, the chat, the tab rows,
+	// the minimap) are still drawn exactly as they always were, but PixMap.target (this) catches them
+	// and copies them into frameBuffer - the fixed frame, 765x503 - instead of the screen. The viewport
+	// is the whole window. Each frame presentGame() copies the three panels out of frameBuffer onto
+	// the viewport where the window has room for them, draws an open viewport menu over the lot, and
+	// puts the viewport on the screen in one piece. The title screen and a fullscreen interface,
+	// which are 765x503 by nature, are drawn in the middle of the window.
+
+	private Layout layout = Layout.fixed();
+	/** What the player asked for; the layout follows it at the next frame (syncLayout). */
+	private boolean wantResizable;
+	/** The fixed frame the panels are cut from, in resizable mode. */
+	private int[] frameBuffer;
+	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
+	private java.awt.Graphics screenGraphics;
+	private java.awt.Graphics letterGraphics;
+	/** The window has been blacked out around the centred 765x503 screen. */
+	private boolean letterCleared;
+	/** World3D.init's pitch distances, kept from load() to rebuild its visibility for a new viewport. */
+	private int[] sceneDistances;
+	/** The viewport World3D's visibility tables were last built for. */
+	private int sceneVisW;
+	private int sceneVisH;
+	private int sceneVisZoom;
+	/** When the layout last changed: the visibility tables and the saved size wait for it to settle. */
+	private long layoutChangedAt;
+	private boolean layoutSettled = true;
+
+	/** Switch the window between fixed and resizable, and remember it. Takes effect at the next frame. */
+	public void setResizable(boolean on) {
+		this.wantResizable = on;
+		DisplaySettings.setResizable(on);
+		if (super.frame != null) {
+			super.frame.setMode(on, DisplaySettings.width(), DisplaySettings.height(), DisplaySettings.maximized());
+		}
+	}
+
+	public boolean isResizable() {
+		return this.layout.resizable;
+	}
+
+	/** Bring the layout into line with the request and the window's size. Game thread only. */
+	public void syncLayout() {
+		Layout next;
+		if (!this.wantResizable) {
+			if (!this.layout.resizable) {
+				return;
+			}
+			next = Layout.fixed();
+		} else {
+			java.awt.Component c = this.getBaseComponent();
+			int w = c.getWidth();
+			int h = c.getHeight();
+			if (w <= 0 || h <= 0) {
+				return;
+			}
+			next = Layout.resizable(w, h);
+		}
+		if (next.sameAs(this.layout)) {
+			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
+				this.layoutSettled = true;
+				this.updateSceneVisibility();
+				if (this.layout.resizable && super.frame != null) {
+					DisplaySettings.setWindow(this.layout.width, this.layout.height, super.frame.isMaximized());
+				}
+			}
+			return;
+		}
+		this.applyLayout(next);
+	}
+
+	private void applyLayout(Layout next) {
+		Layout was = this.layout;
+		boolean first = was.resizable != next.resizable;
+		this.layout = next;
+		super.remapMouse = next.resizable;
+		PixMap.target = next.resizable ? this : null;
+
+		java.awt.Graphics g = this.acquireGraphics();
+		if (g != null) {
+			// (The old ones are left to the collector rather than disposed: the title screen's flame
+			// thread may be half way through drawing with one.)
+			this.screenGraphics = g;
+			if (next.resizable) {
+				this.letterGraphics = g.create();
+				this.letterGraphics.translate(next.letterX, next.letterY);
+			} else {
+				this.letterGraphics = g;
+			}
+			super.graphics = next.resizable && !this.ingame ? this.letterGraphics : this.screenGraphics;
+			if (was.resizable && !next.resizable) {
+				// until the window has shrunk back to 765x503, nothing of the resizable screen is left
+				// showing around the fixed one
+				g.setColor(java.awt.Color.black);
+				g.fillRect(0, 0, was.width, was.height);
+			}
+		}
+		if (next.resizable) {
+			if (this.frameBuffer == null) {
+				this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
+			}
+		} else {
+			this.frameBuffer = null;
+		}
+		if (this.areaViewport != null) {
+			this.createViewportArea();
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+		}
+		// Switching mode rebuilds the scene's visibility now; a window being dragged to a new size
+		// waits until it stops (syncLayout), drawing with the last size's tables meanwhile.
+		this.layoutChangedAt = System.currentTimeMillis();
+		this.layoutSettled = false;
+		if (first || this.sceneVisW == 0) {
+			this.updateSceneVisibility();
+		}
+		// A menu laid out for the old viewport would be somewhere else now.
+		if (this.menuVisible) {
+			this.menuVisible = false;
+			this.menuSwapMode = false;
+		}
+		if (!next.resizable) {
+			super.mouseX = super.rawMouseX;
+			super.mouseY = super.rawMouseY;
+		}
+		this.letterCleared = false;
+		this.redrawFrame = true;
+	}
+
+	/** The viewport's buffer and scanline table, at the layout's size. */
+	private void createViewportArea() {
+		this.areaViewport = new PixMap(this.layout.vpH, this.getBaseComponent(), this.layout.vpW);
+		Pix3D.init3D(this.layout.vpH, this.layout.vpW);
+		this.areaViewportOffset = Pix3D.lineOffset;
+	}
+
+	/**
+	 * World3D precomputes, for each camera angle, which tiles can land inside the viewport. That
+	 * depends on the viewport's size and the projection, so a new layout needs new tables. On the
+	 * fixed screen they are built once, in load(), exactly as 377 built them.
+	 */
+	private void updateSceneVisibility() {
+		if (this.sceneDistances == null) {
+			return;
+		}
+		int w = this.layout.vpW;
+		int h = this.layout.vpH;
+		int zoom = this.layout.zoom;
+		if (w == this.sceneVisW && h == this.sceneVisH && zoom == this.sceneVisZoom) {
+			return;
+		}
+		int was = Pix3D.zoom;
+		Pix3D.zoom = zoom;
+		World3D.init(h, this.sceneDistances, 800, 500, w);
+		Pix3D.zoom = was;
+		this.sceneVisW = w;
+		this.sceneVisH = h;
+		this.sceneVisZoom = zoom;
+	}
+
+	/**
+	 * Resizable: turn the raw canvas mouse into the client's coordinates (see Layout). An open
+	 * menu, or an item being dragged, keeps the mouse in the area it belongs to, so its coordinates
+	 * run on smoothly past that area's edge instead of jumping into another one.
+	 */
+	public void mapInput() {
+		this.syncLayout();
+		if (!this.layout.resizable) {
+			return;
+		}
+		int rx = super.rawMouseX;
+		int ry = super.rawMouseY;
+		int cx = super.rawClickX;
+		int cy = super.rawClickY;
+		if (!this.ingame || this.fullscreenInterfaceId0 != -1) {
+			int lx = this.layout.letterX;
+			int ly = this.layout.letterY;
+			super.mouseX = rx == -1 && ry == -1 ? -1 : rx - lx;
+			super.mouseY = rx == -1 && ry == -1 ? -1 : ry - ly;
+			super.mouseClickX = cx - lx;
+			super.mouseClickY = cy - ly;
+			return;
+		}
+		int area = this.mouseArea();
+		super.mouseX = this.layout.mapX(rx, ry, area);
+		super.mouseY = this.layout.mapY(rx, ry, area);
+		super.mouseClickX = this.layout.mapX(cx, cy, area);
+		super.mouseClickY = this.layout.mapY(cx, cy, area);
+	}
+
+	private int mouseArea() {
+		if (this.menuVisible) {
+			return this.menuArea == 1 ? Layout.SIDEBAR : this.menuArea == 2 ? Layout.CHAT : Layout.VIEWPORT;
+		}
+		if (this.objDragArea == 1 || this.bankTabDragFrom >= 1) {
+			return Layout.VIEWPORT;
+		}
+		if (this.objDragArea == 2) {
+			return Layout.SIDEBAR;
+		}
+		if (this.objDragArea == 3) {
+			return Layout.CHAT;
+		}
+		return Layout.ANY;
+	}
+
+	/**
+	 * Resizable, at the top of each frame: the title screen draws on the centred Graphics and the
+	 * game on the window's, and the first centred frame blacks out the window around it.
+	 */
+	private void prepareResizableFrame() {
+		if (this.screenGraphics == null) {
+			return;
+		}
+		boolean letter = !this.ingame || super.drawArea != null;
+		if (letter && !this.letterCleared) {
+			this.screenGraphics.setColor(java.awt.Color.black);
+			this.screenGraphics.fillRect(0, 0, this.layout.width, this.layout.height);
+			this.letterCleared = true;
+			this.redrawFrame = true;
+		} else if (!letter) {
+			this.letterCleared = false;
+		}
+		super.graphics = this.ingame ? this.screenGraphics : this.letterGraphics;
+	}
+
+	/** PixMap.target: see the top of this section. */
+	public boolean draw(PixMap area, int x, int y, java.awt.Graphics g) {
+		if (!this.layout.resizable || this.letterGraphics == null) {
+			return false;
+		}
+		if (!this.ingame || area == super.drawArea) {
+			area.drawDirect(y, x, this.letterGraphics);
+			return true;
+		}
+		if (this.areaViewport == null) {
+			return false;
+		}
+		if (area == this.areaViewport) {
+			this.presentGame(false);
+			return true;
+		}
+		copyRect(area.data, area.width, 0, 0, area.width, area.height, this.frameBuffer, Layout.FIXED_W, Layout.FIXED_H, x, y);
+		return true;
+	}
+
+	/** The panels over the viewport, an open viewport menu over them, and the lot onto the screen. */
+	private void presentGame(boolean menu) {
+		if (this.areaViewport == null || this.frameBuffer == null) {
+			return;
+		}
+		int[] dst = this.areaViewport.data;
+		int dw = this.areaViewport.width;
+		int dh = this.areaViewport.height;
+		for (int p = 0; p < Layout.PANELS; p++) {
+			copyRect(this.frameBuffer, Layout.FIXED_W, Layout.panelFixedX(p), Layout.panelFixedY(p), Layout.panelWidth(p), Layout.panelHeight(p), dst, dw, dh, this.layout.panelScreenX(p) - this.layout.vpScreenX, this.layout.panelScreenY(p) - this.layout.vpScreenY);
+		}
+		if (menu && this.menuVisible && this.menuArea == 0) {
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+			this.drawMenu();
+		}
+		if (this.screenGraphics != null) {
+			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+		}
+	}
+
+	/** A w x h block of src (stride sw) at (sx, sy) to dst (dw x dh) at (dx, dy), clipped to dst. */
+	private static void copyRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy) {
+		if (dx < 0) {
+			sx -= dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			sy -= dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		for (int row = 0; row < h; row++) {
+			System.arraycopy(src, (sy + row) * sw + sx, dst, (dy + row) * dw + dx, w);
+		}
+	}
+
+	/**
+	 * A walkable overlay (the wilderness level, a minigame's score) is laid out on a 512x334 root
+	 * against the fixed viewport's corners. Resizable keeps each piece at its own corner of the open
+	 * area: a child whose middle is right of the root's middle moves right with the window's width,
+	 * one below the middle moves down with its height. A rectangle that covers the whole root - the
+	 * darkness of a cave without a light source - covers the whole window instead. Fixed mode draws
+	 * the overlay as it always was.
+	 */
+	private void drawViewportOverlay(Component root) {
+		if (!this.layout.resizable || root.children == null || root.childX == null || root.childY == null) {
+			this.drawInterface(0, 0, root, 0);
+			return;
+		}
+		int dx = this.layout.openW - Layout.VIEWPORT_W;
+		int dy = this.layout.openH - Layout.VIEWPORT_H;
+		int n = root.children.length;
+		int[] ox = root.childX.clone();
+		int[] oy = root.childY.clone();
+		int ow = root.width;
+		int oh = root.height;
+		Component[] filled = new Component[n];
+		int[] fw = new int[n];
+		int[] fh = new int[n];
+		try {
+			for (int i = 0; i < n; i++) {
+				Component child = Component.get(root.children[i]);
+				if (child == null) {
+					continue;
+				}
+				if (child.type == 3 && ox[i] <= 0 && oy[i] <= 0 && ox[i] + child.width >= ow && oy[i] + child.height >= oh) {
+					filled[i] = child;
+					fw[i] = child.width;
+					fh[i] = child.height;
+					root.childX[i] = 0;
+					root.childY[i] = 0;
+					child.width = this.layout.vpW;
+					child.height = this.layout.vpH;
+					continue;
+				}
+				if (ox[i] + child.width / 2 > ow / 2) {
+					root.childX[i] = ox[i] + dx;
+				}
+				if (oy[i] + child.height / 2 > oh / 2) {
+					root.childY[i] = oy[i] + dy;
+				}
+			}
+			root.width = this.layout.vpW;
+			root.height = this.layout.vpH;
+			this.drawInterface(0, 0, root, 0);
+		} finally {
+			System.arraycopy(ox, 0, root.childX, 0, n);
+			System.arraycopy(oy, 0, root.childY, 0, n);
+			root.width = ow;
+			root.height = oh;
+			for (int i = 0; i < n; i++) {
+				if (filled[i] != null) {
+					filled[i].width = fw[i];
+					filled[i].height = fh[i];
+				}
+			}
+		}
 	}
 }

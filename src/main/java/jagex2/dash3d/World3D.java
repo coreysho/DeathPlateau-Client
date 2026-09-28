@@ -1020,8 +1020,8 @@ public class World3D {
 		int var6 = field1036 * var5 + field1035 * arg3 >> 16;
 		int var7 = field1036 * arg3 - field1035 * var5 >> 16;
 		if (var6 >= 50 && var6 <= 3500) {
-			int var8 = (var4 << 9) / var6 + field1070;
-			int var9 = (var7 << 9) / var6 + field1071;
+			int var8 = var4 * Pix3D.zoom / var6 + field1070;
+			int var9 = var7 * Pix3D.zoom / var6 + field1071;
 			return var8 >= field1072 && var8 <= field1074 && var9 >= field1073 && var9 <= field1075;
 		} else {
 			return false;
@@ -1692,14 +1692,14 @@ public class World3D {
 		if (var43 < 50) {
 			return;
 		}
-		int var45 = (var21 << 9) / var25 + Pix3D.centerX;
-		int var46 = (var24 << 9) / var25 + Pix3D.centerY;
-		int var47 = (var27 << 9) / var31 + Pix3D.centerX;
-		int var48 = (var30 << 9) / var31 + Pix3D.centerY;
-		int var49 = (var33 << 9) / var37 + Pix3D.centerX;
-		int var50 = (var36 << 9) / var37 + Pix3D.centerY;
-		int var51 = (var39 << 9) / var43 + Pix3D.centerX;
-		int var52 = (var42 << 9) / var43 + Pix3D.centerY;
+		int var45 = var21 * Pix3D.zoom / var25 + Pix3D.centerX;
+		int var46 = var24 * Pix3D.zoom / var25 + Pix3D.centerY;
+		int var47 = var27 * Pix3D.zoom / var31 + Pix3D.centerX;
+		int var48 = var30 * Pix3D.zoom / var31 + Pix3D.centerY;
+		int var49 = var33 * Pix3D.zoom / var37 + Pix3D.centerX;
+		int var50 = var36 * Pix3D.zoom / var37 + Pix3D.centerY;
+		int var51 = var39 * Pix3D.zoom / var43 + Pix3D.centerX;
+		int var52 = var42 * Pix3D.zoom / var43 + Pix3D.centerY;
 		Pix3D.field1593 = 0;
 		if ((var48 - var52) * (var49 - var51) - (var47 - var51) * (var50 - var52) > 0) {
 			Pix3D.hclip = false;
@@ -1765,8 +1765,8 @@ public class World3D {
 				Ground.field920[var10] = var29;
 				Ground.field921[var10] = var30;
 			}
-			Ground.field917[var10] = (var26 << 9) / var30 + Pix3D.centerX;
-			Ground.field918[var10] = (var29 << 9) / var30 + Pix3D.centerY;
+			Ground.field917[var10] = var26 * Pix3D.zoom / var30 + Pix3D.centerX;
+			Ground.field918[var10] = var29 * Pix3D.zoom / var30 + Pix3D.centerY;
 		}
 		Pix3D.field1593 = 0;
 		int var11 = arg2.field908.length;

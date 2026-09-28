@@ -26,7 +26,7 @@ CLIENT = os.path.join(ROOT, 'src/main/java/jagex2/client/Client.java')
 SETTINGS = os.path.join(ROOT, 'src/main/java/jagex2/client/QolSettings.java')
 SHELL = os.path.join(HERE, 'RoofTest.shell.java')
 
-DECLS = ['QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
+DECLS = ['layout', 'QOL_PANEL_ROWS', 'QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
          'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ']
 METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY']
 
@@ -105,9 +105,11 @@ def main():
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         sources = []
-        for root, _dirs, files in os.walk(os.path.join(ROOT, 'src/main/java')):
+        # launcher/src too: the client jar compiles it in (Client.relaunchForUpdate uses it)
+        for root, _dirs, files in [w for d in ('src/main/java', 'launcher/src')
+                                   for w in os.walk(os.path.join(ROOT, d))]:
             sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-d', classes] + sources,
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources,
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-4000:])
@@ -121,7 +123,7 @@ def main():
         out = os.path.join(work, 'RoofTest.java')
         with open(out, 'w', encoding='utf-8') as f:
             f.write(shell)
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-cp', classes, '-d', work, out],
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work, out],
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-6000:])
