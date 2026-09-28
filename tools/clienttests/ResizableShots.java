@@ -45,6 +45,25 @@ public class ResizableShots extends Client {
 	static volatile boolean still;
 	static int pinYaw = 0;
 	static int pinPitch = 300;
+	/**
+	 * Click-rate mode: milliseconds of padding added to every frame, to hold a chosen frame rate on
+	 * any machine. A slow frame is what makes GameShell's catch-up loop run several update()s per
+	 * frame, which is what a dropped click needs.
+	 */
+	static volatile int slowDrawMs;
+	/** update() and useMenuOption() calls: how many updates a frame costs, and what a click did. */
+	static volatile int updates;
+	static volatile int menuOptions;
+
+	public void update() {
+		updates++;
+		super.update();
+	}
+
+	public void useMenuOption(int option) {
+		menuOptions++;
+		super.useMenuOption(option);
+	}
 
 	public Graphics acquireGraphics() {
 		int w = this.getWidth();
@@ -117,6 +136,15 @@ public class ResizableShots extends Client {
 				drawCount++;
 			}
 			frames++;
+		}
+		// Outside the lock: the padding is meant to slow the game thread's frame, not to keep the
+		// test thread out of the canvas for that long.
+		int pad = slowDrawMs;
+		if (pad > 0) {
+			try {
+				Thread.sleep(pad);
+			} catch (InterruptedException ignored) {
+			}
 		}
 	}
 
@@ -198,29 +226,28 @@ public class ResizableShots extends Client {
 	}
 
 	/**
-	 * A click on a row of the F9 panel, retried until something changes. The panel reads the mouse in
-	 * the DRAW phase (handleInput is called from drawGame), and GameShell's catch-up loop can run
-	 * update() twice between two frames when the frame rate is low - 1920x1080 is low enough - which
-	 * clears the press before the frame that would have read it. 377 has always done this; a player
-	 * sees a click go nowhere now and then and clicks again, which is what this does. At 60ms a frame
-	 * - two other clients on the same machine - the loop runs three updates a frame and only one in
-	 * three clicks survives, hence eight tries and not two.
+	 * A click on a row of the F9 panel. One click, once: the panel reads the mouse in the DRAW phase
+	 * (handleInput is called from drawGame), and this used to need up to eight tries because
+	 * GameShell's catch-up loop runs several update()s per frame at 1920x1080 and cleared the press
+	 * before the frame that would have read it - see GameShell.heldClickButton and the clicks mode.
 	 */
 	static boolean clickSettingsRow(int row, String field) throws Exception {
 		Object was = call(field);
+		openSettings();
+		int[] at = settingsRowAt(row);
+		click(at[0], at[1], false);
+		waitFrames(20);
+		return !was.equals(call(field));
+	}
+
+	/** Where a row of the open F9 panel is, in window coordinates. */
+	static int[] settingsRowAt(int row) throws Exception {
 		int hdr = ((Number) staticField("QOL_PANEL_HEADER_H")).intValue();
 		int rh = ((Number) staticField("QOL_PANEL_ROW_H")).intValue();
-		for (int tries = 0; tries < 8; tries++) {
-			openSettings();
-			int x = ((Number) call("qolPanelX")).intValue() + ((Number) layoutField("vpScreenX")).intValue() + 60;
-			int y = ((Number) call("qolPanelY")).intValue() + ((Number) layoutField("vpScreenY")).intValue() + hdr + row * rh + rh / 2;
-			click(x, y, false);
-			waitFrames(20);
-			if (!was.equals(call(field))) {
-				return true;
-			}
-		}
-		return false;
+		return new int[] {
+			((Number) call("qolPanelX")).intValue() + ((Number) layoutField("vpScreenX")).intValue() + 60,
+			((Number) call("qolPanelY")).intValue() + ((Number) layoutField("vpScreenY")).intValue() + hdr + row * rh + rh / 2
+		};
 	}
 
 	/**
@@ -459,6 +486,10 @@ public class ResizableShots extends Client {
 			drawDistances(prefix, w, h);
 			return;
 		}
+		if (mode.equals("clicks")) {
+			clickRates(prefix);
+			return;
+		}
 		shot(prefix + "_game");
 		waitFrames(25);
 		shot(prefix + "_game2");
@@ -613,6 +644,237 @@ public class ResizableShots extends Client {
 		say("done");
 		log.close();
 		System.exit(0);
+	}
+
+	/**
+	 * How many of N clicks actually happen, at a held frame rate - and, at the slowest of them, that
+	 * a click that does happen happens once.
+	 *
+	 * Run on the fixed 765x503 screen, where drawing costs a couple of milliseconds, and the frame
+	 * rate is set by padding every frame (slowDrawMs) instead. GameShell's catch-up loop only reads
+	 * the clock, so a padded frame is the same thing to it as a 1920x1080 one, and the rate is the
+	 * same on any machine.
+	 *
+	 *   ~20 ms/frame  one update per frame  - the rate 377 was written for
+	 *   ~26 ms/frame  two updates per frame - a big window
+	 *   ~60 ms/frame  three or four         - 1920x1080 with something else on the machine
+	 */
+	static void clickRates(String prefix) throws Exception {
+		int row = Integer.getInteger("shots.clickrow", 0).intValue();      // a plain on/off setting
+		int n = Integer.getInteger("shots.clicks", 16).intValue();
+		String[] pads = System.getProperty("shots.pads", "0,22,40,58").split(",");
+		int worst = 0;
+		for (String p : pads) {
+			slowDrawMs = Integer.parseInt(p.trim());
+			waitFrames(25);
+			long t0 = System.currentTimeMillis();
+			int f0 = frames;
+			int u0 = updates;
+			waitFrames(60);
+			double ms = (System.currentTimeMillis() - t0) / (double) Math.max(1, frames - f0);
+			double upf = (updates - u0) / (double) Math.max(1, frames - f0);
+			int took = 0;
+			for (int i = 0; i < n; i++) {
+				openSettings();
+				boolean was = qolOn(row);
+				int[] at = settingsRowAt(row);
+				click(at[0], at[1], false);
+				waitFrames(10);
+				if (qolOn(row) != was) {
+					took++;                 // a click acted on twice would toggle back, and not count
+				}
+			}
+			worst = took == n ? worst : worst + 1;
+			say(String.format("%s clicks: %5.1f ms/frame, %.2f updates/frame - %2d of %2d clicks on the F9 '%s' row took effect",
+				took == n ? "ok  " : "FAIL", ms, upf, took, n, qolLabel(row)));
+		}
+		doubleActions();
+		slowDrawMs = 0;
+		waitFrames(20);
+		say("click rates: " + (pads.length - worst) + " of " + pads.length + " rates landed every click");
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * At the slowest frame rate: one click, one action. A press that survived an extra update and
+	 * was acted on again would walk the player twice or eat two pieces of food off one click.
+	 */
+	static void doubleActions() throws Exception {
+		if (((Boolean) get("qolPanelOpen")).booleanValue()) {
+			key(KeyEvent.VK_F9, (char) 0);
+			waitFrames(6);
+		}
+		slowDrawMs = 58;
+		waitFrames(30);
+		// 1. an item: every click on it acts on it once. The bank's own inventory side is what is
+		//    clicked, because a throwaway account is still in the tutorial and has no inventory tab
+		//    yet; a left click there banks one item, so six clicks must move six and not twelve.
+		//    Done before the walk clicks below - a bank closes the moment the player takes a step.
+		command("::give cooked_meat 20");
+		waitFrames(20);
+		int clicks = 6;
+		int banked = 0;
+		for (int i = 0; i < clicks; i++) {
+			if (geti("sidebarInterfaceId") == -1 && geti("viewportInterfaceId") == -1) {
+				openBank();
+				waitFrames(40);
+			}
+			int[] at = invSlotAt();
+			int used = invUsed();
+			click(at[0], at[1], false);
+			waitFrames(25);
+			banked += used - invUsed();
+			say("   item click " + (i + 1) + " at " + at[0] + "," + at[1] + ": " + used + " -> " + invUsed() + " slots used");
+		}
+		say((banked == clicks ? "ok   " : "FAIL ") + clicks + " clicks on an inventory item banked "
+			+ banked + " of them, one each");
+		call("closeInterfaces");
+		waitFrames(20);
+		// 2. the scene: every left click runs exactly one menu option (Walk here, or whatever is there)
+		int n = 8;
+		int once = 0;
+		int more = 0;
+		int never = 0;
+		for (int i = 0; i < n; i++) {
+			int before = menuOptions;
+			click(100 + i % 4 * 40, 80 + i % 3 * 40, false);
+			waitFrames(12);
+			int ran = menuOptions - before;
+			if (ran == 1) {
+				once++;
+			} else if (ran > 1) {
+				more++;
+			} else {
+				never++;
+			}
+		}
+		say((once == n ? "ok   " : "FAIL ") + n + " walk clicks on the scene at " + slowDrawMs
+			+ "ms a frame ran one menu option each (" + once + " once, " + more + " more than once, " + never + " never)");
+	}
+
+	/** The 28-slot inventory the bank's side panel shows. */
+	static int invUsed() throws Exception {
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		Object inv = null;
+		int[] roots = { geti("sidebarInterfaceId"), geti("viewportInterfaceId") };
+		for (int i = 0; inv == null && i < roots.length; i++) {
+			if (roots[i] != -1) {
+				inv = findInv(comp, get, get.invoke(null, Integer.valueOf(roots[i])), 0);
+			}
+		}
+		if (inv == null) {
+			throw new RuntimeException("no 28-slot inventory in the open interfaces (sidebar " + roots[0]
+				+ ", main " + roots[1] + ")");
+		}
+		int[] ids = (int[]) comp.getField("invSlotObjId").get(inv);
+		int used = 0;
+		for (int i = 0; i < ids.length; i++) {
+			if (ids[i] > 0) {
+				used++;
+			}
+		}
+		return used;
+	}
+
+	/** The component the inventory on screen belongs to, set by the last invSlotAt(). */
+	static Object invComponent;
+
+	/**
+	 * The middle of the first slot of the inventory on screen that still holds something, in window
+	 * coordinates. Banking a slot leaves it empty rather than closing the gap, so the second click
+	 * of a run has to go one slot further along.
+	 */
+	static int[] invSlotAt() throws Exception {
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		int side = geti("sidebarInterfaceId");
+		int main = geti("viewportInterfaceId");
+		int[] p = null;
+		int ox = 0;
+		int oy = 0;
+		if (side != -1) {
+			p = invPath(comp, get, get.invoke(null, Integer.valueOf(side)), 0, 0, 0);
+			if (p != null) {
+				ox = ((Number) staticField("SIDE_X")).intValue();
+				oy = 205;
+			}
+		}
+		if (p == null && main != -1) {
+			p = invPath(comp, get, get.invoke(null, Integer.valueOf(main)), 0, 0, 0);
+			if (p != null) {
+				ox = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("mainX")).intValue();
+				oy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("mainY")).intValue();
+			}
+		}
+		if (p == null) {
+			throw new RuntimeException("no inventory on screen (sidebar " + side + ", main " + main + ")");
+		}
+		int[] ids = (int[]) comp.getField("invSlotObjId").get(invComponent);
+		int cols = comp.getField("width").getInt(invComponent);
+		int pitchX = comp.getField("marginX").getInt(invComponent) + 32;
+		int pitchY = comp.getField("marginY").getInt(invComponent) + 32;
+		for (int slot = 0; slot < ids.length; slot++) {
+			if (ids[slot] > 0) {
+				int x = ox + p[0] + slot % cols * pitchX + 16;
+				int y = oy + p[1] + slot / cols * pitchY + 16;
+				return side != -1 && oy == 205 ? windowOf(x, y) : new int[] { x, y };
+			}
+		}
+		throw new RuntimeException("the inventory on screen is empty");
+	}
+
+	/** The top-left of the 28-slot inventory under this component, relative to it. */
+	static int[] invPath(Class<?> comp, Method get, Object c, int x, int y, int depth) throws Exception {
+		if (c == null || depth > 4) {
+			return null;
+		}
+		int[] ids = (int[]) comp.getField("invSlotObjId").get(c);
+		if (ids != null && ids.length == 28) {
+			invComponent = c;
+			return new int[] { x, y };
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		int[] kx = (int[]) comp.getField("childX").get(c);
+		int[] ky = (int[]) comp.getField("childY").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			int[] found = invPath(comp, get, get.invoke(null, Integer.valueOf(kids[i])), x + kx[i], y + ky[i], depth + 1);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
+	}
+
+	/** The 28-slot inventory somewhere under this component. */
+	static Object findInv(Class<?> comp, Method get, Object c, int depth) throws Exception {
+		if (c == null || depth > 4) {
+			return null;
+		}
+		int[] ids = (int[]) comp.getField("invSlotObjId").get(c);
+		if (ids != null && ids.length == 28) {
+			return c;
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			Object found = findInv(comp, get, get.invoke(null, Integer.valueOf(kids[i])), depth + 1);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
+	}
+
+	static boolean qolOn(int setting) throws Exception {
+		return ((Boolean) Class.forName("jagex2.client.QolSettings").getMethod("on", int.class)
+			.invoke(null, Integer.valueOf(setting))).booleanValue();
+	}
+
+	static String qolLabel(int setting) throws Exception {
+		return (String) Class.forName("jagex2.client.QolSettings").getMethod("label", int.class)
+			.invoke(null, Integer.valueOf(setting));
 	}
 
 	static void showSelf(boolean on) {
