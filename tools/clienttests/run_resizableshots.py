@@ -13,10 +13,13 @@ and that engine's login key's modulus in a file (the client's built-in one is th
 
 It builds nothing: it runs build/libs/rs2client-dev.jar (gradlew.bat build first). Each run logs in
 as a fresh throwaway account on the local server. What it does:
-  - resizable at 1280x800 and 1920x1080: the title screen centred, the game, a menu on the scene, the
-    bank centred with a menu on it, a tab button, the minimap, a walk far outside the old 512x334,
-    a mouse-picking sweep of the whole window, a fullscreen interface, and the F9 switch both ways -
-    each check printed ok/FAIL
+  - draw distance: a 1920x1080 frame at each step of the F9 row, the ms/frame each one costs, and a
+    click on the row stepping it on
+  - each resizable layout (classic and modern) at 1280x800 and 1920x1080: the title screen centred,
+    the game, a menu on the scene, the bank centred with a menu on it, a tab button, the minimap, a
+    walk far outside the old 512x334, a mouse-picking sweep of the whole window, a fullscreen
+    interface, the F9 row stepping fixed -> classic -> modern -> fixed, and the draw distance row -
+    each check printed ok/FAIL. The modern runs go in <out>/modern.
   - fixed, switched to resizable and back in one session: the fixed frames before and after compared
   - with --base: the same still frames (npcs and anything that moves on its own hidden) from this
     client and from the old jar, compared pixel for pixel. The desert has nothing animated in view;
@@ -28,6 +31,14 @@ import os
 import subprocess
 import sys
 import time
+
+# A spot with a long open view, so a bigger draw distance has something to show.
+DRAWDIST_SPOT = '0,50,50,22,22'
+
+# How many viewport pixels may differ between two builds at each compare spot. The desert has
+# nothing animated in view, so none may. In the Draynor house a torch's and a lantern's frames run
+# off the clock, so a few dozen differ between any two runs, of either jar.
+VIEWPORT_SLACK = {'desert': 0, 'draynor': 400}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -62,6 +73,23 @@ def same(a, b, crop=None):
     return box is None, 'identical' if box is None else 'differ in %s' % (box,)
 
 
+# The fixed frame's areas, for comparing two client builds area by area. A bounding box over the
+# whole screen says nothing about WHAT moved; these counts do.
+REGIONS = (('viewport', (4, 4, 516, 338)), ('minimap', (545, 4, 717, 160)), ('sidebar', (547, 205, 737, 466)),
+           ('tabs', (516, 160, 765, 205)), ('tabs2', (519, 466, 765, 503)), ('chat', (0, 338, 519, 503)))
+
+
+def regions(a, b):
+    """Differing pixels per area of the fixed frame, as a dict."""
+    from PIL import Image, ImageChops
+    ia = Image.open(a).convert('RGB')
+    ib = Image.open(b).convert('RGB')
+    if ia.size != ib.size:
+        return None
+    d = ImageChops.difference(ia, ib).convert('L').point(lambda v: 255 if v else 0)
+    return dict((name, sum(1 for px in d.crop(box).getdata() if px)) for name, box in REGIONS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rsan', required=True)
@@ -88,6 +116,15 @@ def main():
         print('resizable %dx%d' % (w, h))
         ok &= java(['resizable', str(w), str(h), 'rz%d%s' % (w, int(tag) % 1000)], JAR, classes, out, rsan, a.port,
                    a.webport, ['shots.pitch=200'])
+    modern = os.path.join(out, 'modern')
+    os.makedirs(modern, exist_ok=True)
+    for w, h in ((1280, 800), (1920, 1080)):
+        print('modern layout %dx%d' % (w, h))
+        ok &= java(['modern', str(w), str(h), 'md%d%s' % (w, int(tag) % 1000), 'modern_%dx%d' % (w, h)], JAR, classes,
+                   modern, rsan, a.port, a.webport, ['shots.pitch=200'])
+    print('draw distance, 1920x1080 resizable')
+    ok &= java(['drawdist', '1920', '1080', 'dd' + tag, 'drawdist_1920x1080'], JAR, classes, out, rsan, a.port,
+               a.webport, ['shots.noflames=true', 'shots.pitch=140', 'shots.tele=' + DRAWDIST_SPOT])
     print('fixed -> resizable -> fixed, one session')
     ok &= java(['toggle', '765', '503', 'tg' + tag, 'toggle'], JAR, classes, out, rsan, a.port, a.webport,
                ['shots.noflames=true', 'shots.pitch=383', 'shots.tele=0,51,45,36,20'])
@@ -104,9 +141,19 @@ def main():
                            classes, out, rsan, a.port, a.webport,
                            ['shots.noflames=true', 'shots.pitch=' + pitch, 'shots.tele=' + spot])
             for shot in ('scene', 'menu', 'bank'):
-                good, why = same(os.path.join(out, '%s_base_%s.png' % (place, shot)),
-                                 os.path.join(out, '%s_new_%s.png' % (place, shot)))
-                print(('   ok   ' if good else '   DIFF ') + '%s %s: %s' % (place, shot, why))
+                r = regions(os.path.join(out, '%s_base_%s.png' % (place, shot)),
+                            os.path.join(out, '%s_new_%s.png' % (place, shot)))
+                if r is None:
+                    print('   FAIL %s %s: sizes differ' % (place, shot))
+                    ok = False
+                    continue
+                # The viewport is what this is really asking about: the scene, drawn by the code that
+                # changed. The minimap is redrawn from the player's exact position and differs by a
+                # pixel of pan between any two logins; the chat carries the throwaway account's name.
+                good = r['viewport'] <= VIEWPORT_SLACK[place] and r['sidebar'] == 0 and r['tabs'] == 0 and r['tabs2'] == 0
+                print(('   ok   ' if good else '   DIFF ') + '%s %s: ' % (place, shot)
+                      + ', '.join('%s %d' % (n, r[n]) for n, _ in REGIONS))
+                ok &= good
     print()
     print('ALL PASS' if ok else 'FAILURES above')
     return 0 if ok else 1
