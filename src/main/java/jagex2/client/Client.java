@@ -345,7 +345,10 @@ public class Client extends GameShell implements PixMap.Target {
 	// mouse's coordinates (layout.vpX/vpY: 4,4 on the fixed screen) is added back when hit-testing.
 	private static final int QOL_PANEL_KEY = 1016; // F9
 	private static final int QOL_PANEL_W = 320;
-	private static final int QOL_PANEL_ROW_H = 15;
+	// 14, not the 15 it was: the panel has no paging and has to fit the fixed screen's 334px
+	// viewport, and the draw distance row is the twentieth. RoofTest's panelTests() fails the build
+	// the moment it stops fitting, so this is the number to shave next time a setting is added.
+	private static final int QOL_PANEL_ROW_H = 14;
 	private static final int QOL_PANEL_HEADER_H = 24;
 	private static final int QOL_PANEL_FOOTER_H = 22;
 	private boolean qolPanelOpen;
@@ -848,9 +851,13 @@ public class Client extends GameShell implements PixMap.Target {
 	// near the top-right of the viewport (same anchor the ::fpson debug counter uses, offset
 	// below it when that's also on). Newest drop is always at index 0/top, since addXpDrop()
 	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
-	// The last row of the panel is not a QolSettings switch: it is the window (DisplaySettings),
-	// which is kept with the launcher's files rather than the cache, and switched with setResizable.
-	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 1;
+	// The last two rows of the panel are not QolSettings switches: they are the window and the draw
+	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
+	// are about this machine's screen and what it can push. The window is a switch like the rest;
+	// the draw distance steps through its values, so its row shows the value instead of a box.
+	private static final int ROW_WINDOW = QolSettings.COUNT;
+	private static final int ROW_DRAW_DISTANCE = QolSettings.COUNT + 1;
+	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 2;
 
 	private int qolPanelHeight() {
 		return QOL_PANEL_HEADER_H + QOL_PANEL_ROWS * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
@@ -885,15 +892,24 @@ public class Client extends GameShell implements PixMap.Target {
 			if (hovered) {
 				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
 			}
-			boolean window = i == QolSettings.COUNT;
+			int baseline = rowY + QOL_PANEL_ROW_H - 4;
+			if (i == ROW_DRAW_DISTANCE) {
+				// the box stays the same shape as every other row's; the value is in the label, because
+				// this row steps 25 -> 35 -> 45 -> 52 -> 25 rather than switching on and off
+				int tiles = DisplaySettings.drawDistance();
+				boolean far = tiles > DisplaySettings.DRAW_DISTANCES[0];
+				this.fontPlain12.drawString(x + 10, far ? 0x00C000 : 0x707070, baseline, far ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, far ? 0xFFFFFF : 0x909090, baseline, "Draw distance: " + tiles + " tiles");
+				continue;
+			}
+			boolean window = i == ROW_WINDOW;
 			boolean on = window ? this.wantResizable : QolSettings.on(i);
 			String label = window ? "Resizable window (drag or maximise it)" : QolSettings.label(i);
-			int baseline = rowY + QOL_PANEL_ROW_H - 4;
 			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
 			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, label);
 		}
 
-		String hint = "Click a row to toggle. Saved on this computer.";
+		String hint = "Click a row to change it. Saved on this computer.";
 		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
 	}
 
@@ -924,9 +940,14 @@ public class Client extends GameShell implements PixMap.Target {
 		if (clickY < y + QOL_PANEL_HEADER_H || row < 0 || row >= QOL_PANEL_ROWS) {
 			return;
 		}
-		if (row == QolSettings.COUNT) {
+		if (row == ROW_WINDOW) {
 			this.setResizable(!this.wantResizable);
 			DevLog.log("QOL", "Resizable window -> " + (this.wantResizable ? "on" : "off"));
+			return;
+		}
+		if (row == ROW_DRAW_DISTANCE) {
+			this.setDrawDistance(DisplaySettings.nextDistance(DisplaySettings.drawDistance()));
+			DevLog.log("QOL", "Draw distance -> " + DisplaySettings.drawDistance() + " tiles");
 			return;
 		}
 		QolSettings.toggle(row);
@@ -3750,11 +3771,13 @@ public class Client extends GameShell implements PixMap.Target {
 				distance[x] = offset * sin >> 16;
 			}
 
+			World3D.drawDistance = DisplaySettings.drawDistance();
 			World3D.init(334, distance, 800, 500, 512);
 			this.sceneDistances = distance;
 			this.sceneVisW = 512;
 			this.sceneVisH = 334;
 			this.sceneVisZoom = 512;
+			this.sceneVisDistance = World3D.drawDistance;
 			// A window already resizable when the game started was laid out before these existed.
 			this.updateSceneVisibility();
 			WordFilter.unpack(jagWordenc);
@@ -3991,7 +4014,9 @@ public class Client extends GameShell implements PixMap.Target {
 	public void drawError() {
 		Graphics var2 = this.getBaseComponent().getGraphics();
 		var2.setColor(Color.black);
-		var2.fillRect(0, 0, 765, 503);
+		// the whole window, not just the fixed frame: an error page in a resizable window would
+		// otherwise leave the title art showing around its edges
+		var2.fillRect(0, 0, Math.max(765, this.layout.width), Math.max(503, this.layout.height));
 		this.setFramerate(1);
 		if (this.errorLoading) {
 			this.flameActive = false;
@@ -7780,6 +7805,7 @@ public class Client extends GameShell implements PixMap.Target {
 		var3.quickPlotSprite(-171, 254);
 		this.imageTitle8.bind();
 		var3.quickPlotSprite(-171, -180);
+		this.buildTitleBackdrop();
 		Pix32 var7 = new Pix32(this.jagTitle, "logo", 0);
 		this.imageTitle2.bind();
 		var7.plotSprite(18, 382 - var7.wi / 2 - 128);
@@ -7787,6 +7813,49 @@ public class Client extends GameShell implements PixMap.Target {
 		Object var9 = null;
 		Object var10 = null;
 		System.gc();
+	}
+
+	/**
+	 * The title screen's BACKGROUND as one 765x503 picture - the hall, its pillars and its braziers,
+	 * with no logo and no login box - for filling a resizable window around the centred title
+	 * screen (see fillTitleSurround). Taken at this exact point of loadTitleBackground because it is
+	 * the one moment all nine pieces hold nothing but the background: the logo goes into imageTitle2
+	 * on the next line, and imageTitle4 is the middle of the picture until drawTitle() paints the
+	 * login box into it a frame later. A backdrop with either of those in it would show a second
+	 * logo, or a second login box, behind the real one.
+	 */
+	private void buildTitleBackdrop() {
+		if (this.imageTitle0 == null) {
+			return;
+		}
+		PixMap backdrop = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
+		PixMap[] pieces = { this.imageTitle0, this.imageTitle1, this.imageTitle2, this.imageTitle7, this.imageTitle4,
+			this.imageTitle8, this.imageTitle3, this.imageTitle5, this.imageTitle6 };
+		int[] px = { 0, 637, 128, 128, 202, 562, 202, 0, 562 };
+		int[] py = { 0, 0, 0, 171, 171, 171, 371, 265, 265 };
+		for (int i = 0; i < pieces.length; i++) {
+			PixMap piece = pieces[i];
+			if (piece != null) {
+				copyRect(piece.data, piece.width, 0, 0, piece.width, piece.height, backdrop.data, Layout.FIXED_W, Layout.FIXED_H, px[i], py[i]);
+			}
+		}
+		backdrop.setPixels();
+		this.titleBackdrop = backdrop;
+		// the same picture flipped, for the tile either side of it: the art is a hall mirrored down
+		// its middle, so a flipped copy joins the original edge to edge with no seam
+		PixMap flipped = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
+		for (int y = 0; y < Layout.FIXED_H; y++) {
+			int row = y * Layout.FIXED_W;
+			for (int x = 0; x < Layout.FIXED_W; x++) {
+				flipped.data[row + x] = backdrop.data[row + Layout.FIXED_W - 1 - x];
+			}
+		}
+		flipped.setPixels();
+		this.titleBackdropFlipped = flipped;
+		this.imageTitle2.bind();
+		// the loading screen has already filled the window - with black, because this did not exist
+		// yet when it did - so ask for it to be filled again now that it does
+		this.letterCleared = false;
 	}
 
 	@ObfuscatedName("client.i(Z)V")
@@ -15913,6 +15982,8 @@ public class Client extends GameShell implements PixMap.Target {
 		this.flameBuffer3 = null;
 		this.imageFlamesLeft = null;
 		this.imageFlamesRight = null;
+		this.titleBackdrop = null;
+		this.titleBackdropFlipped = null;
 	}
 
 	@ObfuscatedName("client.c(B)V")
@@ -16364,14 +16435,18 @@ public class Client extends GameShell implements PixMap.Target {
 	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
 	private java.awt.Graphics screenGraphics;
 	private java.awt.Graphics letterGraphics;
-	/** The window has been blacked out around the centred 765x503 screen. */
+	/** The window has been filled around the centred 765x503 screen. */
 	private boolean letterCleared;
+	/** The title screen's art as one 765x503 picture, for filling the window around it. */
+	private PixMap titleBackdrop;
+	private PixMap titleBackdropFlipped;
 	/** World3D.init's pitch distances, kept from load() to rebuild its visibility for a new viewport. */
 	private int[] sceneDistances;
 	/** The viewport World3D's visibility tables were last built for. */
 	private int sceneVisW;
 	private int sceneVisH;
 	private int sceneVisZoom;
+	private int sceneVisDistance;
 	/** When the layout last changed: the visibility tables and the saved size wait for it to settle. */
 	private long layoutChangedAt;
 	private boolean layoutSettled = true;
@@ -16496,16 +16571,36 @@ public class Client extends GameShell implements PixMap.Target {
 		int w = this.layout.vpW;
 		int h = this.layout.vpH;
 		int zoom = this.layout.zoom;
-		if (w == this.sceneVisW && h == this.sceneVisH && zoom == this.sceneVisZoom) {
+		int dist = DisplaySettings.drawDistance();
+		if (w == this.sceneVisW && h == this.sceneVisH && zoom == this.sceneVisZoom && dist == this.sceneVisDistance) {
 			return;
 		}
 		int was = Pix3D.zoom;
 		Pix3D.zoom = zoom;
+		World3D.drawDistance = dist;
 		World3D.init(h, this.sceneDistances, 800, 500, w);
 		Pix3D.zoom = was;
 		this.sceneVisW = w;
 		this.sceneVisH = h;
 		this.sceneVisZoom = zoom;
+		this.sceneVisDistance = dist;
+	}
+
+	/**
+	 * How far the scene is drawn, in tiles (DisplaySettings.DRAW_DISTANCES). Rebuilding World3D's
+	 * per-angle visibility tables takes a moment - a fraction of a second at the far end - so it is
+	 * done here, once, when the row is clicked, and not per frame. Game thread only: the tables and
+	 * the radius the tile loops index them with are two statics, and a frame half way through
+	 * reading them while they change would read off the end of one.
+	 */
+	public void setDrawDistance(int tiles) {
+		DisplaySettings.setDrawDistance(tiles);
+		this.updateSceneVisibility();
+		this.redrawFrame = true;
+	}
+
+	public int drawDistance() {
+		return DisplaySettings.drawDistance();
 	}
 
 	/**
@@ -16556,7 +16651,7 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/**
 	 * Resizable, at the top of each frame: the title screen draws on the centred Graphics and the
-	 * game on the window's, and the first centred frame blacks out the window around it.
+	 * game on the window's, and the first centred frame fills the window around it.
 	 */
 	private void prepareResizableFrame() {
 		if (this.screenGraphics == null) {
@@ -16564,14 +16659,61 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		boolean letter = !this.ingame || super.drawArea != null;
 		if (letter && !this.letterCleared) {
-			this.screenGraphics.setColor(java.awt.Color.black);
-			this.screenGraphics.fillRect(0, 0, this.layout.width, this.layout.height);
+			this.fillTitleSurround(this.screenGraphics, this.layout.width, this.layout.height);
 			this.letterCleared = true;
 			this.redrawFrame = true;
 		} else if (!letter) {
 			this.letterCleared = false;
 		}
 		super.graphics = this.ingame ? this.screenGraphics : this.letterGraphics;
+	}
+
+	/**
+	 * The window behind the centred 765x503 screen - the title screen and the loading bar. It used
+	 * to be black, so the login screen sat in a letterbox on anything bigger than 765x503; the title
+	 * art fills it instead, and the real title screen is drawn crisp over the middle of it as
+	 * before, so the logo, the login box and its buttons are pixel for pixel what they always were.
+	 *
+	 * TILED, not scaled. Both were rendered at 1920x1080 and compared. The art is one composition -
+	 * a stone hall with a brazier either side, a logo over the middle - so scaling it to cover the
+	 * window shows the same hall twice, once huge and soft behind and once small and sharp in front,
+	 * with the join between them a plain rectangle: it reads as a picture inside a picture. Tiling
+	 * has none of that: the art is the hall mirrored down its own middle, so a left-right flipped
+	 * copy of it joins the original edge to edge with no seam at all, and the window fills with one
+	 * long hall of arches and braziers at full sharpness. Above and below, where there is no more
+	 * hall to draw, each tile's top and bottom row of pixels are stretched out to the window's edge -
+	 * the ceiling's dark and the floor's mist, which carry on without anything to give them away.
+	 *
+	 * In game (a fullscreen interface over the scene) there is no title art loaded and the surround
+	 * stays black, as it was.
+	 */
+	private void fillTitleSurround(java.awt.Graphics g, int w, int h) {
+		PixMap art = this.titleBackdrop;
+		PixMap flipped = this.titleBackdropFlipped;
+		if (art == null || flipped == null || this.ingame) {
+			g.setColor(java.awt.Color.black);
+			g.fillRect(0, 0, w, h);
+			return;
+		}
+		int sw = Layout.FIXED_W;
+		int sh = Layout.FIXED_H;
+		int lx = this.layout.letterX;
+		int ly = this.layout.letterY;
+		art.setPixels();
+		flipped.setPixels();
+		int first = -((lx + sw - 1) / sw);
+		int last = (w - lx) / sw;
+		for (int k = first; k <= last; k++) {
+			int x = lx + k * sw;
+			PixMap piece = (k & 1) == 0 ? art : flipped;
+			g.drawImage(piece.image, x, ly, sw, sh, piece);
+			if (ly > 0) {
+				g.drawImage(piece.image, x, 0, x + sw, ly, 0, 0, sw, 1, piece);
+			}
+			if (ly + sh < h) {
+				g.drawImage(piece.image, x, ly + sh, x + sw, h, 0, sh - 1, sw, sh, piece);
+			}
+		}
 	}
 
 	/** PixMap.target: see the top of this section. */

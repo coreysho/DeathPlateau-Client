@@ -315,7 +315,7 @@ public class ResizableShots extends Client {
 		String user = args[4];
 		String prefix = args.length > 5 ? args[5] : mode + "_" + w + "x" + h;
 		log = new PrintWriter(new FileWriter(new File(out, prefix + ".log")));
-		boolean resizable = mode.equals("resizable");
+		boolean resizable = mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title");
 		pinPitch = Integer.getInteger("shots.pitch", mode.equals("compare") ? 383 : 300);
 
 		seedRandom(377);
@@ -345,6 +345,18 @@ public class ResizableShots extends Client {
 		waitFor("the title screen", 120000, () -> geti("titleScreenState") == 0 && frames > 20 && get("imageTitle4") != null);
 		waitFrames(10);
 		shot(prefix + "_title");
+		if (mode.equals("title")) {
+			// the login box too, so the fill is judged with what sits on top of it
+			int tx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
+			int ty = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
+			click(tx + 765 / 2 + 80, ty + 503 / 2 + 40, false);
+			waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
+			waitFrames(10);
+			shot(prefix + "_loginbox");
+			say("done");
+			log.close();
+			System.exit(0);
+		}
 
 		// Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred.
 		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
@@ -399,6 +411,10 @@ public class ResizableShots extends Client {
 			toggle(prefix);
 			return;
 		}
+		if (mode.equals("drawdist")) {
+			drawDistances(prefix, w, h);
+			return;
+		}
 		shot(prefix + "_game");
 		waitFrames(25);
 		shot(prefix + "_game2");
@@ -426,10 +442,12 @@ public class ResizableShots extends Client {
 		waitFrames(20);
 		shot(prefix + "_bank");
 		if (resizable) {
-			// a right-click on the bank's first slot, in window coordinates: the bank is centred in the open area
+			// a right-click inside the bank's item grid, in window coordinates: the bank is centred in
+			// the open area. Well inside the grid under either bank layout - the 8x5 one in a 488x305
+			// window at (12,20), and the 12x6 one in a 506x328 window at (3,3) that replaced it.
 			int mainX = ((Number) layoutField("mainX")).intValue();
 			int mainY = ((Number) layoutField("mainY")).intValue();
-			click(mainX + 60, mainY + 80, true);
+			click(mainX + 120, mainY + 130, true);
 			say("bank slot menu: area " + get("menuArea") + " " + menu());
 			shot(prefix + "_bankmenu");
 			set("menuVisible", false);
@@ -444,6 +462,55 @@ public class ResizableShots extends Client {
 		if (resizable) {
 			resizableChecks(w, h);
 		}
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * Every draw distance the F9 row offers, in one session: a frame of each and what it costs. The
+	 * scene is the only thing that changes, so the frame times compare directly.
+	 */
+	static void drawDistances(String prefix, int w, int h) throws Exception {
+		// NOT still: hiding the npcs means zeroing npcCount, which the npc-info packet reads the
+		// next tick ("Too many npcs", and the client throws itself off the server). The other modes
+		// get away with it because they sit somewhere with no npcs in view; this one wants a place
+		// with something to look at.
+		int[] steps = (int[]) Class.forName("jagex2.client.DisplaySettings").getField("DRAW_DISTANCES").get(null);
+		double[][] ms = new double[2][steps.length];
+		for (int pass = 0; pass < 2; pass++) {
+			// the second pass runs the steps backwards: a scene with anything living in it drifts, so
+			// two passes in opposite orders show how much of the difference is the draw distance and
+			// how much is the minute that went by
+			for (int j = 0; j < steps.length; j++) {
+				int i = pass == 0 ? j : steps.length - 1 - j;
+				long built = System.currentTimeMillis();
+				// under the draw lock: the client only ever changes this on its own game thread, and
+				// rebuilding the tables under a frame half way through reading them would not end well
+				synchronized (LOCK) {
+					call("setDrawDistance", Integer.valueOf(steps[i]));
+				}
+				built = System.currentTimeMillis() - built;
+				waitFrames(30);
+				if (pass == 0) {
+					shot(prefix + "_" + steps[i]);
+				}
+				drawNanos = 0;
+				drawCount = 0;
+				waitFrames(200);
+				ms[pass][i] = drawNanos / 1e6 / Math.max(1, drawCount);
+				say(String.format("draw: %.2f ms/frame over %d frames at %dx%d (%d tiles, pass %d, tables rebuilt in %d ms)",
+					ms[pass][i], drawCount, w, h, steps[i], pass + 1, built));
+			}
+		}
+		for (int i = 0; i < steps.length; i++) {
+			say(String.format("draw: %d tiles -> %.1f ms/frame (%.2f up, %.2f down)", steps[i],
+				(ms[0][i] + ms[1][i]) / 2, ms[0][i], ms[1][i]));
+		}
+		synchronized (LOCK) {
+			call("setDrawDistance", Integer.valueOf(steps[0]));
+		}
+		waitFrames(10);
 		say("done");
 		log.close();
 		System.exit(0);
@@ -536,13 +603,36 @@ public class ResizableShots extends Client {
 		return f.get(layout);
 	}
 
+	// The panels' geometry, asked of Layout itself rather than written down again here, so the
+	// harness follows the client when a panel's rectangle changes. CHAT 0, MINIMAP 1, SIDEBAR 2.
+	static final int CHAT = 0;
+	static final int MINIMAP = 1;
+	static final int SIDEBAR = 2;
+
+	static int layoutStatic(String method, int panel) throws Exception {
+		Class<?> c = get("layout").getClass();
+		return ((Number) c.getMethod(method, int.class).invoke(null, Integer.valueOf(panel))).intValue();
+	}
+
+	static int layoutOn(String method, int panel) throws Exception {
+		Object layout = get("layout");
+		return ((Number) layout.getClass().getMethod(method, int.class).invoke(layout, Integer.valueOf(panel))).intValue();
+	}
+
+	/** A point of the fixed frame, in window coordinates: where its panel put it. */
+	static int panelWinX(int panel, int fixedX) throws Exception {
+		return layoutOn("panelScreenX", panel) + fixedX - layoutStatic("panelFixedX", panel);
+	}
+
+	static int panelWinY(int panel, int fixedY) throws Exception {
+		return layoutOn("panelScreenY", panel) + fixedY - layoutStatic("panelFixedY", panel);
+	}
+
 	/** The panels take the clicks meant for them, and the scene the rest, however big the window. */
 	static void resizableChecks(int w, int h) throws Exception {
 		int ok = 0;
 		int bad = 0;
 		// 1. a tab button in the bottom-right panel: the Stats tab (second in the top row, fixed x 560..593, y 168..204)
-		int sideX = w - 249;
-		int sideY = h - 343;
 		int tabBefore = geti("selectedTab");
 		int[] tabs = (int[]) get("tabInterfaceId");
 		int want = -1;
@@ -555,20 +645,19 @@ public class ResizableShots extends Client {
 		int col = want % 7;
 		int fx0 = col == 0 ? 522 : 560 + (col - 1) * 33;
 		int fy0 = want < 7 ? 168 : 466;
-		click(sideX + (fx0 + 10 - 516), sideY + (fy0 + 15 - 160), false);
+		click(panelWinX(SIDEBAR, fx0 + 10), panelWinY(SIDEBAR, fy0 + 15), false);
 		int tabAfter = geti("selectedTab");
 		boolean t = tabAfter == want;
 		say((t ? "ok   " : "FAIL ") + "a click on tab " + want + "'s button in the bottom-right panel selects it (" + tabBefore + " -> " + tabAfter + ")");
 		if (t) ok++; else bad++;
 		shot("resizable_" + w + "x" + h + "_tab");
 		// 2. hover the inventory: the menu is the sidebar's
-		hover(sideX + (560 - 516), sideY + (230 - 160));
+		hover(panelWinX(SIDEBAR, 560), panelWinY(SIDEBAR, 230));
 		waitFrames(5);
 		say("hover over the inventory's first slot: " + menu());
 		// 3. the minimap: a click walks, setting the flag
 		set("flagSceneTileX", 0);
-		int mapX = w - 249;
-		click(mapX + (545 + 25 + 73 + 30 - 516), 4 + 5 + 75 + 10, false);
+		click(panelWinX(MINIMAP, 545 + 25 + 73 + 30), panelWinY(MINIMAP, 4 + 5 + 75 + 10), false);
 		waitFrames(3);
 		boolean m = geti("flagSceneTileX") != 0;
 		say((m ? "ok   " : "FAIL ") + "a click on the minimap in the top-right walks there (flag at " + geti("flagSceneTileX") + ")");
@@ -596,8 +685,9 @@ public class ResizableShots extends Client {
 		int found = 0;
 		int far = 0;
 		String sample = null;
+		int sideW = layoutStatic("panelWidth", SIDEBAR) + 11;
 		for (int y = 20; y < h - 180; y += 40) {
-			for (int x = 20; x < w - 260; x += 40) {
+			for (int x = 20; x < w - sideW; x += 40) {
 				hover(x, y);
 				waitFrames(2);
 				List<String> rows = menu();
@@ -659,9 +749,10 @@ public class ResizableShots extends Client {
 		waitFrames(5);
 		shot("resizable_" + w + "x" + h + "_settings");
 		int rows = ((Number) staticField("QOL_PANEL_ROWS")).intValue();
+		int windowRow = ((Number) staticField("ROW_WINDOW")).intValue();
 		int panelH = 24 + rows * 15 + 22;
 		int px = ((Number) layoutField("mainX")).intValue() + (512 - 320) / 2 + 60;
-		int py = ((Number) layoutField("mainY")).intValue() + (334 - panelH) / 2 + 24 + (rows - 1) * 15 + 7;
+		int py = ((Number) layoutField("mainY")).intValue() + (334 - panelH) / 2 + 24 + windowRow * 15 + 7;
 		click(px, py, false);
 		waitFrames(10);
 		boolean off = !((Boolean) call("isResizable"));
@@ -669,12 +760,28 @@ public class ResizableShots extends Client {
 		if (off) ok++; else bad++;
 		shot("resizable_" + w + "x" + h + "_switchedfixed");
 		px = (512 - 320) / 2 + 60 + 4;
-		py = (334 - panelH) / 2 + 24 + (rows - 1) * 15 + 7 + 4;
+		py = (334 - panelH) / 2 + 24 + windowRow * 15 + 7 + 4;
 		click(px, py, false);
 		waitFrames(10);
 		boolean on = (Boolean) call("isResizable");
 		say((on ? "ok   " : "FAIL ") + "...and clicking it again on the fixed screen switches back");
 		if (on) ok++; else bad++;
+		// 8. the draw distance row, under it: a click steps it on to the next value and saves it
+		int[] steps = (int[]) Class.forName("jagex2.client.DisplaySettings").getField("DRAW_DISTANCES").get(null);
+		int distRow = ((Number) staticField("ROW_DRAW_DISTANCE")).intValue();
+		int before = ((Number) call("drawDistance")).intValue();
+		click(((Number) layoutField("mainX")).intValue() + (512 - 320) / 2 + 60,
+			((Number) layoutField("mainY")).intValue() + (334 - panelH) / 2 + 24 + distRow * 15 + 7, false);
+		waitFrames(20);
+		int after = ((Number) call("drawDistance")).intValue();
+		boolean stepped = before == steps[0] && after == steps[1];
+		say((stepped ? "ok   " : "FAIL ") + "clicking the draw distance row steps it on (" + before + " -> " + after + " tiles)");
+		if (stepped) ok++; else bad++;
+		shot("resizable_" + w + "x" + h + "_drawdistance");
+		synchronized (LOCK) {
+			call("setDrawDistance", Integer.valueOf(steps[0]));
+		}
+		waitFrames(10);
 		key(KeyEvent.VK_F9, (char) 0);
 		waitFrames(10);
 		say("resizable checks: " + ok + " ok, " + bad + " failed");

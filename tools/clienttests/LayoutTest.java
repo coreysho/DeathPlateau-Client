@@ -86,8 +86,35 @@ public class LayoutTest {
 			&& Math.abs(r.mainX - (r.openW - 512 - r.mainX)) <= 1 && Math.abs(r.mainY - (r.openH - 334 - r.mainY)) <= 1,
 			"a main interface is centred in the open area, clear of the panels: " + r.mainX + "," + r.mainY);
 		Layout m = Layout.resizable(765, 503);
-		check(m.panelScreenY(Layout.SIDEBAR) == m.panelScreenY(Layout.MINIMAP) + Layout.panelHeight(Layout.MINIMAP),
-			"at the smallest window the minimap and the side tabs meet, as in the fixed frame");
+		int overlaps = 0;
+		for (int a = 0; a < Layout.PANELS; a++) {
+			for (int b = a + 1; b < Layout.PANELS; b++) {
+				if (m.panelScreenX(a) < m.panelScreenX(b) + Layout.panelWidth(b)
+					&& m.panelScreenX(b) < m.panelScreenX(a) + Layout.panelWidth(a)
+					&& m.panelScreenY(a) < m.panelScreenY(b) + Layout.panelHeight(b)
+					&& m.panelScreenY(b) < m.panelScreenY(a) + Layout.panelHeight(a)) {
+					overlaps++;
+				}
+			}
+		}
+		check(overlaps == 0, "at the smallest window the three panels still do not overlap");
+
+		System.out.println("3b. each panel is the panel, without the fixed screen's stone around it");
+		// Every panel rectangle is inside the 765x503 frame and clear of its 512x334 viewport, so no
+		// panel ever carries a copy of the scene; and each is the panel's own art, no wider.
+		int[][] want = { { 0, 338, 519, 165 }, { 545, 4, 172, 156 }, { 522, 168, 241, 335 } };
+		String[] named = { "the chatbox: the parchment and the button row", "the minimap: areaMapback alone",
+			"the side tabs: 548's first tab stone to its last" };
+		for (int p = 0; p < Layout.PANELS; p++) {
+			int px = Layout.panelFixedX(p);
+			int py = Layout.panelFixedY(p);
+			int pw = Layout.panelWidth(p);
+			int ph = Layout.panelHeight(p);
+			boolean inFrame = px >= 0 && py >= 0 && px + pw <= 765 && py + ph <= 503;
+			boolean clearOfScene = px >= 516 || py >= 338;
+			boolean exact = px == want[p][0] && py == want[p][1] && pw == want[p][2] && ph == want[p][3];
+			check(inFrame && clearOfScene && exact, named[p] + " is " + pw + "x" + ph + " at (" + px + "," + py + ")");
+		}
 		Layout tiny = Layout.resizable(400, 300);
 		check(tiny.width == 765 && tiny.height == 503, "a window smaller than 765x503 is laid out as 765x503");
 		check(r.letterX == (1280 - 765) / 2 && r.letterY == (800 - 503) / 2, "the title screen is centred");

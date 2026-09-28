@@ -218,8 +218,8 @@ public class RoofTest {
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
 		check(QolSettings.COUNT == 18, "eighteen settings now (" + QolSettings.COUNT + ")");
-		check(QOL_PANEL_ROWS == QolSettings.COUNT + 1,
-			"...and one more row under them, the resizable window, which is not a QolSettings switch");
+		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
+			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
 		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),
 			"...the roofs one labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
 		// The panel has no paging. It has never needed it, and the only thing stopping it is that

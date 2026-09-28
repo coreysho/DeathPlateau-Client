@@ -12,7 +12,8 @@ package jagex2.client;
  * straight out of the fixed frame - the client still draws that frame exactly as it always did,
  * into a 765x503 buffer, and the panels are copied from there to where the window has room for
  * them. So the sidebar, the chat, the tabs and the minimap are the same code at the same
- * coordinates in both modes, and nothing inside them had to learn about the window.
+ * coordinates in both modes, and nothing inside them had to learn about the window. The rectangles
+ * are the panels only, without the screen's stone around them (see PANEL_X below).
  *
  * THE MOUSE follows from that. A point over a panel is turned back into the fixed-frame point it
  * came from, so the sidebar's hit tests, the tab buttons, the chat bar and the minimap click all
@@ -45,13 +46,25 @@ public final class Layout {
 	/** mapX/mapY: whatever is under the point. */
 	public static final int ANY = -2;
 
-	// The panels as rectangles of the fixed frame. The chatbox is everything under the viewport,
-	// from the chat frame down through the chat bar; the minimap is the right column above the top
-	// tab row; the sidebar is the right column from the top tab row down through the bottom one.
-	private static final int[] PANEL_X = { 0, 516, 516 };
-	private static final int[] PANEL_Y = { 338, 0, 160 };
-	private static final int[] PANEL_W = { 519, 249, 249 };
-	private static final int[] PANEL_H = { 165, 160, 343 };
+	// The panels as rectangles of the fixed frame - the CONTENT of each one, with the frame's stone
+	// left behind. The fixed screen is a single 765x503 slab of decorated stone with the panels set
+	// into it; lifting a panel out with its share of that stone is what gave resizable mode borders
+	// Old School's classic layout does not have, so each rectangle is cut back to the panel itself:
+	//
+	//  - the chatbox: the parchment (the "chatback" sprite at 0,338) and the button row under it,
+	//    519x165, which is the whole of it - the parchment's own dark edge is the chatbox's frame,
+	//    the one Old School draws too, not the screen's.
+	//  - the minimap: areaMapback alone, the 172x156 map with its ring and compass at (545,4). The
+	//    29px of stone to its left, the 48 to its right and the 4 above it are the screen's.
+	//  - the side tabs: from the top tab row's first stone (522,168) to the bottom row's last
+	//    (763,503) - interface 548's own tab edges, the ones handleTabInput() hit-tests. That drops
+	//    the 8px strip of claws above the top row (the bottom of the minimap's frame) and the thin
+	//    stone margins either side. The pillars down the sides of the inventory stay: they are part
+	//    of the panel, and Old School's classic layout has them too.
+	private static final int[] PANEL_X = { 0, 545, 522 };
+	private static final int[] PANEL_Y = { 338, 4, 168 };
+	private static final int[] PANEL_W = { 519, 172, 241 };
+	private static final int[] PANEL_H = { 165, 156, 335 };
 
 	public final boolean resizable;
 	/** The window's drawing area. */
@@ -146,7 +159,8 @@ public final class Layout {
 	 * drawn bigger (the zoom rising with the height, as Old School does) and more of the world in
 	 * view (the zoom left at 512). A 1080p window shows the world about 1.65x the fixed size with
 	 * about 1.65x as much of it in each direction, which keeps the edge of the 25-tile scene out of
-	 * sight at the usual camera angles. Never below the fixed 512.
+	 * sight at the usual camera angles - and a player who wants more world than that raises the draw
+	 * distance in the F9 panel (World3D.drawDistance). Never below the fixed 512.
 	 */
 	public static int zoomFor(int openH) {
 		if (openH <= VIEWPORT_H) {

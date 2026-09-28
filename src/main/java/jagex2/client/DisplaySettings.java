@@ -8,7 +8,8 @@ import java.io.OutputStream;
 import java.util.Properties;
 
 /**
- * The window: fixed or resizable, and how big a resizable window was left.
+ * The window: fixed or resizable, how big a resizable window was left, and how far the scene is
+ * drawn.
  *
  * Kept in ~/.deathplateau/display.properties - the folder the launcher keeps the game in - rather
  * than beside QolSettings in the cache folder, because it is about this machine's screen and not
@@ -25,6 +26,13 @@ public final class DisplaySettings {
 	private static int width = 1024;
 	private static int height = 768;
 	private static boolean maximized;
+	private static int drawDistance = 25;                    // World3D.MIN_DISTANCE, 377's own
+
+	/**
+	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
+	 * the server loads. 25 first, so nobody's frame rate changes until they ask for it.
+	 */
+	public static final int[] DRAW_DISTANCES = { 25, 35, 45, 52 };
 
 	private DisplaySettings() {
 	}
@@ -48,6 +56,7 @@ public final class DisplaySettings {
 			width = Math.max(Layout.MIN_W, Integer.parseInt(p.getProperty("width", "" + width).trim()));
 			height = Math.max(Layout.MIN_H, Integer.parseInt(p.getProperty("height", "" + height).trim()));
 			maximized = "true".equals(p.getProperty("maximized", "false").trim());
+			drawDistance = clampDistance(Integer.parseInt(p.getProperty("drawdistance", "" + drawDistance).trim()));
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -85,6 +94,45 @@ public final class DisplaySettings {
 			load();
 		}
 		return maximized;
+	}
+
+	public static synchronized int drawDistance() {
+		if (!loaded) {
+			load();
+		}
+		return drawDistance;
+	}
+
+	public static synchronized void setDrawDistance(int tiles) {
+		if (!loaded) {
+			load();
+		}
+		tiles = clampDistance(tiles);
+		if (drawDistance != tiles) {
+			drawDistance = tiles;
+			save();
+		}
+	}
+
+	/** The next value in DRAW_DISTANCES after this one, wrapping - what clicking the F9 row does. */
+	public static int nextDistance(int tiles) {
+		for (int i = 0; i < DRAW_DISTANCES.length; i++) {
+			if (DRAW_DISTANCES[i] == tiles) {
+				return DRAW_DISTANCES[(i + 1) % DRAW_DISTANCES.length];
+			}
+		}
+		return DRAW_DISTANCES[0];
+	}
+
+	/** A value from the file that is not one of the steps is rounded down to the nearest one. */
+	private static int clampDistance(int tiles) {
+		int best = DRAW_DISTANCES[0];
+		for (int i = 0; i < DRAW_DISTANCES.length; i++) {
+			if (DRAW_DISTANCES[i] <= tiles) {
+				best = DRAW_DISTANCES[i];
+			}
+		}
+		return best;
 	}
 
 	public static synchronized void setResizable(boolean on) {
@@ -130,6 +178,7 @@ public final class DisplaySettings {
 			p.setProperty("width", "" + width);
 			p.setProperty("height", "" + height);
 			p.setProperty("maximized", "" + maximized);
+			p.setProperty("drawdistance", "" + drawDistance);
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|resizable (F9 in game switches it)");
 		} catch (Exception ignored) {

@@ -13,6 +13,8 @@ and that engine's login key's modulus in a file (the client's built-in one is th
 
 It builds nothing: it runs build/libs/rs2client-dev.jar (gradlew.bat build first). Each run logs in
 as a fresh throwaway account on the local server. What it does:
+  - draw distance: a 1920x1080 frame at each step of the F9 row, the ms/frame each one costs, and a
+    click on the row stepping it on
   - resizable at 1280x800 and 1920x1080: the title screen centred, the game, a menu on the scene, the
     bank centred with a menu on it, a tab button, the minimap, a walk far outside the old 512x334,
     a mouse-picking sweep of the whole window, a fullscreen interface, and the F9 switch both ways -
@@ -28,6 +30,9 @@ import os
 import subprocess
 import sys
 import time
+
+# A spot with a long open view, so a bigger draw distance has something to show.
+DRAWDIST_SPOT = '0,50,50,22,22'
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -88,6 +93,9 @@ def main():
         print('resizable %dx%d' % (w, h))
         ok &= java(['resizable', str(w), str(h), 'rz%d%s' % (w, int(tag) % 1000)], JAR, classes, out, rsan, a.port,
                    a.webport, ['shots.pitch=200'])
+    print('draw distance, 1920x1080 resizable')
+    ok &= java(['drawdist', '1920', '1080', 'dd' + tag, 'drawdist_1920x1080'], JAR, classes, out, rsan, a.port,
+               a.webport, ['shots.noflames=true', 'shots.pitch=140', 'shots.tele=' + DRAWDIST_SPOT])
     print('fixed -> resizable -> fixed, one session')
     ok &= java(['toggle', '765', '503', 'tg' + tag, 'toggle'], JAR, classes, out, rsan, a.port, a.webport,
                ['shots.noflames=true', 'shots.pitch=383', 'shots.tele=0,51,45,36,20'])
