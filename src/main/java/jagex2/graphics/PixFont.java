@@ -3,6 +3,7 @@ package jagex2.graphics;
 import deob.ObfuscatedName;
 import jagex2.io.Jagfile;
 import jagex2.io.Packet;
+import jagex2.wordenc.ChatText;
 import java.util.Random;
 
 public class PixFont extends Pix2D {
@@ -98,6 +99,17 @@ public class PixFont extends Pix2D {
 		} else {
 			this.charAdvance[32] = this.charAdvance[105];
 		}
+
+		// custom (2026-09-27) - ChatText.LITERAL_AT, a player's '@' inside a line that is read for tags
+		// (a ::yell). It is drawn and measured as '@' but no tag reader looks for it, so "@cr2@" typed
+		// in a yell prints those five characters instead of the gold crown.
+		int at = ChatText.LITERAL_AT;
+		this.charMask[at] = this.charMask['@'];
+		this.charMaskWidth[at] = this.charMaskWidth['@'];
+		this.charMaskHeight[at] = this.charMaskHeight['@'];
+		this.charOffsetX[at] = this.charOffsetX['@'];
+		this.charOffsetY[at] = this.charOffsetY['@'];
+		this.charAdvance[at] = this.charAdvance['@'];
 	}
 
 	@ObfuscatedName("JDPYRDAS.a(ZLjava/lang/String;III)V")

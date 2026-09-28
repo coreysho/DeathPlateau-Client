@@ -48,7 +48,7 @@ import jagex2.jstring.JString;
 import jagex2.sound.AreaSounds;
 import jagex2.sound.Wave;
 import jagex2.wordenc.WordFilter;
-import jagex2.wordenc.WordPack;
+import jagex2.wordenc.ChatText;
 import java.applet.AppletContext;
 import java.awt.Color;
 import java.awt.Font;
@@ -4320,7 +4320,8 @@ public class Client extends GameShell {
 				// Environment.ENGINE_REVISION on the server, or login is refused with
 				// "your client is out of date". 378 = the walk-merge skeleton guard. 379 = P_DIALOGPROMPT,
 				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
-				this.login.p2(380);
+				// 381 = chat as typed (ChatText): public, private and clan lines are their characters, not WordPack.
+				this.login.p2(381);
 				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
 				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
 				// instead, so a jar from before them keeps working rather than being turned away.
@@ -5771,7 +5772,7 @@ public class Client extends GameShell {
 				if ((var5 == 3 || var5 == 7) && (var5 == 7 || this.chatPrivateMode == 0 || this.chatPrivateMode == 1 && this.isFriend(var6))) {
 					int var10 = 329 - var3 * 13;
 					if (super.mouseX > 4 && super.mouseY - 4 > var10 - 10 && super.mouseY - 4 <= var10 + 3) {
-						int var11 = this.fontPlain12.stringWidTag("From:  " + var6 + this.messageText[var4]) + 25;
+						int var11 = this.fontPlain12.stringWid("From:  " + var6 + this.messageText[var4]) + 25;
 						if (var11 > 450) {
 							var11 = 450;
 						}
@@ -6917,6 +6918,11 @@ public class Client extends GameShell {
 								this.removeFriend(username);
 							}
 
+							if (this.socialInputType == 3) {
+								// the line as typed, case and all (ChatText, not WordPack)
+								this.socialInput = ChatText.format(this.socialInput);
+							}
+
 							if (this.socialInputType == 3 && this.socialInput.length() > 0) {
 								// MESSAGE_PRIVATE
 								this.out.p1isaac(227);
@@ -6924,10 +6930,9 @@ public class Client extends GameShell {
 
 								int start = this.out.pos;
 								this.out.p8(this.socialName37);
-								WordPack.pack(this.socialInput, this.out);
+								ChatText.pack(this.socialInput, this.out);
 								this.out.psize1(this.out.pos - start);
 
-								this.socialInput = WordPack.toSentenceCase(this.socialInput);
 								// this.socialInput = WordFilter.filter(this.socialInput); // client-side profanity filter disabled per Corey's request
 
 								this.addMessage(JString.formatDisplayName(JString.fromBase37(this.socialName37)), this.socialInput, 6);
@@ -7177,11 +7182,14 @@ public class Client extends GameShell {
 							} else if (this.chatTyped.startsWith("/") && this.chatTyped.length() > 1) {
 								// CLAN_MESSAGE (custom): the server sends the line back to everybody in the
 								// channel, this player included, so there is no local echo
-								this.out.p1isaac(9);
-								this.out.p1(0);
-								int start = this.out.pos;
-								WordPack.pack(WordPack.toSentenceCase(this.chatTyped.substring(1)), this.out);
-								this.out.psize1(this.out.pos - start);
+								String clanLine = ChatText.format(this.chatTyped.substring(1));
+								if (clanLine.length() > 0) {
+									this.out.p1isaac(9);
+									this.out.p1(0);
+									int start = this.out.pos;
+									ChatText.pack(clanLine, this.out);
+									this.out.psize1(this.out.pos - start);
+								}
 							} else {
 								String lower = this.chatTyped.toLowerCase();
 
@@ -7243,37 +7251,39 @@ public class Client extends GameShell {
 									this.chatTyped = this.chatTyped.substring(6);
 								}
 
-								// MESSAGE_PUBLIC
-								this.out.p1isaac(49);
-								this.out.p1(0);
+								// the line as typed, case and all (ChatText, not WordPack); a colour or effect
+								// prefix with nothing after it says nothing
+								this.chatTyped = ChatText.format(this.chatTyped);
+								if (this.chatTyped.length() > 0) {
+									// MESSAGE_PUBLIC
+									this.out.p1isaac(49);
+									this.out.p1(0);
 
-								int start = this.out.pos;
-								this.out.p1_alt2(colour);
-								this.out.p1_alt1(effect);
-								this.chatPacket.pos = 0;
-								WordPack.pack(this.chatTyped, this.chatPacket);
-								this.out.pdata(this.chatPacket.data, this.chatPacket.pos, 0);
-								this.out.psize1(this.out.pos - start);
+									int start = this.out.pos;
+									this.out.p1_alt2(colour);
+									this.out.p1_alt1(effect);
+									ChatText.pack(this.chatTyped, this.out);
+									this.out.psize1(this.out.pos - start);
 
-								this.chatTyped = WordPack.toSentenceCase(this.chatTyped);
-								// this.chatTyped = WordFilter.filter(this.chatTyped); // client-side profanity filter disabled per Corey's request
+									// this.chatTyped = WordFilter.filter(this.chatTyped); // client-side profanity filter disabled per Corey's request
 
-								localPlayer.chatMessage = this.chatTyped;
-								localPlayer.chatColour = colour;
-								localPlayer.chatEffect = effect;
-								localPlayer.chatTimer = 150;
+									localPlayer.chatMessage = this.chatTyped;
+									localPlayer.chatColour = colour;
+									localPlayer.chatEffect = effect;
+									localPlayer.chatTimer = 150;
 
-								String icons = localPlayer.icons.length() > 0 ? localPlayer.icons : ChatIcons.forPlayer(this.staffmodlevel == 3 ? 2 : this.staffmodlevel);
-								this.addMessage(icons + localPlayer.name, localPlayer.chatMessage, 2);
+									String icons = localPlayer.icons.length() > 0 ? localPlayer.icons : ChatIcons.forPlayer(this.staffmodlevel == 3 ? 2 : this.staffmodlevel);
+									this.addMessage(icons + localPlayer.name, localPlayer.chatMessage, 2);
 
-								if (this.chatPublicMode == 2) {
-									this.chatPublicMode = 3;
-									this.redrawPrivacySettings = true;
-									// CHAT_SETMODE
-									this.out.p1isaac(176);
-									this.out.p1(this.chatPublicMode);
-									this.out.p1(this.chatPrivateMode);
-									this.out.p1(this.chatTradeMode);
+									if (this.chatPublicMode == 2) {
+										this.chatPublicMode = 3;
+										this.redrawPrivacySettings = true;
+										// CHAT_SETMODE
+										this.out.p1isaac(176);
+										this.out.p1(this.chatPublicMode);
+										this.out.p1(this.chatPrivateMode);
+										this.out.p1(this.chatTradeMode);
+									}
 								}
 							}
 
@@ -10213,7 +10223,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (!ignored && this.overrideChat == 0) {
-					String text = WordPack.method453(this.in, this.psize - 21);
+					String text = ChatText.unpack(this.in, this.psize - 21);
 					this.addClanMessage(JString.formatDisplayName(JString.fromBase37(channel)), ChatIcons.forPlayer(icons) + JString.formatDisplayName(JString.fromBase37(from)), text);
 				}
 				this.ptype = -1;
@@ -10274,7 +10284,7 @@ public class Client extends GameShell {
 						// QoL: remember who sent this so Tab can reply to them
 						this.lastPmFrom37 = var91;
 						this.hasLastPmFrom = true;
-						String var98 = WordPack.method453(this.in, this.psize - 13);
+						String var98 = ChatText.unpack(this.in, this.psize - 13);
 						// client-side profanity filter disabled per Corey's request
 						//if (var94 != 3) {
 						//	var98 = WordFilter.filter(var98);
@@ -11761,7 +11771,7 @@ public class Client extends GameShell {
 						this.chatPacket.pos = 0;
 						arg4.gdata_alt2(this.chatPacket.data, var18, 0);
 						this.chatPacket.pos = 0;
-						String var24 = WordPack.method453(this.chatPacket, var18);
+						String var24 = ChatText.unpack(this.chatPacket, var18);
 						String var25 = var24; // WordFilter.filter(var24) disabled per Corey's request (client-side profanity filter)
 						arg2.chatMessage = var25;
 						arg2.chatColour = var16 >> 8;
@@ -15518,7 +15528,7 @@ public class Client extends GameShell {
 
 	// Split on spaces to fit. The first line fits beside its prefix; the rest are indented to sit
 	// under it (chat) or start at the margin (game, trade and "To" lines, whose prefix is the line).
-	// A word too long for a line on its own is cut. A colour tag carries onto the next line.
+	// A word too long for a line on its own is cut. In a game message a colour tag carries onto the next line.
 	private java.util.List<String> wrapChat(String sender, String text, int type) {
 		java.util.List<String> out = new java.util.ArrayList<>();
 		PixFont font = this.fontPlain12;
@@ -15527,10 +15537,14 @@ public class Client extends GameShell {
 			return out;
 		}
 		int prefix = this.chatPrefixWidth(sender, text, type);
+		// Only a game message is drawn reading its tags. Every other line - a player's chat above
+		// all - is drawn with drawString, which prints "@red@" as five characters, so it is measured
+		// the same way and no colour is carried onto its next line.
+		boolean tags = type == 0;
 		boolean indented = !(type == 0 || type == 4 || type == 5 || type == 8);
 		int first = CHAT_WIDTH - prefix;
 		int rest = indented ? first : CHAT_WIDTH;
-		if (ChatIcons.width(font, text) <= first || first < 60) {
+		if (this.chatWidth(font, tags, text) <= first || first < 60) {
 			out.add(text);
 			return out;
 		}
@@ -15539,14 +15553,14 @@ public class Client extends GameShell {
 		String remaining = text;
 		int width = first;
 		while (remaining.length() > 0) {
-			if (ChatIcons.width(font, remaining) <= width) {
+			if (this.chatWidth(font, tags, remaining) <= width) {
 				out.add(remaining);
 				break;
 			}
 			int cut = -1;
 			for (int i = 1; i < remaining.length(); i++) {
 				if (remaining.charAt(i) == ' ') {
-					if (ChatIcons.width(font, remaining.substring(0, i)) > width) {
+					if (this.chatWidth(font, tags, remaining.substring(0, i)) > width) {
 						break;
 					}
 					cut = i;
@@ -15554,13 +15568,13 @@ public class Client extends GameShell {
 			}
 			if (cut <= 0) {
 				cut = 1;
-				while (cut < remaining.length() && ChatIcons.width(font, remaining.substring(0, cut + 1)) <= width) {
+				while (cut < remaining.length() && this.chatWidth(font, tags, remaining.substring(0, cut + 1)) <= width) {
 					cut++;
 				}
 			}
 			String line = remaining.substring(0, cut);
 			out.add(line);
-			for (int i = 0; i + 4 < line.length(); i++) {
+			for (int i = 0; tags && i + 4 < line.length(); i++) {
 				if (line.charAt(i) == '@' && line.charAt(i + 4) == '@') {
 					String tag = line.substring(i + 1, i + 4);
 					if (tag.equals("sh1") || tag.equals("sh0")) {
@@ -15581,6 +15595,12 @@ public class Client extends GameShell {
 			width = rest;
 		}
 		return out;
+	}
+
+	// A chatbox line's width: read for tags and icons (a game message), or every character as it is
+	// drawn (chat - see wrapChat).
+	private int chatWidth(PixFont font, boolean tags, String text) {
+		return tags ? ChatIcons.width(font, text) : font.stringWid(text);
 	}
 
 	private void pushMessage(String sender, String text, int type, boolean cont, int indent) {
