@@ -132,6 +132,19 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	public int cameraDragDeltaY;
 	public int mouseScrollDelta;
 
+	// Resizable mode. The canvas position of the mouse and of the last press, exactly as AWT gave
+	// them. In fixed mode mouseX/mouseY and the click fields are these same numbers and nothing else
+	// reads the raw ones. In resizable mode (remapMouse set) the events leave mouseX/mouseY alone
+	// and the game thread fills them from these in mapInput(), because there a canvas point has to
+	// be turned into the coordinates the rest of the client was written for - see Layout.
+	public volatile boolean remapMouse;
+	public volatile int rawMouseX = -1;
+	public volatile int rawMouseY = -1;
+	public int nextRawClickX;
+	public int nextRawClickY;
+	public int rawClickX;
+	public int rawClickY;
+
 	@ObfuscatedName("JWWAIQPI.a(III)V")
 	public void initApplication(int height, int width) {
 		this.setPreferredSize(new Dimension(width, height));
@@ -139,7 +152,7 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		this.canvasWidth = width;
 		this.canvasHeight = height;
 		this.frame = new ViewBox(this.canvasHeight, this, this.canvasWidth);
-		this.graphics = this.getBaseComponent().getGraphics();
+		this.graphics = this.acquireGraphics();
 		this.drawArea = new PixMap(this.canvasHeight, this.getBaseComponent(), this.canvasWidth);
 
 		this.startThread(this, 1);
@@ -151,7 +164,7 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 		this.canvasWidth = width;
 		this.canvasHeight = height;
-		this.graphics = this.getBaseComponent().getGraphics();
+		this.graphics = this.acquireGraphics();
 		this.drawArea = new PixMap(this.canvasHeight, this.getBaseComponent(), this.canvasWidth);
 
 		this.startThread(this, 1);
@@ -250,8 +263,11 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 				this.mouseClickX = this.nextMouseClickX;
 				this.mouseClickY = this.nextMouseClickY;
 				this.mouseClickTime = this.nextMouseClickTime;
+				this.rawClickX = this.nextRawClickX;
+				this.rawClickY = this.nextRawClickY;
 				this.nextMouseClickButton = 0;
 
+				this.mapInput();
 				this.update();
 
 				this.keyQueueReadPos = this.keyQueueWritePos;
@@ -264,6 +280,7 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 				this.fps = ratio * 1000 / (this.deltime * 256);
 			}
 
+			this.mapInput();
 			this.draw();
 
 			if (this.debug) {
@@ -358,6 +375,8 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		int y = e.getY();
 
 		this.idleCycles = 0;
+		this.nextRawClickX = x;
+		this.nextRawClickY = y;
 		this.nextMouseClickX = x;
 		this.nextMouseClickY = y;
 		this.nextMouseClickTime = System.currentTimeMillis();
@@ -407,8 +426,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 	public void mouseExited(MouseEvent e) {
 		this.idleCycles = 0;
-		this.mouseX = -1;
-		this.mouseY = -1;
+		this.rawMouseX = -1;
+		this.rawMouseY = -1;
+		if (!this.remapMouse) {
+			this.mouseX = -1;
+			this.mouseY = -1;
+		}
 	}
 
 	public void mouseDragged(MouseEvent e) {
@@ -416,8 +439,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		int y = e.getY();
 
 		this.idleCycles = 0;
-		this.mouseX = x;
-		this.mouseY = y;
+		this.rawMouseX = x;
+		this.rawMouseY = y;
+		if (!this.remapMouse) {
+			this.mouseX = x;
+			this.mouseY = y;
+		}
 
 		// QoL: accumulate the drag delta while the middle mouse button is held, for camera rotation.
 		// Client.java's updateOrbitCamera() consumes and resets this every game tick.
@@ -434,8 +461,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		int y = e.getY();
 
 		this.idleCycles = 0;
-		this.mouseX = x;
-		this.mouseY = y;
+		this.rawMouseX = x;
+		this.rawMouseY = y;
+		if (!this.remapMouse) {
+			this.mouseX = x;
+			this.mouseY = y;
+		}
 	}
 
 	// QoL: scroll wheel camera zoom. Client.java's updateOrbitCamera() consumes and resets this.
@@ -596,6 +627,19 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	public void load() {
 	}
 
+	/**
+	 * Called on the game thread before every update() and draw(): where a subclass turns the raw
+	 * canvas mouse (rawMouseX, rawClickX...) into mouseX/mouseY/mouseClickX/mouseClickY when it has
+	 * set remapMouse. Does nothing otherwise, and nothing here by default.
+	 */
+	public void mapInput() {
+	}
+
+	/** The Graphics the game draws its frame on: the component's own, unless a subclass says otherwise. */
+	public Graphics acquireGraphics() {
+		return this.getBaseComponent().getGraphics();
+	}
+
 	@ObfuscatedName("JWWAIQPI.a(B)V")
 	public void update() {
 	}
@@ -627,7 +671,7 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	@ObfuscatedName("JWWAIQPI.a(IZLjava/lang/String;)V")
 	public void drawProgress(int percent, String message) {
 		while (this.graphics == null) {
-			this.graphics = this.getBaseComponent().getGraphics();
+			this.graphics = this.acquireGraphics();
 
 			try {
 				this.getBaseComponent().repaint();

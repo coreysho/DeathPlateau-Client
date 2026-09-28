@@ -1,6 +1,7 @@
 // Shell for tools/clienttests/run_rooftest.py. getTopLevel() and the panel's geometry are spliced
 // in from jagex2/client/Client.java at run time - everything below them is the harness.
 import jagex2.client.QolSettings;
+import jagex2.client.Layout;
 import jagex2.dash3d.ClientPlayer;
 
 public class RoofTest {
@@ -216,17 +217,28 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 16, "sixteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 18, "eighteen settings now (" + QolSettings.COUNT + ")");
+		check(QOL_PANEL_ROWS == QolSettings.COUNT + 1,
+			"...and one more row under them, the resizable window, which is not a QolSettings switch");
 		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),
-			"...the last of them labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
+			"...the roofs one labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
 		// The panel has no paging. It has never needed it, and the only thing stopping it is that
 		// nobody has added enough settings - which is worth failing on rather than discovering.
 		check(c.qolPanelHeight() <= 334,
 			"the panel still fits the 334px viewport with no paging: " + c.qolPanelHeight() + "px");
 		check(c.qolPanelY() >= 0, "...and is centred without hanging off the top");
 		int room = (334 - QOL_PANEL_HEADER_H - QOL_PANEL_FOOTER_H) / QOL_PANEL_ROW_H;
-		check(room > QolSettings.COUNT,
-			"...with room for " + (room - QolSettings.COUNT) + " more before it needs paging");
+		check(room >= QOL_PANEL_ROWS,
+			"...with room for " + (room - QOL_PANEL_ROWS) + " more before it needs paging");
+		// Resizable: the panel is centred where a bank would be, in the part of the window no
+		// side panel or chatbox covers.
+		c.layout = Layout.resizable(1920, 1080);
+		int top = c.qolPanelY();
+		int open = c.layout.openH;
+		check(top >= 0 && top + c.qolPanelHeight() <= open && Math.abs(top - (open - c.qolPanelHeight()) / 2) <= 1,
+			"a 1920x1080 window centres it above the chatbox: y " + top + " in an open area " + open + " tall");
+		c.layout = Layout.fixed();
+		check(c.qolPanelY() == (334 - c.qolPanelHeight()) / 2, "...and the fixed screen where it always was");
 		// the toggle round-trips through the real store
 		boolean was = QolSettings.on(QolSettings.ROOFS_OFF);
 		QolSettings.toggle(QolSettings.ROOFS_OFF);
