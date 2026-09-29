@@ -410,6 +410,18 @@ public class Component {
 			contrast += obj.contrast;
 		}
 
+		if (type == 6) {
+			// The local player's whole body, dressed, for 474's Equipment Stats doll. Deliberately
+			// NOT kept in modelCache: that cache is keyed on (type << 16) + id, and the id the doll
+			// passes (Client.updateInterfaceContent, client code 328) is ClientPlayer.field1676
+			// XOR-folded down to 15 bits. Every worn item sits in the top half of that hash and is
+			// masked straight back out again, so a bare player, a player holding a staff and a
+			// player holding a whip all come out as the same id - and the first body built in a
+			// session was handed back for every change of clothes after it, weapon and all. The
+			// body is cached in ClientPlayer instead, on the whole appearance.
+			return Client.localPlayer.getBodyModel();
+		}
+
 		Model model = (Model) modelCache.get((long) ((type << 16) + id));
 		if (model != null) {
 			return model;
@@ -425,10 +437,6 @@ public class Component {
 			model = obj.getInvModel(50);
 		} else if (type == 5) {
 			model = null;
-		} else if (type == 6) {
-			// the local player's whole body, dressed (ClientPlayer.getBodyModel); id is a hash of what
-			// they are wearing, so a change of clothes is a new cache entry rather than a stale one
-			model = Client.localPlayer.getBodyModel();
 		}
 
 		if (model != null) {

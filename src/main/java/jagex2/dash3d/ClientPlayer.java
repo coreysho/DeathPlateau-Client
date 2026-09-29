@@ -96,6 +96,11 @@ public class ClientPlayer extends ClientEntity {
 	// markers, from the byte the engine appends to the appearance block. "" from a server without it.
 	public String icons = "";
 
+	/** The last body getBodyModel() built, and the field1676 it was built for. */
+	private Model bodyModel;
+
+	private long bodyModelAppearance;
+
 	@ObfuscatedName("ZGNGQRPJ.a(Z)LLZYQDKJV;")
 	public Model getHeadModel() {
 		if (!this.field1680) {
@@ -265,10 +270,18 @@ public class ClientPlayer extends ClientEntity {
 	 * itself - 474's Equipment Stats screen shows you standing in what you wear (Client client code 328,
 	 * Component model type 6). The same parts method573 builds the scene model from, or null while any
 	 * of them has not loaded yet.
+	 *
+	 * Cached here on the whole appearance rather than in Component.modelCache, whose key for an
+	 * interface model is a 15-bit fold of field1676 that every worn item falls outside of - see
+	 * Component.loadModel. Built afresh whenever field1676 changes, which is once per change of
+	 * clothes, and handed back unchanged in between: the doll is redrawn every frame.
 	 */
 	public Model getBodyModel() {
 		if (!this.field1680 || this.field1679 != null) {
 			return null;
+		}
+		if (this.bodyModel != null && this.bodyModelAppearance == this.field1676) {
+			return this.bodyModel;
 		}
 		for (int i = 0; i < 12; i++) {
 			int part = this.field1674[i];
@@ -305,6 +318,8 @@ public class ClientPlayer extends ClientEntity {
 				}
 			}
 		}
+		this.bodyModel = body;
+		this.bodyModelAppearance = this.field1676;
 		return body;
 	}
 

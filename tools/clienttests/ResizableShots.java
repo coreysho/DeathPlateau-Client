@@ -1,6 +1,7 @@
 // Drives the REAL client, logged in to a real (local) server, with no window: the frame is drawn onto
 // a BufferedImage and the mouse and keys are handed to the client's own listeners, so everything from
-// the AWT event to the pixels on screen is the client's code. See run_resizableshots.py.
+// the AWT event to the pixels on screen is the client's code. See run_resizableshots.py and, for the
+// "doll" mode (474's Equipment Stats window, weapon by weapon), run_dollshots.py.
 //
 // The same class runs against an older client jar too (everything version-specific is reflection),
 // which is how the fixed screen is compared with the client from before resizable mode existed.
@@ -429,33 +430,8 @@ public class ResizableShots extends Client {
 			System.exit(0);
 		}
 
-		// Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred.
-		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
-		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
-		click(lx + 765 / 2 + 80, ly + 503 / 2 + 40, false);
-		waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
-		set("username", user);
-		set("password", "shots123");
-		say("logging in as '" + get("username") + "'");
-		// The same account twice in a row (two client builds compared) is still logged in for a
-		// minute after the last run's socket closed: try again until the server lets it back in.
-		long giveUp = System.currentTimeMillis() + 150000L;
-		while (true) {
-			click(lx + 765 / 2 - 80, ly + 503 / 2 + 70, false);
-			try {
-				waitFor("the game", 15000, () -> app.ingame && geti("sceneState") == 2);
-				break;
-			} catch (RuntimeException e) {
-				if (app.ingame || System.currentTimeMillis() > giveUp) {
-					waitFor("the game", 45000, () -> app.ingame && geti("sceneState") == 2);
-					break;
-				}
-				say("not in yet (" + get("loginMessage0") + " " + get("loginMessage1") + "), trying again");
-				Thread.sleep(5000);
-			}
-		}
-		say("logged in");
-		waitFrames(50);
+		dollUser = user;
+		logIn(user, resizable, w, h);
 
 		// A quiet spot (nobody walks through it) so a frame can be compared with another run's.
 		command("::tele " + System.getProperty("shots.tele", "0,50,50,22,22"));
@@ -488,6 +464,10 @@ public class ResizableShots extends Client {
 		}
 		if (mode.equals("clicks")) {
 			clickRates(prefix);
+			return;
+		}
+		if (mode.equals("doll")) {
+			doll(prefix);
 			return;
 		}
 		shot(prefix + "_game");
@@ -540,6 +520,223 @@ public class ResizableShots extends Client {
 		say("done");
 		log.close();
 		System.exit(0);
+	}
+
+	/** Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred. */
+	static void logIn(String user, boolean resizable, int w, int h) throws Exception {
+		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
+		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
+		click(lx + 765 / 2 + 80, ly + 503 / 2 + 40, false);
+		waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
+		set("username", user);
+		set("password", "shots123");
+		say("logging in as '" + get("username") + "'");
+		// The same account twice in a row (two client builds compared) is still logged in for a
+		// minute after the last run's socket closed: try again until the server lets it back in.
+		long giveUp = System.currentTimeMillis() + 150000L;
+		while (true) {
+			click(lx + 765 / 2 - 80, ly + 503 / 2 + 70, false);
+			try {
+				waitFor("the game", 15000, () -> app.ingame && geti("sceneState") == 2);
+				break;
+			} catch (RuntimeException e) {
+				if (app.ingame || System.currentTimeMillis() > giveUp) {
+					waitFor("the game", 45000, () -> app.ingame && geti("sceneState") == 2);
+					break;
+				}
+				say("not in yet (" + get("loginMessage0") + " " + get("loginMessage1") + "), trying again");
+				Thread.sleep(5000);
+			}
+		}
+		say("logged in");
+		waitFrames(50);
+	}
+
+	// ------------------------------------------------------------------------ the equipment doll
+	/**
+	 * 474's Equipment Stats window (equipment_stats.if) with one weapon in hand and then another.
+	 * The figure in it is the component with client code 328, and its pose is meant to be the stand
+	 * seq the server gave the player for whatever they hold - a staff carried like a staff, a whip
+	 * like a whip. Every weapon named in -Dshots.weapons gets a frame of the window and a line of
+	 * what the client actually has for the doll, so a pose that never changes can be told apart from
+	 * one that changes to something that happens to look the same.
+	 *
+	 * Weapons are wielded from Equipment Stats' own side panel (equipment_side.if), which is where
+	 * the bug was reported: that leaves the window open, so the doll is asked to change pose in place.
+	 */
+	static void doll(String prefix) throws Exception {
+		String[] weapons = System.getProperty("shots.weapons", "staff_of_air,bronze_sword").split(",");
+		// A throwaway account's first login lands it on Tutorial Island, where login.rs2 jumps to
+		// @start_tutorial and clears every tab - including Worn Equipment, which this window hangs
+		// off. The ::tele in run() has already moved it away, so logging out and straight back in
+		// takes the ordinary branch (~initalltabs) and the tabs are there.
+		if (tabInterface(4) == -1) {
+			say("no Worn Equipment tab (still the tutorial's): logging out and back in");
+			call("logout");
+			waitFor("the title screen", 60000, () -> !app.ingame && geti("titleScreenState") == 0);
+			waitFrames(20);
+			logIn(dollUser, false, 765, 503);
+			waitFor("the scene", 60000, () -> geti("sceneState") == 2);
+			waitFrames(60);
+		}
+		say("Worn Equipment tab is interface " + tabInterface(4));
+		// a whip wants 70 Attack and a trident 75 Magic, and a throwaway account has neither
+		String[] stats = { "attack", "strength", "defence", "ranged", "magic", "hitpoints" };
+		for (int i = 0; i < stats.length; i++) {
+			command("::setstat " + stats[i] + " 99");
+		}
+		waitFrames(10);
+		// the Worn Equipment tab, then its "Show Equipment Stats" button (wornitems:stats_button is
+		// x=45 y=210 34x34 inside a sidebar the fixed layout draws at SIDE_X,205)
+		set("selectedTab", Integer.valueOf(4));
+		set("redrawSidebar", Boolean.TRUE);
+		set("redrawSideicons", Boolean.TRUE);
+		waitFrames(10);
+		int[] button = windowOf(((Number) staticField("SIDE_X")).intValue() + 45 + 17, 205 + 210 + 17);
+		click(button[0], button[1], false);
+		waitFor("the Equipment Stats window", 15000, () -> geti("viewportInterfaceId") != -1);
+		waitFrames(40);
+		dollSay("bare");
+		dollShot(prefix + "_bare");
+		for (int i = 0; i < weapons.length; i++) {
+			String weapon = weapons[i].trim();
+			// The slot ::give fills, found by watching the side panel change rather than by taking
+			// whichever slot holds something: wielding puts the weapon that came off back into the
+			// inventory, so from the second weapon on there is always something else in there.
+			int[] was = sideSlots();
+			int held = wornPart(RIGHT_HAND);
+			command("::give " + weapon);
+			int slot = filledSlot(was);
+			if (slot < 0) {
+				say("FAIL ::give " + weapon + " put nothing in the side panel");
+				continue;
+			}
+			int[] at = invSlotAt(slot);
+			click(at[0], at[1], false);
+			// A wield is a round trip - the op goes to the server, ~update_all answers with a new
+			// appearance - so the frame is taken once the hand has actually changed, not a fixed
+			// number of frames later.
+			for (int waited = 0; waited < 40 && wornPart(RIGHT_HAND) == held; waited++) {
+				waitFrames(5);
+			}
+			if (wornPart(RIGHT_HAND) == held) {
+				say("FAIL " + weapon + " would not go on from the side panel (slot " + slot + ")");
+			}
+			waitFrames(30);
+			dollSay(weapon);
+			dollShot(prefix + "_" + weapon);
+		}
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * A frame of the doll with the window facing straight ahead. The doll sways - client code 328
+	 * turns it by the sine of loopCycle - so two frames taken at whatever moment they happen to land
+	 * on show the figure at two different angles, and a pixel compare then measures the sway rather
+	 * than the pose. loopCycle is put back to 0 so every frame is taken at the same point of it, and
+	 * then straight back to where it was: the client counts everything else in loopCycle too, and a
+	 * session left sitting at 4 stopped taking typed chat.
+	 */
+	static void dollShot(String name) throws Exception {
+		int was = geti("loopCycle");
+		set("loopCycle", Integer.valueOf(0));
+		shot(name);
+		set("loopCycle", Integer.valueOf(was + 4));
+	}
+
+	/** The interface the server put behind one of the sidebar tabs, or -1 if it left that tab empty. */
+	static int tabInterface(int tab) {
+		return ((int[]) get("tabInterfaceId"))[tab];
+	}
+
+	/** The account this run logs in as, so the doll mode can log back in after a tutorial logout. */
+	static String dollUser;
+
+	/** Where the weapon sits in the appearance the client has for a player (ClientPlayer.field1674). */
+	static final int RIGHT_HAND = 3;
+
+	/** The obj in one slot of that appearance, or 0 for an empty slot. */
+	static int wornPart(int part) throws Exception {
+		Object self = Client.class.getField("localPlayer").get(null);
+		return self == null ? 0 : ((int[]) self.getClass().getField("field1674").get(self))[part];
+	}
+
+	/** What the side panel's inventory holds, slot by slot, as the client has it. */
+	static int[] sideSlots() throws Exception {
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		Object inv = findInv(comp, get, get.invoke(null, Integer.valueOf(geti("sidebarInterfaceId"))), 0);
+		if (inv == null) {
+			return new int[0];
+		}
+		return ((int[]) comp.getField("invSlotObjId").get(inv)).clone();
+	}
+
+	/** The slot that has gained something since these were read, waiting up to ten seconds for it. */
+	static int filledSlot(int[] was) throws Exception {
+		for (int waited = 0; waited < 40; waited++) {
+			waitFrames(5);
+			int[] now = sideSlots();
+			for (int slot = 0; slot < now.length && slot < was.length; slot++) {
+				if (now[slot] > 0 && now[slot] != was[slot]) {
+					return slot;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/** What the client has for the doll right now: the stand seq it was given, and the pose it draws. */
+	static void dollSay(String what) throws Exception {
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		Object doll = findCode328(comp, get, get.invoke(null, Integer.valueOf(geti("viewportInterfaceId"))), 0);
+		Object self = Client.class.getField("localPlayer").get(null);
+		int ready = self == null ? -2 : self.getClass().getField("field1181").getInt(self);
+		int[] worn = self == null ? null : (int[]) self.getClass().getField("field1674").get(self);
+		if (doll == null) {
+			say("doll " + what + ": no client-code-328 component in interface " + geti("viewportInterfaceId"));
+			return;
+		}
+		int anim = comp.getField("anim").getInt(doll);
+		int frame = comp.getField("field717").getInt(doll);
+		int cycle = comp.getField("field709").getInt(doll);
+		int frames = -1;
+		int transform = -1;
+		if (anim >= 0) {
+			Class<?> seqc = Class.forName("jagex2.config.SeqType");
+			Object[] seqs = (Object[]) seqc.getField("field775").get(null);
+			Object seq = seqs[anim];
+			frames = seqc.getField("field776").getInt(seq);
+			int[] primary = (int[]) seqc.getField("field777").get(seq);
+			transform = frame < primary.length ? primary[frame] : -1;
+		}
+		say("doll " + what + ": readyanim(field1181)=" + ready + " com.anim=" + anim + " com.id="
+			+ comp.getField("id").getInt(doll) + " frame=" + frame + "/" + frames + " cycle=" + cycle
+			+ " transform=" + transform + " modelType=" + comp.getField("modelType").getInt(doll)
+			+ " model=" + comp.getField("model").getInt(doll)
+			+ " worn=" + java.util.Arrays.toString(worn)
+			+ " hash=" + (self == null ? "?" : Long.toHexString(self.getClass().getField("field1676").getLong(self))));
+	}
+
+	/** The doll: the one component of an open interface that carries client code 328. */
+	static Object findCode328(Class<?> comp, Method get, Object c, int depth) throws Exception {
+		if (c == null || depth > 4) {
+			return null;
+		}
+		if (comp.getField("clientCode").getInt(c) == 328) {
+			return c;
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		for (int i = 0; kids != null && i < kids.length && kids[i] != -1; i++) {
+			Object found = findCode328(comp, get, get.invoke(null, Integer.valueOf(kids[i])), depth + 1);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -788,6 +985,11 @@ public class ResizableShots extends Client {
 	 * of a run has to go one slot further along.
 	 */
 	static int[] invSlotAt() throws Exception {
+		return invSlotAt(-1);
+	}
+
+	/** The middle of one slot of the inventory on screen, or of the first that holds something (-1). */
+	static int[] invSlotAt(int want) throws Exception {
 		Class<?> comp = Class.forName("jagex2.config.Component");
 		Method get = comp.getMethod("get", int.class);
 		int side = geti("sidebarInterfaceId");
@@ -817,7 +1019,7 @@ public class ResizableShots extends Client {
 		int pitchX = comp.getField("marginX").getInt(invComponent) + 32;
 		int pitchY = comp.getField("marginY").getInt(invComponent) + 32;
 		for (int slot = 0; slot < ids.length; slot++) {
-			if (ids[slot] > 0) {
+			if (want == slot || (want == -1 && ids[slot] > 0)) {
 				int x = ox + p[0] + slot % cols * pitchX + 16;
 				int y = oy + p[1] + slot / cols * pitchY + 16;
 				return side != -1 && oy == 205 ? windowOf(x, y) : new int[] { x, y };
