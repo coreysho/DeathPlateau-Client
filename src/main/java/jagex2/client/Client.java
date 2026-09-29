@@ -14843,6 +14843,11 @@ public class Client extends GameShell implements PixMap.Target {
 				// 474's Equipment Stats: you, standing in what you wear, idling
 				if (localPlayer != null) {
 					arg1.modelType = 6;
+					// A fold of the appearance, as 474's client sets it here. Every worn item sits above
+					// bit 15 of it and the mask drops them all, so this is the SAME number whatever the
+					// player is holding and it is no use as a cache key: Component.loadModel builds the
+					// body from the whole appearance instead and ignores this. Kept so a type-6
+					// component still has a model id at all.
 					arg1.model = (int) (localPlayer.field1676 ^ localPlayer.field1676 >>> 32) & 0x7FFF;
 					// A new stance (a weapon changed while the window is open) starts at its first frame:
 					// the frame counter belongs to the old one and can run past the new one's end.
