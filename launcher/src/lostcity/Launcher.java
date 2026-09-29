@@ -94,8 +94,12 @@ public final class Launcher {
      *      as the game opens, and cannot be resized
      *   3  the dev world gets its own client cache (storeid 33), so the two worlds stop overwriting
      *      each other's config - see the note where the storeid is passed
+     *   4  keeps a log in ~/.deathplateau/launcher.log, because a double-clicked launcher has no
+     *      console and its output was gone exactly when it was wanted
+     *   5  the game's own stdout and stderr go to ~/.deathplateau/client.log, so an exception that
+     *      ends GameShell's loop can be read afterwards instead of just freezing the window
      */
-    private static final int VERSION = 3;
+    private static final int VERSION = 5;
     private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
     @SuppressWarnings("unused") // read out of the compiled class, not called
     private static final String STAMP = STAMP_PREFIX + VERSION;
@@ -533,7 +537,14 @@ public final class Launcher {
             cmd.add("33");
         }
         log("running " + cmd);
-        new ProcessBuilder(cmd).directory(dir).start();
+        // THE GAME'S OWN OUTPUT GOES TO A FILE, because otherwise it goes nowhere. GameShell.run
+        // calls update() and draw() with no try/catch, so one exception ends the loop thread: the
+        // window keeps showing its last painted frame, nothing updates again, and the client cannot
+        // even report it. It looks exactly like a scene that is loading slowly and never finishes -
+        // which is how a Zul-andra teleport presented on 2026-09-29, with the stack trace going to a
+        // stderr nobody was reading. Redirected here, so the next one can be read afterwards.
+        // The redirect is the child's own, set by the OS, so it keeps working once this exits.
+        startClient(cmd);
         // ...and this window goes now, not whenever the JVM gets round to exiting: the game's own
         // window takes a few seconds to appear, and a launcher still on screen beside it looks like a
         // second client (reported from play 2026-09-27)
@@ -710,13 +721,40 @@ public final class Launcher {
         }
     }
 
-    private static void append(String line) throws IOException {
-        FileOutputStream out = new FileOutputStream(LOG, true);
+    /**
+     * Start the game with its stdout and stderr appended to ~/.deathplateau/client.log.
+     *
+     * Kept apart from the plain ProcessBuilder call the hand-over uses: that one starts another
+     * LAUNCHER, which writes launcher.log itself and would interleave two runs into one file.
+     */
+    private void startClient(List<String> cmd) throws IOException {
+        File out = new File(dir, "client.log");
+        try {
+            if (out.length() > LOG_MAX) {
+                File old = new File(dir, "client.log.old");
+                old.delete();
+                out.renameTo(old);
+            }
+            append(out, System.lineSeparator() + "---- " + stamp() + "  " + cmd + System.lineSeparator());
+            new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
+        } catch (Throwable e) {
+            // A log is never worth not starting the game for.
+            log("could not redirect the game's output (" + e + ") - starting it anyway");
+            new ProcessBuilder(cmd).directory(dir).start();
+        }
+    }
+
+    private static void append(File file, String line) throws IOException {
+        FileOutputStream out = new FileOutputStream(file, true);
         try {
             out.write(line.getBytes(StandardCharsets.UTF_8));
         } finally {
             out.close();
         }
+    }
+
+    private static void append(String line) throws IOException {
+        append(LOG, line);
     }
 
     private static String stamp() {
