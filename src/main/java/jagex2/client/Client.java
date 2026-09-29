@@ -15252,7 +15252,14 @@ public class Client extends GameShell implements PixMap.Target {
 			var2.centreString(CHAT_W / 2, CHAT_H - 6, 0, this.chatbackInput + "*");
 			Pix2D.hline(0, 0, CHAT_LOG_H, CHAT_W);
 		} else if (this.modalMessage != null) {
-			this.fontBold12.centreString(CHAT_W / 2, CHAT_IF_Y + 40, 0, this.modalMessage);
+			// Drawn the way the chat log draws a game message - through ChatIcons, so colour tags
+			// colour it, shadow tags shadow it and @cr4@ is a badge sprite. centreString drew the
+			// tags as letters, which both printed "@sh1@@cya@[Yell]" at the player and measured the
+			// line far too wide, so it was centred on the wrong width and ran off both edges. The
+			// server wraps game messages to 456 pixels measuring the same way ChatIcons.width does,
+			// so a line fits the box once its tags stop taking space.
+			int modalX = CHAT_W / 2 - ChatIcons.width(this.fontBold12, this.modalMessage) / 2;
+			ChatIcons.draw(this.fontBold12, this.imageModIcons, modalX, CHAT_IF_Y + 40, 0, this.modalMessage);
 			this.fontBold12.centreString(CHAT_W / 2, CHAT_IF_Y + 60, 128, "Click to continue");
 		} else if (this.chatInterfaceId != -1) {
 			this.drawInterface(CHAT_IF_Y, CHAT_IF_X, Component.get(this.chatInterfaceId), 0);
