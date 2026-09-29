@@ -2768,6 +2768,21 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.ni")
 	public long sceneLoadStartTime;
+	/**
+	 * When THIS scene load began. Not sceneLoadStartTime, which is restarted every six minutes to pace
+	 * the error report and would take the stuck note back off the screen each time.
+	 */
+	private long sceneLoadBegan;
+	/** checkScene's last answer: 0 once the scene is built, else -1 to -4. See sceneStuckNote. */
+	private int sceneStuckReason;
+	/** The note currently painted under "Loading - please wait", so it is repainted only when it changes. */
+	private String sceneStuckShown;
+	/**
+	 * How long a scene may sit unfinished before the loading screen starts saying why. Long enough
+	 * that an ordinary load on a slow connection never shows it - those finish in a second or two off
+	 * a warm cache, and a cold one is a progress bar before this point, not a stuck scene.
+	 */
+	private static final long SCENE_STUCK_MS = 20000L;
 
 	@ObfuscatedName("client.Ii")
 	public long lastWaveStartTime;
@@ -4589,6 +4604,8 @@ public class Client extends GameShell implements PixMap.Target {
 				this.menuSize = 0;
 				this.menuVisible = false;
 				this.sceneLoadStartTime = System.currentTimeMillis();
+				this.sceneLoadBegan = System.currentTimeMillis();
+				this.sceneStuckShown = null;
 			} else if (var8 == 16) {
 				this.loginMessage0 = "Login attempts exceeded.";
 				this.loginMessage1 = "Please wait 1 minute and try again.";
@@ -5214,9 +5231,24 @@ public class Client extends GameShell implements PixMap.Target {
 			this.showPopupMessage(null, "Loading - please wait.");
 			this.sceneState = 1;
 			this.sceneLoadStartTime = System.currentTimeMillis();
+			this.sceneLoadBegan = System.currentTimeMillis();
+			this.sceneStuckShown = null;
 		}
 		if (this.sceneState == 1) {
 			int var2 = this.checkScene();
+			this.sceneStuckReason = var2;
+			// The loading screen is painted ONCE, where the load starts, and nothing repaints it while
+			// the scene is coming in - so a scene that never finishes looks exactly like one that is
+			// merely slow, for ever. checkScene can sit at -3 indefinitely (a loc whose models will
+			// never resolve) with no timeout and no way out of it, and on 2026-09-29 a character had to
+			// be moved by editing its save from outside the server because of it. Once the load has
+			// plainly stopped getting anywhere, repaint with the reason underneath so the next one
+			// reports itself.
+			String note = this.sceneStuckNote();
+			if (note != null && !note.equals(this.sceneStuckShown)) {
+				this.sceneStuckShown = note;
+				this.showPopupMessage(note, "Loading - please wait.");
+			}
 			if (var2 != 0 && System.currentTimeMillis() - this.sceneLoadStartTime > 360000L) {
 				signlink.reporterror(this.username + " glcfb " + this.serverSeed + "," + var2 + "," + lowMem + "," + this.fileStreams[0] + "," + this.onDemand.remaining() + "," + this.currentLevel + "," + this.sceneCenterZoneX + "," + this.sceneCenterZoneZ);
 				this.sceneLoadStartTime = System.currentTimeMillis();
@@ -5257,6 +5289,7 @@ public class Client extends GameShell implements PixMap.Target {
 			return -4;
 		} else {
 			this.sceneState = 2;
+			this.sceneStuckShown = null;
 			World.field125 = this.currentLevel;
 			this.buildScene();
 			// MAP_BUILD_COMPLETE
@@ -10621,6 +10654,8 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 				this.sceneState = 1;
 				this.sceneLoadStartTime = System.currentTimeMillis();
+				this.sceneLoadBegan = System.currentTimeMillis();
+				this.sceneStuckShown = null;
 				this.showPopupMessage(null, "Loading - please wait.");
 				if (this.ptype == 222) {
 					int var119 = 0;
@@ -16379,6 +16414,40 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.a(ILjava/lang/String;Ljava/lang/String;)V")
+	/**
+	 * What to say under "Loading - please wait" when the scene has plainly stopped coming in, or null
+	 * while it is still making normal progress.
+	 *
+	 * The four codes are checkScene's own, and they are worth telling apart because they fail in
+	 * different places: -1 and -2 are a map or scenery FILE that has not arrived, so the download is
+	 * the thing to look at; -3 is a loc whose models cannot be resolved, which never recovers on its
+	 * own and means this client's cache does not match the world it is on; -4 is waiting on the
+	 * server. The outstanding file count separates a download still running from one that has
+	 * finished and left the scene short anyway.
+	 */
+	private String sceneStuckNote() {
+		if (this.sceneState != 1 || this.sceneStuckReason == 0) {
+			return null;
+		}
+		if (System.currentTimeMillis() - this.sceneLoadBegan < SCENE_STUCK_MS) {
+			return null;
+		}
+		String why;
+		if (this.sceneStuckReason == -1) {
+			why = "still waiting for map data";
+		} else if (this.sceneStuckReason == -2) {
+			why = "still waiting for scenery data";
+		} else if (this.sceneStuckReason == -3) {
+			why = "scenery models will not load - this client's cache does not match this world";
+		} else if (this.sceneStuckReason == -4) {
+			why = "waiting for the server";
+		} else {
+			why = "not finishing";
+		}
+		int outstanding = this.onDemand == null ? -1 : this.onDemand.remaining();
+		return why + " (code " + this.sceneStuckReason + ", " + outstanding + " files outstanding)";
+	}
+
 	public void showPopupMessage(String arg1, String arg2) {
 		if (this.areaViewport != null) {
 			this.areaViewport.bind();
