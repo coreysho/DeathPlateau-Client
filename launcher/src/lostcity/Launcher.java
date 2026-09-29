@@ -665,8 +665,62 @@ public final class Launcher {
         System.exit(1);
     }
 
+    /**
+     * Everything log(), status() and fail() say, kept in ~/.deathplateau/launcher.log.
+     *
+     * A launcher that is double-clicked has no console, so the one occasion anybody wants this output
+     * - something went wrong and the game did not start - is the one occasion it has gone. On
+     * 2026-09-29 a dev world came up on the wrong client cache and the question "which launcher
+     * actually ran, and what did it pass the client?" could not be answered at all; the line this
+     * already writes at the launch site names the storeid, and would have said so outright.
+     *
+     * Not the `dir` field, because log() is static and is called before there is an instance.
+     */
+    private static final File LOG = new File(new File(System.getProperty("user.home"), ".deathplateau"), "launcher.log");
+    /** Rolled to launcher.log.old past this, so a log cannot grow without end on a machine nobody tidies. */
+    private static final long LOG_MAX = 256L * 1024L;
+    private static boolean logStarted;
+
     private static void log(String text) {
         System.out.println("[launcher] " + text);
+        // NOTHING in here may throw. A launcher that dies because it could not write its own log is
+        // worse than a launcher with no log, and this runs before the window exists, so a failure
+        // would not even have anywhere to show itself.
+        try {
+            File home = LOG.getParentFile();
+            if (!home.isDirectory() && !home.mkdirs()) {
+                return;
+            }
+            if (!logStarted) {
+                logStarted = true;
+                if (LOG.length() > LOG_MAX) {
+                    File old = new File(home, "launcher.log.old");
+                    old.delete();
+                    LOG.renameTo(old);
+                }
+                // A header per run, because the interesting question is usually "what happened the
+                // LAST time I started it", and runs otherwise run together.
+                append(System.lineSeparator() + "---- " + stamp() + "  launcher " + VERSION
+                    + "  java " + System.getProperty("java.version")
+                    + "  " + System.getProperty("os.name") + System.lineSeparator());
+            }
+            append(stamp() + "  " + text + System.lineSeparator());
+        } catch (Throwable ignored) {
+            // a log is never worth a crash
+        }
+    }
+
+    private static void append(String line) throws IOException {
+        FileOutputStream out = new FileOutputStream(LOG, true);
+        try {
+            out.write(line.getBytes(StandardCharsets.UTF_8));
+        } finally {
+            out.close();
+        }
+    }
+
+    private static String stamp() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
     }
 
     // on the Swing thread - directly, when that is where we are already (a button's handler)
