@@ -9272,6 +9272,25 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.a(IIIIII)V")
+	/**
+	 * The minimap icon for a loc, or null when there is none to draw.
+	 *
+	 * imageMapscene holds ONE HUNDRED sprites and drawMinimapLoc used to index it with the loc's own
+	 * mapscene id and no check at all. A loc carrying a higher id - which is what an import from a
+	 * later cache produces, OSRS numbering them past 200 - threw ArrayIndexOutOfBoundsException from
+	 * inside update(), and GameShell.run calls update() with no try/catch, so the loop thread ended
+	 * and the window froze on whatever it had last painted. On 2026-09-29 that was "Loading - please
+	 * wait" after a Zul-andra teleport, for ever, through restarts, and the character had to be moved
+	 * by editing its save from outside the server.
+	 *
+	 * Those four locs have had their ids taken off (content zulandra.loc), but an icon that cannot be
+	 * drawn must never be able to do this again, whatever puts it there.
+	 */
+	private Pix8 mapsceneOf(LocType loc) {
+		int id = loc.field1649;
+		return id < 0 || id >= this.imageMapscene.length ? null : this.imageMapscene[id];
+	}
+
 	public void drawMinimapLoc(int arg0, int arg1, int arg2, int arg3, int arg5) {
 		int var7 = this.scene.method300(arg1, arg2, arg0);
 		if (var7 != 0) {
@@ -9345,7 +9364,7 @@ public class Client extends GameShell implements PixMap.Target {
 					}
 				}
 			} else {
-				Pix8 var17 = this.imageMapscene[var16.field1649];
+				Pix8 var17 = this.mapsceneOf(var16);
 				if (var17 != null) {
 					int var18 = (var16.field1655 * 4 - var17.wi) / 2;
 					int var19 = (var16.field1629 * 4 - var17.hi) / 2;
@@ -9361,7 +9380,7 @@ public class Client extends GameShell implements PixMap.Target {
 			int var24 = var20 >> 14 & 0x7FFF;
 			LocType var25 = LocType.method561(var24);
 			if (var25.field1649 != -1) {
-				Pix8 var26 = this.imageMapscene[var25.field1649];
+				Pix8 var26 = this.mapsceneOf(var25);
 				if (var26 != null) {
 					int var27 = (var25.field1655 * 4 - var26.wi) / 2;
 					int var28 = (var25.field1629 * 4 - var26.hi) / 2;
@@ -9392,7 +9411,7 @@ public class Client extends GameShell implements PixMap.Target {
 			int var33 = var32 >> 14 & 0x7FFF;
 			LocType var34 = LocType.method561(var33);
 			if (var34.field1649 != -1) {
-				Pix8 var35 = this.imageMapscene[var34.field1649];
+				Pix8 var35 = this.mapsceneOf(var34);
 				if (var35 != null) {
 					int var36 = (var34.field1655 * 4 - var35.wi) / 2;
 					int var37 = (var34.field1629 * 4 - var35.hi) / 2;
