@@ -92,8 +92,10 @@ public final class Launcher {
      *   1  the launcher as first released
      *   2  hands over to the launcher inside client.jar; World 1 / Dev world buttons; its window closes
      *      as the game opens, and cannot be resized
+     *   3  the dev world gets its own client cache (storeid 33), so the two worlds stop overwriting
+     *      each other's config - see the note where the storeid is passed
      */
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
     @SuppressWarnings("unused") // read out of the compiled class, not called
     private static final String STAMP = STAMP_PREFIX + VERSION;
@@ -515,7 +517,20 @@ public final class Launcher {
             cmd.add("0");
             cmd.add("highmem");
             cmd.add("members");
-            cmd.add("32");
+            // 33, NOT 32: the dev world gets its own cache directory. signlink.findcachedir names it
+            // ".file_store_" + storeid and accepts 32 to 34, and both worlds used to say 32 - one
+            // directory holding one world's config at a time, for two servers that are deliberately
+            // never on the same content.
+            //
+            // That is not merely wasteful, it strands people. A map's locs are checked in
+            // Client.checkScene: for every loc in the square it does `var4 &= locType.method566()`,
+            // and if that stays false checkScene returns -3 and the scene NEVER finishes loading -
+            // no timeout, no recovery, and no way out, because the cache is on disk and the same
+            // stale config comes back on the next login. It happened on 2026-09-29: a teleport to
+            // Zul-andra, whose map places loc 18635 - the very newest loc in the build, from the
+            // Zulrah round - onto a client still holding World 1's older config. The character could
+            // only be recovered by editing its save from outside the server.
+            cmd.add("33");
         }
         log("running " + cmd);
         new ProcessBuilder(cmd).directory(dir).start();
