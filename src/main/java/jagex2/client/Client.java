@@ -7858,18 +7858,7 @@ public class Client extends GameShell implements PixMap.Target {
 			}
 		}
 		backdrop.setPixels();
-		this.titleBackdrop = backdrop;
-		// the same picture flipped, for the tile either side of it: the art is a hall mirrored down
-		// its middle, so a flipped copy joins the original edge to edge with no seam
-		PixMap flipped = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
-		for (int y = 0; y < Layout.FIXED_H; y++) {
-			int row = y * Layout.FIXED_W;
-			for (int x = 0; x < Layout.FIXED_W; x++) {
-				flipped.data[row + x] = backdrop.data[row + Layout.FIXED_W - 1 - x];
-			}
-		}
-		flipped.setPixels();
-		this.titleBackdropFlipped = flipped;
+		this.titleBlur = this.blurredBackdrop(backdrop);
 		this.imageTitle2.bind();
 		// the loading screen has already filled the window - with black, because this did not exist
 		// yet when it did - so ask for it to be filled again now that it does
@@ -16026,8 +16015,7 @@ public class Client extends GameShell implements PixMap.Target {
 		this.flameBuffer3 = null;
 		this.imageFlamesLeft = null;
 		this.imageFlamesRight = null;
-		this.titleBackdrop = null;
-		this.titleBackdropFlipped = null;
+		this.titleBlur = null;
 	}
 
 	@ObfuscatedName("client.c(B)V")
@@ -16481,9 +16469,25 @@ public class Client extends GameShell implements PixMap.Target {
 	private java.awt.Graphics letterGraphics;
 	/** The window has been filled around the centred 765x503 screen. */
 	private boolean letterCleared;
-	/** The title screen's art as one 765x503 picture, for filling the window around it. */
-	private PixMap titleBackdrop;
-	private PixMap titleBackdropFlipped;
+	/** The title art shrunk, blurred and dimmed, for filling the window around the centred screen. */
+	private PixMap titleBlur;
+	/**
+	 * How small the blurred copy is kept. 128x84 holds the 765x503 art's shape to within a pixel of
+	 * its aspect, and shrinking that far is itself most of the blur: one pixel of it is the average
+	 * of about 36 of the art's, so nothing sharp survives the shrink.
+	 */
+	private static final int BLUR_W = 128;
+	private static final int BLUR_H = 84;
+	/** Box passes over the small copy, to take out the blockiness that averaging leaves behind. */
+	private static final int BLUR_PASSES = 3;
+	/**
+	 * How much of the art's brightness the surround keeps, out of 256. Dark enough that the crisp
+	 * title screen in the middle is plainly the brighter thing, and the one to look at.
+	 */
+	private static final int BLUR_DIM = 108;
+	/** How far the shadow around the centred screen reaches, and how dark it is where it meets it. */
+	private static final int SHADOW = 26;
+	private static final int SHADOW_ALPHA = 120;
 	/** World3D.init's pitch distances, kept from load() to rebuild its visibility for a new viewport. */
 	private int[] sceneDistances;
 	/** The viewport World3D's visibility tables were last built for. */
@@ -16732,46 +16736,135 @@ public class Client extends GameShell implements PixMap.Target {
 	 * art fills it instead, and the real title screen is drawn crisp over the middle of it as
 	 * before, so the logo, the login box and its buttons are pixel for pixel what they always were.
 	 *
-	 * TILED, not scaled. Both were rendered at 1920x1080 and compared. The art is one composition -
-	 * a stone hall with a brazier either side, a logo over the middle - so scaling it to cover the
-	 * window shows the same hall twice, once huge and soft behind and once small and sharp in front,
-	 * with the join between them a plain rectangle: it reads as a picture inside a picture. Tiling
-	 * has none of that: the art is the hall mirrored down its own middle, so a left-right flipped
-	 * copy of it joins the original edge to edge with no seam at all, and the window fills with one
-	 * long hall of arches and braziers at full sharpness. Above and below, where there is no more
-	 * hall to draw, each tile's top and bottom row of pixels are stretched out to the window's edge -
-	 * the ceiling's dark and the floor's mist, which carry on without anything to give them away.
+	 * BLURRED AND DIMMED, not tiled and not drawn sharp. This was tiled at first - the art is a hall
+	 * mirrored down its own middle, so a flipped copy joins it edge to edge with no seam - and the
+	 * seam was never the problem. The problem is that the picture has no outside: its left and right
+	 * 128 pixels are the brazier strips (imageTitle0 and imageTitle1), which end in a hard rectangle
+	 * because at 765x503 that edge IS the edge of the screen and nobody ever sees it. Repeat the art
+	 * and those rectangles land in the middle of the window, so the fire reads as two boxes pasted on
+	 * the wall. Drawing it sharp at any size has the same trouble somewhere.
+	 *
+	 * So the surround is the art with everything that could show a join taken out of it: shrunk to
+	 * BLUR_W x BLUR_H by averaging, box-blurred BLUR_PASSES times and dimmed to BLUR_DIM/256, then
+	 * scaled back over the whole window. What is left is the shape and colour of the hall - dark
+	 * stone, a warm glow at each side where the braziers were - with no edge anywhere in it, and the
+	 * real title screen sits crisp in the middle of it, plainly the thing you are meant to look at.
+	 * The blur is built once with the art, so the only per-frame cost is one scaled blit.
 	 *
 	 * In game (a fullscreen interface over the scene) there is no title art loaded and the surround
 	 * stays black, as it was.
 	 */
 	private void fillTitleSurround(java.awt.Graphics g, int w, int h) {
-		PixMap art = this.titleBackdrop;
-		PixMap flipped = this.titleBackdropFlipped;
-		if (art == null || flipped == null || this.ingame) {
+		PixMap blur = this.titleBlur;
+		if (blur == null || this.ingame) {
 			g.setColor(java.awt.Color.black);
 			g.fillRect(0, 0, w, h);
 			return;
 		}
-		int sw = Layout.FIXED_W;
-		int sh = Layout.FIXED_H;
-		int lx = this.layout.letterX;
-		int ly = this.layout.letterY;
-		art.setPixels();
-		flipped.setPixels();
-		int first = -((lx + sw - 1) / sw);
-		int last = (w - lx) / sw;
-		for (int k = first; k <= last; k++) {
-			int x = lx + k * sw;
-			PixMap piece = (k & 1) == 0 ? art : flipped;
-			g.drawImage(piece.image, x, ly, sw, sh, piece);
-			if (ly > 0) {
-				g.drawImage(piece.image, x, 0, x + sw, ly, 0, 0, sw, 1, piece);
-			}
-			if (ly + sh < h) {
-				g.drawImage(piece.image, x, ly + sh, x + sw, h, 0, sh - 1, sw, sh, piece);
+		blur.setPixels();
+		// Bilinear for this blit and this blit only. The hint lives on the Graphics, and the centred
+		// title screen is drawn through the same one - it must stay nearest-neighbour or every pixel
+		// of the login box goes soft.
+		java.awt.Graphics2D g2 = g instanceof java.awt.Graphics2D ? (java.awt.Graphics2D) g : null;
+		Object previous = null;
+		if (g2 != null) {
+			previous = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+		}
+		g.drawImage(blur.image, 0, 0, w, h, blur);
+		if (g2 != null) {
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+				previous == null ? java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR : previous);
+			// A shadow hugging the centred screen, so its edge reads as the edge of something laid on
+			// the window rather than as the art stopping. Rings of black a pixel thick, fading outwards,
+			// drawn OUTSIDE the 765x503 - the title screen is blitted over that rectangle every frame
+			// and would wipe anything drawn inside it.
+			int lx = this.layout.letterX;
+			int ly = this.layout.letterY;
+			for (int i = 0; i < SHADOW; i++) {
+				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
+				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
+				g2.drawRect(lx - i - 1, ly - i - 1, Layout.FIXED_W + 2 * i + 1, Layout.FIXED_H + 2 * i + 1);
 			}
 		}
+	}
+
+	/**
+	 * The art shrunk, blurred and dimmed, for fillTitleSurround. Shrinking by averaging whole blocks
+	 * is the blur that does most of the work - 765x503 down to 128x84 throws away every edge in the
+	 * picture at once - and the box passes after it take the blockiness out of what is left, so that
+	 * scaling it back up bilinear has only smooth gradients to interpolate.
+	 */
+	private PixMap blurredBackdrop(PixMap src) {
+		int[] small = new int[BLUR_W * BLUR_H];
+		for (int y = 0; y < BLUR_H; y++) {
+			int y0 = y * src.height / BLUR_H;
+			int y1 = (y + 1) * src.height / BLUR_H;
+			for (int x = 0; x < BLUR_W; x++) {
+				int x0 = x * src.width / BLUR_W;
+				int x1 = (x + 1) * src.width / BLUR_W;
+				int r = 0;
+				int gr = 0;
+				int b = 0;
+				int n = 0;
+				for (int sy = y0; sy < y1; sy++) {
+					int row = sy * src.width;
+					for (int sx = x0; sx < x1; sx++) {
+						int p = src.data[row + sx];
+						r += p >> 16 & 0xFF;
+						gr += p >> 8 & 0xFF;
+						b += p & 0xFF;
+						n++;
+					}
+				}
+				small[y * BLUR_W + x] = n == 0 ? 0 : ((r / n) << 16) + ((gr / n) << 8) + b / n;
+			}
+		}
+		for (int pass = 0; pass < BLUR_PASSES; pass++) {
+			boxBlur(small, BLUR_W, BLUR_H);
+		}
+		PixMap out = new PixMap(BLUR_H, this.getBaseComponent(), BLUR_W);
+		for (int i = 0; i < small.length; i++) {
+			int p = small[i];
+			int r = ((p >> 16 & 0xFF) * BLUR_DIM) >> 8;
+			int gr = ((p >> 8 & 0xFF) * BLUR_DIM) >> 8;
+			int b = ((p & 0xFF) * BLUR_DIM) >> 8;
+			out.data[i] = (r << 16) + (gr << 8) + b;
+		}
+		out.setPixels();
+		return out;
+	}
+
+	/** One 3x3 box pass over the small copy, in place. Edges average the neighbours they have. */
+	private static void boxBlur(int[] px, int w, int h) {
+		int[] tmp = new int[px.length];
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				int r = 0;
+				int g = 0;
+				int b = 0;
+				int n = 0;
+				for (int dy = -1; dy <= 1; dy++) {
+					int sy = y + dy;
+					if (sy < 0 || sy >= h) {
+						continue;
+					}
+					for (int dx = -1; dx <= 1; dx++) {
+						int sx = x + dx;
+						if (sx < 0 || sx >= w) {
+							continue;
+						}
+						int p = px[sy * w + sx];
+						r += p >> 16 & 0xFF;
+						g += p >> 8 & 0xFF;
+						b += p & 0xFF;
+						n++;
+					}
+				}
+				tmp[y * w + x] = ((r / n) << 16) + ((g / n) << 8) + b / n;
+			}
+		}
+		System.arraycopy(tmp, 0, px, 0, px.length);
 	}
 
 	/** PixMap.target: see the top of this section. */
