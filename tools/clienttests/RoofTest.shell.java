@@ -2,6 +2,7 @@
 // in from jagex2/client/Client.java at run time - everything below them is the harness.
 import jagex2.client.QolSettings;
 import jagex2.client.Layout;
+import jagex2.client.MenuSwaps;
 import jagex2.dash3d.ClientPlayer;
 
 public class RoofTest {
@@ -93,6 +94,8 @@ public class RoofTest {
 		sameTileTests();
 		System.out.println("3. the panel the switch lives in");
 		panelTests();
+		System.out.println("3b. the left-click swaps panel, which scrolls instead of fitting");
+		swapPanelTests();
 		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS")
 			: (fail + " FAILED of " + (pass + fail)));
@@ -245,5 +248,90 @@ public class RoofTest {
 		check(QolSettings.on(QolSettings.ROOFS_OFF) != was, "the switch flips");
 		QolSettings.toggle(QolSettings.ROOFS_OFF);
 		check(QolSettings.on(QolSettings.ROOFS_OFF) == was, "...and flips back");
+	}
+
+	// ---------------------------------------------------------------- 3b
+	/**
+	 * The swaps panel. Its rule is not the settings panel's "it must fit" - it cannot, 128 swaps is
+	 * 1920px of rows - it is "it must fit OR scroll, and either way it must be ON SCREEN". So every
+	 * check below is run at every list length that matters, in all three display modes: the panel
+	 * never hangs off the top (where the header and the way to close it are) or off the bottom
+	 * (where the hint is), and whatever it cannot show is reachable with the bar.
+	 *
+	 * Driven through swapPanelRows(int) and friends rather than through MenuSwaps, deliberately:
+	 * MenuSwaps.count() reads - and add() would WRITE - the player's real qol_swaps.dat.
+	 */
+	static final int[] SWAP_LENGTHS = { 0, 1, 16, 40, MenuSwaps.MAX };
+
+	static void swapPanelTests() {
+		RoofTest c = new RoofTest().fresh();
+		check(MenuSwaps.MAX >= 128,
+			"a cap a player will not reach: " + MenuSwaps.MAX + " swaps, where the panel's height used to allow 16");
+		check(SWAP_PANEL_ACTIONS == 1 && SWAP_PANEL_SCROLL_W == 16,
+			"one pinned action row, and the bar is the client's own 16px scrollbar sprite");
+
+		int[][] modes = { { Layout.FIXED, 765, 503 }, { Layout.CLASSIC, 1280, 800 },
+			{ Layout.CLASSIC, 1920, 1080 }, { Layout.MODERN, 1920, 1080 } };
+		for (int m = 0; m < modes.length; m++) {
+			c.layout = Layout.of(modes[m][0], modes[m][1], modes[m][2]);
+			String where = Layout.modeName(modes[m][0]) + " " + modes[m][1] + "x" + modes[m][2];
+			int open = c.layout.openH;
+			boolean onScreen = true;
+			boolean reachable = true;
+			for (int i = 0; i < SWAP_LENGTHS.length; i++) {
+				int n = SWAP_LENGTHS[i];
+				int h = c.swapPanelHeight(n);
+				int y = c.swapPanelY(n);
+				if (y < 0 || y + h > open) {
+					onScreen = false;
+					System.out.println("       " + n + " swaps: y " + y + " h " + h + " open " + open);
+				}
+				// Every swap is either drawn or scrolled to: the rows on screen plus the rows the
+				// bar can bring on screen have to be the whole list, with nothing falling off.
+				int shown = c.swapPanelRows(n) - SWAP_PANEL_ACTIONS;
+				c.swapScrollPx = Integer.MAX_VALUE;
+				int last = c.swapFirstRow(n) + shown;
+				if (n > 0 && (shown < 1 || last != Math.max(shown, n))) {
+					reachable = false;
+					System.out.println("       " + n + " swaps: shows " + shown + ", bottom of the list is " + last);
+				}
+			}
+			check(onScreen, "the panel is on screen at 0, 1, 16, 40 and " + MenuSwaps.MAX
+				+ " swaps - " + where + ", open area " + open + "px");
+			check(reachable, "...and every swap is either shown or scrollable to");
+		}
+
+		// The tight case, spelled out: the fixed 765x503 client, which is the one that cannot grow.
+		c.layout = Layout.fixed();
+		int room = c.swapPanelRows(MenuSwaps.MAX) - SWAP_PANEL_ACTIONS;
+		check(c.swapPanelHeight(MenuSwaps.MAX) <= Layout.VIEWPORT_H,
+			"fixed: a full list is " + c.swapPanelHeight(MenuSwaps.MAX) + "px, inside the 334px viewport, showing "
+				+ room + " swaps at a time");
+		check(c.swapScrollMax(MenuSwaps.MAX) == (MenuSwaps.MAX - room) * SWAP_PANEL_ROW_H,
+			"...with the other " + (MenuSwaps.MAX - room) + " behind the bar");
+		check(c.swapScrollMax(room) == 0 && c.swapScrollMax(16) == 0,
+			"...and no bar at all until the list outgrows the panel, so a player with 16 swaps sees what they always saw");
+		check(c.swapPanelHeight(16) == SWAP_PANEL_HEADER_H + 17 * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H
+				&& c.swapPanelY(16) == (Layout.VIEWPORT_H - c.swapPanelHeight(16)) / 2,
+			"...the same size and the same place the old 16-swap panel had: " + c.swapPanelHeight(16)
+				+ "px at y " + c.swapPanelY(16));
+
+		// A bigger window is used, not wasted.
+		c.layout = Layout.resizable(Layout.CLASSIC, 1920, 1080);
+		int wide = c.swapPanelRows(MenuSwaps.MAX) - SWAP_PANEL_ACTIONS;
+		check(wide > room, "a 1920x1080 window shows " + wide + " swaps at once where the fixed screen shows " + room);
+		check(Math.abs(c.swapPanelY(40) - (c.layout.openH - c.swapPanelHeight(40)) / 2) <= 1,
+			"...and the panel is still centred in the part of the window no panel covers");
+
+		// The scroll position is clamped as it is read, which is what lets cycle() shorten the list
+		// under a panel that is scrolled to the bottom.
+		c.layout = Layout.fixed();
+		c.swapScrollPx = 999999;
+		check(c.swapScroll(MenuSwaps.MAX) == c.swapScrollMax(MenuSwaps.MAX), "a scroll past the end stops at the end");
+		check(c.swapScroll(0) == 0, "...and a list that has just been emptied under it goes back to the top");
+		c.swapScrollPx = -500;
+		check(c.swapScroll(40) == 0, "a scroll past the top stops at the top");
+		c.swapScrollPx = 7 * SWAP_PANEL_ROW_H;
+		check(c.swapFirstRow(40) == 7, "...and the first row drawn is the scroll position in whole rows");
 	}
 }

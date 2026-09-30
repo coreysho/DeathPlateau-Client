@@ -382,7 +382,25 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int SWAP_PANEL_ROW_H = 15;
 	private static final int SWAP_PANEL_HEADER_H = 24;
 	private static final int SWAP_PANEL_FOOTER_H = 22;
-	private static final int SWAP_PANEL_ACTIONS = 1; // "clear all", above the list
+	// "Clear all swaps", above the list. The action rows do NOT scroll: it stays pinned under the
+	// header, so the way out of a long list is the first thing under the title rather than something
+	// to go and find. Only the swaps below it move.
+	private static final int SWAP_PANEL_ACTIONS = 1;
+	// THE SWAPS LIST SCROLLS, which is the only reason MenuSwaps.MAX could go from 16 to 128: the
+	// old cap was the panel's height, not the storage. The bar is drawScrollbar() - the same one the
+	// bank, the chatbox and every interface list use - so there is one scrollbar in this client and
+	// not a second one that looks nearly like it. 16 is the width of its "scrollbar" sprites.
+	private static final int SWAP_PANEL_SCROLL_W = 16;
+	// The panel is as tall as the open area leaves room for, less this margin top and bottom, so it
+	// never sits flush against the edge of the viewport or under the chatbox. That is what makes it
+	// work in all three display modes: 334px of open height in FIXED gives 18 rows, and the bigger
+	// open area of a resizable window is used rather than wasted (1280x800 classic gives 38).
+	private static final int SWAP_PANEL_MARGIN = 6;
+	// Rows per notch of the wheel. Three, not one: with 128 swaps allowed, a list a player actually
+	// filled would take a minute to walk one row at a time.
+	private static final int SWAP_PANEL_WHEEL_ROWS = 3;
+	/** How far the swaps list is scrolled, in pixels. Zeroed when the panel opens. */
+	private int swapScrollPx;
 	// handleViewportOptions() gives the "Walk here" entry this action. Swapping to it is how a
 	// player says "left-clicking this must not interact with it" - the reason walk-here is offered
 	// at all, and why it has to be promoted by action rather than by name: the entry carries no
@@ -1265,54 +1283,138 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 	}
 
+	/**
+	 * How many rows the panel shows at once - the pinned action rows and as many swaps as the
+	 * window has room for under them. Everything past that is reached with the scrollbar.
+	 *
+	 * Takes the number of swaps rather than reading MenuSwaps, because MenuSwaps.count() touches the
+	 * file on disk and the geometry is what RoofTest's panelTests() drives with 0, 16, 40 and MAX.
+	 */
+	private int swapPanelRows(int swaps) {
+		int want = SWAP_PANEL_ACTIONS + swaps;
+		int room = (this.layout.openH - 2 * SWAP_PANEL_MARGIN - SWAP_PANEL_HEADER_H - SWAP_PANEL_FOOTER_H)
+			/ SWAP_PANEL_ROW_H;
+		// A window too small to show one swap under the actions cannot happen - resizable mode never
+		// lays out below the fixed frame (Layout.MIN_H) and fixed is 334 - but the panel would be
+		// nothing but a header and a footer if it did, so the floor is here rather than assumed.
+		if (room < SWAP_PANEL_ACTIONS + 1) {
+			room = SWAP_PANEL_ACTIONS + 1;
+		}
+		return want < room ? want : room;
+	}
+
+	private int swapPanelHeight(int swaps) {
+		return SWAP_PANEL_HEADER_H + this.swapPanelRows(swaps) * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H;
+	}
+
 	private int swapPanelHeight() {
-		return SWAP_PANEL_HEADER_H + (SWAP_PANEL_ACTIONS + MenuSwaps.count()) * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H;
+		return this.swapPanelHeight(MenuSwaps.count());
 	}
 
 	private int swapPanelX() {
 		return this.layout.mainX + (512 - SWAP_PANEL_W) / 2;
 	}
 
+	/**
+	 * Centred in the open area - the part of the viewport no side panel or chatbox covers - which is
+	 * the same y the old "mainY + (334 - h) / 2" gave in every mode, because mainY is itself half of
+	 * whatever the open area has over 334. Written as the open area now that the panel can be taller
+	 * than 334: in a resizable window that is still centred, and the clamp keeps a panel that has
+	 * somehow outgrown its room hanging off the bottom rather than off the top, where the header and
+	 * the way to close it are.
+	 */
+	private int swapPanelY(int swaps) {
+		int y = (this.layout.openH - this.swapPanelHeight(swaps)) / 2;
+		return y < 0 ? 0 : y;
+	}
+
 	private int swapPanelY() {
-		return this.layout.mainY + (334 - this.swapPanelHeight()) / 2;
+		return this.swapPanelY(MenuSwaps.count());
+	}
+
+	/** How far the list can be scrolled, in pixels: zero while every swap is already on screen. */
+	private int swapScrollMax(int swaps) {
+		int hidden = swaps - (this.swapPanelRows(swaps) - SWAP_PANEL_ACTIONS);
+		return hidden > 0 ? hidden * SWAP_PANEL_ROW_H : 0;
+	}
+
+	/**
+	 * The scroll position, clamped as it is read. Clamping here and not at every place that moves it
+	 * is what makes removing a swap safe: cycle() can shorten the list under a panel scrolled to the
+	 * bottom, and the next frame simply reads a smaller number.
+	 */
+	private int swapScroll(int swaps) {
+		int max = this.swapScrollMax(swaps);
+		if (this.swapScrollPx > max) {
+			this.swapScrollPx = max;
+		}
+		if (this.swapScrollPx < 0) {
+			this.swapScrollPx = 0;
+		}
+		return this.swapScrollPx;
+	}
+
+	/**
+	 * The first swap shown. Rows are drawn whole - the list scrolls a row at a time even though the
+	 * position underneath is pixels - because half a line of "Attack on Guard" cut off by the footer
+	 * is harder to read than a list that steps.
+	 */
+	private int swapFirstRow(int swaps) {
+		return this.swapScroll(swaps) / SWAP_PANEL_ROW_H;
 	}
 
 	/** Called with areaViewport bound, so coordinates here are viewport-local. */
 	private void drawSwapPanel() {
+		int swaps = MenuSwaps.count();
 		int x = this.swapPanelX();
-		int y = this.swapPanelY();
-		int h = this.swapPanelHeight();
-		int rows = SWAP_PANEL_ACTIONS + MenuSwaps.count();
+		int y = this.swapPanelY(swaps);
+		int h = this.swapPanelHeight(swaps);
+		int rows = this.swapPanelRows(swaps);
+		int listRows = rows - SWAP_PANEL_ACTIONS;
+		int first = this.swapFirstRow(swaps);
+		int scrollMax = this.swapScrollMax(swaps);
+		// The bar takes its column out of every row's width, not just the ones beside it, so the
+		// "on <target>" of a long entry stops at the same place whether it is scrolled past or not.
+		int inner = SWAP_PANEL_W - (scrollMax > 0 ? SWAP_PANEL_SCROLL_W + 1 : 0);
 
 		Pix2D.fillRectTrans(0x000000, y, SWAP_PANEL_W, h, 200, x);
 		Pix2D.drawRect(y, h, 0x8B7B5A, x, SWAP_PANEL_W);
 
 		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Left-click swaps");
-		String close = "F10 / Esc to close";
+		String close = swaps > listRows
+			? (first + 1) + "-" + (first + listRows) + " of " + swaps + "   F10 / Esc to close"
+			: "F10 / Esc to close";
 		this.fontPlain12.drawString(x + SWAP_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
 		int mouseX = super.mouseX - this.layout.vpX;
 		int mouseY = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < rows; i++) {
 			int rowY = y + SWAP_PANEL_HEADER_H + i * SWAP_PANEL_ROW_H;
-			boolean hovered = mouseX >= x + 1 && mouseX < x + SWAP_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
+			boolean hovered = mouseX >= x + 1 && mouseX < x + inner - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
 			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, SWAP_PANEL_W - 2, SWAP_PANEL_ROW_H, 30, x + 1);
+				Pix2D.fillRectTrans(0xFFFFFF, rowY, inner - 2, SWAP_PANEL_ROW_H, 30, x + 1);
 			}
 			int baseline = rowY + SWAP_PANEL_ROW_H - 4;
 			if (i == 0) {
-				boolean can = MenuSwaps.count() > 0;
+				boolean can = swaps > 0;
 				this.fontPlain12.drawString(x + 10, can ? 0xC00000 : 0x707070, baseline, "[x]");
 				this.fontPlain12.drawString(x + 36, can ? 0xFFFFFF : 0x909090, baseline, "Clear all swaps");
 			} else {
-				int k = i - SWAP_PANEL_ACTIONS;
+				int k = first + i - SWAP_PANEL_ACTIONS;
 				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, ">");
 				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, MenuSwaps.verb(k));
 				String on = MenuSwaps.isAny(k) ? "any " + MenuSwaps.kindLabel(k) : MenuSwaps.target(k);
 				this.fontPlain12.drawString(x + 170, MenuSwaps.isAny(k) ? 0xFFB000 : 0xC8C8C8, baseline, "on " + on);
 			}
 		}
-		String hint = MenuSwaps.count() == 0
+		// Only when there is something off screen: an always-drawn bar with nowhere to go says the
+		// list is longer than it is, and drawScrollbar's grip arithmetic divides by (content - view).
+		if (scrollMax > 0) {
+			this.drawScrollbar(first * SWAP_PANEL_ROW_H, x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W,
+				listRows * SWAP_PANEL_ROW_H, swaps * SWAP_PANEL_ROW_H,
+				y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H);
+		}
+		String hint = swaps == 0
 			? "Shift + right-click something to set one. " + MenuSwaps.MAX + " can be stored."
 			: "Click a swap: this target -> any of its kind -> removed.";
 		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
@@ -1328,11 +1430,50 @@ public class Client extends GameShell implements PixMap.Target {
 			this.swapPanelOpen = false;
 			return;
 		}
+		int swaps = MenuSwaps.count();
+		int x = this.swapPanelX() + this.layout.vpX;
+		int y = this.swapPanelY(swaps) + this.layout.vpY;
+		int rows = this.swapPanelRows(swaps);
+		int listRows = rows - SWAP_PANEL_ACTIONS;
+		int listY = y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H;
+		int listH = listRows * SWAP_PANEL_ROW_H;
+		int barX = x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W;
+		int scrollMax = this.swapScrollMax(swaps);
+
+		// The bar answers a HELD button, not a click, which is what makes its two arrows repeat and
+		// its grip follow the mouse - the same deal handleScrollInput() gives every interface list.
+		// Done before the click is consumed below, so a press that lands on the bar never also
+		// counts as a press on the row behind it.
+		if (scrollMax > 0 && super.mouseButton == 1 && super.mouseX >= barX && super.mouseX < barX + SWAP_PANEL_SCROLL_W
+			&& super.mouseY >= listY && super.mouseY < listY + listH) {
+			if (super.mouseY < listY + 16) {
+				this.swapScrollPx -= this.dragCycles * 4;
+			} else if (super.mouseY >= listY + listH - 16) {
+				this.swapScrollPx += this.dragCycles * 4;
+			} else {
+				// The grip, sized as drawScrollbar() draws it, so the press lands where it looks.
+				int grip = (listH - 32) * listH / (swaps * SWAP_PANEL_ROW_H);
+				if (grip < 8) {
+					grip = 8;
+				}
+				// A list shorter than three rows cannot reach this branch today (the bar is only
+				// drawn once there are more swaps than rows, and the smallest window has 17 rows),
+				// but the divisor is a row height away from zero and a divide by zero here would
+				// take the client down.
+				int span = listH - 32 - grip;
+				if (span < 1) {
+					span = 1;
+				}
+				this.swapScrollPx = scrollMax * (super.mouseY - listY - 16 - grip / 2) / span;
+			}
+			this.swapScroll(swaps);
+			super.mouseClickButton = 0;
+			return;
+		}
+
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.swapPanelX() + this.layout.vpX;
-		int y = this.swapPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1340,15 +1481,44 @@ public class Client extends GameShell implements PixMap.Target {
 		if (clickX < x || clickX >= x + SWAP_PANEL_W) {
 			return;
 		}
+		// A click in the bar's column that got here (the press was elsewhere, or the bar is not
+		// drawn) must not fall through onto the row behind it.
+		if (scrollMax > 0 && clickX >= barX && clickY >= listY && clickY < listY + listH) {
+			return;
+		}
 		int row = (clickY - (y + SWAP_PANEL_HEADER_H)) / SWAP_PANEL_ROW_H;
-		if (clickY < y + SWAP_PANEL_HEADER_H || row < 0 || row >= SWAP_PANEL_ACTIONS + MenuSwaps.count()) {
+		if (clickY < y + SWAP_PANEL_HEADER_H || row < 0 || row >= rows) {
 			return;
 		}
 		if (row == 0) {
 			MenuSwaps.clear();
 		} else {
-			MenuSwaps.cycle(row - SWAP_PANEL_ACTIONS);
+			// The scroll position is what turns a row on screen into a swap in the list.
+			MenuSwaps.cycle(this.swapFirstRow(swaps) + row - SWAP_PANEL_ACTIONS);
 		}
+	}
+
+	/**
+	 * The wheel over the swaps panel. Arbitrated in updateOrbitCamera() with the menu, the ground
+	 * item pile and the camera rather than in handleSwapPanelInput(), because that is where the one
+	 * wheel delta of a cycle is handed out and the camera zoom would otherwise have eaten it before
+	 * the panel was ever asked - updateOrbitCamera() runs in update(), handleSwapPanelInput() in the
+	 * draw. Consumed whether it scrolled anything or not, on the same terms as the panel swallowing
+	 * clicks: while it is open, it owns the mouse.
+	 */
+	private void handleSwapPanelScroll() {
+		if (!this.swapPanelOpen || super.mouseScrollDelta == 0) {
+			return;
+		}
+		int swaps = MenuSwaps.count();
+		int x = this.swapPanelX() + this.layout.vpX;
+		int y = this.swapPanelY(swaps) + this.layout.vpY;
+		if (super.mouseX >= x && super.mouseX < x + SWAP_PANEL_W
+			&& super.mouseY >= y && super.mouseY < y + this.swapPanelHeight(swaps)) {
+			this.swapScrollPx += super.mouseScrollDelta * SWAP_PANEL_ROW_H * SWAP_PANEL_WHEEL_ROWS;
+			this.swapScroll(swaps);
+		}
+		super.mouseScrollDelta = 0;
 	}
 
 	private int giPanelHeight() {
@@ -6777,6 +6947,9 @@ public class Client extends GameShell implements PixMap.Target {
 			// the camera. Each consumes the delta when it takes it, so exactly one of the three acts
 			// on a turn - the order is the specificity: a menu is in front of everything, a pile is
 			// a thing you are pointing at, the camera is what is left.
+			// The swaps panel goes first: while it is open it is in front of all three and swallows
+			// the turn either way, exactly as it already swallows clicks. See handleSwapPanelScroll.
+			this.handleSwapPanelScroll();
 			this.handleMenuScroll();
 			this.handleGroundItemScroll();
 			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
@@ -6959,6 +7132,9 @@ public class Client extends GameShell implements PixMap.Target {
 					if (key == SWAP_PANEL_KEY && this.ingame && QolSettings.on(QolSettings.MENU_SWAPPER)) {
 						this.swapPanelOpen = !this.swapPanelOpen;
 						if (this.swapPanelOpen) {
+							// Back to the top every time it opens: a panel that remembered where it
+							// was left would open on the middle of the list with no sign of why.
+							this.swapScrollPx = 0;
 							this.closeInterfaces();
 						}
 						continue;

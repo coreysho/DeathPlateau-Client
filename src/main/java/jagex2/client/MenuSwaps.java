@@ -38,10 +38,22 @@ public final class MenuSwaps {
 	private static final String FILE_NAME = "qol_swaps.dat";
 
 	/**
-	 * Hard cap on stored swaps. Sized so the panel fits the 512x334 viewport without paging:
-	 * 24px header + (2 action rows + MAX rows) * 15 + 22px footer must stay under 334.
+	 * Hard cap on stored swaps. It used to be 16, sized so that the panel fit the 512x334 viewport
+	 * without paging; the panel scrolls now (Client.drawSwapPanel), so the screen no longer decides
+	 * how many a player may keep and this is only here to bound the arrays.
+	 *
+	 * 128 is a number a player will not reach: a swap is one rule about one kind of thing, and the
+	 * whole of 377's world - every npc worth a swap, every altar, every set of bones - does not add
+	 * up to that many decisions. A cap stays, rather than a growing list, for the two reasons this
+	 * class already lives by: kind/target/verb are plain arrays, and load() reads whatever is in the
+	 * file, so a corrupt or hand-written qol_swaps.dat must not be able to make the client allocate
+	 * without limit. Raising it costs three String slots each and nothing else.
+	 *
+	 * The file format did not change with it. load() stops at MAX and skips anything unparseable, so
+	 * a file written when this was 16 loads exactly as it did, and one written now with more than 16
+	 * lines is read by an older client as its first 16 - which is why FILE_VERSION stays at 1.
 	 */
-	public static final int MAX = 16;
+	public static final int MAX = 128;
 
 	/** Target value meaning "any target of this kind". */
 	public static final String ANY = "*";

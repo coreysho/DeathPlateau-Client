@@ -1,7 +1,8 @@
 // Drives the REAL client, logged in to a real (local) server, with no window: the frame is drawn onto
 // a BufferedImage and the mouse and keys are handed to the client's own listeners, so everything from
 // the AWT event to the pixels on screen is the client's code. See run_resizableshots.py and, for the
-// "doll" mode (474's Equipment Stats window, weapon by weapon), run_dollshots.py.
+// "doll" mode (474's Equipment Stats window, weapon by weapon), run_dollshots.py, and the
+// "swaps" mode (the F10 left-click swaps panel with a list too long to fit), run_swapshots.py.
 //
 // The same class runs against an older client jar too (everything version-specific is reflection),
 // which is how the fixed screen is compared with the client from before resizable mode existed.
@@ -9,12 +10,14 @@
 //   java -Dlostcity.host=127.0.0.1 -Dlostcity.port=43694 -Dlostcity.webport=8694 -Duser.home=<tmp>
 //        -cp <client jar><sep><dir of this class> ResizableShots <out dir> <fixed|resizable> <w> <h> <user>
 import jagex2.client.Client;
+import jagex2.client.MenuSwaps;
 import sign.signlink;
 
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileWriter;
@@ -385,8 +388,11 @@ public class ResizableShots extends Client {
 		String prefix = args.length > 5 ? args[5] : mode + "_" + w + "x" + h;
 		log = new PrintWriter(new FileWriter(new File(out, prefix + ".log")));
 		// "modern" is the same run as "resizable", in Old School's modern layout instead of its classic one
-		boolean modern = mode.equals("modern");
-		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title");
+		boolean modern = mode.equals("modern") || mode.equals("swapsmodern");
+		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
+		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
+		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
+			|| mode.equals("swapsclassic");
 		pinPitch = Integer.getInteger("shots.pitch", mode.equals("compare") ? 383 : 300);
 
 		seedRandom(377);
@@ -468,6 +474,10 @@ public class ResizableShots extends Client {
 		}
 		if (mode.equals("doll")) {
 			doll(prefix);
+			return;
+		}
+		if (mode.startsWith("swaps")) {
+			swaps(prefix);
 			return;
 		}
 		shot(prefix + "_game");
@@ -629,6 +639,155 @@ public class ResizableShots extends Client {
 		say("done");
 		log.close();
 		System.exit(0);
+	}
+
+	// ------------------------------------------------------------------------------ swaps (F10)
+	/**
+	 * The left-click swaps panel with a list far longer than it can show - the thing that used to be
+	 * impossible, because MenuSwaps.MAX was 16 and 16 was however many rows fitted the 334px
+	 * viewport. Forty swaps are put in through MenuSwaps itself (its own throwaway cache dir: the
+	 * harness sets signlink.storeid and user.home), the panel is opened with a real F10, and it is
+	 * scrolled with real wheel events through the client's own listener. Nothing here reaches past
+	 * the client's front door, so a frame is what a player would see.
+	 */
+	static void swaps(String prefix) throws Exception {
+		int want = Integer.getInteger("shots.swaps", 40).intValue();
+		MenuSwaps.clear();
+		String[] kinds = { "yel", "cya", "lre", "whi" };
+		String[] verbs = { "Attack", "Talk-to", "Bury", "Take", "Use", "Pickpocket", "Trade with", "Bank" };
+		String[] names = { "Guard", "Goblin", "Banker", "Bones", "Coins", "Yew tree", "Furnace", "Altar",
+			"Al Kharid warrior", "Hill giant", "Man", "Cow", "Chicken", "Rat", "Iron ore", "Lobster" };
+		for (int i = 0; i < want; i++) {
+			MenuSwaps.add(kinds[i % kinds.length], names[i % names.length] + " " + (i + 1), verbs[i % verbs.length]);
+		}
+		say(MenuSwaps.count() == want ? ("ok " + want + " swaps stored, where the old cap was 16")
+			: ("FAIL only " + MenuSwaps.count() + " of " + want + " swaps stored (MenuSwaps.MAX is " + MenuSwaps.MAX + ")"));
+
+		openSwaps();
+		int rows = ((Number) call("swapPanelRows", Integer.valueOf(want))).intValue();
+		int shown = rows - ((Number) staticField("SWAP_PANEL_ACTIONS")).intValue();
+		int max = ((Number) call("swapScrollMax", Integer.valueOf(want))).intValue();
+		say("ok the panel shows " + shown + " of " + want + " swaps, " + max + "px of list behind the bar");
+		shot(prefix + "_swaps_top");
+
+		// Enough notches to reach the bottom of any list, then a few more: the clamp is the thing
+		// being tested as much as the scrolling is.
+		int[] mid = swapPanelPoint(want, 60, rows / 2);
+		wheel(mid[0], mid[1], want);
+		int at = geti("swapScrollPx");
+		say(at == max ? ("ok the wheel reaches the bottom of the list and stops there (" + at + "px)")
+			: ("FAIL the wheel left the list at " + at + "px of " + max));
+		int first = ((Number) call("swapFirstRow", Integer.valueOf(want))).intValue();
+		say(first + shown == want ? ("ok the last swap stored is the last row drawn (" + (first + 1) + "-" + want + ")")
+			: ("FAIL showing " + (first + 1) + "-" + (first + shown) + " of " + want));
+		shot(prefix + "_swaps_bottom");
+
+		// The row a click lands on is read through the scroll position, not straight out of the
+		// list - the one thing scrolling could quietly get wrong. Cycling the bottom row turns THAT
+		// swap into a wildcard, so the check is which one changed.
+		String was = MenuSwaps.target(want - 1);
+		int[] last = swapPanelPoint(want, 60, rows - 1);
+		click(last[0], last[1], false);
+		waitFrames(10);
+		say(MenuSwaps.isAny(want - 1) ? ("ok a click on the bottom row cycles the bottom swap (" + was + ")")
+			: ("FAIL clicking the bottom row changed " + firstWildcard() + ", not " + was));
+		shot(prefix + "_swaps_clicked");
+
+		wheel(mid[0], mid[1], -want);
+		say(geti("swapScrollPx") == 0 ? "ok the wheel comes back to the top and stops there"
+			: ("FAIL the wheel left the list at " + geti("swapScrollPx") + "px going up"));
+		shot(prefix + "_swaps_backtotop");
+
+		// The bar's own input, which the wheel never touches: its two arrows, then a press near the
+		// foot of the track so the grip jumps there.
+		int listH = shown * ((Number) staticField("SWAP_PANEL_ROW_H")).intValue();
+		int[] down = swapBarPoint(want, listH - 8);
+		hold(down[0], down[1], 15);
+		int held = geti("swapScrollPx");
+		say(held > 0 ? ("ok holding the bar's down arrow scrolls the list (" + held + "px)")
+			: "FAIL holding the bar's down arrow did nothing");
+		int[] up = swapBarPoint(want, 8);
+		hold(up[0], up[1], 15);
+		say(geti("swapScrollPx") < held ? ("ok ...and its up arrow brings it back (" + geti("swapScrollPx") + "px)")
+			: ("FAIL the up arrow left the list at " + geti("swapScrollPx") + "px, from " + held));
+		int[] track = swapBarPoint(want, listH - 20);
+		hold(track[0], track[1], 4);
+		say(geti("swapScrollPx") == max ? "ok a press at the foot of the bar takes the grip to the bottom"
+			: ("FAIL a press at the foot of the bar left the list at " + geti("swapScrollPx") + "px of " + max));
+		shot(prefix + "_swaps_bardragged");
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/** F10 until the swaps panel is actually open, the way openSettings() does it for F9. */
+	static void openSwaps() throws Exception {
+		for (int i = 0; i < 4; i++) {
+			if (((Boolean) get("swapPanelOpen")).booleanValue()) {
+				return;
+			}
+			key(KeyEvent.VK_F10, (char) 0);
+			waitFrames(4);
+		}
+		say("FAIL the F10 swaps panel would not stay open");
+	}
+
+	/** A point inside the open swaps panel, in window coordinates: dx across, row down. */
+	static int[] swapPanelPoint(int swaps, int dx, int row) throws Exception {
+		int hdr = ((Number) staticField("SWAP_PANEL_HEADER_H")).intValue();
+		int rh = ((Number) staticField("SWAP_PANEL_ROW_H")).intValue();
+		return new int[] {
+			((Number) call("swapPanelX")).intValue() + ((Number) layoutField("vpScreenX")).intValue() + dx,
+			((Number) call("swapPanelY", Integer.valueOf(swaps))).intValue()
+				+ ((Number) layoutField("vpScreenY")).intValue() + hdr + row * rh + rh / 2
+		};
+	}
+
+	/** A point on the swaps panel's scrollbar, dy pixels down its track, in window coordinates. */
+	static int[] swapBarPoint(int swaps, int dy) throws Exception {
+		int w = ((Number) staticField("SWAP_PANEL_W")).intValue();
+		int bar = ((Number) staticField("SWAP_PANEL_SCROLL_W")).intValue();
+		int actions = ((Number) staticField("SWAP_PANEL_ACTIONS")).intValue();
+		int rh = ((Number) staticField("SWAP_PANEL_ROW_H")).intValue();
+		int[] at = swapPanelPoint(swaps, w - 1 - bar + bar / 2, actions);
+		return new int[] { at[0], at[1] - rh / 2 + dy };
+	}
+
+	/** A press held down for a few frames and then released: what an arrow or a grip answers. */
+	static void hold(int x, int y, int frames) throws Exception {
+		hover(x, y);
+		waitFrames(2);
+		app.mousePressed(new MouseEvent(app, MouseEvent.MOUSE_PRESSED, System.currentTimeMillis(), 0, x, y, 1, false, MouseEvent.BUTTON1));
+		waitFrames(frames);
+		app.mouseReleased(new MouseEvent(app, MouseEvent.MOUSE_RELEASED, System.currentTimeMillis(), 0, x, y, 1, false, MouseEvent.BUTTON1));
+		waitFrames(3);
+	}
+
+	/** Which swap ended up a wildcard, for a FAIL message that says what went wrong instead of that it did. */
+	static String firstWildcard() {
+		for (int i = 0; i < MenuSwaps.count(); i++) {
+			if (MenuSwaps.isAny(i)) {
+				return "#" + (i + 1) + " (" + MenuSwaps.verb(i) + ")";
+			}
+		}
+		return "nothing";
+	}
+
+	/**
+	 * Wheel notches through the client's own listener, one per pass: GameShell accumulates them into
+	 * a single delta that one update() consumes, so ten notches sent in one breath are one turn of
+	 * the wheel as far as the client is concerned.
+	 */
+	static void wheel(int x, int y, int notches) throws Exception {
+		hover(x, y);
+		waitFrames(2);
+		int step = notches < 0 ? -1 : 1;
+		for (int i = 0; i < Math.abs(notches); i++) {
+			app.mouseWheelMoved(new MouseWheelEvent(app, MouseWheelEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0,
+				x, y, 0, false, MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, step));
+			waitFrames(2);
+		}
+		waitFrames(3);
 	}
 
 	/**
