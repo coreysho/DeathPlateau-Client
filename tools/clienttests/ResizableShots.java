@@ -11,6 +11,7 @@
 //        -cp <client jar><sep><dir of this class> ResizableShots <out dir> <fixed|resizable> <w> <h> <user>
 import jagex2.client.Client;
 import jagex2.client.MenuSwaps;
+import jagex2.dash3d.ClientNpc;
 import sign.signlink;
 
 import java.awt.Graphics;
@@ -327,6 +328,18 @@ public class ResizableShots extends Client {
 		log.flush();
 	}
 
+	/** ESC the right-click menu and any chat dialogue, so a frame is a frame of the SCENE. */
+	static void clearOverlays() throws Exception {
+		try {
+			Object vis = get("menuVisible");
+			if (vis instanceof Boolean && ((Boolean) vis).booleanValue()) {
+				key(KeyEvent.VK_ESCAPE, (char) 27);
+				waitFrames(2);
+			}
+		} catch (RuntimeException ignored) {
+		}
+	}
+
 	static void shot(String name) throws Exception {
 		waitFrames(3);
 		BufferedImage copy;
@@ -392,8 +405,15 @@ public class ResizableShots extends Client {
 		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
 		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
 		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
-			|| mode.equals("swapsclassic");
-		pinPitch = Integer.getInteger("shots.pitch", mode.equals("compare") ? 383 : 300);
+			|| mode.equals("swapsclassic")
+			// Zulrah is a five-tile snake in a horseshoe arena: the fixed 765x503 box shows its head
+			// and nothing of the platform its clouds are on.
+			|| mode.equals("zulrah");
+		// 383 is straight down and 128 is nearly level. The interface modes want the steep default,
+		// which keeps the scene out of the way; a boss wants to be looked AT, so the zulrah mode sits
+		// low enough to see the snake stand up out of the water and the clouds lie on the floor.
+		pinPitch = Integer.getInteger("shots.pitch",
+			mode.equals("compare") ? 383 : mode.equals("zulrah") ? 160 : 300);
 
 		seedRandom(377);
 		// The local server's own (throwaway) login key, not the live world's.
@@ -478,6 +498,10 @@ public class ResizableShots extends Client {
 		}
 		if (mode.startsWith("swaps")) {
 			swaps(prefix);
+			return;
+		}
+		if (mode.equals("zulrah")) {
+			zulrah(prefix);
 			return;
 		}
 		shot(prefix + "_game");
@@ -1463,5 +1487,300 @@ public class ResizableShots extends Client {
 		key(KeyEvent.VK_F9, (char) 0);
 		waitFrames(10);
 		say("resizable checks: " + ok + " ok, " + bad + " failed");
+	}
+
+	// ------------------------------------------------------------------------ Zulrah
+	/**
+	 * ZULRAH, PHOTOGRAPHED. Four rounds of this boss were sourced from the cache, asserted in a sim
+	 * and handed over, and four times the owner came back with something that LOOKED wrong - a dive
+	 * with no dive in it, a venom cloud with the wrong model, attack animations a beat out. A sim
+	 * cannot see any of that. It can say npc_anim was called and with which id, and every one of
+	 * those reports was of an npc_anim that HAD been called, correctly, with the wrong animation.
+	 *
+	 * So this mode does the thing no sim can. It logs the real client in to a local engine, takes
+	 * the priestess's boat out to the shrine, and then for a few hundred frames writes down what the
+	 * CLIENT has: which sequence each Zulrah is playing, which frame of it, and how many venom
+	 * clouds are on the floor - and photographs every moment that sequence changes. What comes out
+	 * is a strip of frames covering a dive, the empty water, a surfacing, a cloud lying on a tile
+	 * and each colour's attack, with the seq id printed beside each one.
+	 *
+	 * -Dshots.zulseqs=id:name,id:name,... labels the ids, so the log reads "zulrah_dive_serpentine"
+	 * rather than "5239"; run_zulrahshots.py builds that list out of content/pack/seq.pack.
+	 */
+	static void zulrah(String prefix) throws Exception {
+		// A fight you can watch is a fight you survive: 41 a hit, two of those a beat in the Jad
+		// phase, and venom on top. The stats go up here and the hitpoints are topped up in the loop
+		// below, because the point of this run is the animation and not the difficulty.
+		String[] zstats = { "attack", "strength", "defence", "ranged", "magic", "hitpoints", "prayer" };
+		for (int i = 0; i < zstats.length; i++) {
+			command("::setstat " + zstats[i] + " 99");
+		}
+		// Priestess Zul-Gwenwynig will not row anyone who has not volunteered, and volunteering is a
+		// conversation. This is the varp that conversation sets.
+		command("::setvar zulrah_volunteered 1");
+		// ^zulandra_dock - the last plank of Zul-Andra's pier, which is the tile the boat is boarded
+		// from.
+		command("::tele " + System.getProperty("shots.zultele", "0,34,47,37,48"));
+		waitFrames(80);
+		waitFor("the Zul-Andra scene", 60000, () -> geti("sceneState") == 2);
+		waitFrames(60);
+		shot(prefix + "_pier");
+		board();
+		waitFor("the shrine", 90000, () -> zulNpc() != null);
+		waitFrames(20);
+		say("in the shrine");
+		shot(prefix + "_shrine");
+		// Attack it, so the fight is a fight: the beat runs off the player's own timer
+		// ([timer,zulrah_fight]) whatever the player does, but a player who never swings never sees
+		// the block animation and never has the snake's attention.
+		// NO ATTACK AND NO WEAPON. The fight runs off [timer,zulrah_fight] on the player whose
+		// instance this is, not off the snake's ap trigger, so Zulrah fights whether it is being hit
+		// or not - which is the whole reason that timer exists (zulrah_fight.rs2 says why). Swinging
+		// at it bought one thing, the block animation, and cost two: an unarmed swing throws
+		// player_combat.rs2's sound_synth on a null weapon sound and puts a script-error dialogue up,
+		// and finding something to swing WITH meant right-clicking a 1280x800 viewport looking for a
+		// Wield that is in a tab nobody opened. That sweep took long enough for a 99-hitpoint player
+		// standing in a venom cloud to die, which is what the second run of this mode did: eight
+		// hundred frames of an empty shrine. Watching is what this mode is for.
+
+		int want = Integer.getInteger("shots.zulframes", 900).intValue();
+		int maxShots = Integer.getInteger("shots.zulmax", 40).intValue();
+		int lastSeq = -999;
+		String lastColour = "";
+		int shots = 0, gone = 0, seenClouds = 0;
+		StringBuilder strip = new StringBuilder();
+		for (int f = 0; f < want; f++) {
+			waitFrames(1);
+			if (f % 60 == 0) {
+				command("::setstat hitpoints 99");
+			}
+			clearOverlays();
+			ClientNpc z = zulNpc();
+			int clouds = cloudCount();
+			if (clouds > seenClouds) {
+				seenClouds = clouds;
+			}
+			if (z == null) {
+				// The snake is parked on level 3 between phases, where the client is never told it
+				// exists at all. Counting those frames IS the check on the submerged window.
+				gone++;
+				if (lastSeq != -999) {
+					say(String.format("frame %4d  ZULRAH NOT IN THE SCENE (clouds on the floor: %d)", f, clouds));
+					if (shots < maxShots) {
+						shot(prefix + "_" + two(shots) + "_under");
+						shots++;
+					}
+					strip.append("[under] ");
+					lastSeq = -999;
+					lastColour = "";
+				}
+				continue;
+			}
+			int seq = z.field1171;
+			String colour = z.field1370 == null ? "?" : String.valueOf(z.field1370.field1455);
+			if (seq != lastSeq || !colour.equals(lastColour)) {
+				say(String.format("frame %4d  seq %-30s frame %2d  npc '%s'  clouds %d",
+					f, seqLabel(seq), z.field1172, colour, clouds));
+				if (shots < maxShots) {
+					shot(prefix + "_" + two(shots) + "_" + seqFile(seq));
+					shots++;
+					// A DIVE AND A RISE GET A BURST, because one frame of them proves nothing. The
+					// first frame of a rise is the snake not there yet - that is what a rise starts
+					// from - so a single shot on the change looks exactly like the empty water it
+					// follows. Five frames spread across the animation is the difference between
+					// "the seq was set" and "the snake came up out of the water".
+					String label = seqLabel(seq);
+					if (label.startsWith("zulrah_dive") || label.startsWith("zulrah_rise")) {
+						for (int b = 1; b <= 5 && shots < maxShots; b++) {
+							waitFrames(3);
+							clearOverlays();
+							ClientNpc zb = zulNpc();
+							shot(prefix + "_" + two(shots) + "_" + seqFile(seq) + "_b" + b
+								+ (zb == null ? "_gone" : "_f" + zb.field1172));
+							shots++;
+						}
+					}
+				}
+				strip.append(seqLabel(seq)).append(' ');
+				lastSeq = seq;
+				lastColour = colour;
+			}
+			// A cloud on the floor deserves a frame of its own, once.
+			if (clouds > 0 && !cloudShot) {
+				cloudShot = true;
+				shot(prefix + "_cloud");
+				say("clouds on the floor: " + clouds + ", spotanim ids " + cloudNames());
+			}
+		}
+		say("frames with no Zulrah in the scene: " + gone);
+		say("most map spotanims drawn at once: " + seenClouds);
+		say("what the client played, in order: " + strip);
+	}
+
+	static boolean cloudShot = false;
+
+	static String two(int n) {
+		return (n < 10 ? "0" : "") + n;
+	}
+
+	/** The Zulrah in the scene, of whatever colour, or null while it is under the water. */
+	static ClientNpc zulNpc() {
+		try {
+			synchronized (LOCK) {
+				int count = geti("npcCount");
+				int[] ids = (int[]) get("npcIds");
+				ClientNpc[] all = (ClientNpc[]) get("npcs");
+				for (int i = 0; i < count; i++) {
+					ClientNpc n = all[ids[i]];
+					if (n != null && n.field1370 != null && "Zulrah".equals(n.field1370.field1455)) {
+						return n;
+					}
+				}
+			}
+		} catch (RuntimeException ignored) {
+		}
+		return null;
+	}
+
+	/** Board the priestess's boat: right-click the pier until a Board turns up, then take it. */
+	static void board() throws Exception {
+		if (menuSweep("Board") == null) {
+			throw new RuntimeException("no Board option anywhere on the pier - the boat is not in view");
+		}
+		say("boarding");
+		waitFrames(150);
+	}
+
+	/**
+	 * Right-click a grid over the viewport until a menu carries the wanted verb, then take that row
+	 * with the client's own useMenuOption. Sweeping beats computing a screen position: the boat's
+	 * tile is known but its pixels depend on the camera, and a menu either has the option or it does
+	 * not.
+	 */
+	static int[] menuSweep(String verb) throws Exception {
+		int w = canvas.getWidth(), h = canvas.getHeight();
+		int cx = w / 2, cy = (h - 180) / 2;
+		// OUTWARD FROM THE MIDDLE, AND IT GIVES UP. A raster scan of a 1280x800 window is a couple of
+		// thousand right-clicks at two frames each, which is minutes - long enough for the thing
+		// being looked for to move, and long enough for the player to die standing in a cloud. What
+		// is being looked for is under the camera, so the rings start there and stop after a few
+		// hundred probes with an honest null.
+		int probes = 0, cap = Integer.getInteger("shots.sweepcap", 400).intValue();
+		for (int ring = 0; ring * 40 < Math.max(w, h) && probes < cap; ring++) {
+			for (int dy = -ring; dy <= ring && probes < cap; dy++) {
+				for (int dx = -ring; dx <= ring && probes < cap; dx++) {
+					if (ring > 0 && Math.abs(dx) != ring && Math.abs(dy) != ring) {
+						continue;               // only the new edge of this ring
+					}
+					int x = cx + dx * 44, y = cy + dy * 34;
+					if (x < 20 || y < 40 || x > w - 40 || y > h - 190) {
+						continue;
+					}
+					probes++;
+					click(x, y, true);
+					waitFrames(2);
+					Integer row = menuRowOf(verb);
+					if (row != null) {
+						synchronized (LOCK) {
+							call("useMenuOption", row);
+						}
+						waitFrames(10);
+						say("found '" + verb + "' at " + x + "," + y + " after " + probes + " probes");
+						return new int[] { x, y };
+					}
+					key(KeyEvent.VK_ESCAPE, (char) 27);
+					waitFrames(1);
+				}
+			}
+		}
+		say("no '" + verb + "' after " + probes + " probes");
+		return null;
+	}
+
+	/** The raw menuOption index whose text starts with this verb, or null. */
+	static Integer menuRowOf(String verb) {
+		synchronized (LOCK) {
+			Object vis = get("menuVisible");
+			if (!(vis instanceof Boolean) || !((Boolean) vis).booleanValue()) {
+				return null;
+			}
+			String[] opts = (String[]) get("menuOption");
+			int size = geti("menuSize");
+			for (int i = 0; i < size; i++) {
+				String o = opts[i] == null ? "" : opts[i].replaceAll("@...@", "");
+				if (o.startsWith(verb)) {
+					return Integer.valueOf(i);
+				}
+			}
+		}
+		return null;
+	}
+
+	/** How many map spotanims the client is drawing right now - the venom clouds are these. */
+	static int cloudCount() {
+		int n = 0;
+		synchronized (LOCK) {
+			try {
+				jagex2.datastruct.LinkList list = (jagex2.datastruct.LinkList) get("spotanims");
+				for (Object o = list.head(); o != null; o = list.next()) {
+					n++;
+				}
+			} catch (RuntimeException ignored) {
+			} catch (LinkageError ignored) {
+			}
+		}
+		return n;
+	}
+
+	/** Their spotanim ids, so the cloud on the floor can be told from the orbs that flew to it. */
+	static String cloudNames() {
+		StringBuilder b = new StringBuilder();
+		synchronized (LOCK) {
+			try {
+				jagex2.datastruct.LinkList list = (jagex2.datastruct.LinkList) get("spotanims");
+				for (Object o = list.head(); o != null; o = list.next()) {
+					jagex2.dash3d.MapSpotAnim m = (jagex2.dash3d.MapSpotAnim) o;
+					b.append(spotanimId(m.field1530)).append(' ');
+				}
+			} catch (RuntimeException ignored) {
+			} catch (LinkageError ignored) {
+			}
+		}
+		return b.toString();
+	}
+
+	static int spotanimId(jagex2.config.SpotAnimType t) {
+		jagex2.config.SpotAnimType[] all = jagex2.config.SpotAnimType.field1297;
+		for (int i = 0; all != null && i < all.length; i++) {
+			if (all[i] == t) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	static java.util.Map<Integer, String> zulSeqs;
+
+	static String seqLabel(int id) {
+		if (zulSeqs == null) {
+			zulSeqs = new java.util.HashMap<Integer, String>();
+			String spec = System.getProperty("shots.zulseqs", "");
+			String[] parts = spec.split(",");
+			for (int i = 0; i < parts.length; i++) {
+				int c = parts[i].indexOf(':');
+				if (c > 0) {
+					zulSeqs.put(Integer.valueOf(parts[i].substring(0, c).trim()), parts[i].substring(c + 1).trim());
+				}
+			}
+		}
+		if (id < 0) {
+			return "(none-standing)";
+		}
+		String n = zulSeqs.get(Integer.valueOf(id));
+		return n == null ? String.valueOf(id) : (n + "-" + id);
+	}
+
+	static String seqFile(int id) {
+		return seqLabel(id).replaceAll("[^A-Za-z0-9_-]", "");
 	}
 }
