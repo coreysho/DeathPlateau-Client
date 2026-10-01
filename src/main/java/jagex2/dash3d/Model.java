@@ -5,6 +5,7 @@ import jagex2.graphics.Pix2D;
 import jagex2.graphics.Pix3D;
 import jagex2.io.OnDemandProvider;
 import jagex2.io.Packet;
+import jagex2.client.DevLog;
 
 public class Model extends ModelSource {
 
@@ -1075,12 +1076,28 @@ public class Model extends ModelSource {
 	}
 
 	@ObfuscatedName("LZYQDKJV.a(IB)V")
+	/** How many frames have drawn in the base pose because their animation had not arrived. */
+	private static int missingFrames = 0;
+
 	public void applyTransform(int arg0) {
 		if (this.field1225 == null || arg0 == -1) {
 			return;
 		}
 		AnimFrame var3 = AnimFrame.get(arg0);
 		if (var3 == null) {
+			// THE FRAME IS NOT HERE YET, so no transform is applied and the model draws in its BASE
+			// POSE for this frame instead of the pose the animation wanted. On a snake that is a jump
+			// big enough to read as the thing blinking.
+			//
+			// Animation sets stream on demand exactly like models do - Client.java handles archive 1
+			// by calling AnimFrame.method262 on whatever arrives - and Zulrah brought 477 newly
+			// imported frames with it. This says how often a frame is wanted before it lands, which
+			// the npcmodel counter could not: that one went quiet on the second fight while the
+			// flicker did not.
+			missingFrames++;
+			if (missingFrames <= 12 || missingFrames % 200 == 0) {
+				DevLog.log("animframe", "not posed #" + missingFrames + " - frame " + arg0 + " not loaded");
+			}
 			return;
 		}
 		AnimBase var4 = var3.base;
