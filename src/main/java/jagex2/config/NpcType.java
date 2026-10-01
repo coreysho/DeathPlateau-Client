@@ -83,8 +83,8 @@ public class NpcType {
 	@ObfuscatedName("SLDUQHOR.o")
 	public static LruCache field1438 = new LruCache(30);
 
-	/** The last npc whose model was not ready, so the log says it once rather than every frame. */
-	private static long lastUnbuilt = -1L;
+	/** How many frames have been skipped for want of a model, across every npc. */
+	private static int unbuiltCount = 0;
 
 	@ObfuscatedName("SLDUQHOR.C")
 	public static int field1452;
@@ -340,13 +340,18 @@ public class NpcType {
 				//
 				// Rate-limited to one line per npc type: a model that is not ready is not ready on every
 				// frame until it loads, and an unthrottled log would be the whole file.
-				if (lastUnbuilt != this.field1431) {
-					lastUnbuilt = this.field1431;
+				// COUNTED, not just announced. The first version logged once per npc and that could not
+				// tell a single blink while a model streams in from a model that never arrives and is
+				// re-requested every frame for ever - which are different bugs with different fixes.
+				// The count says which: a handful of frames is the stream, hundreds is a loop.
+				unbuiltCount++;
+				if (unbuiltCount <= 12 || unbuiltCount % 200 == 0) {
 					StringBuilder ids = new StringBuilder();
 					for (int i = 0; i < this.field1429.length; i++) {
 						ids.append(i > 0 ? "," : "").append(this.field1429[i]);
 					}
-					DevLog.log("npcmodel", "not drawn - model data not ready: key=" + this.field1431 + " models=" + ids);
+					DevLog.log("npcmodel", "not drawn #" + unbuiltCount + " - model data not ready: key="
+						+ this.field1431 + " models=" + ids);
 				}
 				return null;
 			}
