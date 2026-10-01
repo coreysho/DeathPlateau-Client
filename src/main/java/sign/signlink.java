@@ -115,8 +115,27 @@ public class signlink implements Runnable {
 		} catch (Exception ex) {
 		}
 		try {
+			// THE CACHE IS NOT ALLOWED TO BE BIGGER THAN THE GAME.
+			//
+			// This deleted the whole file store at startup once it passed FIFTY MEGABYTES, which is
+			// the number the original client shipped with when the game it cached was smaller than
+			// that. This build's data/pack is 86.9 MB. So every player whose cache had filled up was
+			// having it wiped on EVERY LAUNCH, and then re-downloading the entire game as they walked
+			// around in it: models arriving while you look at them, animation frames arriving while
+			// they play.
+			//
+			// That is the Zulrah flicker. The boss brought 477 newly imported animation frames and
+			// three new models with it, so a fight is where a re-streaming cache shows worst - the
+			// npc is not drawn at all while a model is in flight (NpcType.method475 returns null) and
+			// draws in its base pose while a frame is (Model.applyTransform gives up), and the owner
+			// saw both as blinking. It is also why the Kalphite Queen looked fine: whatever had
+			// already arrived this session stayed arrived.
+			//
+			// 512MB keeps the guard - a cache that runs away is still caught - while leaving room for
+			// a build several times this one. The size is the only thing that changes; a cache under
+			// the cap is kept exactly as before.
 			File var2 = new File(var1 + "main_file_cache.dat");
-			if (var2.exists() && var2.length() > 52428800L) {
+			if (var2.exists() && var2.length() > 536870912L) {
 				var2.delete();
 			}
 			cache_dat = new RandomAccessFile(var1 + "main_file_cache.dat", "rw");
