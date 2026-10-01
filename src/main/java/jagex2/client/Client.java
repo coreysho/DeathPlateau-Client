@@ -3259,6 +3259,10 @@ public class Client extends GameShell implements PixMap.Target {
 		try {
 			System.out.println(SERVER_NAME);
 			DevLog.log("SESSION", "=== DEV CLIENT === logging every menu action, chat message, and login/logout to console + dev-client.log");
+			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
+			// and there was no way to tell "frames are fine" from "this client predates that check",
+			// which wasted a round. Any log can now answer it on its own first line.
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
