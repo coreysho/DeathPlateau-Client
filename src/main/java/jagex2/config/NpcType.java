@@ -7,6 +7,7 @@ import jagex2.dash3d.Model;
 import jagex2.datastruct.LruCache;
 import jagex2.io.Jagfile;
 import jagex2.io.Packet;
+import jagex2.client.DevLog;
 
 public class NpcType {
 
@@ -81,6 +82,9 @@ public class NpcType {
 
 	@ObfuscatedName("SLDUQHOR.o")
 	public static LruCache field1438 = new LruCache(30);
+
+	/** The last npc whose model was not ready, so the log says it once rather than every frame. */
+	private static long lastUnbuilt = -1L;
 
 	@ObfuscatedName("SLDUQHOR.C")
 	public static int field1452;
@@ -326,6 +330,24 @@ public class NpcType {
 				}
 			}
 			if (var7) {
+				// WHY THE NPC IS NOT DRAWN THIS FRAME, which until now was silent.
+				//
+				// Returning null here means the caller draws nothing: the npc vanishes for that frame
+				// and comes back when its model data is resident. One frame of that is exactly what a
+				// player reports as "it flickers", and nothing anywhere said it had happened - the
+				// server cannot see it, and the only other instrument was a client harness that could
+				// not reliably reach the fight.
+				//
+				// Rate-limited to one line per npc type: a model that is not ready is not ready on every
+				// frame until it loads, and an unthrottled log would be the whole file.
+				if (lastUnbuilt != this.field1431) {
+					lastUnbuilt = this.field1431;
+					StringBuilder ids = new StringBuilder();
+					for (int i = 0; i < this.field1429.length; i++) {
+						ids.append(i > 0 ? "," : "").append(this.field1429[i]);
+					}
+					DevLog.log("npcmodel", "not drawn - model data not ready: key=" + this.field1431 + " models=" + ids);
+				}
 				return null;
 			}
 			Model[] var9 = new Model[this.field1429.length];
