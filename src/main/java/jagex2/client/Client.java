@@ -3262,7 +3262,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
 			// and there was no way to tell "frames are fine" from "this client predates that check",
 			// which wasted a round. Any log can now answer it on its own first line.
-			DevLog.log("SESSION", "diagnostics: npcmodel, animframe");
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -8571,6 +8571,9 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.a(IZ)V")
+	/** How many npcs have been dropped for sitting outside the 104x104 scene. */
+	private static int offScene = 0;
+
 	public void pushPlayers(boolean arg1) {
 		for (int var4 = 0; var4 < this.npcCount; var4++) {
 			ClientNpc var5 = this.npcs[this.npcIds[var4]];
@@ -8578,6 +8581,19 @@ public class Client extends GameShell implements PixMap.Target {
 			if (var5 != null && var5.method351() && var5.field1370.field1447 == arg1 && var5.field1370.method473()) {
 				int var7 = var5.field1157 >> 7;
 				int var8 = var5.field1158 >> 7;
+				// THE NPC EXISTS BUT IS NOT PUT IN THE SCENE, which is the last way one can be absent
+				// that nothing reported. The server sent it, the client has it in npcs[], and then it
+				// is dropped here for being outside the 104x104 the scene covers - so no model is ever
+				// asked for and the npcmodel and animframe counters stay silent while the thing is
+				// plainly gone. That is the shape of what the owner describes: away for a tick, back
+				// the next, with every other instrument quiet.
+				if (!(var7 >= 0 && var7 < 104 && var8 >= 0 && var8 < 104)) {
+					offScene++;
+					if (offScene <= 12 || offScene % 200 == 0) {
+						DevLog.log("offscene", "npc #" + offScene + " not in scene: tile " + var7 + "," + var8
+							+ " (scene is 0..103)  key=" + var5.field1370.field1431 + " size=" + var5.field1148);
+					}
+				}
 				if (var7 >= 0 && var7 < 104 && var8 >= 0 && var8 < 104) {
 					if (var5.field1148 == 1 && (var5.field1157 & 0x7F) == 64 && (var5.field1158 & 0x7F) == 64) {
 						if (this.tileLastOccupiedCycle[var7][var8] == this.sceneCycle) {
