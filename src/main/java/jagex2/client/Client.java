@@ -3262,7 +3262,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
 			// and there was no way to tell "frames are fine" from "this client predates that check",
 			// which wasted a round. Any log can now answer it on its own first line.
-			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene");
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -8574,10 +8574,38 @@ public class Client extends GameShell implements PixMap.Target {
 	/** How many npcs have been dropped for sitting outside the 104x104 scene. */
 	private static int offScene = 0;
 
+	/** Lines written by the Zulrah draw trace, so a long fight cannot fill the disk. */
+	private static int zdraw = 0;
+
 	public void pushPlayers(boolean arg1) {
 		for (int var4 = 0; var4 < this.npcCount; var4++) {
 			ClientNpc var5 = this.npcs[this.npcIds[var4]];
 			int var6 = (this.npcIds[var4] << 14) + 536870912;
+			// ZULRAH DRAW TRACE. Everything that could stop the snake being drawn has now been ruled
+			// out by measurement: the server never drops it from the npc list except to dive, the
+			// model builds (npcmodel is near silent since models are requested at changetype), no
+			// animation frame is ever missing, and offscene has never once fired. So it IS drawn, and
+			// the remaining ways it can still look absent are that it is drawn COLLAPSED, drawn
+			// SOMEWHERE ELSE, or drawn and then covered. One line a frame tells all three apart:
+			// field1141 is the height of the last model built for it (collapse), field1157/1158 are
+			// its fine position (a jump), and the seq/frame pair says what it was doing at the time.
+			//
+			// Types 4920-4922 are the three Zulrah forms in this build's npc.pack. Hardcoded on
+			// purpose: this is a trace for one bug, not a feature.
+			if (var5 != null && var5.field1370 != null && var5.field1370.field1431 >= 4920
+				&& var5.field1370.field1431 <= 4922 && zdraw < 3000) {
+				zdraw++;
+				DevLog.log("zdraw", "pass=" + arg1
+					+ " type=" + var5.field1370.field1431
+					+ " gate=" + (var5.field1370.field1447 == arg1 ? 1 : 0)
+					+ " multi=" + (var5.field1370.method473() ? 1 : 0)
+					+ " tile=" + (var5.field1157 >> 7) + "," + (var5.field1158 >> 7)
+					+ " fine=" + var5.field1157 + "," + var5.field1158
+					+ " h=" + var5.field1141
+					+ " seq=" + var5.field1171 + ":" + var5.field1172 + ":" + var5.field1174
+					+ " sec=" + var5.field1135 + ":" + var5.field1136
+					+ " spot=" + var5.field1161);
+			}
 			if (var5 != null && var5.method351() && var5.field1370.field1447 == arg1 && var5.field1370.method473()) {
 				int var7 = var5.field1157 >> 7;
 				int var8 = var5.field1158 >> 7;
