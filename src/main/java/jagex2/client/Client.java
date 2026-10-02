@@ -12281,6 +12281,9 @@ public class Client extends GameShell implements PixMap.Target {
 			}
 			int var9 = arg0.gBit(1);
 			var5.field1370 = NpcType.get(arg0.gBit(13));
+			// Get the model data moving the moment the npc appears, not the first time something
+			// tries to draw it - see NpcType.requestModels.
+			var5.field1370.requestModels();
 			var5.field1148 = var5.field1370.field1445;
 			var5.field1147 = var5.field1370.field1454;
 			var5.field1166 = var5.field1370.field1448;
@@ -12302,6 +12305,10 @@ public class Client extends GameShell implements PixMap.Target {
 			if ((var8 & 0x1) != 0) {
 				// CHANGETYPE
 				var7.field1370 = NpcType.get(arg0.g2_alt2());
+				// The one that matters for a boss that changes form: Zulrah's changetype arrives
+				// while it is submerged on another level, so this gets the new colour's model a
+				// couple of ticks' head start on the rise that draws it.
+				var7.field1370.requestModels();
 				var7.field1148 = var7.field1370.field1445;
 				var7.field1147 = var7.field1370.field1454;
 				var7.field1166 = var7.field1370.field1448;

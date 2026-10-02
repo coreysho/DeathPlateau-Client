@@ -344,8 +344,12 @@ public class NpcType {
 				// tell a single blink while a model streams in from a model that never arrives and is
 				// re-requested every frame for ever - which are different bugs with different fixes.
 				// The count says which: a handful of frames is the stream, hundreds is a loop.
+				// RATE LIMITED TOO HARD TO ANSWER THE QUESTION. This logged the first 12 and then
+				// every 200th, so a session with 13 of these and a session with 199 of them produced
+				// identical logs - and "how often" was exactly what had to be known. Every 10th after
+				// the first 12 stays readable and still counts.
 				unbuiltCount++;
-				if (unbuiltCount <= 12 || unbuiltCount % 200 == 0) {
+				if (unbuiltCount <= 12 || unbuiltCount % 10 == 0) {
 					StringBuilder ids = new StringBuilder();
 					for (int i = 0; i < this.field1429.length; i++) {
 						ids.append(i > 0 ? "," : "").append(this.field1429[i]);
@@ -390,6 +394,47 @@ public class NpcType {
 			var12.field1227 = true;
 		}
 		return var12;
+	}
+
+	/**
+	 * Ask the on-demand loader for this npc's model data NOW, rather than at the moment something
+	 * tries to draw it.
+	 *
+	 * WHY: Model.method360 both answers "is the data here?" and, when it is not, REQUESTS it - and
+	 * NpcType.method475 is the only thing that calls it, at draw time. So the first frame an npc is
+	 * drawn is the frame the request goes out, and the npc is not drawn at all until the data lands.
+	 * Caught in a Zulrah fight, from the owner's own dev-client.log:
+	 *
+	 *   [18:02:35.675] [npcmodel] not drawn #3 - model data not ready: key=4920 models=24241
+	 *   ... six consecutive frames ...
+	 *   [18:02:47.448] [npcmodel] not drawn #9  - key=4921   the magma form, twelve seconds later
+	 *   [18:03:01.887] [npcmodel] not drawn #11 - key=4922   tanzanite, fourteen seconds after that
+	 *
+	 * One blink per colour, at the exact moment that colour first surfaces. Zulrah is the worst case
+	 * because changeType swaps it between three models of about 22KB each, but nothing here is about
+	 * Zulrah: every npc in the game is drawn for the first time one request too late.
+	 *
+	 * Called when the client LEARNS a type - an npc entering the local list, and a changetype - both
+	 * of which happen before anything asks for a model. For Zulrah the changetype lands while it is
+	 * submerged on another level, so the request gets a couple of ticks' head start on the rise.
+	 *
+	 * Costs nothing when the data is already here: method360 returns true and does not re-request.
+	 */
+	public void requestModels() {
+		if (this.field1425 != null) {
+			// a multi npc has no models of its own - ask for whichever child it resolves to
+			NpcType var1 = this.method476();
+			if (var1 != null) {
+				var1.requestModels();
+			}
+			return;
+		}
+		if (this.field1429 == null) {
+			return;
+		}
+		for (int var2 = 0; var2 < this.field1429.length; var2++) {
+			Model.method360(this.field1429[var2]);
+		}
 	}
 
 	@ObfuscatedName("SLDUQHOR.b(Z)LSLDUQHOR;")
