@@ -1,5 +1,6 @@
 package jagex2.dash3d;
 
+import jagex2.client.DevLog;
 import deob.ObfuscatedName;
 import jagex2.datastruct.LinkList;
 import jagex2.graphics.Pix2D;
@@ -459,6 +460,10 @@ public class World3D {
 		return this.method287(arg0, arg6, arg2, arg1, arg8, var12, var13, arg9, arg3, arg5, false, arg10, arg4);
 	}
 
+	/** Entities dropped because a tile under them was full, and near-misses at the old cap of 5. */
+	private static int tileFull = 0;
+	private static int tileCrowd = 0;
+
 	@ObfuscatedName("KJCMXHNO.a(ILZOXDNIET;IIZIIIII)Z")
 	public boolean method285(int arg0, ModelSource arg1, int arg2, int arg3, boolean arg4, int arg5, int arg6, int arg7, int arg8, int arg9) {
 		if (arg1 == null) {
@@ -496,15 +501,41 @@ public class World3D {
 
 	@ObfuscatedName("KJCMXHNO.a(IIIIIIIILZOXDNIET;IZIB)Z")
 	public boolean method287(int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, ModelSource arg8, int arg9, boolean arg10, int arg11, byte arg12) {
+		// WHAT THIS LOOP DOES WHEN IT FAILS: returns false, and the caller draws nothing. The entity
+		// is not clipped, not queued and not drawn - it is simply absent for the frame. See
+		// Square.CAPACITY for why that cap being five made the largest thing on screen the first to
+		// go, and why Zulrah was the thing that went.
+		int worst = 0;
 		for (int var14 = arg1; var14 < arg1 + arg3; var14++) {
 			for (int var21 = arg2; var21 < arg2 + arg4; var21++) {
 				if (var14 < 0 || var21 < 0 || var14 >= this.field1015 || var21 >= this.field1016) {
 					return false;
 				}
 				Square var22 = this.field1018[arg0][var14][var21];
-				if (var22 != null && var22.field1390 >= 5) {
-					return false;
+				if (var22 != null) {
+					if (var22.field1390 >= Square.CAPACITY) {
+						tileFull++;
+						if (tileFull <= 20 || tileFull % 50 == 0) {
+							DevLog.log("tilefull", "dropped #" + tileFull + " - tile " + var14 + "," + var21
+								+ " already holds " + var22.field1390 + " entities (cap " + Square.CAPACITY + ")");
+						}
+						return false;
+					}
+					if (var22.field1390 > worst) {
+						worst = var22.field1390;
+					}
 				}
+			}
+		}
+		// Proof, rather than a hope: anything at or above the OLD cap of five would have been
+		// dropped before this change, so these lines say what the bug was doing even now that it
+		// cannot happen. They stop once the point is made.
+		if (worst >= 5) {
+			tileCrowd++;
+			if (tileCrowd <= 40 || tileCrowd % 100 == 0) {
+				DevLog.log("tilecrowd", "#" + tileCrowd + " - a tile under this entity holds " + worst
+					+ " entities; at the old cap of 5 it would NOT have been drawn"
+					+ " (footprint " + arg3 + "x" + arg4 + " at " + arg1 + "," + arg2 + ")");
 			}
 		}
 		Sprite var15 = new Sprite();

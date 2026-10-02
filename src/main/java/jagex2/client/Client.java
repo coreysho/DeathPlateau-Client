@@ -3262,7 +3262,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
 			// and there was no way to tell "frames are fine" from "this client predates that check",
 			// which wasted a round. Any log can now answer it on its own first line.
-			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw");
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw, tilefull, tilecrowd");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
