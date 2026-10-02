@@ -8595,7 +8595,12 @@ public class Client extends GameShell implements PixMap.Target {
 			if (var5 != null && var5.field1370 != null && var5.field1370.field1431 >= 4920
 				&& var5.field1370.field1431 <= 4922 && zdraw < 3000) {
 				zdraw++;
-				DevLog.log("zdraw", "pass=" + arg1
+				// loopCycle and npcCount SEPARATE THE TWO THINGS A GAP IN THIS TRACE CAN MEAN. A gap with
+				// loopCycle running on means Zulrah left the client's npc list; a gap with loopCycle
+				// jumping means the client did not render at all, which is a stall and not a vanish.
+				// The first run of this could not tell them apart and the animation frame index said
+				// stall - it carried straight on across every gap, which a re-added npc cannot do.
+				DevLog.log("zdraw", "cyc=" + loopCycle + " npcs=" + this.npcCount + " pass=" + arg1
 					+ " type=" + var5.field1370.field1431
 					+ " gate=" + (var5.field1370.field1447 == arg1 ? 1 : 0)
 					+ " multi=" + (var5.field1370.method473() ? 1 : 0)
