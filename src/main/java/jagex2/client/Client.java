@@ -3262,7 +3262,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
 			// and there was no way to tell "frames are fine" from "this client predates that check",
 			// which wasted a round. Any log can now answer it on its own first line.
-			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw, tilefull, tilecrowd");
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw, tilefull, tilecrowd, refused");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -8577,6 +8577,9 @@ public class Client extends GameShell implements PixMap.Target {
 	/** Lines written by the Zulrah draw trace, so a long fight cannot fill the disk. */
 	private static int zdraw = 0;
 
+	/** Times the scene refused to take a Zulrah form at all. */
+	private static int sceneRefused = 0;
+
 	public void pushPlayers(boolean arg1) {
 		for (int var4 = 0; var4 < this.npcCount; var4++) {
 			ClientNpc var5 = this.npcs[this.npcIds[var4]];
@@ -8593,7 +8596,12 @@ public class Client extends GameShell implements PixMap.Target {
 			// Types 4920-4922 are the three Zulrah forms in this build's npc.pack. Hardcoded on
 			// purpose: this is a trace for one bug, not a feature.
 			if (var5 != null && var5.field1370 != null && var5.field1370.field1431 >= 4920
-				&& var5.field1370.field1431 <= 4922 && zdraw < 3000) {
+				&& var5.field1370.field1431 <= 4922 && zdraw < 3000
+				// ONE LINE A FRAME, NOT TWO. drawScene calls this twice and the npc is only ever drawn
+				// on the pass its field1447 matches, so the other line said nothing and halved how much
+				// of a fight 3000 lines could cover. The last trace ran out after 34 seconds of a 76
+				// second session, which is no use if the thing being hunted happens late.
+				&& var5.field1370.field1447 == arg1) {
 				zdraw++;
 				// loopCycle and npcCount SEPARATE THE TWO THINGS A GAP IN THIS TRACE CAN MEAN. A gap with
 				// loopCycle running on means Zulrah left the client's npc list; a gap with loopCycle
@@ -8637,7 +8645,23 @@ public class Client extends GameShell implements PixMap.Target {
 					if (!var5.field1370.field1434) {
 						var6 += Integer.MIN_VALUE;
 					}
-					this.scene.method285(var6, var5, var5.field1157, this.getHeightmapY(var5.field1158, var5.field1157, this.currentLevel), var5.field1139, 0, this.currentLevel, (var5.field1148 - 1) * 64 + 60, var5.field1158, var5.field1159);
+					// THE LAST UNKNOWN IN THE CHAIN. method285 -> method287 returns FALSE and adds nothing
+					// when any tile of the entity's footprint is out of the scene or full, and this caller
+					// has always thrown that answer away. The offscene check above only ever tested the
+					// ANCHOR tile; a five-by-five npc is rejected on tiles two or three away from it, so a
+					// snake whose anchor is comfortably inside can still be refused entry and drawn not at
+					// all. Everything before this point is now measured and clean, so this is where the
+					// snake is lost or it is lost after being accepted.
+					boolean accepted = this.scene.method285(var6, var5, var5.field1157, this.getHeightmapY(var5.field1158, var5.field1157, this.currentLevel), var5.field1139, 0, this.currentLevel, (var5.field1148 - 1) * 64 + 60, var5.field1158, var5.field1159);
+					if (!accepted && var5.field1370 != null && var5.field1370.field1431 >= 4920
+						&& var5.field1370.field1431 <= 4922) {
+						sceneRefused++;
+						if (sceneRefused <= 30 || sceneRefused % 25 == 0) {
+							DevLog.log("refused", "#" + sceneRefused + " - the scene would not take type "
+								+ var5.field1370.field1431 + " at tile " + (var5.field1157 >> 7) + "," + (var5.field1158 >> 7)
+								+ " size " + var5.field1148 + " cyc=" + loopCycle);
+						}
+					}
 				}
 			}
 		}
