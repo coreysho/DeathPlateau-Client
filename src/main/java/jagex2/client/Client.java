@@ -3262,7 +3262,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
 			// and there was no way to tell "frames are fine" from "this client predates that check",
 			// which wasted a round. Any log can now answer it on its own first line.
-			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw, tilefull, tilecrowd, refused");
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene, zdraw, tilefull, tilecrowd, refused, notdrawn");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -8471,6 +8471,19 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.L(I)V")
 	public void drawScene() {
+		// THE ANSWER, one line per cycle it matters. Last cycle's push and draw are both finished by
+		// now, so if the scene was handed Zulrah and then drew it zero times, it was culled during the
+		// traversal - the last place it can be lost.
+		if (zulrahPushed && World3D.zulrahDraws == 0) {
+			notDrawn++;
+			if (notDrawn <= 40 || notDrawn % 25 == 0) {
+				DevLog.log("notdrawn", "#" + notDrawn + " - accepted into the scene and then NOT DRAWN"
+					+ " (cyc=" + loopCycle + ")");
+			}
+		}
+		zulrahPushed = false;
+		World3D.zulrahDraws = 0;
+		World3D.zulrahKey = -1;
 		this.sceneCycle++;
 		this.pushNpcs(true);
 		this.pushPlayers(true);
@@ -8580,6 +8593,11 @@ public class Client extends GameShell implements PixMap.Target {
 	/** Times the scene refused to take a Zulrah form at all. */
 	private static int sceneRefused = 0;
 
+	/** Set when a Zulrah form was handed to the scene this cycle, and how often it was not drawn. */
+	private static boolean zulrahPushed = false;
+	private static int notDrawn = 0;
+
+
 	public void pushPlayers(boolean arg1) {
 		for (int var4 = 0; var4 < this.npcCount; var4++) {
 			ClientNpc var5 = this.npcs[this.npcIds[var4]];
@@ -8653,6 +8671,11 @@ public class Client extends GameShell implements PixMap.Target {
 					// all. Everything before this point is now measured and clean, so this is where the
 					// snake is lost or it is lost after being accepted.
 					boolean accepted = this.scene.method285(var6, var5, var5.field1157, this.getHeightmapY(var5.field1158, var5.field1157, this.currentLevel), var5.field1139, 0, this.currentLevel, (var5.field1148 - 1) * 64 + 60, var5.field1158, var5.field1159);
+					if (accepted && var5.field1370 != null && var5.field1370.field1431 >= 4920
+						&& var5.field1370.field1431 <= 4922) {
+						World3D.zulrahKey = var6;
+						zulrahPushed = true;
+					}
 					if (!accepted && var5.field1370 != null && var5.field1370.field1431 >= 4920
 						&& var5.field1370.field1431 <= 4922) {
 						sceneRefused++;
