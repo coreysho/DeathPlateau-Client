@@ -460,10 +460,6 @@ public class World3D {
 		return this.method287(arg0, arg6, arg2, arg1, arg8, var12, var13, arg9, arg3, arg5, false, arg10, arg4);
 	}
 
-	/** Entities dropped because a tile under them was full, and near-misses at the old cap of 5. */
-	private static int tileFull = 0;
-	private static int tileCrowd = 0;
-
 	@ObfuscatedName("KJCMXHNO.a(ILZOXDNIET;IIZIIIII)Z")
 	public boolean method285(int arg0, ModelSource arg1, int arg2, int arg3, boolean arg4, int arg5, int arg6, int arg7, int arg8, int arg9) {
 		if (arg1 == null) {
@@ -501,41 +497,18 @@ public class World3D {
 
 	@ObfuscatedName("KJCMXHNO.a(IIIIIIIILZOXDNIET;IZIB)Z")
 	public boolean method287(int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, ModelSource arg8, int arg9, boolean arg10, int arg11, byte arg12) {
-		// WHAT THIS LOOP DOES WHEN IT FAILS: returns false, and the caller draws nothing. The entity
-		// is not clipped, not queued and not drawn - it is simply absent for the frame. See
-		// Square.CAPACITY for why that cap being five made the largest thing on screen the first to
-		// go, and why Zulrah was the thing that went.
-		int worst = 0;
+		// Returns false and adds NOTHING when a tile under the entity is full - it is not clipped or
+		// queued, it simply is not drawn that frame. See Square.CAPACITY for why that cap used to make
+		// the largest thing on screen the first to disappear.
 		for (int var14 = arg1; var14 < arg1 + arg3; var14++) {
 			for (int var21 = arg2; var21 < arg2 + arg4; var21++) {
 				if (var14 < 0 || var21 < 0 || var14 >= this.field1015 || var21 >= this.field1016) {
 					return false;
 				}
 				Square var22 = this.field1018[arg0][var14][var21];
-				if (var22 != null) {
-					if (var22.field1390 >= Square.CAPACITY) {
-						tileFull++;
-						if (tileFull <= 20 || tileFull % 50 == 0) {
-							DevLog.log("tilefull", "dropped #" + tileFull + " - tile " + var14 + "," + var21
-								+ " already holds " + var22.field1390 + " entities (cap " + Square.CAPACITY + ")");
-						}
-						return false;
-					}
-					if (var22.field1390 > worst) {
-						worst = var22.field1390;
-					}
+				if (var22 != null && var22.field1390 >= Square.CAPACITY) {
+					return false;
 				}
-			}
-		}
-		// Proof, rather than a hope: anything at or above the OLD cap of five would have been
-		// dropped before this change, so these lines say what the bug was doing even now that it
-		// cannot happen. They stop once the point is made.
-		if (worst >= 5) {
-			tileCrowd++;
-			if (tileCrowd <= 40 || tileCrowd % 100 == 0) {
-				DevLog.log("tilecrowd", "#" + tileCrowd + " - a tile under this entity holds " + worst
-					+ " entities; at the old cap of 5 it would NOT have been drawn"
-					+ " (footprint " + arg3 + "x" + arg4 + " at " + arg1 + "," + arg2 + ")");
 			}
 		}
 		Sprite var15 = new Sprite();
@@ -1345,7 +1318,6 @@ public class World3D {
 												for (int var16 = 0; var16 < var14.field1390; var16++) {
 													Sprite var17 = var14.field1391[var16];
 													if (var17 != null) {
-														if (var17.field88 == zulrahKey) { zulrahDraws++; }
 														var17.field80.method381(var17.field81, field1035, field1036, field1037, field1038, var17.field78 - field1032, var17.field77 - field1033, var17.field79 - field1034, var17.field88);
 													}
 												}
@@ -1579,7 +1551,6 @@ public class World3D {
 												Sprite var63 = field1039[var56];
 												var63.field87 = field1025;
 												if (!this.method323(var7, var63.field82, var63.field83, var63.field84, var63.field85, var63.field80.field1709)) {
-													if (var63.field88 == zulrahKey) { zulrahDraws++; }
 													var63.field80.method381(var63.field81, field1035, field1036, field1037, field1038, var63.field78 - field1032, var63.field77 - field1033, var63.field79 - field1034, var63.field88);
 												}
 												for (int var64 = var63.field82; var64 <= var63.field83; var64++) {
@@ -2185,24 +2156,6 @@ public class World3D {
 	}
 
 	@ObfuscatedName("KJCMXHNO.a(IIIIII)Z")
-	/**
-	 * The sprite key of whichever Zulrah form is on screen, and how many times the scene has
-	 * actually DRAWN it this cycle. Client.pushPlayers sets the key; the two draw sites count.
-	 *
-	 * This is the end of the chain. Everything before it reads clean on the owner's own logs: the
-	 * server keeps the npc, the client keeps it, its model builds, no frame is missing, the
-	 * per-tile cap never fires, the scene is handed it at the right tile and height every frame,
-	 * and the scene ACCEPTS it every time - refused has never once fired. If it is accepted and
-	 * then drawn zero times, it is being culled during the traversal, and method323 below is the
-	 * only thing there that can do it.
-	 *
-	 * Worth noting about that test: it is given the model height from field1709, which
-	 * ModelSource.method381 only updates AFTER a draw - so the cull decides on LAST frame's
-	 * height, and Zulrah's swings between 384 and 743 across its animations.
-	 */
-	public static int zulrahKey = -1;
-	public static int zulrahDraws = 0;
-
 	public boolean method323(int arg0, int arg1, int arg2, int arg3, int arg4, int arg5) {
 		if (arg1 != arg2 || arg3 != arg4) {
 			for (int var9 = arg1; var9 <= arg2; var9++) {
