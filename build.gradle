@@ -32,6 +32,35 @@ sourceSets {
     }
 }
 
+// The example plugins in plugins/ are NOT part of the client: they compile against it and ship as
+// a jar the player drops in their plugins folder, which is exactly the path a third-party plugin
+// takes. Built on demand with ./gradlew examplePlugins; nothing else depends on this.
+sourceSets {
+    examplePlugins {
+        java {
+            srcDirs = ['plugins/src']
+        }
+        compileClasspath += sourceSets.main.output
+    }
+}
+
+tasks.register('examplePlugins', Jar) {
+    group = 'build'
+    description = 'Builds the example plugins into build/plugins/example-plugins.jar'
+
+    archiveFileName = 'example-plugins.jar'
+    destinationDirectory = layout.buildDirectory.dir('plugins')
+    from sourceSets.examplePlugins.output
+
+    // How the loader finds the plugins in a jar without walking every class in it.
+    manifest {
+        attributes('Plugin-Class': [
+            'deathplateau.plugins.CoordinatesPlugin',
+            'deathplateau.plugins.XpTrackerPlugin'
+        ].join(','))
+    }
+}
+
 jar {
     manifest {
         attributes(

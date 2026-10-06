@@ -65,6 +65,7 @@ import java.net.URL;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.zip.CRC32;
+import jagex2.client.plugin.PluginManager;
 import sign.signlink;
 
 public class Client extends GameShell {
@@ -397,6 +398,26 @@ public class Client extends GameShell {
 	private static final int GI_PANEL_ACTIONS = 3;  // radius, value floor, reveal - above the list
 	private boolean giPanelOpen;
 	private boolean swapPanelOpen;
+
+	// The plugin system. F8 opens the list of what is installed; see jagex2.client.plugin for the
+	// API itself. The manager is null until load() builds it and null again if it could not be
+	// built, so every hook below is guarded - a client with no plugins behaves exactly as it did
+	// before any of this existed.
+	//
+	// Same panel shape as the three above, with one difference: the rows are not a fixed list, so
+	// it is built from PluginManager.buildPanelRows() each frame and scrolls when it outgrows the
+	// screen.
+	public PluginManager plugins;
+	private static final int PLUGIN_PANEL_KEY = 1015; // F8
+	private static final int PLUGIN_PANEL_W = 400;
+	private static final int PLUGIN_PANEL_ROW_H = 15;
+	private static final int PLUGIN_PANEL_HEADER_H = 24;
+	private static final int PLUGIN_PANEL_FOOTER_H = 22;
+	private static final int PLUGIN_PANEL_MAX_ROWS = 16;
+	private boolean pluginPanelOpen;
+	private int pluginPanelScroll;
+	/** Rebuilt by drawPluginPanel() each frame and read by the click handler on the next one. */
+	private java.util.List<PluginManager.PanelRow> pluginPanelRows;
 	// True while the open right-click menu is a swap menu rather than a real one. Set only inside
 	// showContextMenu(), so the every-frame menu that the left click, the tooltip and shift-drop all
 	// read is never rewritten - only the copy the player is looking at.
@@ -1411,6 +1432,118 @@ public class Client extends GameShell {
 		} else {
 			GroundItemPrefs.cycle(row - GI_PANEL_ACTIONS);
 		}
+	}
+
+	private int pluginPanelRowCount() {
+		int rows = this.pluginPanelRows == null ? 1 : this.pluginPanelRows.size();
+		return rows > PLUGIN_PANEL_MAX_ROWS ? PLUGIN_PANEL_MAX_ROWS : rows;
+	}
+
+	private int pluginPanelHeight() {
+		return PLUGIN_PANEL_HEADER_H + this.pluginPanelRowCount() * PLUGIN_PANEL_ROW_H + PLUGIN_PANEL_FOOTER_H;
+	}
+
+	private int pluginPanelX() {
+		return (512 - PLUGIN_PANEL_W) / 2;
+	}
+
+	private int pluginPanelY() {
+		return (334 - this.pluginPanelHeight()) / 2;
+	}
+
+	/**
+	 * The plugin list. Called with areaViewport bound, so coordinates here are viewport-local.
+	 *
+	 * The row list comes from the manager rather than being held here, because it changes as
+	 * plugins are toggled: enabling one adds its settings as rows underneath it. It is stashed in
+	 * pluginPanelRows so the click handler hit-tests against exactly what was drawn.
+	 */
+	private void drawPluginPanel() {
+		this.pluginPanelRows = this.plugins.buildPanelRows();
+		int total = this.pluginPanelRows.size();
+		int shown = this.pluginPanelRowCount();
+		if (this.pluginPanelScroll > total - shown) {
+			this.pluginPanelScroll = total - shown;
+		}
+		if (this.pluginPanelScroll < 0) {
+			this.pluginPanelScroll = 0;
+		}
+
+		int x = this.pluginPanelX();
+		int y = this.pluginPanelY();
+		int h = this.pluginPanelHeight();
+
+		Pix2D.fillRectTrans(0x000000, y, PLUGIN_PANEL_W, h, 200, x);
+		Pix2D.drawRect(y, h, 0x8B7B5A, x, PLUGIN_PANEL_W);
+
+		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Plugins");
+		String close = "F8 / Esc to close";
+		this.fontPlain12.drawString(x + PLUGIN_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
+
+		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
+		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		String hint = total > shown
+			? "Scroll for more. Jars go in the plugins folder of your cache."
+			: "Click a row to toggle. Jars go in the plugins folder of your cache.";
+
+		for (int i = 0; i < shown; i++) {
+			PluginManager.PanelRow row = this.pluginPanelRows.get(i + this.pluginPanelScroll);
+			int rowY = y + PLUGIN_PANEL_HEADER_H + i * PLUGIN_PANEL_ROW_H;
+			boolean hovered = mouseX >= x + 1 && mouseX < x + PLUGIN_PANEL_W - 1
+				&& mouseY >= rowY && mouseY < rowY + PLUGIN_PANEL_ROW_H;
+			if (hovered && row.isClickable()) {
+				Pix2D.fillRectTrans(0xFFFFFF, rowY, PLUGIN_PANEL_W - 2, PLUGIN_PANEL_ROW_H, 30, x + 1);
+				if (row.hint != null && row.hint.length() > 0) {
+					hint = row.hint;
+				}
+			}
+			int baseline = rowY + PLUGIN_PANEL_ROW_H - 4;
+			if (row.showCheckbox) {
+				this.fontPlain12.drawString(x + 10, row.checked ? 0x00C000 : 0x707070, baseline, row.checked ? "[X]" : "[  ]");
+			}
+			int colour = row.kind == PluginManager.PanelRow.KIND_ACTION ? 0xFFB000
+				: row.kind == PluginManager.PanelRow.KIND_TEXT ? 0x9F9F9F
+				: row.checked ? 0xFFFFFF : 0x909090;
+			this.fontPlain12.drawString(x + 36, colour, baseline, row.label);
+		}
+
+		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
+	}
+
+	/** Consumes a click while the plugin panel is open, on the same terms as the other three. */
+	private void handlePluginPanelInput() {
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+			this.pluginPanelOpen = false;
+			return;
+		}
+		// The wheel scrolls the list while the panel is open, and is consumed so it cannot also
+		// zoom the camera behind it. Clamped in drawPluginPanel(), which is the only place that
+		// knows how many rows there are to scroll through.
+		if (super.mouseScrollDelta != 0) {
+			this.pluginPanelScroll += super.mouseScrollDelta;
+			super.mouseScrollDelta = 0;
+		}
+		if (super.mouseClickButton == 0) {
+			return;
+		}
+		// Drawn before input is handled, so a first frame with no rows yet means there is nothing
+		// to hit-test against - the click is still eaten, as it is for every other panel.
+		java.util.List<PluginManager.PanelRow> rows = this.pluginPanelRows;
+		int x = this.pluginPanelX() + QOL_PANEL_ORIGIN;
+		int y = this.pluginPanelY() + QOL_PANEL_ORIGIN;
+		int clickX = super.mouseClickX;
+		int clickY = super.mouseClickY;
+		super.mouseClickButton = 0;
+
+		if (rows == null || clickX < x || clickX >= x + PLUGIN_PANEL_W) {
+			return;
+		}
+		int row = (clickY - (y + PLUGIN_PANEL_HEADER_H)) / PLUGIN_PANEL_ROW_H + this.pluginPanelScroll;
+		if (clickY < y + PLUGIN_PANEL_HEADER_H || row < this.pluginPanelScroll
+			|| row >= this.pluginPanelScroll + this.pluginPanelRowCount() || row >= rows.size()) {
+			return;
+		}
+		this.plugins.clickRow(rows.get(row));
 	}
 
 	/**
@@ -3291,6 +3424,18 @@ public class Client extends GameShell {
 			this.fontBold12 = new PixFont(false, this.jagTitle, "b12_full");
 			this.fontQuill8 = new PixFont(true, this.jagTitle, "q8_full");
 
+			// Plugins: built here because overlays draw with the client's fonts, so there is no
+			// manager to hand out until they exist. Anything that goes wrong reading the plugins
+			// folder is swallowed by the manager; a throw escaping it would be a bug in the
+			// manager itself, and even then the client still starts - just without plugins.
+			try {
+				this.plugins = new PluginManager(this, this.fontPlain11, this.fontPlain12, this.fontBold12);
+				this.plugins.reload();
+			} catch (Throwable error) {
+				this.plugins = null;
+				DevLog.log("PLUGIN", "plugin system disabled for this session: " + error);
+			}
+
 			this.loadTitleBackground();
 			this.loadTitleImages();
 
@@ -3742,6 +3887,12 @@ public class Client extends GameShell {
 		}
 
 		this.updateOnDemand();
+
+		// Plugins get the frame after the client has had it, so a handler reads state the game has
+		// already finished updating rather than something half way through a tick.
+		if (this.plugins != null) {
+			this.plugins.onClientTick(loopCycle);
+		}
 	}
 
 	@ObfuscatedName("client.c(I)V")
@@ -3764,6 +3915,11 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.b(I)V")
 	public void unload() {
+		// Shutting down: every plugin gets its shutDown() before the client tears its own state
+		// down, so one that writes a file on the way out still can.
+		if (this.plugins != null) {
+			this.plugins.shutdown();
+		}
 		this.players = null;
 		this.playerIds = null;
 		this.entityUpdateIds = null;
@@ -5629,6 +5785,10 @@ public class Client extends GameShell {
 			this.handleGiPanelInput();
 			return;
 		}
+		if (this.pluginPanelOpen) {
+			this.handlePluginPanelInput();
+			return;
+		}
 		if (this.fullscreenInterfaceId0 != -1) {
 			this.lastHoveredInterfaceId = 0;
 			this.field611 = 0;
@@ -5721,6 +5881,12 @@ public class Client extends GameShell {
 		// the client's own priority sort above cannot undo a swap the player asked for.
 		if (QolSettings.on(QolSettings.MENU_SWAPPER)) {
 			this.applyMenuSwap();
+		}
+		// Plugins get the menu last of all, so one can override a swap the player configured.
+		// Whoever runs last wins, and a plugin the player installed deliberately is the more
+		// specific instruction of the two.
+		if (this.plugins != null) {
+			this.plugins.onMenuBuilt(this.menuSize);
 		}
 	}
 
@@ -6796,6 +6962,20 @@ public class Client extends GameShell {
 						return;
 					}
 
+					// The plugin list, on the same terms as the three panels below it.
+					if (key == PLUGIN_PANEL_KEY && this.ingame && this.plugins != null) {
+						this.pluginPanelOpen = !this.pluginPanelOpen;
+						if (this.pluginPanelOpen) {
+							this.closeInterfaces();
+						}
+						continue;
+					}
+					if (this.pluginPanelOpen) {
+						if (key == GameShell.KEY_ESCAPE) {
+							this.pluginPanelOpen = false;
+						}
+						continue;
+					}
 					// QoL settings panel. Handled at the very top of the key loop so it works from
 					// any interface state, and so its keys are swallowed rather than reaching chat.
 					if (key == QOL_PANEL_KEY && this.ingame) {
@@ -6849,6 +7029,15 @@ public class Client extends GameShell {
 					// Alt is read as a held key (updateAltState), never from the queue - swallow it here
 					// so an auto-repeating hold cannot fall through into chat or anything else.
 					if (key == GameShell.KEY_ALT) {
+						continue;
+					}
+
+					// A plugin's own hotkey, offered the key before the game sees it: consuming one
+					// stops it reaching chat, which is what a plugin bound to a letter needs.
+					// Deliberately BELOW the client's own panel keys - a plugin that swallowed
+					// everything must never be able to lock the player out of the panel that turns
+					// it off.
+					if (this.plugins != null && this.plugins.onKeyPressed(key)) {
 						continue;
 					}
 
@@ -8837,11 +9026,20 @@ public class Client extends GameShell {
 			this.fontPlain12.method243("Mem:" + var6 + "k", 16776960, var2, var13);
 			var13 += 15;
 		}
+		// Plugin overlays. Under the client's own panels and under the xp drops, which are the
+		// client's own overlay - a plugin draws alongside the game, never over the furniture the
+		// player needs to turn it off.
+		if (this.plugins != null) {
+			this.plugins.renderOverlays();
+		}
 		// QoL: XP drop counter, see drawXpDrops() above.
 		if (QolSettings.on(QolSettings.XP_DROPS)) {
 			this.drawXpDrops();
 		}
 		// Drawn last of the viewport overlays so the settings panels sit on top of everything else.
+		if (this.pluginPanelOpen && this.plugins != null) {
+			this.drawPluginPanel();
+		}
 		if (this.qolPanelOpen) {
 			this.drawQolPanel();
 		}
@@ -10356,6 +10554,15 @@ public class Client extends GameShell {
 				if (this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]) {
 					this.addXpDrop(var103, var105 - this.skillExperience[var103], var105);
 				}
+				// Plugins see every stat change, xp drops on or off - the drops are a display
+				// feature and this is the data. Gained is 0 for login's initial sync, so an xp
+				// tracker does not count an account's lifetime xp the moment someone logs in.
+				if (this.plugins != null) {
+					this.plugins.onStatChanged(var103, var104, var105,
+						this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]
+							? var105 - this.skillExperience[var103]
+							: 0);
+				}
 				this.xpDropStatSeen[var103] = true;
 				this.skillExperience[var103] = var105;
 				this.skillLevel[var103] = var104;
@@ -10829,6 +11036,11 @@ public class Client extends GameShell {
 			if (this.ptype == 90) {
 				// PLAYER_INFO
 				this.getPlayerPos(this.psize, this.in);
+				// One of these a server cycle, which is what makes it the plugin system's game
+				// tick - see jagex2.client.plugin.event.GameTick.
+				if (this.plugins != null) {
+					this.plugins.onGameTick();
+				}
 				this.awaitingSync = false;
 				this.ptype = -1;
 				return true;
@@ -12093,6 +12305,12 @@ public class Client extends GameShell {
 		int var4 = this.menuParamC[arg0];
 		int var5 = this.menuAction[arg0];
 		int var6 = this.menuParamA[arg0];
+		// Plugins see the click before anything is sent, and may stop it - how a plugin guards an
+		// action ("really drop that?"). Read from the raw action, before the 2000 offset below is
+		// taken off, so a plugin matching on an action id sees the same number the menu carried.
+		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4)) {
+			return;
+		}
 		if (var5 >= 2000) {
 			var5 -= 2000;
 		}
@@ -15312,6 +15530,13 @@ public class Client extends GameShell {
 		int indent = lines.size() > 1 ? this.chatPrefixWidth(arg0, arg2, arg3) : 0;
 		for (int i = 0; i < lines.size(); i++) {
 			this.pushMessage(arg0, lines.get(i), arg3, i > 0, arg3 == 0 || arg3 == 4 || arg3 == 5 || arg3 == 8 ? 0 : indent);
+		}
+		// Plugins see the message as it was sent, not the wrapped lines - a handler matching on
+		// text should not have to care how wide the chatbox happens to be. Posted after the lines
+		// are in, so a plugin that replies with a message of its own cannot interleave with this
+		// one. PluginManager guards against the recursion that reply would otherwise cause.
+		if (this.plugins != null) {
+			this.plugins.onChatMessage(arg0, arg2, arg3);
 		}
 	}
 
