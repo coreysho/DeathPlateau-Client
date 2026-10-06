@@ -202,6 +202,21 @@ public class signlink implements Runnable {
 	}
 
 	public static String findcachedir() {
+		// WHERE THE GAME KEEPS ITS CACHE. In a browser none of the paths below exist and the one place
+		// that can be written is CheerpJ's /files, which it persists in the browser's own storage - so
+		// the page names it (lostcity.cachedir) and the client writes its file store there. Without it
+		// findcachedir returns null, nothing is ever cached, and every visit downloads every animation
+		// and model again from the first byte.
+		String given = System.getProperty("lostcity.cachedir");
+		if (given != null) {
+			try {
+				File dir = new File(given);
+				if (dir.exists() || dir.mkdirs()) {
+					return given.endsWith("/") ? given : given + "/";
+				}
+			} catch (Exception ignore) {
+			}
+		}
 		String[] var0 = new String[] { "c:/windows/", "c:/winnt/", "d:/windows/", "d:/winnt/", "e:/windows/", "e:/winnt/", "f:/windows/", "f:/winnt/", "c:/", "~/", "/tmp/", "", "c:/rscache", "/rscache" };
 		if (storeid < 32 || storeid > 34) {
 			storeid = 32;

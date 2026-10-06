@@ -2340,6 +2340,12 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
 	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
 	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
+	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
+	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
+	// port, which already carries both streams, because the first byte a client sends is what tells
+	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
+	// client below is the client it has always been.
+	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -3417,7 +3423,15 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.g(I)Ljava/net/Socket;")
-	public Socket openSocket(int port) throws IOException { return new Socket(InetAddress.getByName(SERVER_HOST), port); }
+	public Socket openSocket(int port) throws IOException {
+		// Every socket this client opens comes through here - the game stream and OnDemand's update
+		// stream alike - which is what makes the browser case one line rather than a port of the
+		// networking. jagex2/io/WsSocket.java.
+		if (WS_URL != null) {
+			return new jagex2.io.WsSocket(WS_URL);
+		}
+		return new Socket(InetAddress.getByName(SERVER_HOST), port);
+	}
 
 	@ObfuscatedName("client.a(Ljava/lang/Runnable;I)V")
 	public void startThread(Runnable thread, int priority) {
