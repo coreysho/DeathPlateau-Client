@@ -16,9 +16,11 @@ import java.awt.Font;
  * too dark to read as a highlight on #242424, so the accent is that hue lifted until it does.
  * It lives here and nowhere else, which is why changing it is one line.
  *
- * It does NOT reach the game's own 2D interface. The F9 panel, the loading bar and the chat are
- * drawn in the 2004 client's idiom, in its orange, and recolouring those is a different job from
- * theming the window around them.
+ * IT REACHES THE CLIENT'S OWN IN-GAME PANELS TOO, as the ints at the bottom - the F8 and F9
+ * panels are drawn by the game's 2D renderer rather than by Swing, and they are ours. What it
+ * does NOT reach is the GAME's interface: the right-click menu, the chat, the tabs and the
+ * minimap are 2004's own art and colours, and repainting those is a different job from theming
+ * the client around them.
  */
 public final class Theme {
 
@@ -62,6 +64,37 @@ public final class Theme {
 
 	/** Width of the sidebar. Wide enough for a plugin name and its two buttons, no wider. */
 	public static final int WIDTH = 250;
+
+	// ------------------------------------------------------------------ the in-game panels
+
+	// The same palette as plain ints. The F8 and F9 panels are drawn by the game's own 2D
+	// renderer, which takes an RGB int and knows nothing about java.awt - but they are the same
+	// surfaces as the sidebar and must not drift from it, so they read the Colors above rather
+	// than carrying a second set of numbers that someone would later update only one of.
+
+	public static final int ACCENT_RGB = rgb(ACCENT);
+	public static final int ACCENT_BRIGHT_RGB = rgb(ACCENT_BRIGHT);
+	public static final int TEXT_RGB = rgb(TEXT);
+	public static final int TEXT_DIM_RGB = rgb(TEXT_DIM);
+	public static final int SWITCH_OFF_RGB = rgb(SWITCH_OFF);
+
+	/**
+	 * What an in-game panel is filled with, and how opaque.
+	 *
+	 * Black and translucent rather than the sidebar's grey: these panels float over the game and
+	 * letting it show through is what keeps them feeling like part of it, where the sidebar sits
+	 * beside the game and should look like furniture.
+	 */
+	public static final int PANEL_BACKDROP_RGB = 0x000000;
+	public static final int PANEL_BACKDROP_ALPHA = 200;
+
+	/** A hovered row: a white wash rather than a colour, so it reads over whatever is behind. */
+	public static final int PANEL_HOVER_RGB = 0xFFFFFF;
+	public static final int PANEL_HOVER_ALPHA = 30;
+
+	private static int rgb(Color colour) {
+		return colour.getRGB() & 0xFFFFFF;
+	}
 
 	private Theme() {
 	}
