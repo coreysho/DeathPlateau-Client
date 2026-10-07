@@ -61,6 +61,68 @@ public final class XpTrackerPlugin extends Plugin {
 	protected void startUp() {
 		this.reset();
 		this.addOverlay(this.overlay);
+		// A page of its own on the sidebar's rail, which is where a readout belongs: the total
+		// at the top and a row per skill under it, each with what it has earned, the rate it is
+		// earning at, and how far through its current level it is.
+		this.addPanel("Session xp", "chart", new jagex2.client.plugin.ConfigList() {
+
+			public int size() {
+				return 1 + tracked().size();          // the total, then a row per skill
+			}
+
+			public String label(int index) {
+				return index == 0 ? "Total" : ctx.getSkillName(skillAt(index));
+			}
+
+			public String detail(int index) {
+				int amount = index == 0 ? total : gained[skillAt(index)];
+				return format(perHour(amount)) + " xp/hr";
+			}
+
+			public String value(int index) {
+				return format(index == 0 ? total : gained[skillAt(index)]);
+			}
+
+			/** How far through the current level, which the total row has no answer for. */
+			public int progress(int index) {
+				if (index == 0) {
+					return -1;
+				}
+				int skill = skillAt(index);
+				int level = ctx.getBaseLevel(skill);
+				if (level <= 0) {
+					// No level to be partway through: not logged in, or a skill the client has
+					// not been told about. NO BAR rather than a full one - an empty readout
+					// drawn as "complete" is worse than no readout.
+					return -1;
+				}
+				int start = ctx.getExperienceForLevel(level);
+				int next = ctx.getExperienceForLevel(level + 1);
+				if (next <= start) {
+					return 100;                       // 99, or a skill with nowhere left to go
+				}
+				long through = (long) (ctx.getExperience(skill) - start) * 100L / (next - start);
+				return (int) (through < 0 ? 0 : through);
+			}
+
+			public String action(int index) {
+				return index == 0 ? "Reset" : null;
+			}
+
+			public void onAction(int index) {
+				if (index == 0) {
+					reset();
+				}
+			}
+
+			public boolean removable(int index) {
+				return false;
+			}
+
+			public String emptyMessage() {
+				return "Gain some experience and it appears here.";
+			}
+		});
 		// A config list: the rows come from what the plugin has accumulated, not from anything
 		// typed in, which is what a ConfigList is for. Removing one forgets that skill.
 		this.addConfigList("Skills this session", new jagex2.client.plugin.ConfigList() {
@@ -92,6 +154,13 @@ public final class XpTrackerPlugin extends Plugin {
 				return "Gain some experience and the skills appear here.";
 			}
 		});
+	}
+
+	/** The skill on a panel row, where row 0 is the total and the rest follow in skill order. */
+	private int skillAt(int row) {
+		java.util.List<Integer> skills = this.tracked();
+		int at = row - 1;
+		return at >= 0 && at < skills.size() ? skills.get(at).intValue() : 0;
 	}
 
 	/** The skills with experience this session, in skill order - the rows of the config list. */

@@ -754,6 +754,59 @@ public final class PluginManager {
 		}
 	}
 
+	/** One plugin's rail page, read in full, ready for the sidebar to draw. */
+	public static final class PanelSnapshot {
+
+		public final Entry entry;
+		public final String title;
+		public final String icon;
+		public final List<ConfigList.Row> rows;
+		public final String emptyMessage;
+
+		private final ConfigList list;
+
+		PanelSnapshot(Entry entry, Plugin.Panel panel) {
+			this.entry = entry;
+			this.title = panel.title;
+			this.icon = panel.icon;
+			this.list = panel.list;
+			this.rows = panel.list.snapshot();
+			this.emptyMessage = panel.list.emptyMessage();
+		}
+
+		/** Presses a row's button. CALL ON THE GAME THREAD. */
+		public void act(int index) {
+			this.list.onAction(index);
+		}
+	}
+
+	/**
+	 * Every running plugin's rail pages, in the order the plugins are listed.
+	 *
+	 * Only RUNNING plugins: a panel is registered in startUp(), so a stopped plugin has none,
+	 * and its icon leaves the rail with it. CALL ON THE GAME THREAD, for the same reason the
+	 * config lists are read there.
+	 */
+	public List<PanelSnapshot> snapshotPanels() {
+		List<PanelSnapshot> out = new ArrayList<PanelSnapshot>();
+		for (int i = 0; i < this.entries.size(); i++) {
+			Entry entry = this.entries.get(i);
+			if (!entry.enabled) {
+				continue;
+			}
+			List<Plugin.Panel> panels = entry.plugin.getPanels();
+			for (int j = 0; j < panels.size(); j++) {
+				try {
+					out.add(new PanelSnapshot(entry, panels.get(j)));
+				} catch (Throwable error) {
+					DevLog.log("PLUGIN", entry.name + "'s \"" + panels.get(j).title
+						+ "\" panel threw while being read: " + error);
+				}
+			}
+		}
+		return out;
+	}
+
 	/**
 	 * The plugin's config lists, each read in full. CALL ON THE GAME THREAD: that is the whole
 	 * point of a snapshot - the rows usually come from state the game loop writes, and reading

@@ -54,12 +54,25 @@ public final class Sidebar extends JPanel {
 	private static final String CARD_CONFIG = "config";
 	private static final String CARD_HUB = "hub";
 
+	/** A plugin's own page. One card, reused: the rail decides which panel it is showing. */
+	private static final String CARD_PANEL = "panel";
+
 	private final PluginManager manager;
 	private final CardLayout cards = new CardLayout();
 	private final JPanel pages = new JPanel(this.cards);
 	private final PluginListPanel list;
 	private final ConfigPanel config;
 	private final HubPanel hubPanel;
+	private final PanelPage panel;
+
+	/** The rail, kept so plugin tabs can be rebuilt into it when plugins come and go. */
+	private JPanel rail;
+
+	/** The two fixed tabs. Plugin tabs are appended after these and replaced wholesale. */
+	private int fixedTabs;
+
+	/** Re-reads the open page while it is open, so a readout is not frozen at what it said. */
+	private javax.swing.Timer panelTimer;
 	private final java.util.List<Tab> tabs = new java.util.ArrayList<Tab>();
 
 	/** Told when the sidebar's own width changes, so the window can re-fit around it. */
@@ -73,6 +86,7 @@ public final class Sidebar extends JPanel {
 		this.list = new PluginListPanel(manager, this);
 		this.config = new ConfigPanel(manager, this);
 		this.hubPanel = new HubPanel(new jagex2.client.plugin.hub.Hub(manager));
+		this.panel = new PanelPage(manager);
 
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.BACKGROUND);
@@ -83,11 +97,26 @@ public final class Sidebar extends JPanel {
 		this.pages.add(this.list, CARD_LIST);
 		this.pages.add(this.config, CARD_CONFIG);
 		this.pages.add(this.hubPanel, CARD_HUB);
+		this.pages.add(this.panel, CARD_PANEL);
 		this.add(this.pages, BorderLayout.CENTER);
 
 		this.add(this.buildRail(), BorderLayout.EAST);
 		this.list.rebuild();
 		this.show(CARD_LIST);
+		this.readPanels();
+
+		// A page shows numbers that move while it is being looked at, and nothing else would
+		// ask again - the manager only calls back when a plugin starts or stops. A game tick is
+		// 600ms and reading faster than the numbers change would be work for nothing.
+		this.panelTimer = new javax.swing.Timer(600, new java.awt.event.ActionListener() {
+
+			public void actionPerformed(java.awt.event.ActionEvent event) {
+				if (CARD_PANEL.equals(Sidebar.this.openCard) && Sidebar.this.isPanelOpen()) {
+					Sidebar.this.readPanels();
+				}
+			}
+		});
+		this.panelTimer.start();
 
 		// The manager calls this from the game thread whenever a plugin starts, stops or the
 		// folder is re-read.
@@ -99,12 +128,15 @@ public final class Sidebar extends JPanel {
 		});
 	}
 
-	/** One tab in the strip: an icon, a hover, and an underline when it is the open one. */
+	/** One tab on the rail: an icon, a hover, and a bar down its inner edge when it is open. */
 	private final class Tab extends JLabel {
 
 		private final String card;
 		private final String tip;
 		private boolean selected;
+
+		/** The plugin page this tab opens, or null for the two fixed tabs. */
+		private PluginManager.PanelSnapshot panel;
 
 		Tab(Icon icon, String card, String tip) {
 			super(icon);
@@ -119,6 +151,8 @@ public final class Sidebar extends JPanel {
 					// The open one folds the page away; any other one opens itself.
 					if (Tab.this.selected && Sidebar.this.isPanelOpen()) {
 						Sidebar.this.setPanelOpen(false);
+					} else if (Tab.this.panel != null) {
+						Sidebar.this.showPanel(Tab.this);
 					} else {
 						Sidebar.this.show(Tab.this.card);
 					}
@@ -163,16 +197,101 @@ public final class Sidebar extends JPanel {
 
 		this.tabs.add(new Tab(Icons.wrench(20, Theme.ACCENT), CARD_LIST, "Plugins"));
 		this.tabs.add(new Tab(Icons.download(20, Theme.ACCENT), CARD_HUB, "Plugin hub"));
+		this.fixedTabs = this.tabs.size();
+		this.rail = rail;
+		this.layOutRail();
+		return rail;
+	}
+
+	/** Puts the tabs into the rail, in order, sized so BoxLayout does not stretch them. */
+	private void layOutRail() {
+		this.rail.removeAll();
 		for (int i = 0; i < this.tabs.size(); i++) {
 			Tab tab = this.tabs.get(i);
-			// BoxLayout stretches anything that lets it, and a stretched icon row leaves the
-			// rail as two tabs sharing its whole height.
+			// BoxLayout stretches anything that lets it, and a stretched icon leaves two tabs
+			// sharing the rail's whole height.
 			tab.setAlignmentX(LEFT_ALIGNMENT);
 			tab.setMaximumSize(new Dimension(Theme.RAIL_WIDTH, tab.getPreferredSize().height));
-			rail.add(tab);
+			this.rail.add(tab);
 		}
-		rail.add(javax.swing.Box.createVerticalGlue());
-		return rail;
+		this.rail.add(javax.swing.Box.createVerticalGlue());
+		this.rail.revalidate();
+		this.rail.repaint();
+	}
+
+	/**
+	 * Rebuilds the plugin half of the rail from whatever is running.
+	 *
+	 * WHOLESALE RATHER THAN BY DIFFERENCE. A plugin starting or stopping changes the set, and
+	 * matching up what moved would be more code than throwing the icons away and asking again -
+	 * there are a handful of them and this runs when somebody flips a switch, not per frame.
+	 *
+	 * The page being shown is kept open across the rebuild IF its plugin is still running; if it
+	 * has just been switched off, the page it had goes with it and the list comes back.
+	 */
+	private void readPanels() {
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				// Read over there, where the plugin's own numbers are written.
+				final java.util.List<PluginManager.PanelSnapshot> read =
+					Sidebar.this.manager.snapshotPanels();
+				SwingUtilities.invokeLater(new Runnable() {
+
+					public void run() {
+						Sidebar.this.applyPanels(read);
+					}
+				});
+			}
+		});
+	}
+
+	/** Puts a set of panels that were read on the game thread into the rail. On the EDT. */
+	private void applyPanels(java.util.List<PluginManager.PanelSnapshot> panels) {
+		PluginManager.PanelSnapshot showing = this.panel.getSnapshot();
+		String openKey = showing == null ? null : showing.entry.key + "/" + showing.title;
+
+		while (this.tabs.size() > this.fixedTabs) {
+			this.tabs.remove(this.tabs.size() - 1);
+		}
+		Tab reopen = null;
+		for (int i = 0; i < panels.size(); i++) {
+			PluginManager.PanelSnapshot snapshot = panels.get(i);
+			Tab tab = new Tab(Icons.named(snapshot.icon, 20, Theme.ACCENT), CARD_PANEL,
+				snapshot.entry.name + ": " + snapshot.title);
+			tab.panel = snapshot;
+			this.tabs.add(tab);
+			if ((snapshot.entry.key + "/" + snapshot.title).equals(openKey)) {
+				reopen = tab;
+			}
+		}
+		this.layOutRail();
+
+		if (showing != null) {
+			if (reopen != null) {
+				// Same page, fresher numbers.
+				this.panel.show(reopen.panel);
+				this.markSelected(reopen);
+			} else {
+				// Its plugin was switched off while its page was open.
+				this.show(CARD_LIST);
+			}
+		}
+	}
+
+	/** Opens a plugin's page, from its tab on the rail. */
+	private void showPanel(Tab tab) {
+		this.openCard = CARD_PANEL;
+		this.setPanelOpen(true);
+		this.panel.show(tab.panel);
+		this.cards.show(this.pages, CARD_PANEL);
+		this.markSelected(tab);
+	}
+
+	private void markSelected(Tab selected) {
+		for (int i = 0; i < this.tabs.size(); i++) {
+			this.tabs.get(i).setSelected(this.tabs.get(i) == selected);
+		}
 	}
 
 	// ------------------------------------------------------------------ the page, open or folded
@@ -258,6 +377,24 @@ public final class Sidebar extends JPanel {
 		}
 	}
 
+	/**
+	 * Opens the first rail page belonging to a plugin, as clicking its icon does.
+	 *
+	 * Returns false when that plugin has no page yet, which is the usual answer right after it
+	 * is switched on: the rail is read on the game thread and the answer arrives a moment later.
+	 * Used by run_sidebarpreview.py.
+	 */
+	public boolean openPanel(String pluginKey) {
+		for (int i = this.fixedTabs; i < this.tabs.size(); i++) {
+			Tab tab = this.tabs.get(i);
+			if (tab.panel != null && tab.panel.entry.key.equals(pluginKey)) {
+				this.showPanel(tab);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Opens the hub tab, as clicking its tab does. Used by run_sidebarpreview.py. */
 	public void openHub() {
 		this.show(CARD_HUB);
@@ -272,8 +409,20 @@ public final class Sidebar extends JPanel {
 				if (Sidebar.this.config.getEntry() != null) {
 					Sidebar.this.config.rebuild();
 				}
+				// A plugin starting or stopping adds or removes its icon.
+				Sidebar.this.readPanels();
 			}
 		});
+	}
+
+	/**
+	 * Re-reads the open plugin page, for numbers that move while it is being looked at.
+	 *
+	 * Separate from refreshLater, which the manager calls when a plugin starts or stops: this is
+	 * the page's own contents, and whatever drives it wants to ask far more often than that.
+	 */
+	public void refreshPanelLater() {
+		this.readPanels();
 	}
 
 	// ------------------------------------------------------------------ shared widgets

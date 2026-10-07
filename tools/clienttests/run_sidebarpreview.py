@@ -34,7 +34,8 @@ PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']),
-         ('antidrag', ['antidrag']), ('hub', ['hub']), ('empty', [])]
+         ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('hub', ['hub']),
+         ('empty', [])]
 
 
 def run(*cmd, **kwargs):

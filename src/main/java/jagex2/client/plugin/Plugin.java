@@ -58,6 +58,29 @@ public abstract class Plugin {
 	/** Lists this plugin shows on its config page, in the order they were added. */
 	private final List<NamedList> configLists = new ArrayList<NamedList>();
 
+	/**
+	 * A page of this plugin's own, reached from an icon on the sidebar's rail.
+	 *
+	 * DIFFERENT FROM A CONFIG LIST, which is a section of the plugin's settings page and is
+	 * about what the player has told it. A panel is the plugin's own readout - what it has
+	 * measured, what it is watching - and gets a place in the rail of its own, the way
+	 * RuneLite's XP tracker does.
+	 */
+	static final class Panel {
+
+		final String title;
+		final String icon;
+		final ConfigList list;
+
+		Panel(String title, String icon, ConfigList list) {
+			this.title = title;
+			this.icon = icon;
+			this.list = list;
+		}
+	}
+
+	private final List<Panel> panels = new ArrayList<Panel>();
+
 	/** Set by the manager so a plugin cannot lie about whether it is running. */
 	private boolean running;
 
@@ -104,8 +127,38 @@ public abstract class Plugin {
 		}
 	}
 
+	/**
+	 * Gives this plugin a page on the sidebar's rail, with an icon to reach it by.
+	 *
+	 * The icon is NAMED rather than supplied: a plugin picks from the set the client draws (see
+	 * jagex2.client.plugin.ui.Icons) instead of shipping an image. That keeps a jar from the hub
+	 * out of the business of loading and scaling pictures into the client's UI, and keeps the
+	 * rail looking like one set of icons rather than a row of everybody's artwork. An unknown
+	 * name falls back to a plain one rather than to nothing.
+	 *
+	 * Call it from startUp(); panels go when the plugin stops, like overlays and config lists.
+	 *
+	 * <pre>
+	 * this.addPanel("Session xp", "chart", new ConfigList() {
+	 *     public int size()            { return skills.size(); }
+	 *     public String label(int i)   { return name(i); }
+	 *     public String value(int i)   { return gained(i) + " xp"; }
+	 *     public int progress(int i)   { return percentToNextLevel(i); }
+	 * });
+	 * </pre>
+	 */
+	protected final void addPanel(String title, String icon, ConfigList list) {
+		if (title != null && list != null) {
+			this.panels.add(new Panel(title, icon == null ? "" : icon, list));
+		}
+	}
+
 	final List<Overlay> getOverlays() {
 		return this.overlays;
+	}
+
+	final List<Panel> getPanels() {
+		return this.panels;
 	}
 
 	final List<NamedList> getConfigLists() {
@@ -118,6 +171,7 @@ public abstract class Plugin {
 		}
 		this.overlays.clear();
 		this.configLists.clear();
+		this.panels.clear();
 	}
 
 	public final boolean isRunning() {
