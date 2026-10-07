@@ -3124,6 +3124,12 @@ public class Client extends GameShell implements PixMap.Target {
 		// already finished updating rather than something half way through a tick.
 		if (this.plugins != null) {
 			this.plugins.onClientTick(loopCycle);
+			// Alt-drag, before draw() so an overlay picked up this frame is drawn where it has
+			// been dragged to rather than a frame behind the cursor. Viewport-local, because
+			// that is the space overlays draw in.
+			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
+				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
+				this.layout.openW, this.layout.openH);
 		}
 	}
 
@@ -5517,6 +5523,14 @@ public class Client extends GameShell implements PixMap.Target {
 			var2 = 0;
 		}
 		if (!this.menuVisible) {
+			// A click that picked an overlay up or put it down belongs to the drag, not to the
+			// overlay and not to the game. Without this, grabbing an overlay with a button on it
+			// presses that button, and dropping it presses whatever is now underneath.
+			if (var2 == 1 && this.plugins != null
+				&& this.plugins.dragWantsClick(super.mouseClickX - this.layout.vpX,
+					super.mouseClickY - this.layout.vpY)) {
+				return;
+			}
 			// A click on something an overlay drew and claimed. Checked before everything below so
 			// it cannot also walk the player; a click that lands on nothing claimed falls through
 			// and behaves exactly as it always did.

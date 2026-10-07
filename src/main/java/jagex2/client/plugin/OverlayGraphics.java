@@ -50,6 +50,33 @@ public final class OverlayGraphics {
 	/** Whose regions these are, so a plugin that is turned off takes its clicks with it. */
 	private Plugin owner;
 
+	/**
+	 * Where the player has dragged this overlay to, as an offset added to everything it draws.
+	 *
+	 * THIS IS WHY NO PLUGIN HAD TO CHANGE TO BECOME DRAGGABLE. An overlay works out where it
+	 * wants to be - a corner, a margin, a column under a tile - and this class quietly adds the
+	 * player's offset on the way to the screen. The overlay never knows it moved, which is also
+	 * what keeps the two plugins already published draggable without being rebuilt.
+	 *
+	 * Set by the manager before each overlay renders, and zero for an overlay nobody has moved.
+	 */
+	private int offsetX;
+	private int offsetY;
+
+	/**
+	 * The bounding box of everything drawn since the last reset, in screen coordinates.
+	 *
+	 * Recorded rather than declared, because an overlay has never had to say how big it is and
+	 * asking every one of them to start would be a change to the API and a chance to get wrong.
+	 * What it draws is what it occupies, which is also exactly what a player would try to grab.
+	 *
+	 * Empty - left greater than right - when nothing was drawn.
+	 */
+	private int left;
+	private int top;
+	private int right;
+	private int bottom;
+
 	OverlayGraphics(PixFont small, PixFont normal, PixFont bold) {
 		this.small = small;
 		this.normal = normal;
@@ -65,6 +92,23 @@ public final class OverlayGraphics {
 	}
 
 	/**
+	 * Records a string's box, given the position the overlay asked for.
+	 *
+	 * Text is drawn from its BASELINE - y is the bottom of the line, not the top - so the box
+	 * runs from one line height above y to a couple of pixels below it, which is where a
+	 * descender and the client's own text shadow land. Getting this backwards would put an
+	 * overlay's grab area a whole line below the words a player is looking at.
+	 */
+	private void markText(int x, int y, String text) {
+		if (this.font == null || text == null) {
+			return;
+		}
+		int wide = this.font.stringWidTag(text);
+		int tall = this.lineHeight();
+		this.mark(this.tx(x), this.ty(y) - tall, wide, tall + 2);
+	}
+
+	/**
 	 * Marks a rectangle the overlay just drew as clickable. A click inside it runs the action and
 	 * is CONSUMED - it will not also walk the player or open a menu.
 	 *
@@ -77,14 +121,16 @@ public final class OverlayGraphics {
 	 */
 	public void clickable(int x, int y, int width, int height, Runnable onClick) {
 		if (onClick != null && this.regions != null) {
-			this.regions.add(x, y, width, height, onClick, null, this.owner);
+			// Offset like everything else: a region left where the overlay USED to be is a
+			// button the player can press by clicking empty space.
+			this.regions.add(this.tx(x), this.ty(y), width, height, onClick, null, this.owner);
 		}
 	}
 
 	/** The same for the wheel: a turn inside the rectangle goes to the overlay, not the camera. */
 	public void scrollable(int x, int y, int width, int height, Scrolled onScroll) {
 		if (onScroll != null && this.regions != null) {
-			this.regions.add(x, y, width, height, null, onScroll, this.owner);
+			this.regions.add(this.tx(x), this.ty(y), width, height, null, onScroll, this.owner);
 		}
 	}
 
@@ -92,12 +138,78 @@ public final class OverlayGraphics {
 	 * Called before each overlay renders, so one overlay's font choice cannot leak into the next,
 	 * and so every overlay in a frame is told the same drawable area.
 	 */
-	void reset(int width, int height, InteractiveRegions regions, Plugin owner) {
+	void reset(int width, int height, InteractiveRegions regions, Plugin owner,
+		int offsetX, int offsetY) {
 		this.font = this.normal;
 		this.width = width;
 		this.height = height;
 		this.regions = regions;
 		this.owner = owner;
+		this.offsetX = offsetX;
+		this.offsetY = offsetY;
+		this.left = Integer.MAX_VALUE;
+		this.top = Integer.MAX_VALUE;
+		this.right = Integer.MIN_VALUE;
+		this.bottom = Integer.MIN_VALUE;
+	}
+
+	/** x in screen coordinates: where the overlay asked for, plus where it has been dragged. */
+	private int tx(int x) {
+		return x + this.offsetX;
+	}
+
+	private int ty(int y) {
+		return y + this.offsetY;
+	}
+
+	/**
+	 * Records a rectangle as part of what this overlay occupies. Takes SCREEN coordinates - call
+	 * it with tx/ty already applied, so the box is where the thing ended up rather than where it
+	 * was asked for.
+	 */
+	private void mark(int x, int y, int width, int height) {
+		if (width <= 0 || height <= 0) {
+			return;
+		}
+		if (x < this.left) {
+			this.left = x;
+		}
+		if (y < this.top) {
+			this.top = y;
+		}
+		if (x + width > this.right) {
+			this.right = x + width;
+		}
+		if (y + height > this.bottom) {
+			this.bottom = y + height;
+		}
+	}
+
+	/**
+	 * What the last overlay to render occupies, or null if it drew nothing.
+	 *
+	 * Four ints rather than a Rectangle: this is read once per overlay per frame by the manager
+	 * and allocating for it would be a garbage-per-frame answer to a question with four numbers
+	 * in it.
+	 */
+	boolean hasBounds() {
+		return this.left <= this.right && this.top <= this.bottom;
+	}
+
+	int boundsLeft() {
+		return this.left;
+	}
+
+	int boundsTop() {
+		return this.top;
+	}
+
+	int boundsRight() {
+		return this.right;
+	}
+
+	int boundsBottom() {
+		return this.bottom;
 	}
 
 	/** Width of the area an overlay may draw in, this frame. */
@@ -127,28 +239,34 @@ public final class OverlayGraphics {
 	 */
 	public void text(int x, int y, String text, int colour) {
 		if (text != null && this.font != null) {
-			this.font.drawStringTag(colour, x, y, true, text);
+			this.markText(x, y, text);
+			this.font.drawStringTag(colour, this.tx(x), this.ty(y), true, text);
 		}
 	}
 
 	/** Text with no shadow. Cheaper, and easier to read on a solid background. */
 	public void textFlat(int x, int y, String text, int colour) {
 		if (text != null && this.font != null) {
-			this.font.drawString(x, colour, y, text);
+			this.markText(x, y, text);
+			this.font.drawString(this.tx(x), colour, this.ty(y), text);
 		}
 	}
 
 	/** Shadowed text centred on x. */
 	public void textCentred(int x, int y, String text, int colour) {
 		if (text != null && this.font != null) {
-			this.font.drawStringTag(colour, x - this.font.stringWidTag(text) / 2, y, true, text);
+			int centred = x - this.font.stringWidTag(text) / 2;
+			this.markText(centred, y, text);
+			this.font.drawStringTag(colour, this.tx(centred), this.ty(y), true, text);
 		}
 	}
 
 	/** Shadowed text ending at x, for right-aligned columns. */
 	public void textRight(int x, int y, String text, int colour) {
 		if (text != null && this.font != null) {
-			this.font.drawStringTag(colour, x - this.font.stringWidTag(text), y, true, text);
+			int aligned = x - this.font.stringWidTag(text);
+			this.markText(aligned, y, text);
+			this.font.drawStringTag(colour, this.tx(aligned), this.ty(y), true, text);
 		}
 	}
 
@@ -168,33 +286,39 @@ public final class OverlayGraphics {
 	 */
 	public void sprite(int x, int y, Sprite sprite) {
 		if (sprite != null) {
-			sprite.image.plotSprite(y, x);
+			this.mark(this.tx(x), this.ty(y), sprite.width(), sprite.height());
+			sprite.image.plotSprite(this.ty(y), this.tx(x));
 		}
 	}
 
 	/** Solid filled rectangle. */
 	public void fill(int x, int y, int width, int height, int colour) {
-		Pix2D.fillRect(height, y, colour, width, x);
+		this.mark(this.tx(x), this.ty(y), width, height);
+		Pix2D.fillRect(height, this.ty(y), colour, width, this.tx(x));
 	}
 
 	/** Filled rectangle, alpha 0 (invisible) to 255 (solid). */
 	public void fillAlpha(int x, int y, int width, int height, int colour, int alpha) {
-		Pix2D.fillRectTrans(colour, y, width, height, alpha, x);
+		this.mark(this.tx(x), this.ty(y), width, height);
+		Pix2D.fillRectTrans(colour, this.ty(y), width, height, alpha, this.tx(x));
 	}
 
 	/** One pixel outline. */
 	public void box(int x, int y, int width, int height, int colour) {
-		Pix2D.drawRect(y, height, colour, x, width);
+		this.mark(this.tx(x), this.ty(y), width, height);
+		Pix2D.drawRect(this.ty(y), height, colour, this.tx(x), width);
 	}
 
 	/** Horizontal line of the given width, starting at x,y. */
 	public void hline(int x, int y, int width, int colour) {
-		Pix2D.hline(x, colour, y, width);
+		this.mark(this.tx(x), this.ty(y), width, 1);
+		Pix2D.hline(this.tx(x), colour, this.ty(y), width);
 	}
 
 	/** Vertical line of the given height, starting at x,y. */
 	public void vline(int x, int y, int height, int colour) {
-		Pix2D.vline(x, colour, height, y);
+		this.mark(this.tx(x), this.ty(y), 1, height);
+		Pix2D.vline(this.tx(x), colour, height, this.ty(y));
 	}
 
 	/**

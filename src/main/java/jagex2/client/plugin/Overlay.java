@@ -15,6 +15,22 @@ public abstract class Overlay {
 	Plugin owner;
 
 	/**
+	 * What this overlay's dragged position is saved under, set by the manager.
+	 *
+	 * "<plugin key>#<index among that plugin's overlays>". Not something the overlay chooses: a
+	 * plugin naming its own overlays would be another thing to get wrong, and an index is stable
+	 * as long as startUp adds them in the same order, which is the only order there is.
+	 *
+	 * Reordering or removing an overlay therefore puts the ones after it back where the plugin
+	 * draws them. That is the right trade: the alternative is a name every plugin has to invent
+	 * and keep, for a feature most of them never think about.
+	 */
+	String positionKey;
+
+	/** Where the last frame drew this overlay, or null if it drew nothing. See OverlayGraphics. */
+	int[] lastBounds;
+
+	/**
 	 * Draws the overlay. Coordinates are viewport-local - see {@link OverlayGraphics}.
 	 *
 	 * Called every frame on the client thread. Exceptions are caught and logged, and an overlay

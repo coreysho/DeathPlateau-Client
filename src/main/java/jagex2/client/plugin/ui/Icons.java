@@ -169,6 +169,9 @@ public final class Icons {
 		if ("download".equals(name)) {
 			return download(size, colour);
 		}
+		if ("move".equals(name)) {
+			return move(size, colour);
+		}
 		if ("refresh".equals(name)) {
 			return refresh(size, colour);
 		}
@@ -198,6 +201,42 @@ public final class Icons {
 				for (int i = 0; i < 3; i++) {
 					g.fillRect(3, gap + i * gap - 1, size - 6, 2);
 				}
+			}
+		};
+	}
+
+	/**
+	 * Four arrows out of a centre: "this thing can be moved", and so also the button that puts
+	 * every moved thing back. Distinct from refresh on purpose - the two sit next to each other
+	 * in the plugin panel's header, and two arrows-in-a-circle would read as one button twice.
+	 */
+	public static Icon move(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.2f, s * 0.11f), BasicStroke.CAP_BUTT,
+					BasicStroke.JOIN_ROUND));
+				int mid = s / 2;
+				int reach = (int) Math.round(s * 0.34);
+				g.drawLine(mid, mid - reach, mid, mid + reach);
+				g.drawLine(mid - reach, mid, mid + reach, mid);
+				// Filled heads, for the same reason refresh has one: at 14 pixels a pair of
+				// short strokes is indistinguishable from a thicker line.
+				double wing = s * 0.15;
+				g.fill(head(mid, mid - reach, 0, -1, wing));
+				g.fill(head(mid, mid + reach, 0, 1, wing));
+				g.fill(head(mid - reach, mid, -1, 0, wing));
+				g.fill(head(mid + reach, mid, 1, 0, wing));
+			}
+
+			/** An arrow head at x,y pointing along dx,dy. */
+			private Path2D head(int x, int y, int dx, int dy, double wing) {
+				Path2D path = new Path2D.Double();
+				path.moveTo(x + dy * wing, y + dx * wing);
+				path.lineTo(x - dy * wing, y - dx * wing);
+				path.lineTo(x + dx * wing * 1.4, y + dy * wing * 1.4);
+				path.closePath();
+				return path;
 			}
 		};
 	}
