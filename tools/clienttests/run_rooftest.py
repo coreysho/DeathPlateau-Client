@@ -36,7 +36,8 @@ SHELL = os.path.join(HERE, 'RoofTest.shell.java')
 DECLS = ['layout', 'QOL_PANEL_ROWS', 'QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
          'SWAP_PANEL_ROW_H', 'SWAP_PANEL_HEADER_H', 'SWAP_PANEL_FOOTER_H', 'SWAP_PANEL_ACTIONS',
          'SWAP_PANEL_SCROLL_W', 'SWAP_PANEL_MARGIN', 'swapScrollPx',
-         'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ']
+         'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ',
+         'pluginRoofsHidden']
 METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY',
            'swapPanelRows', 'swapPanelHeight', 'swapPanelY', 'swapScrollMax', 'swapScroll', 'swapFirstRow']
 
@@ -100,16 +101,16 @@ def source_checks(src, settings, swaps):
     ret = top.rindex('return var2;')
     out.append(('the toggle is at the one return, after the ANTICHEAT_CYCLELOGIC1 block, so the '
                 'packet that block sends keeps going out on its own schedule',
-                'QolSettings.ROOFS_OFF' in top[:ret]
-                and top.index('ANTICHEAT_CYCLELOGIC1') < top.index('QolSettings.ROOFS_OFF')))
+                'pluginRoofsHidden' in top[:ret]
+                and top.index('ANTICHEAT_CYCLELOGIC1') < top.index('pluginRoofsHidden')))
     out.append(('...and outside the camera-pitch test, so a steeply tilted camera cannot put the '
                 'roofs back',
                 top.count('if (this.cameraPitch < 310) {') == 1
-                and top.index('QolSettings.ROOFS_OFF') > top.rindex('levelTileFlags')))
+                and top.index('pluginRoofsHidden') > top.rindex('levelTileFlags')))
     # The cutscene path is deliberately left alone.
-    out.append(('the cutscene camera is left alone: getTopLevelCutscene() does not read the setting, '
+    out.append(('the cutscene camera is left alone: getTopLevelCutscene() does not read the flag, '
                 'because a scripted shot chose its own level',
-                'ROOFS_OFF' not in method(src, 'getTopLevelCutscene')))
+                'pluginRoofsHidden' not in method(src, 'getTopLevelCutscene')))
     # The default, which is the one place this setting breaks the file's own rule.
     m = re.search(r'private static final boolean\[\] DEFAULTS = \{(.*?)\};', settings, re.S)
     defaults = [x.strip() for x in m.group(1).replace('\n', '').split(',') if x.strip()]
@@ -121,11 +122,15 @@ def source_checks(src, settings, swaps):
     out.append(('the three parallel arrays are the same length: %d keys, %d labels, %d defaults'
                 % (len(keys), len(labels), len(defaults)),
                 len(keys) == len(labels) == len(defaults)))
-    idx = keys.index('roofs_off') if 'roofs_off' in keys else -1
-    out.append(('roofs_off is the one setting that defaults OFF, because it changes how the world '
-                'looks rather than adding a convenience',
-                idx >= 0 and defaults[idx] == 'false'
-                and all(d == 'true' for i, d in enumerate(defaults) if i != idx)))
+    # Hiding roofs left this file to become a plugin, taking the one false with it.
+    out.append(('roofs_off is no longer a QolSettings switch, so every default here is ON again',
+                'roofs_off' not in keys and all(d == 'true' for d in defaults)))
+    plugin = read(os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/HideRoofsPlugin.java'))
+    out.append(('...and the plugin it became is the thing that defaults off, for the same reason: '
+                'it changes how the world looks rather than adding a convenience',
+                'enabledByDefault = false' in plugin))
+    out.append(('...and it carries the old key, so a player who turned it on keeps it on',
+                'legacySetting = "roofs_off"' in plugin))
     return out
 
 

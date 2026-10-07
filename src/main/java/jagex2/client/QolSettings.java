@@ -35,7 +35,13 @@ public final class QolSettings {
 	private static final String FILE_NAME = "qol_settings.dat";
 
 	// Indices into the parallel arrays below. Order here is display order in the panel; it is NOT
-	// persisted, so these can be reordered freely.
+	// persisted, so these can be reordered freely - and entries can be removed, because the file
+	// is matched by name.
+	//
+	// SETTINGS LEAVE HERE WHEN THEY BECOME PLUGINS. "Escape closes interfaces" and "Hide roofs"
+	// went first (jagex2.client.plugin.builtin); their keys live on as the legacySetting on those
+	// plugins, which read this file once to carry across a choice the player had made. Removing
+	// one from here does not disturb the rest: the saved file is key=value, so nothing shifts.
 	public static final int CHAT_HISTORY = 0;
 	public static final int COMPASS_NORTH = 1;
 	public static final int SHIFT_DROP = 2;
@@ -43,45 +49,43 @@ public final class QolSettings {
 	public static final int DIALOGUE_KEYS = 4;
 	public static final int BANKPIN_KEYS = 5;
 	public static final int TAB_REPLY = 6;
-	public static final int ESC_CLOSE = 7;
-	public static final int MMB_CAMERA = 8;
-	public static final int WHEEL_ZOOM = 9;
-	public static final int WHEEL_CHAT = 10;
-	public static final int WHEEL_INTERFACE = 11;
-	public static final int XP_DROPS = 12;
-	public static final int GROUND_ITEMS = 13;
-	public static final int MENU_SWAPPER = 14;
-	public static final int ROOFS_OFF = 15;
-	public static final int BARROWS_DOORS = 16;
-	public static final int ANTI_DRAG = 17;
+	public static final int MMB_CAMERA = 7;
+	public static final int WHEEL_ZOOM = 8;
+	public static final int WHEEL_CHAT = 9;
+	public static final int WHEEL_INTERFACE = 10;
+	public static final int XP_DROPS = 11;
+	public static final int GROUND_ITEMS = 12;
+	public static final int MENU_SWAPPER = 13;
+	public static final int BARROWS_DOORS = 14;
+	public static final int ANTI_DRAG = 15;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
-		"bankpin_keys", "tab_reply", "esc_close", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "xp_drops", "ground_items", "menu_swapper", "roofs_off", "barrows_doors", "anti_drag"
+		"bankpin_keys", "tab_reply", "mmb_camera", "wheel_zoom", "wheel_chat",
+		"wheel_interface", "xp_drops", "ground_items", "menu_swapper", "barrows_doors", "anti_drag"
 	};
 
 	private static final String[] LABELS = {
 		"Chat history (Page Up/Down)", "Click compass to face north", "Shift-click to drop",
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
-		"Tab replies to last PM", "Escape closes interfaces", "Middle-mouse camera drag",
+		"Tab replies to last PM", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"XP drops", "Ground item names", "Left-click swaps (F10)", "Hide roofs",
+		"XP drops", "Ground item names", "Left-click swaps (F10)",
 		"Barrows doors that open glow green", "Anti-drag (items drag after 0.2s)"
 	};
 
-	// Every default is ON, with ONE exception. For the twelve that predate this class that was the
-	// point - introducing a switchboard should not change what anyone sees. Features added since
-	// default ON too, on the grounds that a QoL feature nobody discovers is a QoL feature nobody
-	// has; the panel is one keypress away for anyone who wants it off.
+	// Every default is ON. For the twelve that predate this class that was the point - introducing
+	// a switchboard should not change what anyone sees. Features added since default ON too, on
+	// the grounds that a QoL feature nobody discovers is a QoL feature nobody has; the panel is one
+	// keypress away for anyone who wants it off.
 	//
-	// "Hide roofs" defaults OFF, and the streak breaking is deliberate: every other setting adds a
-	// convenience and leaves the world alone, and this one changes what the world looks like. Old
-	// School ships its own Roofs toggle off as well, so on is the surprising answer in both places.
+	// The one exception was "Hide roofs", which defaulted off because it changes what the world
+	// looks like rather than adding a convenience. It is a plugin now and that reasoning went with
+	// it, which is why this array is all true again.
 	private static final boolean[] DEFAULTS = {
 		true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-		false, true, true
+		true
 	};
 
 	public static final int COUNT = KEYS.length;
@@ -118,6 +122,44 @@ public final class QolSettings {
 		}
 		enabled[setting] = !enabled[setting];
 		save();
+	}
+
+	/**
+	 * What the saved file says about a key, or null when it does not mention it.
+	 *
+	 * Different from on(), which answers with the default for anything unsaved. The difference is
+	 * the whole point here: this is read when a setting becomes a plugin, to carry across a
+	 * choice the player actually made, and a default is not a choice.
+	 *
+	 * Reads the file rather than the array because a setting that has become a plugin is no
+	 * longer in the array at all.
+	 */
+	public static Boolean saved(String key) {
+		BufferedReader reader = null;
+		try {
+			File file = new File(sign.signlink.findcachedir() + FILE_NAME);
+			if (!file.exists()) {
+				return null;
+			}
+			reader = new BufferedReader(new FileReader(file));
+			String line;
+			while ((line = reader.readLine()) != null) {
+				int split = line.indexOf('=');
+				if (split > 0 && line.substring(0, split).trim().equals(key)) {
+					return Boolean.valueOf(line.substring(split + 1).trim().equals("1"));
+				}
+			}
+		} catch (Exception ignored) {
+			// Unreadable: nothing was chosen as far as we can tell, so the plugin's default wins.
+		} finally {
+			try {
+				if (reader != null) {
+					reader.close();
+				}
+			} catch (Exception ignored) {
+			}
+		}
+		return null;
 	}
 
 	public static void load() {

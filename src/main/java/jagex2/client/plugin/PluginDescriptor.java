@@ -36,4 +36,15 @@ public @interface PluginDescriptor {
 	 * launch. The player ticks it on in the panel (F12), once, and that choice is remembered.
 	 */
 	boolean enabledByDefault() default false;
+
+	/**
+	 * For a built-in plugin that used to be a QolSettings switch: the key it was saved under.
+	 *
+	 * A player who turned that feature off before it became a plugin has that choice in
+	 * qol_settings.dat, and nothing else would carry it across - they would log in to find it
+	 * back on. The manager reads this once, the first time it sees the plugin, and only when
+	 * there is no plugin state saved for it yet. After that the plugin's own state is the truth
+	 * and the old file is never consulted again.
+	 */
+	String legacySetting() default "";
 }

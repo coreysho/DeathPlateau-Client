@@ -49,6 +49,8 @@ public class RoofTest {
 	static final int ROOF = 0x4;
 
 	RoofTest fresh() {
+		current = this;
+		this.pluginRoofsHidden = roofsHidden;
 		this.levelTileFlags = new byte[4][104][104];
 		this.currentLevel = 0;
 		this.cameraPitch = 200;               // not looking down: the tile tests run
@@ -81,9 +83,22 @@ public class RoofTest {
 		}
 	}
 
+	// Hiding roofs is a plugin now (jagex2.client.plugin.builtin.HideRoofsPlugin), and all the
+	// plugin does is set pluginRoofsHidden - so these tests drive that flag, which is what
+	// getTopLevel actually reads.
+	//
+	// The setting it replaced was static, so the tests below set it both BEFORE building a
+	// client and AFTER - "c = fresh(); roofsOff(true); c.getTopLevel()" is as common here as the
+	// other order. A per-instance flag has to serve both, so this remembers the choice for the
+	// next fixture and applies it to the current one. Keeping both orders working is what makes
+	// this a port of the test rather than a rewrite of it.
+	static boolean roofsHidden;
+	static RoofTest current;
+
 	static void roofsOff(boolean want) {
-		if (QolSettings.on(QolSettings.ROOFS_OFF) != want) {
-			QolSettings.toggle(QolSettings.ROOFS_OFF);
+		roofsHidden = want;
+		if (current != null) {
+			current.pluginRoofsHidden = want;
 		}
 	}
 
@@ -220,11 +235,17 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 18, "eighteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 16, "sixteen settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
-		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),
-			"...the roofs one labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
+		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel.
+		boolean roofsGone = true;
+		for (int i = 0; i < QolSettings.COUNT; i++) {
+			if (QolSettings.label(i).equals("Hide roofs")) {
+				roofsGone = false;
+			}
+		}
+		check(roofsGone, "...and Hide roofs is not among them any more - it is a plugin");
 		// The panel has no paging. It has never needed it, and the only thing stopping it is that
 		// nobody has added enough settings - which is worth failing on rather than discovering.
 		check(c.qolPanelHeight() <= 334,
@@ -243,11 +264,12 @@ public class RoofTest {
 		c.layout = Layout.fixed();
 		check(c.qolPanelY() == (334 - c.qolPanelHeight()) / 2, "...and the fixed screen where it always was");
 		// the toggle round-trips through the real store
-		boolean was = QolSettings.on(QolSettings.ROOFS_OFF);
-		QolSettings.toggle(QolSettings.ROOFS_OFF);
-		check(QolSettings.on(QolSettings.ROOFS_OFF) != was, "the switch flips");
-		QolSettings.toggle(QolSettings.ROOFS_OFF);
-		check(QolSettings.on(QolSettings.ROOFS_OFF) == was, "...and flips back");
+		// Still worth driving the real store once; XP drops stands in for the one that left.
+		boolean was = QolSettings.on(QolSettings.XP_DROPS);
+		QolSettings.toggle(QolSettings.XP_DROPS);
+		check(QolSettings.on(QolSettings.XP_DROPS) != was, "the switch flips");
+		QolSettings.toggle(QolSettings.XP_DROPS);
+		check(QolSettings.on(QolSettings.XP_DROPS) == was, "...and flips back");
 	}
 
 	// ---------------------------------------------------------------- 3b

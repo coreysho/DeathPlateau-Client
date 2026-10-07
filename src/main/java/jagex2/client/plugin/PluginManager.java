@@ -45,6 +45,22 @@ import jagex2.graphics.PixFont;
  */
 public final class PluginManager {
 
+	/**
+	 * Plugins compiled into the client, which were QoL features in Client.java before they were
+	 * plugins. They load with no jar and no folder, and honour enabledByDefault, because they are
+	 * code the player already has and already trusted by running the client.
+	 *
+	 * Named rather than scanned: a classpath scan would be slower, would need a library, and
+	 * would turn "is this class a plugin" into something a stray class could answer by accident.
+	 */
+	private static final String[] BUILT_IN = {
+		"jagex2.client.plugin.builtin.EscapeClosesPlugin",
+		"jagex2.client.plugin.builtin.HideRoofsPlugin"
+	};
+
+	/** What the panel shows as the source of a plugin that came with the client. */
+	public static final String BUILT_IN_SOURCE = "built in";
+
 	/** Folder under the cache directory that jars are read from. */
 	public static final String PLUGIN_FOLDER = "plugins";
 
@@ -66,6 +82,9 @@ public final class PluginManager {
 
 		boolean enabled;
 		int renderErrors;
+
+		/** What this plugin is when nothing has been saved about it yet. */
+		boolean defaultEnabled;
 
 		/** The jar this came out of, kept so its file can be released when the plugin is dropped. */
 		final PluginLoader.Found found;
@@ -279,7 +298,7 @@ public final class PluginManager {
 
 		for (int i = 0; i < this.entries.size(); i++) {
 			Entry entry = this.entries.get(i);
-			if (this.store.getBoolean(entry.key + ".enabled", false)) {
+			if (this.store.getBoolean(entry.key + ".enabled", entry.defaultEnabled)) {
 				this.start(entry);
 			}
 		}
@@ -288,10 +307,41 @@ public final class PluginManager {
 	}
 
 	private void discover() {
+		// Built in first, so a jar cannot take a built-in plugin's key and displace it.
+		for (int i = 0; i < BUILT_IN.length; i++) {
+			try {
+				Class<?> type = Class.forName(BUILT_IN[i]);
+				this.instantiate(new PluginLoader.Found(type, BUILT_IN_SOURCE, null));
+			} catch (Throwable error) {
+				DevLog.log("PLUGIN", "built-in " + BUILT_IN[i] + " did not load: " + error);
+			}
+		}
 		List<PluginLoader.Found> found = PluginLoader.scan(this.pluginDirectory);
 		for (int i = 0; i < found.size(); i++) {
 			this.instantiate(found.get(i));
 		}
+	}
+
+	/**
+	 * Whether a plugin should be on, the first time it is ever seen.
+	 *
+	 * A plugin from a jar starts off, always: dropping a file in a folder is not consent to run
+	 * it. A built-in one may ask to be on, and if it used to be a QolSettings switch, a choice
+	 * the player made back then wins over what it asks for - that is the only thing legacySetting
+	 * is for, and it is read once, before this plugin has any state of its own.
+	 */
+	private boolean defaultEnabled(PluginDescriptor descriptor, boolean builtIn) {
+		if (descriptor == null || !builtIn) {
+			return false;
+		}
+		String legacy = descriptor.legacySetting();
+		if (legacy.length() > 0) {
+			Boolean chosen = jagex2.client.QolSettings.saved(legacy);
+			if (chosen != null) {
+				return chosen.booleanValue();
+			}
+		}
+		return descriptor.enabledByDefault();
 	}
 
 	/**
@@ -319,7 +369,9 @@ public final class PluginManager {
 			PluginConfig config = new PluginConfig(key, this.store);
 			plugin.attach(this.ctx, config);
 			config.bind(plugin);
-			this.entries.add(new Entry(key, name, description, found.source, plugin, config, found));
+			Entry entry = new Entry(key, name, description, found.source, plugin, config, found);
+			entry.defaultEnabled = this.defaultEnabled(descriptor, BUILT_IN_SOURCE.equals(found.source));
+			this.entries.add(entry);
 		} catch (Throwable error) {
 			// A missing no-argument constructor, a constructor that threw, a class compiled
 			// against a client that has since changed.

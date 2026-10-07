@@ -111,6 +111,33 @@ public final class PluginContext {
 		}
 	}
 
+	// ------------------------------------------------------------------ asking the client to act
+
+	/**
+	 * Closes whatever interface is open - a bank, a shop, a dialogue - as the client's own
+	 * Escape handling does. Nothing is sent to the server; this is the client putting its own
+	 * windows away.
+	 */
+	public void closeInterfaces() {
+		this.client.closeInterfaces();
+	}
+
+	/**
+	 * Hides or shows the roofs over buildings.
+	 *
+	 * A SETTING, NOT A DRAW CALL. The client decides what level to draw the scene at deep inside
+	 * its renderer, every frame, in a method no event could usefully fire from. So a plugin says
+	 * what it wants once and the renderer reads it - which also means a plugin that is turned off
+	 * must put it back, as HideRoofsPlugin does in shutDown().
+	 */
+	public void setRoofsHidden(boolean hidden) {
+		this.client.pluginRoofsHidden = hidden;
+	}
+
+	public boolean areRoofsHidden() {
+		return this.client.pluginRoofsHidden;
+	}
+
 	// ------------------------------------------------------------------ the right-click menu
 
 	/** Number of entries, including "Cancel" at index 0. */

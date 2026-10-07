@@ -14,6 +14,7 @@ import jagex2.client.plugin.event.MenuOptionClicked;
 public class PluginSystemTest {
 
 	static int fails;
+	static boolean skipped;
 
 	static void check(boolean ok, String what) {
 		System.out.println((ok ? "  ok   " : "FAIL   ") + what);
@@ -34,7 +35,11 @@ public class PluginSystemTest {
 		System.out.println("3. loading plugins out of jars");
 		loaderTests(jars);
 		System.out.println();
-		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
+		System.out.println("4. the built-in plugins, and the settings they used to be");
+		builtInTests();
+		System.out.println();
+		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
+			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
 	}
 
@@ -169,6 +174,109 @@ public class PluginSystemTest {
 		SettingsPlugin third = new SettingsPlugin();
 		new PluginConfig("sample", new PluginStore(file)).bind(third);
 		check(third.radius == 10, "a corrupt saved value falls back to the default (" + third.radius + ")");
+	}
+
+	// ---------------------------------------------------------------- 4
+
+	/**
+	 * Escape-closes and Hide-roofs were QolSettings switches before they were plugins. What has
+	 * to hold is that nobody notices: a player who never touched them gets the same behaviour,
+	 * and a player who turned one off keeps it off.
+	 */
+	static void builtInTests() {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			// Said loudly rather than passing quietly: this is the section that checks nobody's
+			// saved preference is lost, and a silent skip is how that stops being checked.
+			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
+			skipped = true;
+			return;
+		}
+		java.io.File cache = new java.io.File(sign.signlink.findcachedir());
+		java.io.File qol = new java.io.File(cache, "qol_settings.dat");
+		java.io.File plugins = new java.io.File(cache, "plugins.dat");
+
+		// A player who has never had either file: the defaults the features always had.
+		qol.delete();
+		plugins.delete();
+		PluginManager manager = freshManager();
+		check(manager != null, "a manager builds with no settings files at all");
+		if (manager == null) {
+			return;
+		}
+		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null,
+			"both built-in plugins are found");
+		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "escape-closes").source),
+			"...and say they came with the client");
+		check(enabled(manager, "escape-closes"), "Escape closes interfaces is on by default, as it was");
+		check(!enabled(manager, "hide-roofs"), "Hide roofs is off by default, as it was");
+
+		// A player who turned Escape off back when it was a setting.
+		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");
+		plugins.delete();
+		manager = freshManager();
+		check(manager != null && !enabled(manager, "escape-closes"),
+			"a player who turned Escape off keeps it off");
+		check(manager != null && !enabled(manager, "hide-roofs"), "...and Hide roofs is unaffected");
+
+		// A player who turned Hide roofs ON back when it was a setting.
+		write(qol, "version=1\nroofs_off=1\n");
+		plugins.delete();
+		manager = freshManager();
+		check(manager != null && enabled(manager, "hide-roofs"),
+			"a player who turned Hide roofs on keeps it on");
+
+		// Once the plugin has its own state, the old file is history.
+		write(qol, "version=1\nesc_close=0\n");
+		write(plugins, "escape-closes.enabled=1\n");
+		manager = freshManager();
+		check(manager != null && enabled(manager, "escape-closes"),
+			"the plugin's own state wins over the setting it replaced");
+
+		qol.delete();
+		plugins.delete();
+	}
+
+	/**
+	 * A manager over the real built-in plugins.
+	 *
+	 * Client extends Applet, whose constructor refuses to run without a display - so this whole
+	 * section needs one, and the runner provides a virtual one. There is no way round it worth
+	 * having: a PluginManager with no client cannot start HideRoofsPlugin, which is exactly what
+	 * is being tested.
+	 */
+	static PluginManager freshManager() {
+		try {
+			PluginManager manager = new PluginManager(new jagex2.client.Client(), null, null, null);
+			manager.reload();
+			return manager;
+		} catch (Throwable error) {
+			System.out.println("       " + error);
+			return null;
+		}
+	}
+
+	static PluginManager.Entry entry(PluginManager manager, String key) {
+		for (PluginManager.Entry entry : manager.getPlugins()) {
+			if (entry.key.equals(key)) {
+				return entry;
+			}
+		}
+		return null;
+	}
+
+	static boolean enabled(PluginManager manager, String key) {
+		PluginManager.Entry entry = entry(manager, key);
+		return entry != null && entry.isEnabled();
+	}
+
+	static void write(java.io.File file, String text) {
+		try {
+			java.io.PrintWriter writer = new java.io.PrintWriter(file);
+			writer.print(text);
+			writer.close();
+		} catch (Exception error) {
+			check(false, "could not write " + file + ": " + error);
+		}
 	}
 
 	// ---------------------------------------------------------------- 3

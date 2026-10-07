@@ -147,8 +147,20 @@ def main():
 
         settings = os.path.join(work, 'settings')
         os.makedirs(settings)
-        r = run(java, '-cp', classes + os.pathsep + work,
-                'jagex2.client.plugin.PluginSystemTest', jars, settings, cwd=work)
+        # signlink.findcachedir() walks a list of candidate paths and takes the first that
+        # exists, and "~/" in that list is a LITERAL directory name, not the home folder. A
+        # directory called ~ in the working directory therefore gives this run a cache folder of
+        # its own, instead of the test writing into the real /tmp/.file_store_32.
+        os.makedirs(os.path.join(work, '~'))
+        # The built-in section constructs a Client, and Applet's constructor refuses to run
+        # headless. A virtual display is enough; without one that section says it skipped.
+        launcher = []
+        if not os.environ.get('DISPLAY'):
+            xvfb = shutil.which('xvfb-run')
+            if xvfb:
+                launcher = [xvfb, '-a']
+        r = run(*(launcher + [java, '-cp', classes + os.pathsep + work,
+                              'jagex2.client.plugin.PluginSystemTest', jars, settings]), cwd=work)
         lines = [l for l in r.stdout.split('\n') if l.strip()]
         for l in lines:
             print(l)
