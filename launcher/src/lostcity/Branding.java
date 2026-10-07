@@ -1,4 +1,4 @@
-package jagex2.client;
+package lostcity;
 
 import java.awt.Image;
 import java.util.ArrayList;
@@ -8,6 +8,13 @@ import javax.imageio.ImageIO;
 
 /**
  * The window icon, in the sizes a desktop asks for.
+ *
+ * IN THE LAUNCHER'S PACKAGE because both windows need it and this is the only source the two
+ * jars share. launcher/src is compiled into the client jar as well as into
+ * Death-Plateau-Launcher.jar (see build.gradle and release.yml), so a class put here is in both;
+ * one put in jagex2.client would be in the client jar alone, and the launcher - the first window
+ * a player sees - would be back to the default Java cup.
+ *
  *
  * WHY SEVERAL. setIconImages hands the window manager a set and it picks per use - 16 in the
  * title bar, 32 or 48 in the taskbar and alt-tab, more for a large-icon view. Given one image it

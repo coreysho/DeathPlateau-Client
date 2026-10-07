@@ -33,6 +33,11 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java')
+# The client's source set is BOTH directories - build.gradle says so, and the client jar
+# compiles launcher/src in (Client.relaunchForUpdate runs the launcher, and lostcity.Branding
+# is the window icon both of them use). Compiling src/main/java alone builds a subset of the
+# real client and fails on anything that reaches across.
+LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 TEST = os.path.join(HERE, 'GroundItemsTest.java')
 
 
@@ -44,9 +49,11 @@ def main():
 
     work = tempfile.mkdtemp(prefix='groundtest')
     try:
+        # Both source directories: see LAUNCHER_SRC above.
         sources = []
-        for root, _dirs, files in os.walk(SRC):
-            sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
+        for where in (SRC, LAUNCHER_SRC):
+            for root, _dirs, files in os.walk(where):
+                sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         r = subprocess.run([javac, '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources,

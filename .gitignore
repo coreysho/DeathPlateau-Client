@@ -14,3 +14,8 @@ build/
 
 # the launcher build output (the release workflow builds it)
 launcher/out/
+
+# What the release's launcher step leaves in the root when it is run locally, and what the
+# python test runners leave beside themselves.
+/Death-Plateau-Launcher.jar
+__pycache__/

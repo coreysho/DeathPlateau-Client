@@ -27,6 +27,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java')
+LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
@@ -39,10 +40,15 @@ def run(*cmd, **kwargs):
     return subprocess.run(list(cmd), capture_output=True, text=True, **kwargs)
 
 
-def java_sources(root):
+# The client's source set is BOTH directories - build.gradle says so, and the client jar
+# compiles launcher/src in (Client.relaunchForUpdate runs the launcher, and lostcity.Branding
+# is the window icon both of them use). Compiling src/main/java alone builds a subset of the
+# real client and fails on anything that reaches across.
+def java_sources(*roots):
     found = []
-    for base, _, files in os.walk(root):
-        found += [os.path.join(base, f) for f in files if f.endswith('.java')]
+    for root in roots:
+        for base, _, files in os.walk(root):
+            found += [os.path.join(base, f) for f in files if f.endswith('.java')]
     return found
 
 
@@ -91,7 +97,7 @@ def main():
     try:
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
-        r = run(javac, '-nowarn', '-d', classes, *java_sources(SRC))
+        r = run(javac, '-nowarn', '-d', classes, *java_sources(SRC, LAUNCHER_SRC))
         if r.returncode != 0:
             print(r.stderr[-4000:])
             raise SystemExit('run_sidebarpreview: the client does not compile')

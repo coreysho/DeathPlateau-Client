@@ -43,8 +43,18 @@ jobs:
       run: |
         mkdir -p launcher/out
         javac -source 8 -target 8 -encoding UTF-8 -d launcher/out $(find launcher/src -name '*.java')
+        cp -r src/main/resources/deathplateau launcher/out/
         jar cfe Death-Plateau-Launcher.jar lostcity.Launcher -C launcher/out .
 
+    # NO WINDOWS .EXE, DELIBERATELY. The icon on a .jar in Explorer is the file-type icon Windows
+    # draws for .jar and nothing inside the archive can change it, so the only way to put our own
+    # icon on the downloaded file is to wrap the jar in an .exe. That was built and it worked -
+    # launch4j, the badge embedded, one self-contained file - and it is not shipped, because an
+    # unsigned wrapped exe draws a SmartScreen "Windows protected your PC" box on first run and
+    # the occasional antivirus false positive. To a player downloading a game client from a
+    # stranger, that reads as "this is a virus", which is a worse first impression than a generic
+    # Java icon. It needs a code-signing certificate to be worth doing; until there is one, the
+    # jar is what ships. See the commit that added it for the launch4j config and its test.
     - name: Publish
       env:
         GH_TOKEN: ${{ github.token }}

@@ -22,6 +22,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 import jagex2.client.plugin.ui.Theme;
+import lostcity.Branding;
 
 /**
  * The window's own title bar, drawn rather than asked for.
