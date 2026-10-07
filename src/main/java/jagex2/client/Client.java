@@ -2346,6 +2346,13 @@ public class Client extends GameShell implements PixMap.Target {
 	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
 	// client below is the client it has always been.
 	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
+	// THE WHOLE URL THE CACHE COMES FROM, scheme and all. WEB_HOST/WEB_PORT below build an http://
+	// one, which is right for a plain tunnel and wrong the moment the server is behind TLS: a page
+	// served over https cannot fetch http, the browser blocks it as mixed content, and the client
+	// sits on "Loading title screen" with nothing to say why. The page passes its own origin here
+	// (Engine-TS serves it), so the browser client follows whatever address it was opened on; a
+	// desktop launch can set -Dlostcity.weburl=https://... for the same reason.
+	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL");
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -3371,7 +3378,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL("http://" + WEB_HOST + ":" + WEB_PORT);
+				return new URL(WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT);
 			}
 		} catch (Exception var1) {
 		}
