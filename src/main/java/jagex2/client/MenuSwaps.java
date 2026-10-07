@@ -99,6 +99,11 @@ public final class MenuSwaps {
 		return i >= 0 && i < count() ? target[i] : "";
 	}
 
+	/** The raw colour tag a rule is stored against, which remove() matches on. */
+	public static String kindTag(int i) {
+		return i >= 0 && i < count() ? kind[i] : "";
+	}
+
 	/** Human-readable kind, for the panel. Falls back to the raw tag if it is one we do not name. */
 	public static String kindLabel(int i) {
 		if (i < 0 || i >= count()) {

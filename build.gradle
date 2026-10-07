@@ -32,6 +32,64 @@ sourceSets {
     }
 }
 
+// The example plugins in plugins/ are NOT part of the client: they compile against it and ship as
+// a jar the player drops in their plugins folder, which is exactly the path a third-party plugin
+// takes. Built on demand with ./gradlew examplePlugins; nothing else depends on this.
+sourceSets {
+    examplePlugins {
+        java {
+            srcDirs = ['plugins/src']
+        }
+        compileClasspath += sourceSets.main.output
+    }
+}
+
+// One jar per plugin, which is what the hub distributes: it installs a jar per plugin id, so two
+// plugins in one jar would be installed twice under two names. The combined jar below is still
+// built for anyone who just wants both by hand.
+//
+// The pair is declared once here and the tasks are generated from it, so adding an example is a
+// line rather than another twenty.
+def examplePluginJars = [
+    coordinates: 'deathplateau.plugins.CoordinatesPlugin',
+    xptracker  : 'deathplateau.plugins.XpTrackerPlugin'
+]
+
+examplePluginJars.each { id, pluginClass ->
+    tasks.register("${id}Jar", Jar) {
+        group = 'build'
+        description = "Builds the ${id} example plugin into build/plugins/${id}.jar"
+
+        archiveFileName = "${id}.jar"
+        destinationDirectory = layout.buildDirectory.dir('plugins')
+        from sourceSets.examplePlugins.output
+
+        // Only this plugin's own classes, and the anonymous classes inside it. A jar carrying
+        // the other plugin's classes too would still work - the manifest decides what loads -
+        // but it would be a jar that is half somebody else's code.
+        include "${pluginClass.replace('.', '/')}*.class"
+
+        manifest {
+            attributes('Plugin-Class': pluginClass)
+        }
+    }
+}
+
+tasks.register('examplePlugins', Jar) {
+    group = 'build'
+    description = 'Builds the example plugins into build/plugins/example-plugins.jar'
+    dependsOn examplePluginJars.keySet().collect { "${it}Jar" }
+
+    archiveFileName = 'example-plugins.jar'
+    destinationDirectory = layout.buildDirectory.dir('plugins')
+    from sourceSets.examplePlugins.output
+
+    // How the loader finds the plugins in a jar without walking every class in it.
+    manifest {
+        attributes('Plugin-Class': examplePluginJars.values().join(','))
+    }
+}
+
 jar {
     manifest {
         attributes(

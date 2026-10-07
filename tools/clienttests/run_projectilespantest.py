@@ -51,7 +51,11 @@ def main():
     try:
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
-        sources = [os.path.join(r, f) for r, _d, fs in os.walk(os.path.join(ROOT, 'src/main/java'))
+        # Both source directories: build.gradle compiles launcher/src into the client too, so
+        # src/main/java alone is a subset that no longer builds on its own.
+        sources = [os.path.join(r, f)
+                   for d in ('src/main/java', 'launcher/src')
+                   for r, _d, fs in os.walk(os.path.join(ROOT, d))
                    for f in fs if f.endswith('.java')]
         r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources + [TEST],
                            capture_output=True, text=True)

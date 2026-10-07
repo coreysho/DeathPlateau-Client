@@ -65,6 +65,9 @@ import java.net.URL;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.zip.CRC32;
+import jagex2.client.plugin.PluginManager;
+import jagex2.client.plugin.event.SettingsMenuOpening;
+import jagex2.client.plugin.ui.Theme;
 import sign.signlink;
 
 public class Client extends GameShell implements PixMap.Target {
@@ -371,163 +374,67 @@ public class Client extends GameShell implements PixMap.Target {
 	// lists the same options, each one offering to become the left-click. That works because the
 	// thing you are configuring is the thing under the cursor - you never have to arm a mode, go
 	// find a target, and remember what you were doing when you get there.
-	private static final int SWAP_PANEL_KEY = 1017; // F10, the list of what you have set
 
 	// Worn options: an item's own options in the Worn Equipment tab, after Remove (ObjType.wearop).
 	// Menu actions WEAROP_ACTION..+7 are worn options 1-8; below 1000 so they stay above Examine.
 	// WEAROP_TAB is the sidebar slot the equipment tab sits in (content's ^tab_wornitems).
 	private static final int WEAROP_ACTION = 600;
 	private static final int WEAROP_TAB = 4;
-	private static final int SWAP_PANEL_W = 340;
-	private static final int SWAP_PANEL_ROW_H = 15;
-	private static final int SWAP_PANEL_HEADER_H = 24;
-	private static final int SWAP_PANEL_FOOTER_H = 22;
 	// "Clear all swaps", above the list. The action rows do NOT scroll: it stays pinned under the
 	// header, so the way out of a long list is the first thing under the title rather than something
 	// to go and find. Only the swaps below it move.
-	private static final int SWAP_PANEL_ACTIONS = 1;
 	// THE SWAPS LIST SCROLLS, which is the only reason MenuSwaps.MAX could go from 16 to 128: the
 	// old cap was the panel's height, not the storage. The bar is drawScrollbar() - the same one the
 	// bank, the chatbox and every interface list use - so there is one scrollbar in this client and
 	// not a second one that looks nearly like it. 16 is the width of its "scrollbar" sprites.
-	private static final int SWAP_PANEL_SCROLL_W = 16;
 	// The panel is as tall as the open area leaves room for, less this margin top and bottom, so it
 	// never sits flush against the edge of the viewport or under the chatbox. That is what makes it
 	// work in all three display modes: 334px of open height in FIXED gives 18 rows, and the bigger
 	// open area of a resizable window is used rather than wasted (1280x800 classic gives 38).
-	private static final int SWAP_PANEL_MARGIN = 6;
 	// Rows per notch of the wheel. Three, not one: with 128 swaps allowed, a list a player actually
 	// filled would take a minute to walk one row at a time.
-	private static final int SWAP_PANEL_WHEEL_ROWS = 3;
 	/** How far the swaps list is scrolled, in pixels. Zeroed when the panel opens. */
-	private int swapScrollPx;
 	// handleViewportOptions() gives the "Walk here" entry this action. Swapping to it is how a
 	// player says "left-clicking this must not interact with it" - the reason walk-here is offered
 	// at all, and why it has to be promoted by action rather than by name: the entry carries no
 	// target tag unless another player happens to be standing on the tile.
-	private static final int WALK_HERE_ACTION = 14;
+	public static final int WALK_HERE_ACTION = 14;
 
-	// QoL: the ground item settings panel. F11 opens it, F12 peeks at what is hidden. Same shape as
-	// the swaps panel - GroundItemPrefs holds the values and the list, this holds the drawing.
-	private static final int GI_PANEL_KEY = 1018;   // F11
-	private static final int GI_PANEL_W = 340;
-	private static final int GI_PANEL_ROW_H = 15;
-	private static final int GI_PANEL_HEADER_H = 24;
-	private static final int GI_PANEL_FOOTER_H = 22;
-	private static final int GI_PANEL_ACTIONS = 3;  // radius, value floor, reveal - above the list
-	private boolean giPanelOpen;
-	private boolean swapPanelOpen;
+	// The plugin system. F8 opens the list of what is installed; see jagex2.client.plugin for the
+	// API itself. The manager is null until load() builds it and null again if it could not be
+	// built, so every hook below is guarded - a client with no plugins behaves exactly as it did
+	// before any of this existed.
+	//
+	// Same panel shape as the QoL panel, with one difference: the rows are not a fixed list, so
+	// it is built from PluginManager.buildPanelRows() each frame and scrolls when it outgrows the
+	// screen. (It had three siblings once. The swaps panel and the ground item panel are both
+	// plugin config pages now, which is where a panel about one feature belongs.)
+	public PluginManager plugins;
+	private static final int PLUGIN_PANEL_KEY = 1015; // F8
+	private static final int PLUGIN_PANEL_W = 400;
+	private static final int PLUGIN_PANEL_ROW_H = 15;
+	private static final int PLUGIN_PANEL_HEADER_H = 24;
+	private static final int PLUGIN_PANEL_FOOTER_H = 22;
+	private static final int PLUGIN_PANEL_MAX_ROWS = 16;
+	private boolean pluginPanelOpen;
+	private int pluginPanelScroll;
+	/** The Swing sidebar, once it exists. Null in the applet, where F8 opens the panel instead. */
+	private volatile jagex2.client.plugin.ui.Sidebar pluginSidebar;
+	/** Rebuilt by drawPluginPanel() each frame and read by the click handler on the next one. */
+	private java.util.List<PluginManager.PanelRow> pluginPanelRows;
 	// True while the open right-click menu is a swap menu rather than a real one. Set only inside
 	// showContextMenu(), so the every-frame menu that the left click, the tooltip and shift-drop all
 	// read is never rewritten - only the copy the player is looking at.
 	private boolean menuSwapMode;
-	// What each row of that swap menu does. Parallel to menuOption while menuSwapMode is set.
-	// swapRowOp says WHICH of the four things a row is - an explicit op rather than inferring it
-	// from a null verb, because the menu now configures two different features and "null means
-	// reset" stops being readable the moment there is a third meaning.
-	private static final int SWAP_ROW_SET = 0;
-	private static final int SWAP_ROW_RESET = 1;
-	private static final int SWAP_ROW_HIDE = 2;
-	private static final int SWAP_ROW_HIGHLIGHT = 3;
-	private final int[] swapRowOp = new int[500];
-	private final String[] swapRowKind = new String[500];
-	private final String[] swapRowTarget = new String[500];
-	private final String[] swapRowVerb = new String[500];
+	// What choosing each row of that swap menu runs. Parallel to menuOption while menuSwapMode is
+	// set, and null for Cancel.
+	//
+	// It used to be five arrays and a four-valued op, because the client built the rows itself and
+	// had to remember which feature each one belonged to. Every row in this menu is a plugin's
+	// now - the swaps and the ground item rules both - so a row is its label and the Runnable
+	// behind it, and there is nothing left for the client to tell apart.
+	private final Runnable[] swapRowAction = new Runnable[500];
 
-	// QoL: ground item names. Labels every obj lying on the ground within GROUND_ITEM_RADIUS tiles
-	// of the player, tinted by what the pile is worth.
-	//
-	// WHY A RADIUS AND NOT THE WHOLE SCENE. objStacks is [4][104][104]; walking all of it every
-	// frame is 10,816 null checks to find the handful of tiles that ever hold anything. A box
-	// around the player covers everything close enough to read - past about a dozen tiles the text
-	// is unreadably small and the item models themselves are nearly gone.
-	//
-	// WHY IT DRAWS FROM drawScene() AND NOT draw3DEntityElements(). Ground labels belong *under*
-	// player names, hitsplats and headicons, and all of those draw in draw2DEntityElements().
-	// Calling this immediately before that one puts the labels above the world and below the entity
-	// overlays, which is the order you want when someone is standing on top of a drop pile.
-	// Radius and the value floor now come from GroundItemPrefs (the player cycles them in the F11
-	// panel); what is left here is the geometry and the ceilings, which are about what the client
-	// can draw rather than about taste.
-	private static final int GROUND_ITEM_ROW_H = 12;
-	// Raises the label off the floor, in the same 1/128-of-a-tile units projectFromGround() takes.
-	// Roughly the height of a dropped item's model, so the text clears it instead of sitting in it.
-	private static final int GROUND_ITEM_HEIGHT = 24;
-	// Distinct obj ids TRACKED on one tile, and how many of them are drawn at once. These were one
-	// number at 8: a tile can legally hold more ids than that and the extras were simply dropped, so
-	// a big pile had rows nobody could ever see. Tracking more than is drawn is what gives the wheel
-	// something to scroll to (see handleGroundItemScroll), and only the drawn window pays for a
-	// string build - the tracking pass reads the name, the price and the stackable flag and builds
-	// nothing.
-	private static final int GROUND_ITEM_MAX_PER_TILE = 24;
-	private static final int GI_ROWS_SHOWN = 8;
-	// Whole-frame ceiling, so a deliberately built pile of junk cannot turn the viewport into a
-	// wall of text (or make ObjType.get() the most expensive thing in the frame).
-	private static final int GROUND_ITEM_MAX_LABELS = 48;
-	// Value tiers, richest first, paired with the colour each one draws in. Two lined-up arrays
-	// rather than a chain of ifs so a threshold and its colour cannot drift apart.
-	private static final int[] GROUND_ITEM_TIERS = { 1000000, 100000, 10000, 1000 };
-	private static final int[] GROUND_ITEM_TIER_COLOURS = { 0xFF9040, 0x40C0FF, 0x40FF40, 0xFFFF80 };
-	private static final int GROUND_ITEM_COLOUR = 0xFFFFFF;
-	// Highlighted items ignore the tiers entirely - the point of highlighting a rune scimitar is that
-	// you spot it, not that you are reminded what it is worth. Magenta because none of the five tier
-	// colours is anywhere near it.
-	private static final int GROUND_ITEM_HIGHLIGHT = 0xFF40FF;
-	// What a hidden item looks like while the reveal toggle is on: visible, obviously suppressed.
-	private static final int GROUND_ITEM_HIDDEN = 0x707070;
-	// Hit box for one Alt control. Wider than the glyph on purpose - "-" is four pixels of ink and
-	// the labels are small, so a tight box would be a target you miss.
-	private static final int GI_CONTROL_W = 10;
-	private static final int GI_MINUS_COLOUR = 0xFF6060;
-	private static final int GI_PLUS_COLOUR = 0x60FF60;
-	// Scratch for merging duplicate stacks on a tile, reused for every tile of every frame so the
-	// overlay allocates nothing at all while it runs.
-	private final int[] groundItemIds = new int[GROUND_ITEM_MAX_PER_TILE];
-	private final int[] groundItemCounts = new int[GROUND_ITEM_MAX_PER_TILE];
-	// Hold Alt and every ground item label grows a [-] and a [+] you can click, and hidden items are
-	// shown so you can put them back. Double-tap Alt to leave them shown. Alt rather than an F-key
-	// because this is a modifier over the world, not a screen to open: the thing you want to hide is
-	// already under the cursor, and a hold means you never have to remember to turn it off again.
-	private static final int ALT_DOUBLE_TAP_MS = 400;
-	private boolean altDown;
-	private long altLastPress;
-	// Click targets for the labels drawn under Alt, in viewport-local coordinates. Rebuilt every
-	// frame by drawGroundItems(), read by handleMouseInput() - the click can only ever be tested
-	// against what was actually on screen when it happened.
-	private int giZoneCount;
-	private final String[] giZoneName = new String[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneTop = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneBottom = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneMinusX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZonePlusX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneNameX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneNameEndX = new int[GROUND_ITEM_MAX_LABELS];
-	// Per-row visibility, decided in one pass before the column is laid out. A row the player has
-	// hidden, or one under the value floor, or one whose obj type has no name, is GI_ROW_SKIP - and
-	// the column is then laid out over the rows that remain, so a hidden item does NOT leave a hole
-	// where it used to be. (It did until Corey sent a screenshot of the hole: the column used to be
-	// positioned from the tracked count and each skipped row still advanced the cursor.)
-	private static final int GI_ROW_SKIP = -1;
-	private final int[] giRowColour = new int[GROUND_ITEM_MAX_PER_TILE];
-	// A PILE is one tile's column. Recorded every frame, in viewport-local coordinates, for the same
-	// reason the Alt click zones are: a wheel turn can only ever be tested against what was on the
-	// screen when it happened.
-	private static final int GI_MAX_PILES = 48;
-	private int giPileCount;
-	private final int[] giPileTileX = new int[GI_MAX_PILES];
-	private final int[] giPileTileZ = new int[GI_MAX_PILES];
-	private final int[] giPileLeft = new int[GI_MAX_PILES];
-	private final int[] giPileRight = new int[GI_MAX_PILES];
-	private final int[] giPileTop = new int[GI_MAX_PILES];
-	private final int[] giPileBottom = new int[GI_MAX_PILES];
-	private final int[] giPileRows = new int[GI_MAX_PILES];
-	// ONE scrolled pile, not a scroll position per tile. You scroll the pile under the cursor, and
-	// scrolling a different one starts that one from the top; nothing is remembered once you walk
-	// away. Same call as the reveal toggle not being persisted - this is a peek, not a preference.
-	private int giScrollLevel = -1;
-	private int giScrollTileX = -1;
-	private int giScrollTileZ = -1;
-	private int giScrollOffset;
 	// QoL: the right-click menu scrolls when it is taller than the area it opens in.
 	//
 	// A pile of thirty drops builds a thirty-row "Choose Option", and the placement code clamps its
@@ -595,14 +502,12 @@ public class Client extends GameShell implements PixMap.Target {
 	private String nextMessageChannel = null;
 	private int menuScroll;
 	private int menuRowsShown;
-	// The bar, in the ground-item overlay's colours - same control, same look.
+	// The scroll bar on a long right-click menu. These were the ground item piles' colours first
+	// and the plugin still draws its own bar in them, so the two controls go on looking alike -
+	// but they are this menu's now, and named for it.
+	private static final int MENU_BAR_TRACK = 0x282828;
+	private static final int MENU_BAR_THUMB = 0xC8C8C8;
 	private static final int MENU_BAR_W = 3;
-
-	// The scroll bar, drawn only on a pile that has more rows than it shows.
-	private static final int GI_BAR_W = 2;
-	private static final int GI_BAR_GAP = 3;
-	private static final int GI_BAR_TRACK = 0x282828;
-	private static final int GI_BAR_THUMB = 0xC8C8C8;
 
 	private static final int CHAT_HISTORY_MAX = 10;
 	private final String[] chatHistory = new String[CHAT_HISTORY_MAX];
@@ -739,18 +644,12 @@ public class Client extends GameShell implements PixMap.Target {
 	// skill's current level/xp uniformly on every single gain across all skills, so the client
 	// just diffs the new xp against what it already had stored and turns any increase into a
 	// drop. No server-side changes needed at all.
-	private static final long XPDROP_FADE_MS = 1500L; // how long a single drop stays up before disappearing (tuned: 3000L -> 600L (too slow) -> 1500L (Corey: "now its a bit too fast lol"))
-	private static final int XPDROP_MAX_VISIBLE = 8; // oldest entries beyond this are dropped outright
 	// The RuneLite-style xp tracker panel (Corey, 2026-09-05: "just like runelite on osrs ... where
 	// you can see the total xp you currently have in the skill and the xp flowing up/down"): the
 	// skill of the most recent gain, that skill's new running total, and when the panel hides again.
 	// Deliberately separate state from the drop list - the panel shows one running total that
 	// survives while individual drops come and go, which is what the earlier inline "+550 (12,345)"
 	// version got wrong by welding the total onto every drop row.
-	private static final long XPTRACKER_FADE_MS = 6000L;
-	private int xpTrackerSkill = -1;
-	private int xpTrackerTotal = 0;
-	private long xpTrackerUntil = 0L;
 
 	// Root cause of Corey's "character/compass seem off-center compared to normal runescape" report:
 	// retail Jagex clients randomize macroCameraX/Z/Angle and macroMinimapAngle/Zoom on login (see
@@ -781,7 +680,6 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int CAMERA_DRAG_YAW_NUM = -3;
 	private static final int CAMERA_DRAG_PITCH_NUM = 3;
 	private static final int CAMERA_DRAG_DIV = 2;
-	private final java.util.ArrayList<XpDrop> xpDrops = new java.util.ArrayList<>();
 	// Guards against a spurious "gained thousands of xp!" drop for every skill at login, when the
 	// server sends each skill's real current xp for the first time against a freshly-zeroed
 	// skillExperience[] array (a fresh Client object has no prior xp to diff against). A skill
@@ -794,7 +692,7 @@ public class Client extends GameShell implements PixMap.Target {
 	// that column's script1op1=stat_level,<skill> text). 18 of the 21 skills use the "staticons"
 	// sheet (indices 0-17); the last row (Runecraft/Slayer/Farming) uses a second sheet,
 	// "staticons2" (indices 0-2), confirmed from stats.if directly rather than assumed.
-	private static final String[] XPDROP_ICON_SHEET = {
+	private static final String[] SKILL_ICON_SHEET = {
 		"staticons", "staticons", "staticons", "staticons", "staticons", "staticons", "staticons", // attack, defence, strength, hitpoints, ranged, prayer, magic
 		"staticons", "staticons", "staticons", "staticons", "staticons", "staticons", "staticons", // cooking, woodcutting, fletching, fishing, firemaking, crafting, smithing
 		"staticons", "staticons", "staticons", "staticons", // mining, herblore, agility, thieving
@@ -802,7 +700,7 @@ public class Client extends GameShell implements PixMap.Target {
 		"staticons2", // construction (stat 21, 2026-09-10) - index 5 of staticons2, same cell stats.if uses
 		"staticons2", // hunter (stat 22, 2026-09-22) - index 4, same cell stats.if uses
 	};
-	private static final int[] XPDROP_ICON_INDEX = {
+	private static final int[] SKILL_ICON_INDEX = {
 		0, 2, 1, 6, 3, 4, 5, // attack, defence, strength, hitpoints, ranged, prayer, magic
 		15, 17, 11, 14, 16, 10, 13, // cooking, woodcutting, fletching, fishing, firemaking, crafting, smithing
 		12, 8, 7, 9, // mining, herblore, agility, thieving
@@ -813,38 +711,6 @@ public class Client extends GameShell implements PixMap.Target {
 		// Hunter needs no new art. Index 3 (a spade) is still spare.
 		4, // hunter
 	};
-
-	private static final class XpDrop {
-		final int skillId;
-		int amount;
-		final int total; // the skill's new running total xp when this drop was created (Corey, 2026-09-04: "just like runelite does ... including showing total xp")
-		long lastUpdate;
-		float displayY = -1f; // eased screen-row offset in rowHeight units; -1 = "not yet placed", set to its spawn row the first time it's drawn so it flows down into position instead of snapping
-
-		XpDrop(int skillId, int amount, int total, long lastUpdate) {
-			this.skillId = skillId;
-			this.amount = amount;
-			this.total = total;
-			this.lastUpdate = lastUpdate;
-		}
-	}
-
-	// Corrected 2026-09-03 (Corey: "i don't want the xp to stack - i want it to flow and
-	// disappear after each drop, like runescapes"): every gain is now always its own new entry,
-	// full stop - no more merging into a same-skill running total. Pushing a new entry in at the
-	// top naturally shifts every existing one down a row (the "flow"), and each entry's own fade
-	// timer is set once here and never touched again, so it disappears on its own fixed schedule
-	// regardless of what else gains xp after it - matching real OSRS's drop-per-gain behaviour
-	// instead of the accumulating-counter version this had before.
-	private void addXpDrop(int skillId, int amount, int total) {
-		this.xpTrackerSkill = skillId;
-		this.xpTrackerTotal = total;
-		this.xpTrackerUntil = System.currentTimeMillis() + XPTRACKER_FADE_MS;
-		this.xpDrops.add(0, new XpDrop(skillId, amount, total, System.currentTimeMillis()));
-		while (this.xpDrops.size() > XPDROP_MAX_VISIBLE) {
-			this.xpDrops.remove(this.xpDrops.size() - 1);
-		}
-	}
 
 	// QoL (Corey, 2026-09-05): a plain game message (type 0) can carry a rank crown via an inline
 	// "@cr1@"/"@cr2@" marker - the same markers the messageSender field already uses for public and
@@ -863,12 +729,6 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 
-	// Called every frame from draw3DEntityElements() - expires any entry whose own fixed
-	// XPDROP_FADE_MS lifetime (set once when it was created in addXpDrop(), never refreshed)
-	// has elapsed, then renders whatever's left as a right-aligned stack of icon+number rows
-	// near the top-right of the viewport (same anchor the ::fpson debug counter uses, offset
-	// below it when that's also on). Newest drop is always at index 0/top, since addXpDrop()
-	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
 	// The last two rows of the panel are not QolSettings switches: they are the window and the draw
 	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
 	// are about this machine's screen and what it can push. Neither is a switch: both step through
@@ -895,12 +755,12 @@ public class Client extends GameShell implements PixMap.Target {
 		int y = this.qolPanelY();
 		int h = this.qolPanelHeight();
 
-		Pix2D.fillRectTrans(0x000000, y, QOL_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, QOL_PANEL_W);
+		Pix2D.fillRectTrans(Theme.PANEL_BACKDROP_RGB, y, QOL_PANEL_W, h, Theme.PANEL_BACKDROP_ALPHA, x);
+		Pix2D.drawRect(y, h, Theme.ACCENT_RGB, x, QOL_PANEL_W);
 
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Client settings");
+		this.fontBold12.drawString(x + 10, Theme.ACCENT_BRIGHT_RGB, y + 17, "Client settings");
 		String close = "F9 / Esc to close";
-		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
+		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), Theme.TEXT_DIM_RGB, y + 17, close);
 
 		int mouseX = super.mouseX - this.layout.vpX;
 		int mouseY = super.mouseY - this.layout.vpY;
@@ -908,7 +768,8 @@ public class Client extends GameShell implements PixMap.Target {
 			int rowY = y + QOL_PANEL_HEADER_H + i * QOL_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + QOL_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + QOL_PANEL_ROW_H;
 			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
+				Pix2D.fillRectTrans(Theme.PANEL_HOVER_RGB, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H,
+					Theme.PANEL_HOVER_ALPHA, x + 1);
 			}
 			int baseline = rowY + QOL_PANEL_ROW_H - 4;
 			// The two stepping rows keep the same box the switches have, so the column still lines up;
@@ -917,23 +778,29 @@ public class Client extends GameShell implements PixMap.Target {
 			if (i == ROW_DRAW_DISTANCE) {
 				int tiles = DisplaySettings.drawDistance();
 				boolean far = tiles > DisplaySettings.DRAW_DISTANCES[0];
-				this.fontPlain12.drawString(x + 10, far ? 0x00C000 : 0x707070, baseline, far ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, far ? 0xFFFFFF : 0x909090, baseline, "Draw distance: " + tiles + " tiles");
+				this.fontPlain12.drawString(x + 10, far ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, far ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, far ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+					baseline, "Draw distance: " + tiles + " tiles");
 				continue;
 			}
 			if (i == ROW_WINDOW) {
 				boolean sized = this.wantMode != Layout.FIXED;
-				this.fontPlain12.drawString(x + 10, sized ? 0x00C000 : 0x707070, baseline, sized ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, sized ? 0xFFFFFF : 0x909090, baseline, "Window: " + Layout.modeName(this.wantMode));
+				this.fontPlain12.drawString(x + 10, sized ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, sized ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, sized ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+					baseline, "Window: " + Layout.modeName(this.wantMode));
 				continue;
 			}
 			boolean on = QolSettings.on(i);
-			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, QolSettings.label(i));
+			this.fontPlain12.drawString(x + 10, on ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+				baseline, on ? "[X]" : "[  ]");
+			this.fontPlain12.drawString(x + 36, on ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+				baseline, QolSettings.label(i));
 		}
 
 		String hint = "Click a row to change it. Saved on this computer.";
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
+		this.fontPlain12.drawString(x + 10, Theme.TEXT_DIM_RGB, y + h - 8, hint);
 	}
 
 	/**
@@ -979,9 +846,6 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		QolSettings.toggle(row);
-		if (row == QolSettings.BARROWS_DOORS) {
-			jagex2.config.LocType.resetBarrowsDoors();
-		}
 		DevLog.log("QOL", QolSettings.label(row) + " -> " + (QolSettings.on(row) ? "on" : "off"));
 	}
 
@@ -1003,81 +867,6 @@ public class Client extends GameShell implements PixMap.Target {
 		boolean ea = !MenuSwaps.isAny(a);
 		boolean eb = !MenuSwaps.isAny(b);
 		return ea != eb ? ea : a < b;
-	}
-
-	private void applyMenuSwap() {
-		if (this.menuSize < 3 || MenuSwaps.count() == 0) {
-			return;                                  // Cancel plus one option: nothing to choose between
-		}
-		int best = -1;
-		int bestRule = Integer.MAX_VALUE;
-		boolean bestExact = false;
-		// Where "Walk here" sits, for a walk-here rule to promote. It is not a tagged option (unless
-		// a player happens to be standing on the tile), so it cannot be found by the name scan below.
-		int walkAt = -1;
-		for (int i = 1; i < this.menuSize; i++) {
-			if (this.menuAction[i] == WALK_HERE_ACTION) {
-				walkAt = i;
-				break;
-			}
-		}
-		// Index 0 is always "Cancel" and has no target, so the scan can skip it. The TOP entry is
-		// scanned though, even though it is already the left-click: a walk-here rule has to be able
-		// to demote it. "Make the Guard un-clickable" is exactly the case where Attack is already
-		// the default, so a scan that stopped short of it would do nothing in the common case. A
-		// normal rule that names the current default is a no-op, caught by the best == top guard.
-		for (int i = 1; i < this.menuSize; i++) {
-			String option = this.menuOption[i];
-			int at = MenuSwaps.tagAt(option);
-			if (at < 0) {
-				continue;
-			}
-			String kind = MenuSwaps.parseKind(option, at);
-			String target = MenuSwaps.parseTarget(option, at);
-			int rule = MenuSwaps.match(kind, target, MenuSwaps.parseVerb(option, at));
-			int promote = i;
-			// A walk-here rule is stored against the target, but promotes the "Walk here" entry -
-			// that is the whole point of it: left-clicking this thing should not touch it at all.
-			// Checked here, inside the same scan, so it competes on the same exact-beats-wildcard
-			// terms as every other rule rather than overriding them or being overridden.
-			if (walkAt >= 0) {
-				int walkRule = MenuSwaps.match(kind, target, MenuSwaps.WALK);
-				if (walkRule >= 0 && (rule < 0 || better(walkRule, rule))) {
-					rule = walkRule;
-					promote = walkAt;
-				}
-			}
-			if (rule < 0) {
-				continue;
-			}
-			boolean exact = !MenuSwaps.isAny(rule);
-			// An exact-target rule wins over a wildcard; between two of the same kind the one added
-			// first wins, so the order in the panel is the order they are applied.
-			if ((exact && !bestExact) || ((exact == bestExact) && rule < bestRule)) {
-				best = promote;
-				bestRule = rule;
-				bestExact = exact;
-			}
-		}
-		if (best < 0 || best == this.menuSize - 1) {
-			return;
-		}
-		int top = this.menuSize - 1;
-		String o = this.menuOption[best];
-		this.menuOption[best] = this.menuOption[top];
-		this.menuOption[top] = o;
-		int v = this.menuAction[best];
-		this.menuAction[best] = this.menuAction[top];
-		this.menuAction[top] = v;
-		v = this.menuParamA[best];
-		this.menuParamA[best] = this.menuParamA[top];
-		this.menuParamA[top] = v;
-		v = this.menuParamB[best];
-		this.menuParamB[best] = this.menuParamB[top];
-		this.menuParamB[top] = v;
-		v = this.menuParamC[best];
-		this.menuParamC[best] = this.menuParamC[top];
-		this.menuParamC[top] = v;
 	}
 
 	/**
@@ -1134,567 +923,216 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		this.menuOption[0] = "Cancel";
 		this.menuAction[0] = 1016;
-		this.swapRowVerb[0] = null;
-		this.swapRowKind[0] = null;
-		this.swapRowTarget[0] = null;
-		this.swapRowOp[0] = SWAP_ROW_SET;
+		this.swapRowAction[0] = null;       // Cancel: nothing to run, and never dispatched
 		int size = 1;
-		// Walk-here rows go in first, so they draw at the BOTTOM of the menu (the array is stored
-		// bottom-to-top). That is where "do nothing to this" belongs: nearest Cancel, furthest from
-		// the rows that make something happen. One per distinct target, because "walk past the Guard"
-		// and "walk past the bones on his tile" are different instructions.
-		if (hasWalk) {
+		// Everything below this point is a plugin's. The left-click swaps
+		// (jagex2.client.plugin.builtin.MenuSwapperPlugin) and the ground item rules
+		// (GroundItemsPlugin) both arrive here, in the order the plugins added them.
+		if (this.plugins != null) {
+			java.util.List<SettingsMenuOpening.Target> seen =
+				new java.util.ArrayList<SettingsMenuOpening.Target>();
 			for (int i = 0; i < n; i++) {
-				boolean dup = false;
-				for (int j = 0; j < i; j++) {
-					if (kinds[j].equals(kinds[i]) && targets[j].equalsIgnoreCase(targets[i])) {
-						dup = true;
-						break;
-					}
-				}
-				// A player standing on the tile already produced a real "Walk here @whi@Name" option,
-				// so that target has a row from the loop below; a second one would say the same thing.
-				if (dup || verbs[i].equalsIgnoreCase(MenuSwaps.WALK)) {
-					continue;
-				}
-				this.menuOption[size] = "Left-click " + MenuSwaps.WALK + " @" + kinds[i] + "@" + targets[i];
-				this.menuAction[size] = 1016;
-				this.swapRowKind[size] = kinds[i];
-				this.swapRowTarget[size] = targets[i];
-				this.swapRowVerb[size] = MenuSwaps.WALK;
-				this.swapRowOp[size] = SWAP_ROW_SET;
+				seen.add(new SettingsMenuOpening.Target(kinds[i], targets[i], verbs[i]));
+			}
+			// Room left, keeping a slot free so a full menu cannot run off the end of the arrays.
+			int room = this.menuOption.length - size - 1;
+			java.util.List<SettingsMenuOpening.Row> rows =
+				this.plugins.onSettingsMenuOpening(seen, hasWalk, room < 0 ? 0 : room);
+			for (int i = 0; i < rows.size() && size < this.menuOption.length - 1; i++) {
+				this.menuOption[size] = rows.get(i).label;
+				this.menuAction[size] = 1016;              // never dispatched; the row carries its own
+				this.swapRowAction[size] = rows.get(i).action;
 				size++;
 			}
 		}
-		// Rows keep the order they had in the real menu, so the swap menu reads the same way round.
-		for (int i = 0; i < n; i++) {
-			this.menuOption[size] = "Left-click " + verbs[i] + " @" + kinds[i] + "@" + targets[i];
-			this.menuAction[size] = 1016;                  // never dispatched; applySwapChoice reads the row
-			this.swapRowKind[size] = kinds[i];
-			this.swapRowTarget[size] = targets[i];
-			this.swapRowVerb[size] = verbs[i];
-			this.swapRowOp[size] = SWAP_ROW_SET;
-			size++;
-		}
-		// A reset row, only for targets that actually have a swap - offering to undo nothing is noise.
-		// Deduped on the TARGET, not the option: several options share one target ("Attack Guard" and
-		// "Talk-to Guard"), and one reset per option would put the same row in the menu twice.
-		int resetFrom = size;
-		for (int i = 0; i < n; i++) {
-			if (MenuSwaps.exact(kinds[i], targets[i]) < 0) {
-				continue;
-			}
-			boolean already = false;
-			for (int j = resetFrom; j < size; j++) {
-				if (this.swapRowKind[j].equals(kinds[i]) && this.swapRowTarget[j].equalsIgnoreCase(targets[i])) {
-					already = true;
-					break;
-				}
-			}
-			if (already) {
-				continue;
-			}
-			this.menuOption[size] = "Reset left-click @" + kinds[i] + "@" + targets[i];
-			this.menuAction[size] = 1016;
-			this.swapRowKind[size] = kinds[i];
-			this.swapRowTarget[size] = targets[i];
-			this.swapRowVerb[size] = null;
-			this.swapRowOp[size] = SWAP_ROW_RESET;
-			size++;
-		}
-		// Ground item rules last, so they draw at the TOP of the menu: they are grouped, visible, and
-		// harmless if mis-clicked (nothing here performs a game action). Only for a world menu - the
-		// "hasWalk" test is what tells a viewport right-click from an inventory one, which matters
-		// because ground objs and inventory items share the @lre@ tag and cannot be told apart by it.
-		if (hasWalk && QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			for (int i = 0; i < n; i++) {
-				if (!"lre".equals(kinds[i])) {
-					continue;
-				}
-				boolean dup = false;
-				for (int j = 0; j < i; j++) {
-					if ("lre".equals(kinds[j]) && targets[j].equalsIgnoreCase(targets[i])) {
-						dup = true;
-						break;
-					}
-				}
-				if (dup) {
-					continue;
-				}
-				boolean hidden = GroundItemPrefs.isHidden(targets[i]);
-				boolean lit = GroundItemPrefs.isHighlighted(targets[i]);
-				this.menuOption[size] = (hidden ? "Stop hiding @lre@" : "Hide @lre@") + targets[i];
-				this.swapRowKind[size] = kinds[i];
-				this.swapRowTarget[size] = targets[i];
-				this.swapRowVerb[size] = null;
-				this.swapRowOp[size] = SWAP_ROW_HIDE;
-				this.menuAction[size] = 1016;
-				size++;
-				this.menuOption[size] = (lit ? "Stop highlighting @lre@" : "Highlight @lre@") + targets[i];
-				this.swapRowKind[size] = kinds[i];
-				this.swapRowTarget[size] = targets[i];
-				this.swapRowVerb[size] = null;
-				this.swapRowOp[size] = SWAP_ROW_HIGHLIGHT;
-				this.menuAction[size] = 1016;
-				size++;
-			}
+		if (size <= 1) {
+			// Nothing offered a row - every plugin that would have is switched off. Leave the
+			// real menu alone rather than opening a Choose Option with only Cancel in it.
+			return false;
 		}
 		this.menuSize = size;
 		this.menuSwapMode = true;
 		return true;
 	}
 
-	/** Acts on a row of the swap menu. Nothing here ever performs a game action. */
+	/** Acts on a row of the settings menu. Nothing here ever performs a game action. */
 	private void applySwapChoice(int row) {
-		if (row <= 0 || row >= this.menuSize || this.swapRowKind[row] == null) {
+		if (row <= 0 || row >= this.menuSize) {
 			return;                                         // Cancel, or a click that missed
 		}
-		String kind = this.swapRowKind[row];
-		String target = this.swapRowTarget[row];
-		String verb = this.swapRowVerb[row];
-		int op = this.swapRowOp[row];
-		if (op == SWAP_ROW_HIDE || op == SWAP_ROW_HIGHLIGHT) {
-			boolean hide = op == SWAP_ROW_HIDE;
-			int mode = hide ? GroundItemPrefs.HIDE : GroundItemPrefs.HIGHLIGHT;
-			boolean was = hide ? GroundItemPrefs.isHidden(target) : GroundItemPrefs.isHighlighted(target);
-			if (!GroundItemPrefs.toggle(target, mode)) {
-				this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-					+ " ground item rules. Remove one with F11 first.", 0);
-				return;
-			}
-			DevLog.log("GROUND", (was ? "un" : "") + (hide ? "hide " : "highlight ") + target);
-			this.addMessage("", was
-				? (hide ? target + " is no longer hidden." : target + " is no longer highlighted.")
-				: (hide ? target + " will be hidden on the ground." : target + " will be highlighted on the ground."), 0);
+		Runnable action = this.swapRowAction[row];
+		if (action == null) {
 			return;
 		}
-		if (op == SWAP_ROW_RESET || verb == null) {
-			MenuSwaps.remove(kind, target);
-			DevLog.log("SWAP", "reset " + target);
-			this.addMessage("", "Left-click on " + target + " is back to normal.", 0);
-			return;
-		}
-		if (MenuSwaps.add(kind, target, verb)) {
-			DevLog.log("SWAP", verb + " -> " + target);
-			this.addMessage("", verb + " is now the left-click on " + target + ".", 0);
-		} else {
-			this.addMessage("", "You can only have " + MenuSwaps.MAX
-				+ " left-click swaps. Remove one with F10 first.", 0);
+		try {
+			action.run();
+		} catch (Throwable error) {
+			// The plugin's own code, on the game thread. One bad row must not take the click
+			// handler down with it.
+			DevLog.log("PLUGIN", "a settings menu row threw: " + error);
 		}
 	}
 
+
 	/**
-	 * How many rows the panel shows at once - the pinned action rows and as many swaps as the
-	 * window has room for under them. Everything past that is reached with the scrollbar.
+	 * Builds the Swing plugin sidebar and puts it beside the game, when there is a window to put
+	 * it in. In the applet there is not, and F8's in-canvas panel is the whole interface instead.
 	 *
-	 * Takes the number of swaps rather than reading MenuSwaps, because MenuSwaps.count() touches the
-	 * file on disk and the geometry is what RoofTest's panelTests() drives with 0, 16, 40 and MAX.
+	 * Swing components may only be touched on the event dispatch thread and this runs on the game
+	 * thread during load(), hence the invokeLater. Failure is not fatal: no sidebar, and the
+	 * in-canvas panel takes over, which is why pluginSidebar is only set once one exists.
 	 */
-	private int swapPanelRows(int swaps) {
-		int want = SWAP_PANEL_ACTIONS + swaps;
-		int room = (this.layout.openH - 2 * SWAP_PANEL_MARGIN - SWAP_PANEL_HEADER_H - SWAP_PANEL_FOOTER_H)
-			/ SWAP_PANEL_ROW_H;
-		// A window too small to show one swap under the actions cannot happen - resizable mode never
-		// lays out below the fixed frame (Layout.MIN_H) and fixed is 334 - but the panel would be
-		// nothing but a header and a footer if it did, so the floor is here rather than assumed.
-		if (room < SWAP_PANEL_ACTIONS + 1) {
-			room = SWAP_PANEL_ACTIONS + 1;
+	private void attachPluginSidebar() {
+		final ViewBox window = super.frame;
+		if (window == null) {
+			return;
 		}
-		return want < room ? want : room;
+		final PluginManager manager = this.plugins;
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				try {
+					jagex2.client.plugin.ui.Sidebar sidebar = new jagex2.client.plugin.ui.Sidebar(manager);
+					window.setSidebar(sidebar);
+					Client.this.pluginSidebar = sidebar;
+					DevLog.log("PLUGIN", "sidebar attached");
+				} catch (Throwable error) {
+					DevLog.log("PLUGIN", "could not build the sidebar, using the in-game panel: " + error);
+				}
+			}
+		});
 	}
 
-	private int swapPanelHeight(int swaps) {
-		return SWAP_PANEL_HEADER_H + this.swapPanelRows(swaps) * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H;
+	/** Shows or hides the sidebar from the game thread. */
+	private void togglePluginSidebar() {
+		final ViewBox window = super.frame;
+		if (window == null) {
+			return;
+		}
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				window.setSidebarVisible(!window.isSidebarVisible());
+			}
+		});
 	}
 
-	private int swapPanelHeight() {
-		return this.swapPanelHeight(MenuSwaps.count());
+	private int pluginPanelRowCount() {
+		int rows = this.pluginPanelRows == null ? 1 : this.pluginPanelRows.size();
+		return rows > PLUGIN_PANEL_MAX_ROWS ? PLUGIN_PANEL_MAX_ROWS : rows;
 	}
 
-	private int swapPanelX() {
-		return this.layout.mainX + (512 - SWAP_PANEL_W) / 2;
+	private int pluginPanelHeight() {
+		return PLUGIN_PANEL_HEADER_H + this.pluginPanelRowCount() * PLUGIN_PANEL_ROW_H + PLUGIN_PANEL_FOOTER_H;
+	}
+
+	private int pluginPanelX() {
+		return this.layout.mainX + (512 - PLUGIN_PANEL_W) / 2;
+	}
+
+	private int pluginPanelY() {
+		return this.layout.mainY + (334 - this.pluginPanelHeight()) / 2;
 	}
 
 	/**
-	 * Centred in the open area - the part of the viewport no side panel or chatbox covers - which is
-	 * the same y the old "mainY + (334 - h) / 2" gave in every mode, because mainY is itself half of
-	 * whatever the open area has over 334. Written as the open area now that the panel can be taller
-	 * than 334: in a resizable window that is still centred, and the clamp keeps a panel that has
-	 * somehow outgrown its room hanging off the bottom rather than off the top, where the header and
-	 * the way to close it are.
+	 * The plugin list. Called with areaViewport bound, so coordinates here are viewport-local.
+	 *
+	 * The row list comes from the manager rather than being held here, because it changes as
+	 * plugins are toggled: enabling one adds its settings as rows underneath it. It is stashed in
+	 * pluginPanelRows so the click handler hit-tests against exactly what was drawn.
 	 */
-	private int swapPanelY(int swaps) {
-		int y = (this.layout.openH - this.swapPanelHeight(swaps)) / 2;
-		return y < 0 ? 0 : y;
-	}
-
-	private int swapPanelY() {
-		return this.swapPanelY(MenuSwaps.count());
-	}
-
-	/** How far the list can be scrolled, in pixels: zero while every swap is already on screen. */
-	private int swapScrollMax(int swaps) {
-		int hidden = swaps - (this.swapPanelRows(swaps) - SWAP_PANEL_ACTIONS);
-		return hidden > 0 ? hidden * SWAP_PANEL_ROW_H : 0;
-	}
-
-	/**
-	 * The scroll position, clamped as it is read. Clamping here and not at every place that moves it
-	 * is what makes removing a swap safe: cycle() can shorten the list under a panel scrolled to the
-	 * bottom, and the next frame simply reads a smaller number.
-	 */
-	private int swapScroll(int swaps) {
-		int max = this.swapScrollMax(swaps);
-		if (this.swapScrollPx > max) {
-			this.swapScrollPx = max;
+	private void drawPluginPanel() {
+		this.pluginPanelRows = this.plugins.buildPanelRows();
+		int total = this.pluginPanelRows.size();
+		int shown = this.pluginPanelRowCount();
+		if (this.pluginPanelScroll > total - shown) {
+			this.pluginPanelScroll = total - shown;
 		}
-		if (this.swapScrollPx < 0) {
-			this.swapScrollPx = 0;
+		if (this.pluginPanelScroll < 0) {
+			this.pluginPanelScroll = 0;
 		}
-		return this.swapScrollPx;
-	}
 
-	/**
-	 * The first swap shown. Rows are drawn whole - the list scrolls a row at a time even though the
-	 * position underneath is pixels - because half a line of "Attack on Guard" cut off by the footer
-	 * is harder to read than a list that steps.
-	 */
-	private int swapFirstRow(int swaps) {
-		return this.swapScroll(swaps) / SWAP_PANEL_ROW_H;
-	}
+		int x = this.pluginPanelX();
+		int y = this.pluginPanelY();
+		int h = this.pluginPanelHeight();
 
-	/** Called with areaViewport bound, so coordinates here are viewport-local. */
-	private void drawSwapPanel() {
-		int swaps = MenuSwaps.count();
-		int x = this.swapPanelX();
-		int y = this.swapPanelY(swaps);
-		int h = this.swapPanelHeight(swaps);
-		int rows = this.swapPanelRows(swaps);
-		int listRows = rows - SWAP_PANEL_ACTIONS;
-		int first = this.swapFirstRow(swaps);
-		int scrollMax = this.swapScrollMax(swaps);
-		// The bar takes its column out of every row's width, not just the ones beside it, so the
-		// "on <target>" of a long entry stops at the same place whether it is scrolled past or not.
-		int inner = SWAP_PANEL_W - (scrollMax > 0 ? SWAP_PANEL_SCROLL_W + 1 : 0);
+		Pix2D.fillRectTrans(Theme.PANEL_BACKDROP_RGB, y, PLUGIN_PANEL_W, h, Theme.PANEL_BACKDROP_ALPHA, x);
+		Pix2D.drawRect(y, h, Theme.ACCENT_RGB, x, PLUGIN_PANEL_W);
 
-		Pix2D.fillRectTrans(0x000000, y, SWAP_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, SWAP_PANEL_W);
-
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Left-click swaps");
-		String close = swaps > listRows
-			? (first + 1) + "-" + (first + listRows) + " of " + swaps + "   F10 / Esc to close"
-			: "F10 / Esc to close";
-		this.fontPlain12.drawString(x + SWAP_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
+		this.fontBold12.drawString(x + 10, Theme.ACCENT_BRIGHT_RGB, y + 17, "Plugins");
+		String close = "F8 / Esc to close";
+		this.fontPlain12.drawString(x + PLUGIN_PANEL_W - 10 - this.fontPlain12.stringWid(close), Theme.TEXT_DIM_RGB, y + 17, close);
 
 		int mouseX = super.mouseX - this.layout.vpX;
 		int mouseY = super.mouseY - this.layout.vpY;
-		for (int i = 0; i < rows; i++) {
-			int rowY = y + SWAP_PANEL_HEADER_H + i * SWAP_PANEL_ROW_H;
-			boolean hovered = mouseX >= x + 1 && mouseX < x + inner - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
-			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, inner - 2, SWAP_PANEL_ROW_H, 30, x + 1);
-			}
-			int baseline = rowY + SWAP_PANEL_ROW_H - 4;
-			if (i == 0) {
-				boolean can = swaps > 0;
-				this.fontPlain12.drawString(x + 10, can ? 0xC00000 : 0x707070, baseline, "[x]");
-				this.fontPlain12.drawString(x + 36, can ? 0xFFFFFF : 0x909090, baseline, "Clear all swaps");
-			} else {
-				int k = first + i - SWAP_PANEL_ACTIONS;
-				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, ">");
-				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, MenuSwaps.verb(k));
-				String on = MenuSwaps.isAny(k) ? "any " + MenuSwaps.kindLabel(k) : MenuSwaps.target(k);
-				this.fontPlain12.drawString(x + 170, MenuSwaps.isAny(k) ? 0xFFB000 : 0xC8C8C8, baseline, "on " + on);
-			}
-		}
-		// Only when there is something off screen: an always-drawn bar with nowhere to go says the
-		// list is longer than it is, and drawScrollbar's grip arithmetic divides by (content - view).
-		if (scrollMax > 0) {
-			this.drawScrollbar(first * SWAP_PANEL_ROW_H, x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W,
-				listRows * SWAP_PANEL_ROW_H, swaps * SWAP_PANEL_ROW_H,
-				y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H);
-		}
-		String hint = swaps == 0
-			? "Shift + right-click something to set one. " + MenuSwaps.MAX + " can be stored."
-			: "Click a swap: this target -> any of its kind -> removed.";
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
-	}
+		String hint = total > shown
+			? "Scroll for more. Jars go in .deathplateau/plugins in your home folder."
+			: "Click a row to toggle. Jars go in .deathplateau/plugins in your home folder.";
 
-	/** Consumes a click while the swaps panel is open, on the same terms as the settings panel. */
-	private void handleSwapPanelInput() {
-		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
-		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
-		// counting it here closed this panel on its own and swallowed the click, all through the
-		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
-			this.swapPanelOpen = false;
-			return;
-		}
-		int swaps = MenuSwaps.count();
-		int x = this.swapPanelX() + this.layout.vpX;
-		int y = this.swapPanelY(swaps) + this.layout.vpY;
-		int rows = this.swapPanelRows(swaps);
-		int listRows = rows - SWAP_PANEL_ACTIONS;
-		int listY = y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H;
-		int listH = listRows * SWAP_PANEL_ROW_H;
-		int barX = x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W;
-		int scrollMax = this.swapScrollMax(swaps);
-
-		// The bar answers a HELD button, not a click, which is what makes its two arrows repeat and
-		// its grip follow the mouse - the same deal handleScrollInput() gives every interface list.
-		// Done before the click is consumed below, so a press that lands on the bar never also
-		// counts as a press on the row behind it.
-		if (scrollMax > 0 && super.mouseButton == 1 && super.mouseX >= barX && super.mouseX < barX + SWAP_PANEL_SCROLL_W
-			&& super.mouseY >= listY && super.mouseY < listY + listH) {
-			if (super.mouseY < listY + 16) {
-				this.swapScrollPx -= this.dragCycles * 4;
-			} else if (super.mouseY >= listY + listH - 16) {
-				this.swapScrollPx += this.dragCycles * 4;
-			} else {
-				// The grip, sized as drawScrollbar() draws it, so the press lands where it looks.
-				int grip = (listH - 32) * listH / (swaps * SWAP_PANEL_ROW_H);
-				if (grip < 8) {
-					grip = 8;
+		for (int i = 0; i < shown; i++) {
+			PluginManager.PanelRow row = this.pluginPanelRows.get(i + this.pluginPanelScroll);
+			int rowY = y + PLUGIN_PANEL_HEADER_H + i * PLUGIN_PANEL_ROW_H;
+			boolean hovered = mouseX >= x + 1 && mouseX < x + PLUGIN_PANEL_W - 1
+				&& mouseY >= rowY && mouseY < rowY + PLUGIN_PANEL_ROW_H;
+			if (hovered && row.isClickable()) {
+				Pix2D.fillRectTrans(Theme.PANEL_HOVER_RGB, rowY, PLUGIN_PANEL_W - 2, PLUGIN_PANEL_ROW_H,
+					Theme.PANEL_HOVER_ALPHA, x + 1);
+				if (row.hint != null && row.hint.length() > 0) {
+					hint = row.hint;
 				}
-				// A list shorter than three rows cannot reach this branch today (the bar is only
-				// drawn once there are more swaps than rows, and the smallest window has 17 rows),
-				// but the divisor is a row height away from zero and a divide by zero here would
-				// take the client down.
-				int span = listH - 32 - grip;
-				if (span < 1) {
-					span = 1;
-				}
-				this.swapScrollPx = scrollMax * (super.mouseY - listY - 16 - grip / 2) / span;
 			}
-			this.swapScroll(swaps);
-			super.mouseClickButton = 0;
-			return;
-		}
-
-		if (super.mouseClickButton == 0) {
-			return;
-		}
-		int clickX = super.mouseClickX;
-		int clickY = super.mouseClickY;
-		super.mouseClickButton = 0;
-
-		if (clickX < x || clickX >= x + SWAP_PANEL_W) {
-			return;
-		}
-		// A click in the bar's column that got here (the press was elsewhere, or the bar is not
-		// drawn) must not fall through onto the row behind it.
-		if (scrollMax > 0 && clickX >= barX && clickY >= listY && clickY < listY + listH) {
-			return;
-		}
-		int row = (clickY - (y + SWAP_PANEL_HEADER_H)) / SWAP_PANEL_ROW_H;
-		if (clickY < y + SWAP_PANEL_HEADER_H || row < 0 || row >= rows) {
-			return;
-		}
-		if (row == 0) {
-			MenuSwaps.clear();
-		} else {
-			// The scroll position is what turns a row on screen into a swap in the list.
-			MenuSwaps.cycle(this.swapFirstRow(swaps) + row - SWAP_PANEL_ACTIONS);
-		}
-	}
-
-	/**
-	 * The wheel over the swaps panel. Arbitrated in updateOrbitCamera() with the menu, the ground
-	 * item pile and the camera rather than in handleSwapPanelInput(), because that is where the one
-	 * wheel delta of a cycle is handed out and the camera zoom would otherwise have eaten it before
-	 * the panel was ever asked - updateOrbitCamera() runs in update(), handleSwapPanelInput() in the
-	 * draw. Consumed whether it scrolled anything or not, on the same terms as the panel swallowing
-	 * clicks: while it is open, it owns the mouse.
-	 */
-	private void handleSwapPanelScroll() {
-		if (!this.swapPanelOpen || super.mouseScrollDelta == 0) {
-			return;
-		}
-		int swaps = MenuSwaps.count();
-		int x = this.swapPanelX() + this.layout.vpX;
-		int y = this.swapPanelY(swaps) + this.layout.vpY;
-		if (super.mouseX >= x && super.mouseX < x + SWAP_PANEL_W
-			&& super.mouseY >= y && super.mouseY < y + this.swapPanelHeight(swaps)) {
-			this.swapScrollPx += super.mouseScrollDelta * SWAP_PANEL_ROW_H * SWAP_PANEL_WHEEL_ROWS;
-			this.swapScroll(swaps);
-		}
-		super.mouseScrollDelta = 0;
-	}
-
-	private int giPanelHeight() {
-		return GI_PANEL_HEADER_H + (GI_PANEL_ACTIONS + GroundItemPrefs.count()) * GI_PANEL_ROW_H + GI_PANEL_FOOTER_H;
-	}
-
-	private int giPanelX() {
-		return this.layout.mainX + (512 - GI_PANEL_W) / 2;
-	}
-
-	private int giPanelY() {
-		return this.layout.mainY + (334 - this.giPanelHeight()) / 2;
-	}
-
-	/** Money the way a player reads it, for the value-floor row. */
-	private static String giGp(int v) {
-		if (v == 0) {
-			return "any value";
-		}
-		if (v >= 1000000) {
-			return (v / 1000000) + "m gp+";
-		}
-		if (v >= 1000) {
-			return (v / 1000) + "k gp+";
-		}
-		return v + " gp+";
-	}
-
-	/** Called with areaViewport bound, so coordinates here are viewport-local. */
-	private void drawGiPanel() {
-		int x = this.giPanelX();
-		int y = this.giPanelY();
-		int h = this.giPanelHeight();
-		int rows = GI_PANEL_ACTIONS + GroundItemPrefs.count();
-
-		Pix2D.fillRectTrans(0x000000, y, GI_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, GI_PANEL_W);
-
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Ground items");
-		String close = "F11 / Esc to close";
-		this.fontPlain12.drawString(x + GI_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
-
-		int mouseX = super.mouseX - this.layout.vpX;
-		int mouseY = super.mouseY - this.layout.vpY;
-		for (int i = 0; i < rows; i++) {
-			int rowY = y + GI_PANEL_HEADER_H + i * GI_PANEL_ROW_H;
-			boolean hovered = mouseX >= x + 1 && mouseX < x + GI_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + GI_PANEL_ROW_H;
-			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, GI_PANEL_W - 2, GI_PANEL_ROW_H, 30, x + 1);
+			int baseline = rowY + PLUGIN_PANEL_ROW_H - 4;
+			if (row.showCheckbox) {
+				this.fontPlain12.drawString(x + 10,
+					row.checked ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, row.checked ? "[X]" : "[  ]");
 			}
-			int baseline = rowY + GI_PANEL_ROW_H - 4;
-			if (i == 0) {
-				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, "<>");
-				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, "Show items within");
-				this.fontPlain12.drawString(x + 200, 0xFFB000, baseline, GroundItemPrefs.radius() + " tiles");
-			} else if (i == 1) {
-				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, "<>");
-				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, "Only label piles worth");
-				this.fontPlain12.drawString(x + 200, 0xFFB000, baseline, giGp(GroundItemPrefs.minValue()));
-			} else if (i == 2) {
-				boolean on = GroundItemPrefs.showHidden();
-				this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, "Reveal hidden items (double-tap Alt)");
-			} else {
-				int k = i - GI_PANEL_ACTIONS;
-				boolean hide = GroundItemPrefs.mode(k) == GroundItemPrefs.HIDE;
-				this.fontPlain12.drawString(x + 10, hide ? 0x707070 : 0xFF40FF, baseline, hide ? "hide" : "show");
-				this.fontPlain12.drawString(x + 60, hide ? 0x909090 : 0xFFFFFF, baseline, GroundItemPrefs.name(k));
-			}
+			int colour = row.kind == PluginManager.PanelRow.KIND_ACTION ? Theme.ACCENT_BRIGHT_RGB
+				: row.kind == PluginManager.PanelRow.KIND_TEXT ? Theme.TEXT_DIM_RGB
+				: row.checked ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB;
+			this.fontPlain12.drawString(x + 36, colour, baseline, row.label);
 		}
-		String hint = GroundItemPrefs.count() == 0
-			? "Hold Alt and click the [-] or [+] on an item on the ground."
-			: "Click an item: hidden -> highlighted -> removed.";
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
+
+		this.fontPlain12.drawString(x + 10, Theme.TEXT_DIM_RGB, y + h - 8, hint);
 	}
 
-	/** Consumes a click while the ground item panel is open, on the same terms as the other two. */
-	private void handleGiPanelInput() {
-		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
-		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
-		// counting it here closed this panel on its own and swallowed the click, all through the
-		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
-			this.giPanelOpen = false;
+	/** Consumes a click while the plugin panel is open, on the same terms as the other three. */
+	private void handlePluginPanelInput() {
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+			this.pluginPanelOpen = false;
 			return;
+		}
+		// The wheel scrolls the list while the panel is open, and is consumed so it cannot also
+		// zoom the camera behind it. Clamped in drawPluginPanel(), which is the only place that
+		// knows how many rows there are to scroll through.
+		if (super.mouseScrollDelta != 0) {
+			this.pluginPanelScroll += super.mouseScrollDelta;
+			super.mouseScrollDelta = 0;
 		}
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.giPanelX() + this.layout.vpX;
-		int y = this.giPanelY() + this.layout.vpY;
+		// Drawn before input is handled, so a first frame with no rows yet means there is nothing
+		// to hit-test against - the click is still eaten, as it is for every other panel.
+		java.util.List<PluginManager.PanelRow> rows = this.pluginPanelRows;
+		int x = this.pluginPanelX() + this.layout.vpX;
+		int y = this.pluginPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
 
-		if (clickX < x || clickX >= x + GI_PANEL_W) {
+		if (rows == null || clickX < x || clickX >= x + PLUGIN_PANEL_W) {
 			return;
 		}
-		int row = (clickY - (y + GI_PANEL_HEADER_H)) / GI_PANEL_ROW_H;
-		if (clickY < y + GI_PANEL_HEADER_H || row < 0 || row >= GI_PANEL_ACTIONS + GroundItemPrefs.count()) {
+		int row = (clickY - (y + PLUGIN_PANEL_HEADER_H)) / PLUGIN_PANEL_ROW_H + this.pluginPanelScroll;
+		if (clickY < y + PLUGIN_PANEL_HEADER_H || row < this.pluginPanelScroll
+			|| row >= this.pluginPanelScroll + this.pluginPanelRowCount() || row >= rows.size()) {
 			return;
 		}
-		if (row == 0) {
-			GroundItemPrefs.cycleRadius();
-		} else if (row == 1) {
-			GroundItemPrefs.cycleMinValue();
-		} else if (row == 2) {
-			GroundItemPrefs.toggleShowHidden();
-		} else {
-			GroundItemPrefs.cycle(row - GI_PANEL_ACTIONS);
-		}
+		this.plugins.clickRow(rows.get(row));
 	}
 
-	/**
-	 * Tracks Alt from the held-key state rather than the key queue, because a held key auto-repeats:
-	 * the queue sees a stream of presses and could not tell a genuine double-tap from someone
-	 * leaning on the key. actionKey stays 1 for the whole hold, so a rising edge is a real press.
-	 */
-	private void updateAltState() {
-		boolean down = super.actionKey[GameShell.KEY_ALT] == 1;
-		if (down && !this.altDown) {
-			long now = System.currentTimeMillis();
-			if (now - this.altLastPress < ALT_DOUBLE_TAP_MS) {
-				GroundItemPrefs.toggleShowHidden();
-				this.addMessage("", GroundItemPrefs.showHidden()
-					? "Showing hidden ground items." : "Hidden ground items are hidden again.", 0);
-				this.altLastPress = 0;          // a third tap starts a new pair, not another toggle
-			} else {
-				this.altLastPress = now;
-			}
-		}
-		this.altDown = down;
-	}
 
-	/**
-	 * A click on one of the Alt controls. Returns true when it hit something, in which case the
-	 * click is spent and must not also walk the player.
-	 */
-	private boolean handleGroundItemClick() {
-		int x = super.mouseClickX - this.layout.vpX;
-		int y = super.mouseClickY - this.layout.vpY;
-		for (int i = 0; i < this.giZoneCount; i++) {
-			if (y < this.giZoneTop[i] || y > this.giZoneBottom[i]) {
-				continue;
-			}
-			String name = this.giZoneName[i];
-			if (x >= this.giZoneMinusX[i] && x < this.giZoneMinusX[i] + GI_CONTROL_W) {
-				if (GroundItemPrefs.set(name, GroundItemPrefs.HIDE)) {
-					this.addMessage("", name + " will be hidden on the ground.", 0);
-				} else {
-					this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-						+ " ground item rules. Remove one with F11 first.", 0);
-				}
-				return true;
-			}
-			if (x >= this.giZonePlusX[i] && x < this.giZonePlusX[i] + GI_CONTROL_W) {
-				this.addMessage("", GroundItemPrefs.removeName(name)
-					? name + " is back to normal." : name + " was already normal.", 0);
-				return true;
-			}
-			if (x >= this.giZoneNameX[i] && x < this.giZoneNameEndX[i]) {
-				boolean was = GroundItemPrefs.isHighlighted(name);
-				if (was) {
-					GroundItemPrefs.removeName(name);
-					this.addMessage("", name + " is no longer highlighted.", 0);
-				} else if (GroundItemPrefs.set(name, GroundItemPrefs.HIGHLIGHT)) {
-					this.addMessage("", name + " will be highlighted on the ground.", 0);
-				} else {
-					this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-						+ " ground item rules. Remove one with F11 first.", 0);
-				}
-				return true;
-			}
-		}
-		return false;
-	}
 
 	/**
 	 * Rows a menu can show in an area this tall: never fewer than one, never more than it has.
@@ -1752,418 +1190,27 @@ public class Client extends GameShell implements PixMap.Target {
 		return true;
 	}
 
-	private void drawGroundItems() {
-		this.updateAltState();
-		this.giZoneCount = 0;
-		this.giPileCount = 0;
-		ClientPlayer self = localPlayer;
-		if (self == null) {
-			return;
-		}
-		int level = this.currentLevel;
-		int centreX = self.field1157 >> 7;
-		int centreZ = self.field1158 >> 7;
-		int radius = GroundItemPrefs.radius();
-		// Holding Alt reveals hidden items as well as offering the controls - otherwise a hidden
-		// item would have no [+] to click and could only be recovered from the F11 panel.
-		boolean alt = this.altDown;
-		boolean reveal = GroundItemPrefs.showHidden() || alt;
-		long floor = GroundItemPrefs.minValue();
-		int minX = centreX - radius;
-		if (minX < 0) {
-			minX = 0;
-		}
-		int minZ = centreZ - radius;
-		if (minZ < 0) {
-			minZ = 0;
-		}
-		int maxX = centreX + radius;
-		if (maxX > 103) {
-			maxX = 103;
-		}
-		int maxZ = centreZ + radius;
-		if (maxZ > 103) {
-			maxZ = 103;
-		}
-		int drawn = 0;
-		for (int tileX = minX; tileX <= maxX; tileX++) {
-			for (int tileZ = minZ; tileZ <= maxZ; tileZ++) {
-				if (drawn >= GROUND_ITEM_MAX_LABELS) {
-					return;
-				}
-				LinkList stack = this.objStacks[level][tileX][tileZ];
-				if (stack == null) {
-					continue;
-				}
-				// tail()/prev() rather than head()/next() to match every other walk of objStacks in
-				// this class, so the rows come out in the same order the right-click menu lists them.
-				int distinct = 0;
-				for (ClientObj obj = (ClientObj) stack.tail(); obj != null; obj = (ClientObj) stack.prev()) {
-					int at = -1;
-					for (int i = 0; i < distinct; i++) {
-						if (this.groundItemIds[i] == obj.field873) {
-							at = i;
-							break;
-						}
-					}
-					if (at >= 0) {
-						this.groundItemCounts[at] += obj.field875;
-					} else if (distinct < GROUND_ITEM_MAX_PER_TILE) {
-						this.groundItemIds[distinct] = obj.field873;
-						this.groundItemCounts[distinct] = obj.field875;
-						distinct++;
-					}
-				}
-				if (distinct == 0) {
-					continue;
-				}
-				this.projectFromGround((tileX << 7) + 64, GROUND_ITEM_HEIGHT, (tileZ << 7) + 64);
-				// -1 means behind the camera. The generous box around the 512x334 viewport is not
-				// for correctness - plotLetter() clips - but so a tile off to the side costs one
-				// comparison instead of an ObjType decode and a string build per row.
-				if (this.projectX <= -1 || this.projectX > this.layout.vpW + 128 || this.projectY < -64 || this.projectY > this.layout.vpH + 66) {
-					continue;
-				}
-				// PASS ONE: what each tracked row would look like, and how many rows there are to
-				// draw. This pass exists so the column can be laid out over the rows that will
-				// actually appear - a hidden row is not a row. It reads the name, the price and the
-				// stackable flag and allocates nothing; the label string is built in pass two, for
-				// the drawn window only.
-				int visible = 0;
-				for (int i = 0; i < distinct; i++) {
-					ObjType type = ObjType.get(this.groundItemIds[i]);
-					if (type.field811 == null) {
-						this.giRowColour[i] = GI_ROW_SKIP;
-						continue;
-					}
-					// field827 is the price of one. Deliberately count * price and NOT the
-					// (count + 1) * price sortObjStacks() uses: that +1 is a tie-break to make a
-					// stack of one outrank a non-stackable at the same price, and showing it to
-					// the player would just read as arithmetic the client got wrong. long because
-					// a merged stack times a high price overflows an int.
-					long value = type.field827;
-					if (type.field853) {
-						value = (long) this.groundItemCounts[i] * value;
-					}
-					// The player's list is consulted on the BARE name, not the "x 500" label: a
-					// rule set on one coin has to keep applying to a pile of them.
-					int colour;
-					if (GroundItemPrefs.isHighlighted(type.field811)) {
-						colour = GROUND_ITEM_HIGHLIGHT;              // always shown, floor ignored
-					} else if (GroundItemPrefs.isHidden(type.field811)) {
-						if (!reveal) {
-							this.giRowColour[i] = GI_ROW_SKIP;
-							continue;
-						}
-						colour = GROUND_ITEM_HIDDEN;
-					} else if (value < floor) {
-						this.giRowColour[i] = GI_ROW_SKIP;
-						continue;
-					} else {
-						colour = GROUND_ITEM_COLOUR;
-						for (int tier = 0; tier < GROUND_ITEM_TIERS.length; tier++) {
-							if (value >= (long) GROUND_ITEM_TIERS[tier]) {
-								colour = GROUND_ITEM_TIER_COLOURS[tier];
-								break;
-							}
-						}
-					}
-					this.giRowColour[i] = colour;
-					visible++;
-				}
-				if (visible == 0) {
-					continue;
-				}
-				// The window into those rows. A pile taller than GI_ROWS_SHOWN shows a slice of
-				// itself and the wheel moves the slice; every other pile shows all of itself and
-				// ignores the offset entirely.
-				int shown = visible < GI_ROWS_SHOWN ? visible : GI_ROWS_SHOWN;
-				int offset = 0;
-				if (this.giScrollLevel == level && this.giScrollTileX == tileX
-					&& this.giScrollTileZ == tileZ) {
-					offset = this.giScrollOffset;
-					// Re-clamped here as well as on the wheel, because the pile can shrink between
-					// frames - somebody taking the bottom four items must not leave the column
-					// scrolled past its own end.
-					if (offset > visible - shown) {
-						offset = visible - shown;
-					}
-					if (offset < 0) {
-						offset = 0;
-					}
-				}
-				// PASS TWO. Grow the column upwards: the last row lands on the tile, earlier ones
-				// stack above it, so the pile never covers the item models below it.
-				int rowY = this.projectY - (shown - 1) * GROUND_ITEM_ROW_H;
-				int firstY = rowY;
-				int lastY = rowY;
-				int minLeft = this.projectX;
-				int maxRight = this.projectX;
-				int visIndex = 0;
-				for (int i = 0; i < distinct; i++) {
-					int colour = this.giRowColour[i];
-					if (colour == GI_ROW_SKIP) {
-						continue;
-					}
-					int at = visIndex++;
-					if (at < offset || at >= offset + shown) {
-						continue;
-					}
-					int count = this.groundItemCounts[i];
-					ObjType type = ObjType.get(this.groundItemIds[i]);
-					String label = type.field811;
-					if (count > 1) {
-						label = label + " x " + formatObjCount(count);
-					}
-					if (alt && this.giZoneCount < GROUND_ITEM_MAX_LABELS) {
-						// [-] [+] Name, laid out from the left edge of what centreString would
-						// have drawn, so the row stays centred on the tile as it grows.
-						int nameW = this.fontPlain11.stringWid(label);
-						int totalW = GI_CONTROL_W * 2 + nameW;
-						int left = this.projectX - totalW / 2;
-						int plusX = left + GI_CONTROL_W;
-						int nameX = plusX + GI_CONTROL_W;
-						this.fontPlain11.drawString(left + 1, 0x000000, rowY + 1, "-");
-						this.fontPlain11.drawString(left, GI_MINUS_COLOUR, rowY, "-");
-						this.fontPlain11.drawString(plusX + 1, 0x000000, rowY + 1, "+");
-						this.fontPlain11.drawString(plusX, GI_PLUS_COLOUR, rowY, "+");
-						this.fontPlain11.drawString(nameX + 1, 0x000000, rowY + 1, label);
-						this.fontPlain11.drawString(nameX, colour, rowY, label);
-						int z = this.giZoneCount++;
-						this.giZoneName[z] = type.field811;
-						this.giZoneTop[z] = rowY - this.fontPlain11.height;
-						this.giZoneBottom[z] = rowY + 2;
-						this.giZoneMinusX[z] = left;
-						this.giZonePlusX[z] = plusX;
-						this.giZoneNameX[z] = nameX;
-						this.giZoneNameEndX[z] = nameX + nameW;
-						if (left < minLeft) {
-							minLeft = left;
-						}
-						if (nameX + nameW > maxRight) {
-							maxRight = nameX + nameW;
-						}
-					} else {
-						this.fontPlain11.centreString(this.projectX + 1, rowY + 1, 0x000000, label);
-						this.fontPlain11.centreString(this.projectX, rowY, colour, label);
-						int half = this.fontPlain11.stringWid(label) / 2;
-						if (this.projectX - half < minLeft) {
-							minLeft = this.projectX - half;
-						}
-						if (this.projectX + half > maxRight) {
-							maxRight = this.projectX + half;
-						}
-					}
-					lastY = rowY;
-					drawn++;
-					rowY += GROUND_ITEM_ROW_H;
-				}
-				int top = firstY - this.fontPlain11.height;
-				int bottom = lastY + 2;
-				// THE SCROLL BAR, only on a pile that has more rows than it shows - otherwise it
-				// would be a control with nothing to control. Drawn after the rows, because its x
-				// comes from how wide the widest drawn row turned out to be.
-				if (visible > shown) {
-					int barX = minLeft - GI_BAR_GAP - GI_BAR_W;
-					int track = bottom - top;
-					Pix2D.fillRect(track, top, GI_BAR_TRACK, GI_BAR_W, barX);
-					int thumb = track * shown / visible;
-					if (thumb < 2) {
-						thumb = 2;
-					}
-					int thumbY = top + track * offset / visible;
-					if (thumbY + thumb > top + track) {
-						thumbY = top + track - thumb;
-					}
-					Pix2D.fillRect(thumb, thumbY, GI_BAR_THUMB, GI_BAR_W, barX);
-					minLeft = barX;
-				}
-				if (this.giPileCount < GI_MAX_PILES) {
-					int pz = this.giPileCount++;
-					this.giPileTileX[pz] = tileX;
-					this.giPileTileZ[pz] = tileZ;
-					this.giPileLeft[pz] = minLeft;
-					this.giPileRight[pz] = maxRight;
-					this.giPileTop[pz] = top;
-					this.giPileBottom[pz] = bottom;
-					this.giPileRows[pz] = visible;
-				}
-			}
-		}
-	}
 
-	// QoL: the wheel scrolls the pile under the cursor rather than zooming the camera - the same
-	// shape wheel_chat and wheel_interface already have, and for the same reason: the wheel belongs
-	// to whatever you are pointing at. Called from updateOrbitCamera() just before the zoom branch,
-	// so a turn over a tall pile is consumed before the camera ever sees it.
-	//
-	// Gated on GROUND_ITEMS rather than on a wheel setting of its own: it only does anything at all
-	// on a pile the overlay is drawing, and a pile with nothing to scroll is skipped, so there is no
-	// case where a player would want the overlay on and this off.
-	private boolean handleGroundItemScroll() {
-		if (super.mouseScrollDelta == 0 || !QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			return false;
-		}
-		int x = super.mouseX - this.layout.vpX;
-		int y = super.mouseY - this.layout.vpY;
-		for (int i = 0; i < this.giPileCount; i++) {
-			if (this.giPileRows[i] <= GI_ROWS_SHOWN) {
-				continue;                                    // nothing to scroll: leave it to zoom
-			}
-			if (x < this.giPileLeft[i] || x > this.giPileRight[i]
-				|| y < this.giPileTop[i] || y > this.giPileBottom[i]) {
-				continue;
-			}
-			if (this.giScrollLevel != this.currentLevel || this.giScrollTileX != this.giPileTileX[i]
-				|| this.giScrollTileZ != this.giPileTileZ[i]) {
-				this.giScrollLevel = this.currentLevel;
-				this.giScrollTileX = this.giPileTileX[i];
-				this.giScrollTileZ = this.giPileTileZ[i];
-				this.giScrollOffset = 0;
-			}
-			this.giScrollOffset += super.mouseScrollDelta;
-			int max = this.giPileRows[i] - GI_ROWS_SHOWN;
-			if (this.giScrollOffset > max) {
-				this.giScrollOffset = max;
-			}
-			if (this.giScrollOffset < 0) {
-				this.giScrollOffset = 0;
-			}
-			super.mouseScrollDelta = 0;
-			return true;
-		}
-		return false;
-	}
-
-	private void drawXpDrops() {
-		long now = System.currentTimeMillis();
-		for (int i = this.xpDrops.size() - 1; i >= 0; i--) {
-			if (now - this.xpDrops.get(i).lastUpdate >= XPDROP_FADE_MS) {
-				this.xpDrops.remove(i);
-			}
-		}
-		boolean showTracker = this.xpTrackerSkill >= 0 && now < this.xpTrackerUntil;
-		if (!showTracker && this.xpDrops.isEmpty()) {
-			return;
-		}
-		int rightX = this.layout.openW - 5;
-		int y = displayFps ? 68 : 22;
-
-		// The tracker panel: skill icon + that skill's total xp + a bar showing progress to the next
-		// level - the box RuneLite shows above its drops. Separate from the drops themselves, which
-		// stay a bare "+amount".
-		if (showTracker) {
-			// The panel is sized to its contents. A fixed width overflowed as soon as the total got
-			// long - Corey's 13,050,939 spilled out past the left edge and collided with the skill
-			// icon, because the total is right-aligned inside the box.
-			Pix32 panelIcon = this.xpIcon(this.xpTrackerSkill);
-			int panelIconW = panelIcon == null ? 0 : panelIcon.wi;
-			String totalText = formatXpNumber(this.xpTrackerTotal);
-			int totalWidth = this.fontBold12.stringWid(totalText);
-			int boxH = 32;
-			int boxW = 10 + panelIconW + 8 + totalWidth;
-			if (boxW < 96) {
-				boxW = 96;
-			}
-			int boxX = rightX - boxW;
-			Pix2D.fillRectTrans(0x000000, y, boxW, boxH, 165, boxX);
-			Pix2D.drawRect(y, boxH, 0x6F6A5A, boxX, boxW);
-			if (panelIcon != null) {
-				// vertically centred in the space above the progress bar, whatever the icon's height
-				int iconY = y + Math.max(1, (boxH - 8 - panelIcon.hi) / 2);
-				panelIcon.plotSprite(iconY, boxX + 5);
-			}
-			// NB: method243() is itself a right-aligned draw - it does drawString(x - stringWid(text)),
-			// so x is the RIGHT edge of the text, not the left. Subtracting the width here as well
-			// (which this and the original drop code both did) shifted the text a full text-width
-			// further left, which is what pushed the total outside the panel entirely.
-			int totalRight = boxX + boxW - 5;
-			int totalY = y + 18;
-			this.fontBold12.method243(totalText, 0x000000, totalRight + 1, totalY + 1);
-			this.fontBold12.method243(totalText, 0xFFFFFF, totalRight, totalY);
-
-			// levelExperience[L-1] is the xp needed for level L+1 (see its static initialiser and the
-			// stats-tab consumer), so the current level's band runs from levelExperience[L-2] up to
-			// levelExperience[L-1]. Level 1 starts at 0, and 99 has no next level so it reads full.
-			int level = this.skillBaseLevel[this.xpTrackerSkill];
-			int barX = boxX + 4;
-			int barY = y + boxH - 8;
-			int barW = boxW - 8;
-			Pix2D.fillRect(5, barY, 0x201C15, barW, barX);
-			if (level >= 99) {
-				Pix2D.fillRect(5, barY, 0xC8641E, barW, barX);
-			} else if (level >= 1) {
-				int floor = level >= 2 ? levelExperience[level - 2] : 0;
-				int span = levelExperience[level - 1] - floor;
-				if (span > 0) {
-					int done = this.xpTrackerTotal - floor;
-					if (done < 0) {
-						done = 0;
-					}
-					if (done > span) {
-						done = span;
-					}
-					int filled = (int) ((long) barW * (long) done / (long) span);
-					if (filled > 0) {
-						Pix2D.fillRect(5, barY, 0xC8641E, filled, barX);
-					}
-				}
-			}
-			Pix2D.drawRect(barY, 5, 0x000000, barX, barW);
-			y += boxH + 4;
-		}
-
-		// The drops: icon + "+amount", newest at the top, each easing down a row as newer ones push
-		// in above it (Corey: "an actual drop, not just static placement").
-		int rowHeight = 27;
-		for (int i = 0; i < this.xpDrops.size(); i++) {
-			XpDrop drop = this.xpDrops.get(i);
-			float targetRow = i;
-			if (drop.displayY < 0f) {
-				drop.displayY = Math.max(0f, targetRow - 1f);
-			}
-			drop.displayY += (targetRow - drop.displayY) * 0.25f;
-			if (Math.abs(targetRow - drop.displayY) < 0.02f) {
-				drop.displayY = targetRow;
-			}
-			int rowY = y + Math.round(drop.displayY * rowHeight);
-			String text = "+" + drop.amount;
-			int textWidth = this.fontPlain12.stringWid(text);
-			Pix32 icon = this.xpIcon(drop.skillId);
-			int iconWidth = icon != null ? icon.wi : 0;
-			int textY = rowY + 18;
-			// right edge, not left - see the method243() note in the panel block above
-			// black drop-shadow, offset by one pixel, so it stays readable over any scene colour
-			this.fontPlain12.method243(text, 0x000000, rightX + 1, textY + 1);
-			this.fontPlain12.method243(text, 0xFFFF00, rightX, textY);
-			if (icon != null) {
-				icon.plotSprite(rowY, rightX - textWidth - iconWidth - 4);
-			}
-		}
-	}
-
-	private Pix32 xpIcon(int skillId) {
-		if (skillId < 0 || skillId >= XPDROP_ICON_SHEET.length) {
+	/**
+	 * The stats tab's icon for a skill, or null if there is none. Public because the XP drops
+	 * plugin asks for it through PluginContext.getSkillIcon - the tables above are knowledge
+	 * about this cache, so they stay here rather than being copied into a plugin.
+	 */
+	public Pix32 skillIcon(int skillId) {
+		if (skillId < 0 || skillId >= SKILL_ICON_SHEET.length) {
 			return null;
 		}
-		return Component.getImage(XPDROP_ICON_INDEX[skillId], XPDROP_ICON_SHEET[skillId]);
+		try {
+			return Component.getImage(SKILL_ICON_INDEX[skillId], SKILL_ICON_SHEET[skillId]);
+		} catch (Throwable error) {
+			// No image cache yet - asked before the interfaces loaded, or they failed to. "No
+			// icon" is the right answer and the callers all draw nothing for null; throwing here
+			// would instead kill whichever overlay asked, every frame, until it was disabled.
+			// Not logged: this is called once per drop per frame and would flood the log.
+			return null;
+		}
 	}
 
-	// 227731 -> "227,731", matching the grouped total RuneLite's tracker shows.
-	private static String formatXpNumber(int value) {
-		String digits = Integer.toString(value);
-		StringBuilder out = new StringBuilder(digits.length() + 4);
-		int lead = digits.length() % 3;
-		if (lead == 0) {
-			lead = 3;
-		}
-		out.append(digits, 0, lead);
-		for (int i = lead; i < digits.length(); i += 3) {
-			out.append(',');
-			out.append(digits, i, i + 3);
-		}
-		return out.toString();
-	}
 
 
 	@ObfuscatedName("client.yi")
@@ -2876,6 +1923,16 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.bj")
 	public int objDragCycles;
+	/**
+	 * Cycles a click must be held before it becomes a drag. The client's own figure, unless the
+	 * Anti-drag plugin (jagex2.client.plugin.builtin.AntiDragPlugin) has raised it.
+	 *
+	 * A FIELD RATHER THAN AN EVENT, for the same reason the roofs toggle used to be one: the
+	 * decision is made in the middle of the input loop, where no event could usefully fire. The
+	 * plugin sets this while it runs and puts it back in shutDown, so a client with the plugin
+	 * off behaves exactly as an unmodified one does - see PluginContext.setDragDelay.
+	 */
+	public int pluginDragCycles = 5;
 
 	@ObfuscatedName("client.cj")
 	public int midiSong;
@@ -3581,6 +2638,19 @@ public class Client extends GameShell implements PixMap.Target {
 			this.fontBold12 = new PixFont(false, this.jagTitle, "b12_full");
 			this.fontQuill8 = new PixFont(true, this.jagTitle, "q8_full");
 
+			// Plugins: built here because overlays draw with the client's fonts, so there is no
+			// manager to hand out until they exist. Anything that goes wrong reading the plugins
+			// folder is swallowed by the manager; a throw escaping it would be a bug in the
+			// manager itself, and even then the client still starts - just without plugins.
+			try {
+				this.plugins = new PluginManager(this, this.fontPlain11, this.fontPlain12, this.fontBold12);
+				this.plugins.reload();
+				this.attachPluginSidebar();
+			} catch (Throwable error) {
+				this.plugins = null;
+				DevLog.log("PLUGIN", "plugin system disabled for this session: " + error);
+			}
+
 			this.loadTitleBackground();
 			this.loadTitleImages();
 
@@ -4049,6 +3119,18 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 
 		this.updateOnDemand();
+
+		// Plugins get the frame after the client has had it, so a handler reads state the game has
+		// already finished updating rather than something half way through a tick.
+		if (this.plugins != null) {
+			this.plugins.onClientTick(loopCycle);
+			// Alt-drag, before draw() so an overlay picked up this frame is drawn where it has
+			// been dragged to rather than a frame behind the cursor. Viewport-local, because
+			// that is the space overlays draw in.
+			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
+				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
+				this.layout.openW, this.layout.openH);
+		}
 	}
 
 	@ObfuscatedName("client.c(I)V")
@@ -4070,11 +3152,80 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawTitle();
 		}
 
+		if (this.screenshotWanted) {
+			this.screenshotWanted = false;
+			this.writeScreenshot();
+		}
+
 		this.dragCycles = 0;
+	}
+
+	// ------------------------------------------------------------------ screenshots
+
+	/**
+	 * Set by the camera button, read at the end of the next frame.
+	 *
+	 * A FLAG RATHER THAN A CALL, because the button is Swing and the viewport buffer is written
+	 * by the game loop: copying it from the event thread would catch a frame halfway drawn, with
+	 * a torn line across the middle of whatever the player wanted a picture of. Waiting for the
+	 * end of draw() means the buffer is a whole finished frame and nothing is racing for it.
+	 */
+	private volatile boolean screenshotWanted;
+
+	/** Asks for a screenshot of the next completed frame. Safe to call from any thread. */
+	public void requestScreenshot() {
+		this.screenshotWanted = true;
+	}
+
+	/**
+	 * Writes the game view to ~/.deathplateau/screenshots.
+	 *
+	 * WHAT IS IN IT is areaViewport: the scene, the plugin overlays, and in the resizable layout
+	 * the panels that are composited over it. Not the window's own chrome, and in the fixed
+	 * layout not the surrounding interface either - the frame art there goes straight to the
+	 * screen Graphics one piece at a time and was never gathered anywhere this could copy from.
+	 * What a player wants a picture of is the game, which is what this is.
+	 */
+	private void writeScreenshot() {
+		PixMap area = this.areaViewport;
+		if (area == null || area.data == null) {
+			this.addMessage("", "There is nothing to take a picture of yet.", 0);
+			return;
+		}
+		try {
+			java.io.File dir = new java.io.File(System.getProperty("user.home", "."),
+				".deathplateau/screenshots");
+			if (!dir.isDirectory() && !dir.mkdirs()) {
+				this.addMessage("", "Could not make " + dir.getPath() + " to save the screenshot in.", 0);
+				return;
+			}
+			java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+				area.width, area.height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			image.setRGB(0, 0, area.width, area.height, area.data, 0, area.width);
+			String stamp = new java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss")
+				.format(new java.util.Date());
+			java.io.File file = new java.io.File(dir, "deathplateau_" + stamp + ".png");
+			// A second shot in the same second must not quietly overwrite the first.
+			for (int n = 2; file.exists() && n < 100; n++) {
+				file = new java.io.File(dir, "deathplateau_" + stamp + "_" + n + ".png");
+			}
+			javax.imageio.ImageIO.write(image, "png", file);
+			DevLog.log("SHOT", "wrote " + file.getPath());
+			this.addMessage("", "Screenshot saved as " + file.getName(), 0);
+		} catch (Throwable error) {
+			// A full disk, a read-only home. A failed screenshot is not a reason to lose the game.
+			DevLog.log("SHOT", "screenshot failed: " + error);
+			this.addMessage("", "The screenshot could not be saved: " + error, 0);
+		}
 	}
 
 	@ObfuscatedName("client.b(I)V")
 	public void unload() {
+		// Shutting down: every plugin gets its shutDown() before the client tears its own state
+		// down, so one that writes a file on the way out still can.
+		if (this.plugins != null) {
+			this.plugins.shutdown();
+		}
 		this.players = null;
 		this.playerIds = null;
 		this.entityUpdateIds = null;
@@ -5165,13 +4316,10 @@ public class Client extends GameShell implements PixMap.Target {
 
 					this.objDragArea = 0;
 
-					// A click that moves a few pixels while held is a drag after 5 client cycles (100ms) -
-					// Old School's own default - or, with Anti-drag on, after 10 (200ms): long enough that a
-					// fast switch whose mouse is still moving as the button comes up stays a click on the
-					// item, short enough to lay out an inventory. (30, RuneLite's default, made rearranging
-					// switches a chore.) Client settings (F9) turns it off.
-					int dragCycles = QolSettings.on(QolSettings.ANTI_DRAG) ? 10 : 5;
-					if (this.objGrabThreshold && this.objDragCycles >= dragCycles) {
+					// A click that moves a few pixels while held is a drag after this many client
+					// cycles. Five - Old School's own figure, 100ms - unless the Anti-drag plugin
+					// has asked for longer.
+					if (this.objGrabThreshold && this.objDragCycles >= this.pluginDragCycles) {
 						this.hoveredSlotInterfaceId = -1;
 						this.bankTabHovered = -1;
 						this.hoveredSlotPad = false;
@@ -5967,12 +5115,8 @@ public class Client extends GameShell implements PixMap.Target {
 			this.handleQolPanelInput();
 			return;
 		}
-		if (this.swapPanelOpen) {
-			this.handleSwapPanelInput();
-			return;
-		}
-		if (this.giPanelOpen) {
-			this.handleGiPanelInput();
+		if (this.pluginPanelOpen) {
+			this.handlePluginPanelInput();
 			return;
 		}
 		if (this.fullscreenInterfaceId0 != -1) {
@@ -6063,10 +5207,11 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 		}
-		// QoL: player-configured left-click swaps, see applyMenuSwap(). Last thing in the method, so
-		// the client's own priority sort above cannot undo a swap the player asked for.
-		if (QolSettings.on(QolSettings.MENU_SWAPPER)) {
-			this.applyMenuSwap();
+		// Plugins get the menu last of all, so one can override a swap the player configured.
+		// Whoever runs last wins, and a plugin the player installed deliberately is the more
+		// specific instruction of the two.
+		if (this.plugins != null) {
+			this.plugins.onMenuBuilt(this.menuSize);
 		}
 	}
 
@@ -6378,11 +5523,20 @@ public class Client extends GameShell implements PixMap.Target {
 			var2 = 0;
 		}
 		if (!this.menuVisible) {
-			// QoL: a click on one of the Alt ground item controls configures and does nothing else.
-			// Checked before everything below so it cannot also walk the player; a click that misses
-			// every control falls through and behaves normally.
-			if (var2 == 1 && this.altDown && QolSettings.on(QolSettings.GROUND_ITEMS)
-				&& this.handleGroundItemClick()) {
+			// A click that picked an overlay up or put it down belongs to the drag, not to the
+			// overlay and not to the game. Without this, grabbing an overlay with a button on it
+			// presses that button, and dropping it presses whatever is now underneath.
+			if (var2 == 1 && this.plugins != null
+				&& this.plugins.dragWantsClick(super.mouseClickX - this.layout.vpX,
+					super.mouseClickY - this.layout.vpY)) {
+				return;
+			}
+			// A click on something an overlay drew and claimed. Checked before everything below so
+			// it cannot also walk the player; a click that lands on nothing claimed falls through
+			// and behaves exactly as it always did.
+			if (var2 == 1 && this.plugins != null
+				&& this.plugins.onViewportClick(super.mouseClickX - this.layout.vpX,
+					super.mouseClickY - this.layout.vpY)) {
 				return;
 			}
 			// QoL: shift-click an inventory item to drop it instantly, bypassing whatever its
@@ -6985,15 +6139,22 @@ public class Client extends GameShell implements PixMap.Target {
 			// viewport rect below is the same one handleInput() uses to route hover input to the
 			// viewport (see the identical check at ~line 4066) - this client is fixed 765x503, not
 			// resizable, so these bounds are safe to hardcode here too.
-			// QoL: an open menu owns the wheel, then a tall ground-item pile under the cursor, then
-			// the camera. Each consumes the delta when it takes it, so exactly one of the three acts
-			// on a turn - the order is the specificity: a menu is in front of everything, a pile is
-			// a thing you are pointing at, the camera is what is left.
-			// The swaps panel goes first: while it is open it is in front of all three and swallows
-			// the turn either way, exactly as it already swallows clicks. See handleSwapPanelScroll.
-			this.handleSwapPanelScroll();
+			// QoL: an open menu owns the wheel, then an overlay that claimed the spot under the
+			// cursor - a tall ground-item pile is one - then the camera. Each consumes the delta
+			// when it takes it, so exactly one of the three acts on a turn: the order is the
+			// specificity - a menu is in front of everything, an overlay is a thing you are
+			// pointing at, the camera is what is left.
+			// (The swaps panel used to go first here, while it was an in-game panel. It is a
+			// plugin's page in the sidebar now, which is a Swing scroll pane and never sees the
+			// game's wheel at all.)
 			this.handleMenuScroll();
-			this.handleGroundItemScroll();
+			// An overlay that claimed this spot for the wheel takes the turn, before the camera
+			// gets a look.
+			if (super.mouseScrollDelta != 0 && this.plugins != null
+				&& this.plugins.onViewportScroll(super.mouseX - this.layout.vpX,
+					super.mouseY - this.layout.vpY, super.mouseScrollDelta)) {
+				super.mouseScrollDelta = 0;
+			}
 			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
 				if (QolSettings.on(QolSettings.WHEEL_ZOOM)) {
 					this.cameraZoomOffset -= super.mouseScrollDelta * 40;
@@ -7150,6 +6311,27 @@ public class Client extends GameShell implements PixMap.Target {
 						return;
 					}
 
+					// The plugin list, on the same terms as the QoL panel below it.
+					if (key == PLUGIN_PANEL_KEY && this.ingame && this.plugins != null) {
+						// One key, two interfaces: where there is a window there is a sidebar, and
+						// F8 shows and hides it. The in-canvas panel is for the applet, which has
+						// no window to put a sidebar in.
+						if (this.pluginSidebar != null) {
+							this.togglePluginSidebar();
+							continue;
+						}
+						this.pluginPanelOpen = !this.pluginPanelOpen;
+						if (this.pluginPanelOpen) {
+							this.closeInterfaces();
+						}
+						continue;
+					}
+					if (this.pluginPanelOpen) {
+						if (key == GameShell.KEY_ESCAPE) {
+							this.pluginPanelOpen = false;
+						}
+						continue;
+					}
 					// QoL settings panel. Handled at the very top of the key loop so it works from
 					// any interface state, and so its keys are swallowed rather than reaching chat.
 					if (key == QOL_PANEL_KEY && this.ingame) {
@@ -7170,46 +6352,25 @@ public class Client extends GameShell implements PixMap.Target {
 						}
 						continue;
 					}
-					// QoL: the left-click swaps panel, on the same terms as the settings panel above.
-					if (key == SWAP_PANEL_KEY && this.ingame && QolSettings.on(QolSettings.MENU_SWAPPER)) {
-						this.swapPanelOpen = !this.swapPanelOpen;
-						if (this.swapPanelOpen) {
-							// Back to the top every time it opens: a panel that remembered where it
-							// was left would open on the middle of the list with no sign of why.
-							this.swapScrollPx = 0;
-							this.closeInterfaces();
-						}
-						continue;
-					}
-					if (this.swapPanelOpen) {
-						if (key == GameShell.KEY_ESCAPE) {
-							this.swapPanelOpen = false;
-						}
-						continue;
-					}
-					// QoL: the ground item panel, and the peek at what is hidden. Both gated on the
-					// feature's own QolSettings switch, so turning ground items off turns off the
-					// keys that only make sense with it on.
-					if (key == GI_PANEL_KEY && this.ingame && QolSettings.on(QolSettings.GROUND_ITEMS)) {
-						this.giPanelOpen = !this.giPanelOpen;
-						if (this.giPanelOpen) {
-							this.closeInterfaces();
-						}
-						continue;
-					}
-					if (this.giPanelOpen) {
-						if (key == GameShell.KEY_ESCAPE) {
-							this.giPanelOpen = false;
-						}
-						continue;
-					}
-					// Alt is read as a held key (updateAltState), never from the queue - swallow it here
-					// so an auto-repeating hold cannot fall through into chat or anything else.
+					// Alt is read as a held key, never from the queue - swallow it here so an
+					// auto-repeating hold cannot fall through into chat or anything else. The
+					// Ground items plugin reads it through PluginContext.isAltHeld().
 					if (key == GameShell.KEY_ALT) {
 						continue;
 					}
 
+					// A plugin's own hotkey, offered the key before the game sees it: consuming one
+					// stops it reaching chat, which is what a plugin bound to a letter needs.
+					// Deliberately BELOW the client's own panel keys - a plugin that swallowed
+					// everything must never be able to lock the player out of the panel that turns
+					// it off.
+					if (this.plugins != null && this.plugins.onKeyPressed(key)) {
+						continue;
+					}
+
 					// QoL: Escape closes whatever interface is currently open, regardless of state.
+					// Not consumed - anything else that wants Escape still gets it, which is how
+					// this has always behaved.
 					if (key == GameShell.KEY_ESCAPE && QolSettings.on(QolSettings.ESC_CLOSE)) {
 						DevLog.log("HOTKEY", "Escape closed interfaces");
 						this.closeInterfaces();
@@ -8586,10 +7747,12 @@ public class Client extends GameShell implements PixMap.Target {
 		Pix3D.zoom = this.layout.zoom;
 		this.scene.draw(this.cameraX, var4, this.cameraY, this.cameraZ, this.cameraYaw, this.cameraPitch);
 		this.scene.clearLocChanges();
-		// QoL: ground item names, see drawGroundItems(). Here and not in draw3DEntityElements() so
-		// the labels sit under player names, hitsplats and headicons rather than over them.
-		if (QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			this.drawGroundItems();
+		// Plugin overlays on the scene layer - ground item names among them. Here and not in
+		// draw3DEntityElements() so they sit under player names, hitsplats and headicons rather
+		// than over them. First of the two overlay passes in a frame.
+		if (this.plugins != null) {
+			this.plugins.renderOverlays(this.layout.openW, this.layout.openH,
+				jagex2.client.plugin.Overlay.LAYER_SCENE);
 		}
 		this.draw2DEntityElements();
 		this.drawTileHint();
@@ -9284,19 +8447,19 @@ public class Client extends GameShell implements PixMap.Target {
 			this.fontPlain12.method243("Mem:" + var6 + "k", 16776960, var2, var13);
 			var13 += 15;
 		}
-		// QoL: XP drop counter, see drawXpDrops() above.
-		if (QolSettings.on(QolSettings.XP_DROPS)) {
-			this.drawXpDrops();
+		// Plugin overlays. Under the client's own panels and under the xp drops, which are the
+		// client's own overlay - a plugin draws alongside the game, never over the furniture the
+		// player needs to turn it off.
+		if (this.plugins != null) {
+			this.plugins.renderOverlays(this.layout.openW, this.layout.openH,
+				jagex2.client.plugin.Overlay.LAYER_SCREEN);
 		}
 		// Drawn last of the viewport overlays so the settings panels sit on top of everything else.
+		if (this.pluginPanelOpen && this.plugins != null) {
+			this.drawPluginPanel();
+		}
 		if (this.qolPanelOpen) {
 			this.drawQolPanel();
-		}
-		if (this.swapPanelOpen) {
-			this.drawSwapPanel();
-		}
-		if (this.giPanelOpen) {
-			this.drawGiPanel();
 		}
 		if (this.systemUpdateTimer != 0) {
 			int var10 = this.systemUpdateTimer / 50;
@@ -9464,14 +8627,15 @@ public class Client extends GameShell implements PixMap.Target {
 			ChatIcons.draw(this.fontBold12, this.imageModIcons, var2 + 3, var10, var11,
 				"@sh1@" + this.fitMenuText(this.menuOption[this.menuRowIndex(p)], var4 - 6));
 		}
-		// A menu with rows it is not showing says so, in the ground-item overlay's own colours. A
+		// A menu with rows it is not showing says so, in what were the ground-item overlay's own
+		// colours and are now this menu's - see MENU_BAR_TRACK. A
 		// menu that runs off the bottom of the screen with no mark is what this round is fixing;
 		// one that silently shows two thirds of itself would be the same bug in a smaller box.
 		if (this.menuSize > this.menuRowsShown) {
 			int barX = var2 + var4 - MENU_BAR_W - 1;
 			int trackY = var3 + 19;
 			int track = this.menuRowsShown * MENU_ROW_H;
-			Pix2D.fillRect(track, trackY, GI_BAR_TRACK, MENU_BAR_W, barX);
+			Pix2D.fillRect(track, trackY, MENU_BAR_TRACK, MENU_BAR_W, barX);
 			int thumb = track * this.menuRowsShown / this.menuSize;
 			if (thumb < 3) {
 				thumb = 3;
@@ -9480,7 +8644,7 @@ public class Client extends GameShell implements PixMap.Target {
 			if (thumbY + thumb > trackY + track) {
 				thumbY = trackY + track - thumb;
 			}
-			Pix2D.fillRect(thumb, thumbY, GI_BAR_THUMB, MENU_BAR_W, barX);
+			Pix2D.fillRect(thumb, thumbY, MENU_BAR_THUMB, MENU_BAR_W, barX);
 		}
 	}
 
@@ -10817,10 +9981,15 @@ public class Client extends GameShell implements PixMap.Target {
 				int var103 = this.in.g1_alt2();
 				int var104 = this.in.g1();
 				int var105 = this.in.g4();
-				// QoL: XP drop counter - see addXpDrop() above. Skipped on each skill's first ever
-				// update this session so login's initial xp sync doesn't look like a giant gain.
-				if (this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]) {
-					this.addXpDrop(var103, var105 - this.skillExperience[var103], var105);
+				// Plugins see every stat change; the XP drops plugin is one of them. Gained is 0
+				// for each skill's first update of the session - login's sync of the whole
+				// account - so nothing reads it as a gain. That guard is here rather than in a
+				// plugin because it is about the packet, not about any one display of it.
+				if (this.plugins != null) {
+					this.plugins.onStatChanged(var103, var104, var105,
+						this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]
+							? var105 - this.skillExperience[var103]
+							: 0);
 				}
 				this.xpDropStatSeen[var103] = true;
 				this.skillExperience[var103] = var105;
@@ -11297,6 +10466,11 @@ public class Client extends GameShell implements PixMap.Target {
 			if (this.ptype == 90) {
 				// PLAYER_INFO
 				this.getPlayerPos(this.psize, this.in);
+				// One of these a server cycle, which is what makes it the plugin system's game
+				// tick - see jagex2.client.plugin.event.GameTick.
+				if (this.plugins != null) {
+					this.plugins.onGameTick();
+				}
 				this.awaitingSync = false;
 				this.ptype = -1;
 				return true;
@@ -12441,11 +11615,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.B(I)V")
 	public void showContextMenu() {
-		// QoL: Shift + right-click opens a menu of swaps to set instead of actions to take. Done
-		// here, at the moment of the right-click, so the every-frame menu is left alone - see
-		// buildSwapMenu(). menuSwapMode stays false if there was nothing swappable under the cursor.
+		// QoL: Shift + right-click opens a menu of settings for whatever is under the cursor
+		// instead of actions to take. Done here, at the moment of the right-click, so the
+		// every-frame menu is left alone - see buildSwapMenu(). Not gated on any one feature any
+		// more: the rows come from the plugins that want them, and the menu does not open at all
+		// when none of them offered anything.
 		this.menuSwapMode = false;
-		if (QolSettings.on(QolSettings.MENU_SWAPPER) && super.actionKey[GameShell.KEY_SHIFT] == 1) {
+		if (super.actionKey[GameShell.KEY_SHIFT] == 1) {
 			this.buildSwapMenu();
 		}
 		int var2 = this.fontBold12.stringWidTag("Choose Option");
@@ -12569,6 +11745,12 @@ public class Client extends GameShell implements PixMap.Target {
 		int var4 = this.menuParamC[arg0];
 		int var5 = this.menuAction[arg0];
 		int var6 = this.menuParamA[arg0];
+		// Plugins see the click before anything is sent, and may stop it - how a plugin guards an
+		// action ("really drop that?"). Read from the raw action, before the 2000 offset below is
+		// taken off, so a plugin matching on an action id sees the same number the menu carried.
+		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4)) {
+			return;
+		}
 		if (var5 >= 2000) {
 			var5 -= 2000;
 		}
@@ -15960,6 +15142,13 @@ public class Client extends GameShell implements PixMap.Target {
 		int indent = lines.size() > 1 ? this.chatPrefixWidth(arg0, arg2, arg3) : 0;
 		for (int i = 0; i < lines.size(); i++) {
 			this.pushMessage(arg0, lines.get(i), arg3, i > 0, arg3 == 0 || arg3 == 4 || arg3 == 5 || arg3 == 8 ? 0 : indent);
+		}
+		// Plugins see the message as it was sent, not the wrapped lines - a handler matching on
+		// text should not have to care how wide the chatbox happens to be. Posted after the lines
+		// are in, so a plugin that replies with a message of its own cannot interleave with this
+		// one. PluginManager guards against the recursion that reply would otherwise cause.
+		if (this.plugins != null) {
+			this.plugins.onChatMessage(arg0, arg2, arg3);
 		}
 	}
 

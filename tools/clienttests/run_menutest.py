@@ -27,7 +27,7 @@ SHELL = os.path.join(HERE, 'MenuTest.shell.java')
 
 DECLS = [
     'MENU_ROW_H', 'MENU_CHROME_H', 'menuScroll', 'menuRowsShown', 'MENU_BAR_W',
-    'GI_BAR_TRACK', 'GI_BAR_THUMB',
+    'MENU_BAR_TRACK', 'MENU_BAR_THUMB',
     'menuOption', 'menuSize', 'menuVisible', 'menuArea', 'menuX', 'menuY', 'menuWidth',
     'menuHeight', 'menuSwapMode', 'layout', 'CHAT_X', 'CHAT_Y', 'CHAT_W', 'CHAT_H', 'SIDE_X',
     'imageModIcons',
@@ -78,11 +78,12 @@ def source_checks(src):
     old = re.findall(r'\(this\.menuSize - 1 - \w+\) \* 15', src)
     out.append(('and no copy of the old (menuSize - 1 - i) * 15 arithmetic is left in the file: '
                 '%d found' % len(old), not old))
-    # the wheel order: a menu takes the wheel before a ground pile, which takes it before the camera
-    order = [src.find('this.handleMenuScroll();'), src.find('this.handleGroundItemScroll();'),
+    # The wheel order: a menu takes the wheel before an overlay that claimed the spot under the
+    # cursor - which is what a tall ground-item pile is now - and both before the camera.
+    order = [src.find('this.handleMenuScroll();'), src.find('this.plugins.onViewportScroll('),
              src.find('QolSettings.on(QolSettings.WHEEL_ZOOM)')]
-    out.append(('an open menu is offered the wheel before a ground pile, and both before the '
-                'camera zoom', all(x > 0 for x in order) and order == sorted(order)))
+    out.append(('an open menu is offered the wheel before an overlay that claimed the spot, and '
+                'both before the camera zoom', all(x > 0 for x in order) and order == sorted(order)))
     return out
 
 

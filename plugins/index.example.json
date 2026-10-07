@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "A sample plugin hub index. Copy this to index.json in the DeathPlateau-Plugins repo (or",
+    "wherever you point -Dlostcity.pluginindex at) and fill in your own plugins.",
+    "",
+    "id       required. The jar is installed as <id>.jar, so it may only be letters, digits,",
+    "         dash and underscore. Never change one after release: it is how the client knows",
+    "         an installed plugin is this plugin.",
+    "name     required. What the hub shows.",
+    "url      required. http or https. Where the jar is.",
+    "version  compared as text. A different string to the installed one offers an update.",
+    "sha256   strongly recommended. Checked after download; a mismatch throws the file away.",
+    "         Get it with: sha256sum plugin.jar   (Windows: certutil -hashfile plugin.jar SHA256)",
+    "author, description  shown in the hub.",
+    "clientApi  the lowest PluginApi.LEVEL the jar needs - the same number as the plugin's own",
+    "         @PluginDescriptor(apiLevel = ...). Leave it out for \"does not say\". An entry",
+    "         asking for more than the running client has is listed with what it needs, and has",
+    "         no Install button: downloading it would succeed and then fail on the first frame.",
+    "",
+    "Keys starting with _ are ignored, which is what makes this comment legal JSON."
+  ],
+  "plugins": [
+    {
+      "id": "coordinates",
+      "name": "Coordinates",
+      "description": "Shows your world position in the corner of the viewport",
+      "author": "Corey",
+      "version": "1.0",
+      "url": "https://github.com/coreysho/DeathPlateau-Plugins/releases/download/coordinates-1.0/coordinates.jar",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "clientApi": 1
+    },
+    {
+      "id": "xptracker",
+      "name": "XP tracker",
+      "description": "Session experience and xp/hr. F7 resets it.",
+      "author": "Corey",
+      "version": "1.0",
+      "url": "https://github.com/coreysho/DeathPlateau-Plugins/releases/download/xptracker-1.0/xptracker.jar",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "clientApi": 1
+    }
+  ]
+}
