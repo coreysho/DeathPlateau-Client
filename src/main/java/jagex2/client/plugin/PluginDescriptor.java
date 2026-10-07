@@ -47,4 +47,17 @@ public @interface PluginDescriptor {
 	 * and the old file is never consulted again.
 	 */
 	String legacySetting() default "";
+
+	/**
+	 * The lowest {@link PluginApi#LEVEL} this plugin needs to run.
+	 *
+	 * Say it whenever the plugin calls something that was added to the API, and say the level that
+	 * added it - not the newest one going. A client below it refuses the plugin by name, with a
+	 * line saying it was built for a newer client, instead of loading it and throwing
+	 * NoSuchMethodError out of the first frame that touches the missing method.
+	 *
+	 * The default of 0 means "does not say", which is never refused. Every plugin written before
+	 * levels existed is in that bucket.
+	 */
+	int apiLevel() default 0;
 }

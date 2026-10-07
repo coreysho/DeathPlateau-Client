@@ -59,7 +59,10 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.XpDropsPlugin",
 		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin",
 		"jagex2.client.plugin.builtin.MenuSwapperPlugin",
-		"jagex2.client.plugin.builtin.GroundItemsPlugin"
+		"jagex2.client.plugin.builtin.GroundItemsPlugin",
+		"jagex2.client.plugin.builtin.BoostsPlugin",
+		"jagex2.client.plugin.builtin.StatusBarsPlugin",
+		"jagex2.client.plugin.builtin.SkillsPlugin"
 	};
 
 	/** What the panel shows as the source of a plugin that came with the client. */
@@ -74,6 +77,26 @@ public final class PluginManager {
 	private static final int MAX_RENDER_ERRORS = 5;
 
 	/** A plugin the client knows about, running or not. */
+	/**
+	 * A plugin that was found but not loaded, and the one sentence saying why.
+	 *
+	 * Kept so the plugin panel can show a dim row instead of the plugin simply not being there.
+	 * A jar that vanishes without a word is the thing this whole mechanism exists to stop: the
+	 * player installed something, and "it is not in the list" is not an answer.
+	 */
+	public static final class Refused {
+
+		public final String name;
+		public final String source;
+		public final String reason;
+
+		Refused(String name, String source, String reason) {
+			this.name = name;
+			this.source = source;
+			this.reason = reason;
+		}
+	}
+
 	public static final class Entry {
 
 		public final String key;
@@ -167,6 +190,9 @@ public final class PluginManager {
 
 	private final List<Entry> entries = new ArrayList<Entry>();
 
+	/** Plugins found and turned away, for the panel to show. Rebuilt by every {@link #reload()}. */
+	private final List<Refused> refused = new ArrayList<Refused>();
+
 	/** Overlays of every running plugin, in render order. Rebuilt whenever one is toggled. */
 	private final List<Overlay> overlays = new ArrayList<Overlay>();
 
@@ -249,6 +275,14 @@ public final class PluginManager {
 		return this.entries;
 	}
 
+	/**
+	 * The plugins that were found but refused, with a reason each. Display only, same threading
+	 * rules as {@link #getPlugins()}.
+	 */
+	public List<Refused> getRefused() {
+		return this.refused;
+	}
+
 	/** Runs the task at the top of the next frame. Safe to call from any thread. */
 	public void invokeOnClientThread(Runnable task) {
 		if (task != null) {
@@ -295,6 +329,7 @@ public final class PluginManager {
 			PluginLoader.close(this.entries.get(i).found);
 		}
 		this.entries.clear();
+		this.refused.clear();
 		this.overlays.clear();
 		this.running = 0;
 
@@ -322,7 +357,8 @@ public final class PluginManager {
 				this.start(entry);
 			}
 		}
-		DevLog.log("PLUGIN", this.entries.size() + " found, " + this.running + " running");
+		DevLog.log("PLUGIN", this.entries.size() + " found, " + this.running + " running"
+			+ (this.refused.isEmpty() ? "" : ", " + this.refused.size() + " refused"));
 		this.fireChanged();
 	}
 
@@ -369,19 +405,38 @@ public final class PluginManager {
 	 * constructed is logged and skipped: one bad plugin, not a broken client.
 	 */
 	private void instantiate(PluginLoader.Found found) {
+		Class<?> type = found.type;
+		PluginDescriptor descriptor = null;
 		try {
-			Class<?> type = found.type;
+			descriptor = type.getAnnotation(PluginDescriptor.class);
+		} catch (Throwable ignored) {
+			// An annotation that will not resolve is not worth a refusal of its own: fall through
+			// with none, and the plugin is judged on whether it constructs.
+		}
+		String key = descriptor == null || descriptor.key().length() == 0
+			? type.getName()
+			: descriptor.key();
+		String name = descriptor == null || descriptor.name().length() == 0
+			? type.getSimpleName()
+			: descriptor.name();
+		String description = descriptor == null ? "" : descriptor.description();
+
+		// Checked BEFORE the plugin is constructed. A constructor is already plugin code running,
+		// and a jar built against a newer client can throw out of it - at which point the reason
+		// is a LinkageError with no plugin name attached, rather than this sentence.
+		int needs = descriptor == null ? 0 : descriptor.apiLevel();
+		if (!PluginApi.supports(needs)) {
+			this.refuse(name, found, "built for a newer client - it needs plugin API "
+				+ needs + " and this client has " + PluginApi.LEVEL);
+			return;
+		}
+
+		try {
 			Plugin plugin = (Plugin) type.newInstance();
-			PluginDescriptor descriptor = type.getAnnotation(PluginDescriptor.class);
-			String key = descriptor == null || descriptor.key().length() == 0
-				? type.getName()
-				: descriptor.key();
-			String name = descriptor == null ? type.getSimpleName() : descriptor.name();
-			String description = descriptor == null ? "" : descriptor.description();
 
 			for (int i = 0; i < this.entries.size(); i++) {
 				if (this.entries.get(i).key.equals(key)) {
-					DevLog.log("PLUGIN", "ignoring a second plugin with key " + key + " from " + found.source);
+					this.refuse(name, found, "another plugin already uses the key " + key);
 					return;
 				}
 			}
@@ -392,11 +447,106 @@ public final class PluginManager {
 			Entry entry = new Entry(key, name, description, found.source, plugin, config, found);
 			entry.defaultEnabled = this.defaultEnabled(descriptor, BUILT_IN_SOURCE.equals(found.source));
 			this.entries.add(entry);
+		} catch (LinkageError error) {
+			// The jar wants something this client does not have, and did not declare a level that
+			// would have caught it earlier - every plugin built before apiLevel existed. Said in
+			// the same words as a declared mismatch, because to the player it is the same thing.
+			this.refuse(name, found, "built for a different client - it needs " + missing(error));
 		} catch (Throwable error) {
-			// A missing no-argument constructor, a constructor that threw, a class compiled
-			// against a client that has since changed.
-			DevLog.log("PLUGIN", "could not create " + found.type.getName() + " from " + found.source + ": " + error);
+			// A missing no-argument constructor, or a constructor that threw.
+			this.refuse(name, found, "it could not be created: " + error);
 		}
+	}
+
+	/**
+	 * Records a plugin that was found and not loaded, and lets go of its jar.
+	 *
+	 * The file matters: a loader left open holds the jar open, and on Windows an open jar cannot
+	 * be replaced or deleted - so a refused plugin that kept its loader would also be one the
+	 * player could not uninstall or overwrite with a working build.
+	 */
+	private void refuse(String name, PluginLoader.Found found, String reason) {
+		DevLog.log("PLUGIN", name + " from " + found.source + " refused: " + reason);
+		this.refused.add(new Refused(name, found.source, reason));
+		PluginLoader.close(found);
+	}
+
+	/**
+	 * What a LinkageError was about, in as few words as the error will give up.
+	 *
+	 * The JVM writes these for a compiler, not for a sidebar row, and it writes them in two
+	 * shapes. A missing member comes QUOTED, as a signature: {@code 'void api.Helper.v2()'}. A
+	 * missing or unusable class comes unquoted, as a sentence that starts with the class:
+	 * {@code api/Helper} from NoClassDefFoundError, or {@code api/Helper has been compiled by a
+	 * more recent version...} from UnsupportedClassVersionError.
+	 *
+	 * The quoting is what tells them apart, so it decides which token to keep: the last one that
+	 * looks like a name in a signature, the first one in a sentence. Then slashes become dots and
+	 * the owner plus the member is what is left - "Helper.v2()", "api.Helper".
+	 *
+	 * Anything that fits neither shape is returned as the JVM wrote it. A wrong guess here would
+	 * be worse than the raw text, which is at least true.
+	 */
+	static String missing(LinkageError error) {
+		String message = error.getMessage();
+		if (message == null || message.trim().length() == 0) {
+			return error.getClass().getSimpleName();
+		}
+		String text = message.trim();
+		boolean quoted = text.length() > 1 && text.charAt(0) == '\''
+			&& text.charAt(text.length() - 1) == '\'';
+		if (quoted) {
+			text = text.substring(1, text.length() - 1).trim();
+		}
+		// Everything from the first bracket goes, because it is full of dots and spaces that
+		// every step below would otherwise mistake for the name - an argument list like
+		// "v2(java.lang.String, int)" ends in a dotted segment of its own, and so does the
+		// "(class file version 65.0)" an UnsupportedClassVersionError ends with.
+		//
+		// A bracket only MEANS a method in the quoted shape, where it is a signature. In the
+		// sentence shape it is prose, and reading it as a method is how this once answered
+		// "api.Helper()" for a class that was never a method.
+		int open = text.indexOf('(');
+		boolean method = quoted && open >= 0;
+		if (open >= 0) {
+			text = text.substring(0, open);
+		}
+
+		// One token out of what is left. In a signature the name is the last thing before the
+		// arguments ("void api.Helper.v2"); in a sentence it is the first thing said
+		// ("api/Helper has been compiled by..."). Taking the wrong end of a sentence is how this
+		// used to answer "has been compiled by a more recent version of the Java Runtime".
+		String name = null;
+		String[] words = text.split("\\s+");
+		for (int i = 0; i < words.length; i++) {
+			String word = words[quoted ? words.length - 1 - i : i];
+			if (word.indexOf('.') >= 0 || word.indexOf('/') >= 0) {
+				name = word;
+				break;
+			}
+		}
+		if (name == null) {
+			// No dots anywhere. One word is a bare field name, which is already the answer -
+			// the cleaned one, so a message that arrived padded or quoted does not put that
+			// padding in a sidebar row. More than one word is a sentence, and a sentence with
+			// no name in it is better said in the JVM's own words than in a guess at them.
+			return words.length == 1 && text.length() > 0 && text.length() <= 80
+				? text : message;
+		}
+
+		name = name.replace('/', '.');
+		// The owner and the member, which is what someone can act on. More is a package path.
+		int last = name.lastIndexOf('.');
+		if (last > 0) {
+			int before = name.lastIndexOf('.', last - 1);
+			if (before >= 0) {
+				name = name.substring(before + 1);
+			}
+		}
+		if (name.length() == 0 || name.length() > 80) {
+			return message;
+		}
+		return method ? name + "()" : name;
 	}
 
 	/** Turns a plugin on or off and remembers the choice. */
@@ -430,8 +580,27 @@ public final class PluginManager {
 			this.running++;
 			this.rebuildOverlays();
 			DevLog.log("PLUGIN", entry.name + " started");
-		} catch (Throwable error) {
+		} catch (LinkageError error) {
 			// Half-started is worse than off: unwind whatever it managed before it threw.
+			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			entry.enabled = false;
+			this.stopQuietly(entry);
+			// Said in chat, not just the log. This is the case that sent us looking for API
+			// levels in the first place: a jar built against a newer client, installed cleanly,
+			// switching itself off on the first launch with nothing anywhere explaining it.
+			//
+			// Queued rather than said here, because start() also runs during the first reload(),
+			// which is before the chatbox has a font to measure the line with. The queue drains
+			// at the top of a frame, by which point it does.
+			final String line = "Plugin '" + entry.name + "' was built for a different client"
+				+ " - it needs " + missing(error) + ".";
+			this.invokeOnClientThread(new Runnable() {
+
+				public void run() {
+					PluginManager.this.ctx.addChatMessage(line);
+				}
+			});
+		} catch (Throwable error) {
 			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
 			entry.enabled = false;
 			this.stopQuietly(entry);

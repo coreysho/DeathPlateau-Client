@@ -58,6 +58,9 @@ public class PluginSystemTest {
 		System.out.println("10. panels: a plugin's own page on the rail");
 		panelTests();
 		System.out.println();
+		System.out.println("11. client API levels: what a jar may ask for");
+		apiLevelTests(new File(args[2]), new File(args[3]));
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -839,6 +842,204 @@ public class PluginSystemTest {
 	}
 
 	// ---------------------------------------------------------------- 3
+
+	/**
+	 * The gate that keeps a jar built against a newer client from loading on an older one.
+	 *
+	 * Driven through the real PluginManager over real jars in the real plugins folder, because
+	 * the thing being checked is not that PluginApi.supports() does arithmetic - it is that a
+	 * refused plugin is NOT constructed, IS still reported with a reason, and does not take the
+	 * working plugin beside it down. The three jars are:
+	 *
+	 *   future.jar   declares apiLevel 999 - refused before its constructor runs
+	 *   current.jar  declares apiLevel 1 - loads
+	 *   linkage.jar  declares nothing and calls a method its jar no longer contains - loads, then
+	 *                fails on startUp with a NoSuchMethodError the JVM raises
+	 */
+	static void apiLevelTests(File apiJars, File witness) {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			skipped = true;
+			return;
+		}
+		check(jagex2.client.plugin.PluginApi.LEVEL >= 1,
+			"this client reports an API level of at least 1 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
+		check(jagex2.client.plugin.PluginApi.supports(0),
+			"level 0 - \"does not say\" - is supported, so no pre-levels plugin is refused");
+		check(!jagex2.client.plugin.PluginApi.supports(jagex2.client.plugin.PluginApi.LEVEL + 1),
+			"one past this client's level is not supported");
+
+		// What the player is actually shown, checked against the messages the JVM really writes.
+		// These strings are not invented: the first is what the linkage.jar case below produces.
+		check("Helper.v2()".equals(PluginManager.missing(
+			new NoSuchMethodError("'void api.Helper.v2()'"))),
+			"a missing method reads as its owner and name: \""
+				+ PluginManager.missing(new NoSuchMethodError("'void api.Helper.v2()'")) + "\"");
+		check("Helper.v2()".equals(PluginManager.missing(
+			new NoSuchMethodError("'int api.Helper.v2(java.lang.String, int)'"))),
+			"...with the argument list off, dots and all: \""
+				+ PluginManager.missing(new NoSuchMethodError("'int api.Helper.v2(java.lang.String, int)'")) + "\"");
+		check("api.Helper".equals(PluginManager.missing(new NoClassDefFoundError("api/Helper"))),
+			"a missing class reads as a class name, slashes and all: \""
+				+ PluginManager.missing(new NoClassDefFoundError("api/Helper")) + "\"");
+		check("PluginContext.getNpcs()".equals(PluginManager.missing(new NoSuchMethodError(
+			"'java.util.List jagex2.client.plugin.PluginContext.getNpcs(int)'"))),
+			"...and the case this exists for reads plainly: \"" + PluginManager.missing(new NoSuchMethodError(
+				"'java.util.List jagex2.client.plugin.PluginContext.getNpcs(int)'")) + "\"");
+		// The sentence shape, which the signature rules get backwards if nothing distinguishes
+		// them: this message starts with the class and runs on in prose. Reading it from the
+		// wrong end answered "has been compiled by a more recent version of the Java Runtime",
+		// and the bracket in "(class file version 65.0)" made it look like a method.
+		//
+		// It is also the error a plugin built for the wrong Java raises, which is not
+		// hypothetical - the plugin hub's builder shipped jars compiled for Java 21 against a
+		// Java 8 client, and this is what a player would have seen.
+		String tooNewJava = "api/Helper has been compiled by a more recent version of the Java"
+			+ " Runtime (class file version 65.0), this version of the Java Runtime only"
+			+ " recognizes class file versions up to 52.0";
+		check("api.Helper".equals(PluginManager.missing(new UnsupportedClassVersionError(tooNewJava))),
+			"a class built for a newer Java reads as just the class: \""
+				+ PluginManager.missing(new UnsupportedClassVersionError(tooNewJava)) + "\"");
+		check("someField".equals(PluginManager.missing(new NoSuchFieldError("someField"))),
+			"a missing field, which has no dots at all, reads as itself: \""
+				+ PluginManager.missing(new NoSuchFieldError("someField")) + "\"");
+		check("someField".equals(PluginManager.missing(new NoSuchFieldError("  someField  "))),
+			"...cleaned up, because padding in a sidebar row is still padding: \""
+				+ PluginManager.missing(new NoSuchFieldError("  someField  ")) + "\"");
+
+		// A sentence with TWO names in it, which is the only shape that can tell the two ends
+		// apart - the UnsupportedClassVersionError above has one, so it reads the same either
+		// way and proved nothing about which end is taken.
+		String changed = "class api.Helper has interface java.lang.Runnable as super class";
+		check("api.Helper".equals(PluginManager.missing(new IncompatibleClassChangeError(changed))),
+			"a sentence naming two classes reads the one it is about, not the last one: \""
+				+ PluginManager.missing(new IncompatibleClassChangeError(changed)) + "\"");
+
+		// No message at all must not read as an empty sentence - and an empty one is not the
+		// same case as a null one, which is the only one the first version of this checked.
+		check(PluginManager.missing(new NoSuchMethodError()).length() > 0,
+			"a LinkageError with no message still says something ("
+				+ PluginManager.missing(new NoSuchMethodError()) + ")");
+		check(PluginManager.missing(new NoSuchMethodError("")).length() > 0,
+			"...and so does one whose message is empty ("
+				+ PluginManager.missing(new NoSuchMethodError("")) + ")");
+		check(PluginManager.missing(new NoSuchMethodError("   ")).length() > 0,
+			"...and one that is nothing but spaces ("
+				+ PluginManager.missing(new NoSuchMethodError("   ")) + ")");
+
+		File folder = new File(new File(System.getProperty("user.home"), ".deathplateau"), "plugins");
+		if (!folder.isDirectory() && !folder.mkdirs()) {
+			check(false, "a plugins folder can be made under this run's home directory");
+			return;
+		}
+		File[] copied = new File[3];
+		String[] names = { "future.jar", "current.jar", "linkage.jar" };
+		try {
+			for (int i = 0; i < names.length; i++) {
+				copied[i] = new File(folder, names[i]);
+				copy(new File(apiJars, names[i]), copied[i]);
+			}
+			// Nothing saved about any of them, so current.jar starts off like any jar plugin and
+			// linkage.jar has to be switched on by hand below.
+			new File(sign.signlink.findcachedir() + "plugins.dat").delete();
+
+			PluginManager manager = freshManager();
+			check(manager != null, "a manager builds over the three jars");
+			if (manager == null) {
+				return;
+			}
+
+			check(entry(manager, "api.future") == null, "the jar asking for API 999 did not load");
+			check(!witness.exists(),
+				"...and was never constructed - the level is read off the class, not the object");
+			check(entry(manager, "api.current") != null, "the jar asking for API 1 loaded");
+			check(entry(manager, "api.linkage") != null,
+				"...and so did the one that declares nothing: it only fails when it runs");
+
+			PluginManager.Refused refused = refused(manager, "From the future");
+			check(refused != null, "the refused jar is reported, not silently absent");
+			if (refused != null) {
+				check(refused.reason.indexOf("999") >= 0 && refused.reason.indexOf("newer client") >= 0,
+					"...with a reason naming the level it wants: \"" + refused.reason + "\"");
+				check(refused.source.endsWith("future.jar"),
+					"...and the jar it came from (" + refused.source + ")");
+			}
+
+			// The other half: a jar that declares nothing and breaks anyway. It must come back
+			// off, and the reason must say what it was looking for rather than leaving a
+			// NoSuchMethodError in a log nobody reads.
+			PluginManager.Entry linkage = entry(manager, "api.linkage");
+			manager.setEnabled(linkage, true);
+			check(!linkage.isEnabled(),
+				"a plugin whose startUp hits a missing method does not come up enabled");
+			// The count, not just the flag. start() clears enabled BEFORE unwinding so the
+			// unwind does not decrement a counter that was never incremented; get that order
+			// wrong and the count goes negative, idle() stops being true, and the client does
+			// per-frame plugin work forever with nothing running. The flag alone cannot see it.
+			check(runningCount(manager) == countEnabled(manager),
+				"...and the running count still matches what is enabled ("
+					+ runningCount(manager) + " of " + countEnabled(manager) + ")");
+
+			check(entry(manager, "api.current") != null && entry(manager, "xp-drops") != null,
+				"...and neither refusal took the plugins beside it down");
+
+			// Reload is also the panel's Reload button, and a player can press it all day. The
+			// refused list is rebuilt by it, not added to: without that, every press leaves
+			// another copy of every refused plugin in the panel.
+			int before = manager.getRefused().size();
+			manager.reload();
+			check(manager.getRefused().size() == before,
+				"reloading rebuilds the refused list rather than adding to it ("
+					+ before + " then " + manager.getRefused().size() + ")");
+		} catch (Throwable error) {
+			check(false, "the API level section ran without throwing (" + error + ")");
+		} finally {
+			for (int i = 0; i < copied.length; i++) {
+				if (copied[i] != null) {
+					copied[i].delete();
+				}
+			}
+		}
+	}
+
+	/**
+	 * The manager's private running count, which has no accessor and should not get one just for
+	 * a test. Returns -1 if it cannot be read, which fails whatever is comparing it.
+	 */
+	static int runningCount(PluginManager manager) {
+		try {
+			java.lang.reflect.Field field = PluginManager.class.getDeclaredField("running");
+			field.setAccessible(true);
+			return ((Integer) field.get(manager)).intValue();
+		} catch (Throwable error) {
+			System.out.println("       " + error);
+			return -1;
+		}
+	}
+
+	static int countEnabled(PluginManager manager) {
+		int count = 0;
+		for (PluginManager.Entry entry : manager.getPlugins()) {
+			if (entry.isEnabled()) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	static PluginManager.Refused refused(PluginManager manager, String name) {
+		for (PluginManager.Refused one : manager.getRefused()) {
+			if (one.name.equals(name)) {
+				return one;
+			}
+		}
+		return null;
+	}
+
+	static void copy(File from, File to) throws java.io.IOException {
+		java.nio.file.Files.copy(from.toPath(), to.toPath(),
+			java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+	}
 
 	static void loaderTests(File jars) {
 		List<PluginLoader.Found> declared = PluginLoader.scan(new File(jars, "declared"));

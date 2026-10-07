@@ -1,0 +1,696 @@
+/*
+ * Headless test for the three plugins that are nothing but arithmetic over the skills the plugin
+ * context already exposes: Boosts, Status bars and Skills.
+ *
+ * DRIVEN THE WAY THE CLIENT DRIVES THEM. The plugins are started by the real PluginManager, the
+ * overlays draw through the real OverlayGraphics, and the Skills page is read through the same
+ * snapshotPanels() the sidebar reads. So what is checked is what a player would see - the text
+ * actually drawn, the rows actually offered - rather than a method called in isolation.
+ *
+ * That also means nothing here needs the plugins to widen a single method: a plugin is a leaf
+ * class and owes nobody an API, and this test sits in their own package so the handful of static
+ * helpers worth checking directly are already in reach.
+ *
+ * The font is a stub that records (x, y, colour, text) per call, because recording what was
+ * drawn IS the measurement for a panel of numbers.
+ *
+ * Constructing a Client needs a display (it extends Applet), so the runner provides a virtual one.
+ */
+package jagex2.client.plugin.builtin;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import jagex2.client.Client;
+import jagex2.client.plugin.PluginManager;
+import jagex2.dash3d.ClientPlayer;
+import jagex2.graphics.PixFont;
+
+public class SkillPluginsTest {
+
+	static final int W = 512;
+	static final int H = 334;
+	static final int ROW_H = 12;
+
+	/** Where the status bars are put for the pixel checks, and the colour their fill is. */
+	static final int BAR_X = 20;
+	static final int BAR_Y = 40;
+	static final int BAR_HEIGHT = 120;
+	static final int HP_FILL = 0x4A9E3F;
+
+	static int fails;
+
+	static Client client;
+	static PluginManager manager;
+	static RecordingFont font;
+
+	/** What Pix2D draws into, kept so the test can read back what was painted where. */
+	static int[] pixels;
+
+	static void check(boolean ok, String what) {
+		System.out.println((ok ? "  ok   " : "FAIL   ") + what);
+		if (!ok) {
+			fails++;
+		}
+	}
+
+	public static void main(String[] args) {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			System.exit(0);
+		}
+		System.out.println("0. the three plugins, started by the real manager");
+		if (!setUp()) {
+			System.out.println();
+			System.out.println("1 FAILED");
+			System.exit(1);
+		}
+		System.out.println();
+		System.out.println("1. Boosts: which stats are up and which are down");
+		boostTests();
+		System.out.println();
+		System.out.println("2. Status bars: the arithmetic that keeps a bar inside its box");
+		statusBarTests();
+		System.out.println();
+		System.out.println("3. Skills: the experience curve, past where the client's table ends");
+		curveTests();
+		System.out.println();
+		System.out.println("4. Skills: the combat level, and the page");
+		skillsPageTests();
+
+		System.out.println();
+		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
+		System.exit(fails == 0 ? 0 : 1);
+	}
+
+	// ---------------------------------------------------------------- 0
+
+	static boolean setUp() {
+		try {
+			client = new Client();
+		} catch (Throwable error) {
+			check(false, "a client can be built (" + error + ")");
+			return false;
+		}
+		// isLoggedIn wants both of these, and all three plugins check it before doing anything.
+		client.ingame = true;
+		Client.localPlayer = new ClientPlayer();
+		levelAll(50);
+
+		pixels = new int[W * H];
+		jagex2.graphics.Pix2D.bind(W, H, pixels);
+		font = new RecordingFont();
+		manager = new PluginManager(client, font, font, font);
+		manager.reload();
+
+		// Everything off to begin with, so a line of drawn text can only have come from the
+		// plugin the test just turned on.
+		List<PluginManager.Entry> entries = manager.getPlugins();
+		for (int i = 0; i < entries.size(); i++) {
+			if (entries.get(i).isEnabled()) {
+				manager.setEnabled(entries.get(i), false);
+			}
+		}
+		check(entry("boosts") != null, "Boosts is one of the built-in plugins");
+		check(entry("status-bars") != null, "Status bars is one of the built-in plugins");
+		check(entry("skills") != null, "Skills is one of the built-in plugins");
+		// None of the three asks to be on: they are all additions, and an addition that turns
+		// itself on changes what every existing player sees on their next launch.
+		check(entry("boosts") != null && !entry("boosts").isEnabled()
+			&& entry("status-bars") != null && !entry("status-bars").isEnabled()
+			&& entry("skills") != null && !entry("skills").isEnabled(),
+			"...and none of them turns itself on");
+		return entry("boosts") != null && entry("status-bars") != null && entry("skills") != null;
+	}
+
+	// ---------------------------------------------------------------- 1
+
+	static void boostTests() {
+		PluginManager.Entry boosts = entry("boosts");
+		levelAll(50);
+		manager.setEnabled(boosts, true);
+
+		check(drawnText().isEmpty(), "nothing boosted draws nothing at all, not an empty box");
+
+		// One boost and one drain. Both must be named, and not in the same colour.
+		client.skillLevel[0] = 54;   // attack, boosted
+		client.skillLevel[1] = 46;   // defence, drained
+		List<Drawn> rows = drawnText();
+		check(find(rows, "Attack 54/50") != null,
+			"a boost is drawn as now over base: " + texts(rows));
+		check(find(rows, "Defence 46/50") != null, "...and so is a drain");
+		Drawn up = find(rows, "Attack 54/50");
+		Drawn down = find(rows, "Defence 46/50");
+		check(up != null && down != null && up.colour != down.colour,
+			"...in different colours, because a drain is not a boost");
+		check(find(rows, "Boosts") != null, "...under a heading, so the panel says what it is");
+
+		// AND WHICH COLOUR IS WHICH. "The two differ" is still true when they are swapped, and
+		// swapping them is one subtraction the wrong way round - so the sign is checked where it
+		// is visible as text, which is the relative mode.
+		setBoolean(boosts, "relative", true);
+		rows = drawnText();
+		check(find(rows, "Attack +4") != null,
+			"a boost carries its plus when shown as a difference: " + texts(rows));
+		check(find(rows, "Defence -4") != null, "...and a drain its minus, exactly once");
+		setBoolean(boosts, "relative", false);
+
+		// The placeholder slots the client keeps. A plugin walking getSkillCount() reaches them,
+		// and "-unused- 54/50" in a panel is a plugin reading an array rather than the game.
+		int last = client.skillLevel.length - 1;
+		client.skillLevel[last] = 54;
+		client.skillBaseLevel[last] = 50;
+		rows = drawnText();
+		boolean named = false;
+		for (int i = 0; i < rows.size(); i++) {
+			if (rows.get(i).text.indexOf("nused") >= 0 || rows.get(i).text.startsWith("-")) {
+				named = true;
+			}
+		}
+		check(!named, "the cache's unused skill slots are not offered as boosted skills: "
+			+ texts(rows));
+		client.skillLevel[last] = 50;
+		client.skillBaseLevel[last] = 50;
+
+		// Logged out, nothing is drawn: the skill arrays still hold the last values seen, so a
+		// plugin that does not check would paint a panel over the login screen.
+		client.ingame = false;
+		check(drawnText().isEmpty(), "logged out, the panel is gone rather than frozen");
+		client.ingame = true;
+
+		manager.setEnabled(boosts, false);
+		levelAll(50);
+	}
+
+	// ---------------------------------------------------------------- 2
+
+	static void statusBarTests() {
+		check(fill(0, 10, 100) == 0, "an empty bar fills nothing");
+		check(fill(10, 10, 100) == 100, "a full bar fills all of it");
+		check(fill(5, 10, 100) == 50, "half full is half (" + fill(5, 10, 100) + ")");
+		// A boosted skill is above its own maximum, which is the one case that would draw
+		// outside the bar if the fraction were multiplied out rather than capped.
+		check(fill(14, 10, 100) == 100, "a boosted level fills the bar rather than overflowing it");
+		// Just after login a skill reads 0/0, and dividing by that throws inside a render loop -
+		// which the manager answers by turning the whole plugin off.
+		// 0/0 does not reach the division - the value being zero answers first - so this is
+		// asked with a real value and no maximum, which is what a skill reads as between login
+		// and the server's first stat update. The catch is so a divide by zero FAILS this check
+		// by name instead of throwing out of the test.
+		int noMax = -1;
+		try {
+			noMax = fill(5, 0, 100);
+		} catch (Throwable dividedByZero) {
+			noMax = -1;
+		}
+		check(noMax == 0, "a maximum of zero fills nothing rather than dividing by it ("
+			+ noMax + ")");
+		check(fill(0, 0, 100) == 0, "...and neither does a skill that is 0 of 0");
+		check(fill(10, 10, 0) == 0, "a bar with no height fills nothing");
+
+		check(StatusBarsPlugin.percent(3, 10) == 30, "percent is a percentage");
+		check(StatusBarsPlugin.percent(1, 0) == 0,
+			"...and is 0 rather than infinite when there is no maximum");
+		check(StatusBarsPlugin.percent(14, 10) == 100, "...and never over 100");
+
+		// The height is a number a player types in, so it can be anything at all. In the
+		// resizable modes the viewport changes size while the game runs, so it is bounded every
+		// frame rather than once.
+		check(clamp(120, 300) == 120, "a height that fits is left alone");
+		check(clamp(9999, 300) == 300, "a height past the viewport is cut to it");
+		check(clamp(-5, 300) == 8, "a negative height becomes the smallest bar, not an inverted one");
+		check(clamp(120, 0) == 0, "no room at all draws nothing");
+		check(clamp(120, 4) == 4, "a viewport shorter than the smallest bar still bounds it");
+
+		// And the bars on screen, through the real overlay.
+		PluginManager.Entry bars = entry("status-bars");
+		levelAll(50);
+		client.skillLevel[StatusBarsPlugin.HITPOINTS] = 25;
+		manager.setEnabled(bars, true);
+		// Geometry pinned, so the pixel checks below know where to look without depending on
+		// whatever the defaults happen to be.
+		setInt(bars, "x", BAR_X);
+		setInt(bars, "y", BAR_Y);
+		setInt(bars, "height", BAR_HEIGHT);
+		List<Drawn> rows = drawnText();
+		check(find(rows, "25") != null, "the hitpoints number is drawn: " + texts(rows));
+		check(find(rows, "50") != null, "...and the prayer one beside it");
+		// BESIDE, not on top of. Both numbers being drawn says nothing about where: two bars at
+		// the same x draw both of these and look like one bar.
+		Drawn hp = find(rows, "25");
+		Drawn prayer = find(rows, "50");
+		check(hp != null && prayer != null && hp.x != prayer.x,
+			"...in two places, because two bars at one x look like one bar");
+
+		// And the fill itself, read off the pixels. A bar filled from the top paints exactly as
+		// many rows in exactly the same colour as one filled from the bottom, so only WHERE
+		// they are tells the two apart - and a half-empty bar that empties upwards is the one
+		// thing a status bar must not do.
+		//
+		// The backdrop covers the whole bar, so counting painted pixels counts that too; the
+		// fill's own colour is what is counted. Geometry taken from the plugin's own constants
+		// rather than from the text's position, which is centred and so is not the bar's edge.
+		int column = BAR_X + StatusBarsPlugin.BAR_W / 2;
+		int fillRows = rowsOfColour(column, HP_FILL);
+		check(fillRows > 0, "the hitpoints bar paints a fill (" + fillRows + " rows)");
+		check(fillRows > BAR_HEIGHT / 4 && fillRows < BAR_HEIGHT * 3 / 4,
+			"...about half the bar for a half-full skill (" + fillRows + " of " + BAR_HEIGHT + ")");
+		check(lowestOfColour(column, HP_FILL) > BAR_Y + BAR_HEIGHT / 2,
+			"...reaching the bottom of the bar, the way a tank empties");
+		check(highestOfColour(column, HP_FILL) > BAR_Y + BAR_HEIGHT / 4,
+			"...and starting halfway down it, not at the top");
+		manager.setEnabled(bars, false);
+		levelAll(50);
+	}
+
+	// ---------------------------------------------------------------- 3
+
+	static void curveTests() {
+		PluginManager.Entry entry = entry("skills");
+		manager.setEnabled(entry, true);
+
+		// THE CHECK THAT MATTERS. This plugin continues the client's experience table past where
+		// it ends, and the only way to know it continues the SAME curve is to point the
+		// continuation at the part the client already answers for - all 99 levels of it, not a
+		// spot check. A formula right at 2 and 99 and wrong at 73 is the bug this catches.
+		int wrong = 0;
+		int firstWrong = 0;
+		for (int level = 2; level <= SkillsPlugin.LAST_TABLED_LEVEL; level++) {
+			if (formula(level) != experienceFor(level)) {
+				if (wrong == 0) {
+					firstWrong = level;
+				}
+				wrong++;
+			}
+		}
+		check(wrong == 0, wrong == 0
+			? "the formula reproduces every level the client tables (2 to "
+				+ SkillsPlugin.LAST_TABLED_LEVEL + ")"
+			: wrong + " of those levels disagree with the client's table, first at " + firstWrong);
+
+		// Past the end, where the client clamps and this does not. Without the continuation
+		// every level above 100 would report the same experience and read as level 100 forever.
+		check(experienceFor(101) > experienceFor(100),
+			"past the table the levels keep going up rather than flattening ("
+				+ experienceFor(100) + " then " + experienceFor(101) + ")");
+		check(experienceFor(126) == formula(126),
+			"...on the same curve, all the way to 126");
+		check(experienceFor(126) > 180_000_000 && experienceFor(126) < 200_000_000,
+			"...which lands where 200M experience does (" + experienceFor(126) + ")");
+
+		// True levels. A 99 is only a 99 until it has a 100's experience.
+		check(virtualFor(13_034_431, 99) == 99, "a bare 99 is a 99");
+		check(virtualFor(14_391_160, 99) == 100, "a 99 with a 100's experience is a 100");
+		check(virtualFor(formula(110), 99) == 110, "...and it keeps counting (110)");
+		check(virtualFor(500, 7) == 7,
+			"below 99 the client's own answer is used unchanged, whatever the experience");
+		check(virtualFor(formula(SkillsPlugin.MAX_VIRTUAL_LEVEL), 99)
+			== SkillsPlugin.MAX_VIRTUAL_LEVEL,
+			"the top level is reachable, not one short of it ("
+				+ virtualFor(formula(SkillsPlugin.MAX_VIRTUAL_LEVEL), 99) + ")");
+		check(virtualFor(Integer.MAX_VALUE, 99) == SkillsPlugin.MAX_VIRTUAL_LEVEL,
+			"the most experience an int can hold stops exactly there rather than counting on ("
+				+ virtualFor(Integer.MAX_VALUE, 99) + ")");
+
+		check("1,234,567".equals(SkillsPlugin.commas(1234567)),
+			"a seven-digit total gets its commas: " + SkillsPlugin.commas(1234567));
+		check("83".equals(SkillsPlugin.commas(83)), "a small one does not: " + SkillsPlugin.commas(83));
+		check("1,000".equals(SkillsPlugin.commas(1000)),
+			"and a round thousand groups correctly: " + SkillsPlugin.commas(1000));
+		check("0".equals(SkillsPlugin.commas(0)), "zero is zero: " + SkillsPlugin.commas(0));
+		manager.setEnabled(entry, false);
+	}
+
+	// ---------------------------------------------------------------- 4
+
+	static void skillsPageTests() {
+		PluginManager.Entry entry = entry("skills");
+		manager.setEnabled(entry, true);
+
+		// Combat level, against figures worked out by hand from the 377 formula.
+		baseAll(1);
+		client.skillBaseLevel[3] = 10;  // hitpoints, as a new account has
+		check(combatRow() == 3, "a fresh account is combat 3 (" + combatRow() + ")");
+
+		baseAll(1);
+		client.skillBaseLevel[0] = 99;  // attack
+		client.skillBaseLevel[2] = 99;  // strength
+		client.skillBaseLevel[1] = 99;  // defence
+		client.skillBaseLevel[3] = 99;  // hitpoints
+		client.skillBaseLevel[5] = 99;  // prayer
+		check(combatRow() == 126, "maxed melee with 99 prayer is combat 126 (" + combatRow() + ")");
+
+		client.skillBaseLevel[0] = 1;
+		client.skillBaseLevel[2] = 1;
+		client.skillBaseLevel[4] = 99;  // ranged instead
+		// 109, not 123: ranged counts as floor(99 * 3 / 2) = 148 against melee's 99 + 99 = 198,
+		// so the same defensives carry a pure ranger seventeen levels lower than maxed melee.
+		// 123 was this test's first guess and it was simply wrong - worth keeping the real
+		// number, because a combat level a player can check is the point of having one.
+		check(combatRow() == 109,
+			"the same account as a pure ranger is 109 (" + combatRow() + ")");
+
+		// The page the sidebar actually reads.
+		baseAll(50);
+		levelAll(50);
+		tick();
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		PluginManager.PanelSnapshot page = null;
+		for (int i = 0; i < panels.size(); i++) {
+			if ("Skills".equals(panels.get(i).title)) {
+				page = panels.get(i);
+			}
+		}
+		check(page != null, "the plugin puts a page on the rail");
+		if (page == null) {
+			manager.setEnabled(entry, false);
+			return;
+		}
+		check(page.rows.size() > 20, "...with a row per skill (" + page.rows.size() + ")");
+		check("Combat level".equals(page.rows.get(0).label),
+			"...the combat level first, because it belongs to no one skill");
+		boolean unused = false;
+		boolean progressed = false;
+		for (int i = 0; i < page.rows.size(); i++) {
+			if (page.rows.get(i).label.indexOf("nused") >= 0) {
+				unused = true;
+			}
+			if (page.rows.get(i).progress > 0) {
+				progressed = true;
+			}
+		}
+		check(!unused, "...and no placeholder slots among them");
+		check(progressed, "...each with a bar showing how far through its level it is");
+
+		// Every skill at 99 and nothing left to train: the page is the combat level and nothing
+		// else, which is what "hide maxed" is for.
+		// The cache. Read twice without a tick between, the page must say the same thing both
+		// times: the sidebar asks size() and then five questions per row, and a page that
+		// rebuilt itself per question could answer them about two different games.
+		baseAll(50);
+		tick();
+		String first = pageText();
+		client.skillBaseLevel[4] = 1;
+		client.skillExperience[4] = 0;
+		check(first.equals(pageText()),
+			"a page read twice inside one tick reads the same both times");
+		tick();
+		check(!first.equals(pageText()),
+			"...and the next tick rebuilds it, so the page is never a tick behind for long");
+
+		baseAll(99);
+		int all = pageRows();
+		setBoolean(entry, "hideMaxed", true);
+		int left = pageRows();
+		check(left < all, "hiding maxed skills takes the 99s off (" + all + " then " + left + ")");
+		check(left >= 1, "...and leaves the combat level, which is not a skill to hide");
+		setBoolean(entry, "hideMaxed", false);
+
+		manager.setEnabled(entry, false);
+	}
+
+	// ---------------------------------------------------------------- the plumbing
+
+	/**
+	 * A server cycle, through the manager's own hook.
+	 *
+	 * The Skills page holds its rows for one tick - building the list per question is twenty-six
+	 * skills read a hundred and thirty times for one refresh - so anything that changes a level
+	 * and then reads the page has to tick first. The first run of this test did not, and read
+	 * the levels as they were three assertions ago.
+	 */
+	static void tick() {
+		manager.onGameTick();
+	}
+
+	/** The combat level as the page reports it, which is the number a player would read. */
+	static int combatRow() {
+		tick();
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		for (int i = 0; i < panels.size(); i++) {
+			PluginManager.PanelSnapshot page = panels.get(i);
+			if (!"Skills".equals(page.title) || page.rows.isEmpty()) {
+				continue;
+			}
+			jagex2.client.plugin.ConfigList.Row row = page.rows.get(0);
+			if (!"Combat level".equals(row.label)) {
+				return -1;
+			}
+			try {
+				return Integer.parseInt(row.value);
+			} catch (RuntimeException notANumber) {
+				return -1;
+			}
+		}
+		return -1;
+	}
+
+	/** Every row of the page as one string, for comparing one read against another. */
+	static String pageText() {
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < panels.size(); i++) {
+			if (!"Skills".equals(panels.get(i).title)) {
+				continue;
+			}
+			List<jagex2.client.plugin.ConfigList.Row> rows = panels.get(i).rows;
+			for (int r = 0; r < rows.size(); r++) {
+				out.append(rows.get(r).label).append('=').append(rows.get(r).value)
+					.append('/').append(rows.get(r).progress).append(';');
+			}
+		}
+		return out.toString();
+	}
+
+	/** How many rows of the given pixel column are exactly this colour. */
+	static int rowsOfColour(int x, int colour) {
+		int count = 0;
+		for (int y = 0; y < H; y++) {
+			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/** The lowest row of the column painted in this colour, or -1. */
+	static int lowestOfColour(int x, int colour) {
+		for (int y = H - 1; y >= 0; y--) {
+			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
+				return y;
+			}
+		}
+		return -1;
+	}
+
+	/** The highest row of the column painted in this colour, or -1. */
+	static int highestOfColour(int x, int colour) {
+		for (int y = 0; y < H; y++) {
+			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
+				return y;
+			}
+		}
+		return -1;
+	}
+
+	static int pageRows() {
+		tick();
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		for (int i = 0; i < panels.size(); i++) {
+			if ("Skills".equals(panels.get(i).title)) {
+				return panels.get(i).rows.size();
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * The experience curve, asked of the plugin the manager started.
+	 *
+	 * The curve is the one thing here worth asking about directly rather than reading off a
+	 * label: it is a formula, and a formula is checked against another formula. Everything else
+	 * in this test goes through what a player would see.
+	 */
+	static int experienceFor(int level) {
+		return managedSkills().experienceForLevel(level);
+	}
+
+	static int virtualFor(int experience, int level) {
+		return managedSkills().virtualLevel(experience, level);
+	}
+
+	/**
+	 * The Skills plugin instance the manager started.
+	 *
+	 * PluginManager.Entry keeps its plugin package-private, in a package this test is not in, so
+	 * it is read reflectively. Worth it to avoid the alternative: making the field public, which
+	 * would hand every plugin a way to reach into every other one.
+	 */
+	static SkillsPlugin managedSkills() {
+		try {
+			java.lang.reflect.Field field = PluginManager.Entry.class.getDeclaredField("plugin");
+			field.setAccessible(true);
+			return (SkillsPlugin) field.get(entry("skills"));
+		} catch (Throwable error) {
+			throw new IllegalStateException("cannot reach the started Skills plugin: " + error);
+		}
+	}
+
+	/** Sets an int config item on a running plugin, the way the config panel does. */
+	static void setInt(PluginManager.Entry entry, String key, int value) {
+		try {
+			java.lang.reflect.Field field = PluginManager.Entry.class.getDeclaredField("plugin");
+			field.setAccessible(true);
+			Object plugin = field.get(entry);
+			plugin.getClass().getField(key).setInt(plugin, value);
+		} catch (Throwable error) {
+			check(false, "cannot set " + key + " (" + error + ")");
+		}
+	}
+
+	/** Sets a boolean config item on a running plugin, the way the config panel does. */
+	static void setBoolean(PluginManager.Entry entry, String key, boolean value) {
+		List<PluginManager.Entry> all = manager.getPlugins();
+		for (int i = 0; i < all.size(); i++) {
+			if (all.get(i) != entry) {
+				continue;
+			}
+			try {
+				java.lang.reflect.Field field = PluginManager.Entry.class.getDeclaredField("plugin");
+				field.setAccessible(true);
+				Object plugin = field.get(entry);
+				java.lang.reflect.Field item = plugin.getClass().getField(key);
+				item.setBoolean(plugin, value);
+			} catch (Throwable error) {
+				check(false, "cannot set " + key + " (" + error + ")");
+			}
+		}
+	}
+
+	/**
+	 * The experience for a level, from the formula, written out independently of the plugin.
+	 *
+	 * Not called from the plugin on purpose: a test that asks the code under test for the
+	 * expected answer checks nothing at all.
+	 */
+	static int formula(int level) {
+		long points = 0;
+		for (int i = 1; i < level; i++) {
+			points += (long) Math.floor(i + 300.0 * Math.pow(2.0, i / 7.0));
+		}
+		return (int) (points / 4);
+	}
+
+	static int fill(int value, int max, int tall) {
+		return StatusBarsPlugin.fillHeight(value, max, tall);
+	}
+
+	static int clamp(int wanted, int available) {
+		return StatusBarsPlugin.clampHeight(wanted, available);
+	}
+
+	/**
+	 * Every skill at a level, with the experience that level implies - and a bit more.
+	 *
+	 * The experience matters: a level with no experience behind it is not a state any account is
+	 * ever in, and it makes every progress bar read zero, which is a page that looks right and
+	 * says nothing. Halfway to the next level is what a real account mostly looks like.
+	 */
+	static void levelAll(int level) {
+		int start = formula(level);
+		int next = formula(level + 1);
+		for (int i = 0; i < client.skillLevel.length; i++) {
+			client.skillLevel[i] = level;
+			client.skillBaseLevel[i] = level;
+			client.skillExperience[i] = start + (next - start) / 2;
+		}
+	}
+
+	/** The same, named for the tests that are about base levels rather than boosted ones. */
+	static void baseAll(int level) {
+		levelAll(level);
+	}
+
+	static PluginManager.Entry entry(String key) {
+		List<PluginManager.Entry> entries = manager.getPlugins();
+		for (int i = 0; i < entries.size(); i++) {
+			if (key.equals(entries.get(i).key)) {
+				return entries.get(i);
+			}
+		}
+		return null;
+	}
+
+	/** Everything the running overlays draw as text, one frame's worth. */
+	static List<Drawn> drawnText() {
+		font.rows.clear();
+		manager.renderOverlays(W, H, jagex2.client.plugin.Overlay.LAYER_SCREEN);
+		return new ArrayList<Drawn>(font.rows);
+	}
+
+	static Drawn find(List<Drawn> rows, String text) {
+		for (int i = 0; i < rows.size(); i++) {
+			if (text.equals(rows.get(i).text)) {
+				return rows.get(i);
+			}
+		}
+		return null;
+	}
+
+	static String texts(List<Drawn> rows) {
+		StringBuilder out = new StringBuilder("[");
+		for (int i = 0; i < rows.size(); i++) {
+			out.append(i > 0 ? ", " : "").append(rows.get(i).text);
+		}
+		return out.append(']').toString();
+	}
+
+	/** One string the font was asked to draw. */
+	static final class Drawn {
+
+		final int x;
+		final int y;
+		final int colour;
+		final String text;
+
+		Drawn(int x, int y, int colour, String text) {
+			this.x = x;
+			this.y = y;
+			this.colour = colour;
+			this.text = text;
+		}
+	}
+
+	/** A font that records what it was asked to draw instead of drawing it. */
+	static final class RecordingFont extends PixFont {
+
+		static final int ADVANCE = 4;
+
+		final List<Drawn> rows = new ArrayList<Drawn>();
+
+		RecordingFont() {
+			this.height = ROW_H;
+			java.util.Arrays.fill(this.charAdvance, ADVANCE);
+		}
+
+		int widthOf(String text) {
+			return text == null ? 0 : text.length() * ADVANCE;
+		}
+
+		public int stringWid(String text) {
+			return this.widthOf(text);
+		}
+
+		public int stringWidTag(String text) {
+			return this.widthOf(text);
+		}
+
+		public void drawStringTag(int colour, int x, int y, boolean shadow, String text) {
+			this.rows.add(new Drawn(x, y, colour, text));
+		}
+
+		public void drawString(int x, int colour, int y, String text) {
+			this.rows.add(new Drawn(x, y, colour, text));
+		}
+	}
+}

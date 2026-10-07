@@ -22,11 +22,17 @@ import jagex2.client.DevLog;
  *       "author": "Corey",
  *       "version": "1.0",
  *       "url": "https://github.com/.../releases/download/v1.0/coordinates.jar",
- *       "sha256": "9f86d0818..."
+ *       "sha256": "9f86d0818...",
+ *       "clientApi": 1
  *     }
  *   ]
  * }
  * </pre>
+ *
+ * Only id, name and url are required. "clientApi" is the lowest
+ * {@link jagex2.client.plugin.PluginApi#LEVEL} the jar needs; leaving it out means "does not
+ * say", and an entry asking for more than this client has is listed with what it needs but not
+ * offered for install.
  *
  * ONE BAD ENTRY DOES NOT SPOIL THE INDEX. An entry that is malformed, or whose id or url would
  * not be safe to act on, is dropped with a log line and the rest are offered. A duplicate id is

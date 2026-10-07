@@ -44,16 +44,33 @@ public class HubTest {
 		server.start();
 		String base = "http://127.0.0.1:" + server.getAddress().getPort();
 
-		System.out.println("1. reading the index");
-		indexTests(base);
-		System.out.println();
-		System.out.println("2. installing");
-		installTests(base, dir);
-		System.out.println();
-		System.out.println("3. refusing what it should");
-		refusalTests(base, dir);
+		// EVERYTHING IN A try/finally, AND THE EXIT IS NOT OPTIONAL. HttpServer's dispatcher is
+		// a non-daemon thread, so a section that throws before stop() leaves the JVM alive with
+		// nothing to do - the test does not fail, it HANGS, forever, and a mutation run waiting
+		// on it waits all night. That happened: twenty minutes of a wedged JVM, found only by
+		// looking at the process list. A test that cannot fail cleanly is not a test.
+		try {
+			System.out.println("1. reading the index");
+			indexTests(base);
+			System.out.println();
+			System.out.println("2. installing");
+			installTests(base, dir);
+			System.out.println();
+			System.out.println("3. refusing what it should");
+			refusalTests(base, dir);
+			System.out.println();
+			System.out.println("4. the client API level an entry asks for");
+			apiLevelTests(base);
+		} catch (Throwable error) {
+			// Printed as a FAIL so a mutation run sees a named check rather than a bare exit
+			// code, which it is right to distrust.
+			System.out.println("FAIL   the suite threw rather than finishing: " + error);
+			error.printStackTrace(System.out);
+			fails++;
+		} finally {
+			server.stop(0);
+		}
 
-		server.stop(0);
 		System.out.println();
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -223,6 +240,65 @@ public class HubTest {
 		return "{\"id\":\"" + id + "\",\"name\":\"" + Character.toUpperCase(id.charAt(0)) + id.substring(1)
 			+ "\",\"author\":\"Tester\",\"version\":\"1.0\",\"description\":\"A plugin\",\"url\":\"" + url
 			+ "\"" + (sha.length() > 0 ? ",\"sha256\":\"" + sha + "\"" : "") + "}";
+	}
+
+	/** The same entry with a clientApi on it. */
+	static String entry(String id, String url, String sha, int clientApi) {
+		String base = entry(id, url, sha);
+		return base.substring(0, base.length() - 1) + ",\"clientApi\":" + clientApi + "}";
+	}
+
+	// ---------------------------------------------------------------- 4
+
+	/**
+	 * What the index's clientApi does. This is the gate that keeps a jar built against a newer
+	 * client off an older client's disk, so the thing being checked is not just that the number
+	 * parses - it is that needsNewerClient() answers no for everything this client can run and
+	 * yes for the first level it cannot.
+	 */
+	static void apiLevelTests(String base) {
+		int level = jagex2.client.plugin.PluginApi.LEVEL;
+
+		HubEntry says = one(entry("good", base + "/plugin.jar", "", level));
+		check(says.clientApi == level, "an entry's clientApi is read off the index (" + says.clientApi + ")");
+		check(!says.needsNewerClient(), "...and one asking for exactly this client's level is offered");
+
+		HubEntry quiet = one(entry("good", base + "/plugin.jar", ""));
+		check(quiet.clientApi == 0, "an entry with no clientApi reads as 0, not as a refusal");
+		check(!quiet.needsNewerClient(), "...and is offered, the way every pre-levels plugin must be");
+
+		HubEntry old = one(entry("good", base + "/plugin.jar", "", 1));
+		check(!old.needsNewerClient(), "an entry asking for level 1 runs on this client");
+
+		// Checked on the INDEX, not on an entry fished out of it: the failure worth catching here
+		// is the entry being dropped altogether, and one() would throw on an empty list rather
+		// than say so. A test that only crashes is a test that names nothing.
+		HubIndex ahead = HubIndex.parse("[" + entry("good", base + "/plugin.jar", "", level + 1) + "]");
+		check(ahead.getEntries().size() == 1,
+			"a too-new entry is still LISTED, so the player can see what it needs ("
+				+ ahead.getEntries().size() + " of 1)");
+		if (ahead.getEntries().size() == 1) {
+			HubEntry future = ahead.getEntries().get(0);
+			check(future.needsNewerClient(),
+				"...and asking for one level past this client is NOT offered");
+			check(future.isUsable(), "...while still being a usable entry in every other way");
+		}
+
+		// The number comes off the network, so neither of these may become "supported".
+		HubEntry silly = one(entry("good", base + "/plugin.jar", "", 9999));
+		check(silly.needsNewerClient(), "an absurd clientApi is refused, not believed");
+
+		HubIndex negative = HubIndex.parse("[" + entry("good", base + "/plugin.jar", "", -5) + "]");
+		HubEntry under = negative.getEntries().get(0);
+		check(under.clientApi == 0 && !under.needsNewerClient(),
+			"a negative clientApi reads as \"does not say\" (" + under.clientApi + ")");
+
+		// A string where a number belongs is the commonest hand-editing mistake. It must read as
+		// "does not say" rather than taking the entry out of the index.
+		HubIndex texty = HubIndex.parse("[{\"id\":\"good\",\"name\":\"Good\",\"url\":\""
+			+ base + "/plugin.jar\",\"clientApi\":\"two\"}]");
+		check(texty.getEntries().size() == 1 && texty.getEntries().get(0).clientApi == 0,
+			"a clientApi that is not a number reads as 0 and keeps the entry");
 	}
 
 	static void serve(HttpServer server, String path, final String type, final byte[] body) {
