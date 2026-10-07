@@ -98,7 +98,14 @@ public class SidebarPreview {
 				// before there is a tab to open - twice, because opening it reads them again.
 				manager.onClientTick(0);
 				Thread.sleep(250);
-				sidebar.openPanel(entry.key);
+				// LOUD, because this is the whole claim: a plugin loaded out of a jar in the
+				// plugins folder gets an icon on the rail. openPanel returns false when there
+				// is no tab for it, and a preview that quietly rendered the plugin list instead
+				// would have looked exactly like a pass.
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException(
+						"no rail tab for " + entry.key + ": a jar plugin's panel did not reach the rail");
+				}
 				manager.onClientTick(0);
 				Thread.sleep(250);
 			}
