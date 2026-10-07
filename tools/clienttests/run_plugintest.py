@@ -19,6 +19,11 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java')
+# The client's source set is BOTH directories - build.gradle says so, and the client jar
+# compiles launcher/src in (Client.relaunchForUpdate runs the launcher, and lostcity.Branding
+# is the window icon both of them use). Compiling src/main/java alone builds a subset of the
+# real client and fails on anything that reaches across.
+LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 TEST = os.path.join(HERE, 'PluginSystemTest.java')
 
 # A plugin with everything a real one has: a descriptor, a config item and an anonymous Overlay
@@ -125,9 +130,11 @@ def main():
     work = tempfile.mkdtemp(prefix='plugintest')
     try:
         # 1. the client itself
+        # Both source directories: see LAUNCHER_SRC above.
         sources = []
-        for root, _, files in os.walk(SRC):
-            sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
+        for where in (SRC, LAUNCHER_SRC):
+            for root, _dirs, files in os.walk(where):
+                sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         r = run(javac, '-nowarn', '-d', classes, *sources)

@@ -17,6 +17,7 @@ import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
 import jagex2.client.plugin.ui.Theme;
+import lostcity.Branding;
 
 import deob.ObfuscatedName;
 import sign.signlink;

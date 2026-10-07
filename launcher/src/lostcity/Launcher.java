@@ -98,8 +98,13 @@ public final class Launcher {
      *      console and its output was gone exactly when it was wanted
      *   5  the game's own stdout and stderr go to ~/.deathplateau/client.log, so an exception that
      *      ends GameShell's loop can be read afterwards instead of just freezing the window
+     *   6  the Death Plateau badge on the launcher's own window, instead of the default Java cup.
+     *      The bump is what carries it: a player who downloaded their launcher months ago runs
+     *      that jar, and only a higher version in client.jar makes it step aside for one that has
+     *      the icons - which the client jar has, because launcher/src and src/main/resources are
+     *      both compiled into it
      */
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
     private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
     @SuppressWarnings("unused") // read out of the compiled class, not called
     private static final String STAMP = STAMP_PREFIX + VERSION;
@@ -603,6 +608,9 @@ public final class Launcher {
     private void window() {
         run(() -> {
             frame = new JFrame("Death Plateau Launcher");
+            // The first window a player sees, so it gets the badge too. Dialogs opened with this
+            // frame as their owner inherit it, which covers every message box below.
+            frame.setIconImages(Branding.icons());
             label = new JLabel("Starting...");
             bar = new JProgressBar(0, 1000);
             bar.setIndeterminate(true);

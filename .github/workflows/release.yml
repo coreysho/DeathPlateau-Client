@@ -43,6 +43,7 @@ jobs:
       run: |
         mkdir -p launcher/out
         javac -source 8 -target 8 -encoding UTF-8 -d launcher/out $(find launcher/src -name '*.java')
+        cp -r src/main/resources/deathplateau launcher/out/
         jar cfe Death-Plateau-Launcher.jar lostcity.Launcher -C launcher/out .
 
     - name: Publish
