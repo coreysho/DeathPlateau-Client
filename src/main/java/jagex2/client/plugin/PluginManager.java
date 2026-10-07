@@ -170,6 +170,9 @@ public final class PluginManager {
 	/** Overlays of every running plugin, in render order. Rebuilt whenever one is toggled. */
 	private final List<Overlay> overlays = new ArrayList<Overlay>();
 
+	/** What the overlays claimed as clickable this frame. Cleared at the start of every one. */
+	private final InteractiveRegions regions = new InteractiveRegions();
+
 	/** How many plugins are running, so a client with none pays nothing for having the system. */
 	private int running;
 
@@ -622,6 +625,19 @@ public final class PluginManager {
 		return event.isConsumed();
 	}
 
+	/**
+	 * A click in the viewport, in viewport-local coordinates. Returns true when an overlay had
+	 * claimed that spot, in which case the click is spent and must not also walk the player.
+	 */
+	public boolean onViewportClick(int x, int y) {
+		return !this.idle() && this.regions.click(x, y);
+	}
+
+	/** The same for the wheel. Returns true when an overlay took the turn. */
+	public boolean onViewportScroll(int x, int y, int delta) {
+		return !this.idle() && this.regions.scroll(x, y, delta);
+	}
+
 	/** Returns true when a plugin consumed the key and the game should not see it. */
 	public boolean onKeyPressed(int key) {
 		if (this.idle()) {
@@ -641,10 +657,13 @@ public final class PluginManager {
 		if (this.idle()) {
 			return;
 		}
+		// Last frame's regions go before this frame's are drawn, so nothing a plugin has stopped
+		// drawing stays clickable.
+		this.regions.clear();
 		for (int i = 0; i < this.overlays.size(); i++) {
 			Overlay overlay = this.overlays.get(i);
 			try {
-				this.graphics.reset(width, height);
+				this.graphics.reset(width, height, this.regions, overlay.owner);
 				overlay.render(this.graphics);
 			} catch (Throwable error) {
 				Entry entry = this.entryOf(overlay.owner);
@@ -653,6 +672,8 @@ public final class PluginManager {
 					this.disableFaulty(entry.plugin, "it kept throwing while drawing");
 					return;                            // disabling edits the list being walked
 				}
+				// Half-drawn, so whatever it did claim this frame is not to be trusted.
+				this.regions.forget(overlay.owner);
 			}
 		}
 	}

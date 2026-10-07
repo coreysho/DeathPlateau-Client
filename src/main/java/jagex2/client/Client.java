@@ -6074,6 +6074,14 @@ public class Client extends GameShell implements PixMap.Target {
 			var2 = 0;
 		}
 		if (!this.menuVisible) {
+			// A click on something an overlay drew and claimed. Checked before everything below so
+			// it cannot also walk the player; a click that lands on nothing claimed falls through
+			// and behaves exactly as it always did.
+			if (var2 == 1 && this.plugins != null
+				&& this.plugins.onViewportClick(super.mouseClickX - this.layout.vpX,
+					super.mouseClickY - this.layout.vpY)) {
+				return;
+			}
 			// QoL: a click on one of the Alt ground item controls configures and does nothing else.
 			// Checked before everything below so it cannot also walk the player; a click that misses
 			// every control falls through and behaves normally.
@@ -6684,6 +6692,13 @@ public class Client extends GameShell implements PixMap.Target {
 			// plugin's page in the sidebar now, which is a Swing scroll pane and never sees the
 			// game's wheel at all.)
 			this.handleMenuScroll();
+			// An overlay that claimed this spot for the wheel takes the turn, before the ground
+			// items and the camera get a look.
+			if (super.mouseScrollDelta != 0 && this.plugins != null
+				&& this.plugins.onViewportScroll(super.mouseX - this.layout.vpX,
+					super.mouseY - this.layout.vpY, super.mouseScrollDelta)) {
+				super.mouseScrollDelta = 0;
+			}
 			this.handleGroundItemScroll();
 			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
 				if (QolSettings.on(QolSettings.WHEEL_ZOOM)) {

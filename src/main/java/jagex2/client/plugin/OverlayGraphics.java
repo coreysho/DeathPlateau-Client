@@ -44,6 +44,12 @@ public final class OverlayGraphics {
 	private int width = FIXED_WIDTH;
 	private int height = FIXED_HEIGHT;
 
+	/** Where clickable()/scrollable() put their regions. Set by the manager each frame. */
+	private InteractiveRegions regions;
+
+	/** Whose regions these are, so a plugin that is turned off takes its clicks with it. */
+	private Plugin owner;
+
 	OverlayGraphics(PixFont small, PixFont normal, PixFont bold) {
 		this.small = small;
 		this.normal = normal;
@@ -51,14 +57,47 @@ public final class OverlayGraphics {
 		this.font = normal;
 	}
 
+	/** Something an overlay drew that the player can turn the wheel on. */
+	public interface Scrolled {
+
+		/** delta is the wheel's turn: negative is up, positive is down. */
+		void onScroll(int delta);
+	}
+
+	/**
+	 * Marks a rectangle the overlay just drew as clickable. A click inside it runs the action and
+	 * is CONSUMED - it will not also walk the player or open a menu.
+	 *
+	 * Declared while drawing, on purpose: the overlay has just worked out where the thing is, and
+	 * saying so costs it nothing. Regions last one frame, so an overlay that stops drawing a
+	 * thing stops it being clickable in the same breath.
+	 *
+	 * Later regions win where two overlap, matching what a player sees: the thing drawn last is
+	 * the thing on top.
+	 */
+	public void clickable(int x, int y, int width, int height, Runnable onClick) {
+		if (onClick != null && this.regions != null) {
+			this.regions.add(x, y, width, height, onClick, null, this.owner);
+		}
+	}
+
+	/** The same for the wheel: a turn inside the rectangle goes to the overlay, not the camera. */
+	public void scrollable(int x, int y, int width, int height, Scrolled onScroll) {
+		if (onScroll != null && this.regions != null) {
+			this.regions.add(x, y, width, height, null, onScroll, this.owner);
+		}
+	}
+
 	/**
 	 * Called before each overlay renders, so one overlay's font choice cannot leak into the next,
 	 * and so every overlay in a frame is told the same drawable area.
 	 */
-	void reset(int width, int height) {
+	void reset(int width, int height, InteractiveRegions regions, Plugin owner) {
 		this.font = this.normal;
 		this.width = width;
 		this.height = height;
+		this.regions = regions;
+		this.owner = owner;
 	}
 
 	/** Width of the area an overlay may draw in, this frame. */

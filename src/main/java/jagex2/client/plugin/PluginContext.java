@@ -1,8 +1,15 @@
 package jagex2.client.plugin;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import jagex2.client.Client;
+import jagex2.client.GameShell;
 import jagex2.client.Stats;
+import jagex2.config.ObjType;
+import jagex2.dash3d.ClientObj;
 import jagex2.dash3d.ClientPlayer;
+import jagex2.datastruct.LinkList;
 
 /**
  * What a plugin is allowed to know and do. Every plugin gets one, as {@link Plugin#ctx}.
@@ -270,6 +277,105 @@ public final class PluginContext {
 	/** Promotes an entry to the left click, leaving the rest of the menu as it was. */
 	public void setLeftClick(int index) {
 		this.swapMenuEntries(index, this.getLeftClickIndex());
+	}
+
+	// ------------------------------------------------------------------ the scene
+
+	/**
+	 * What is lying on the ground within so many tiles of the player, a pile per tile.
+	 *
+	 * The scanning, the walk of each tile's stack and the merging of same-id drops are all done
+	 * here, because every one of them is a detail of how this client stores a scene: objStacks
+	 * is a three-deep array of LinkList walked tail-first, and a plugin that knew that would
+	 * break the day it changed.
+	 *
+	 * Allocates a pile per occupied tile, so call it once a frame and walk the result rather
+	 * than calling it per tile. Returns an empty list when logged out or when the radius is
+	 * nonsense.
+	 */
+	public List<GroundItemPile> getGroundItemPiles(int radius) {
+		List<GroundItemPile> piles = new ArrayList<GroundItemPile>();
+		ClientPlayer self = Client.localPlayer;
+		if (self == null || radius <= 0 || radius > 104) {
+			return piles;
+		}
+		int level = this.client.currentLevel;
+		if (this.client.objStacks == null || level < 0 || level >= this.client.objStacks.length) {
+			return piles;
+		}
+		int centreX = self.field1157 >> 7;
+		int centreZ = self.field1158 >> 7;
+		int minX = Math.max(0, centreX - radius);
+		int minZ = Math.max(0, centreZ - radius);
+		int maxX = Math.min(103, centreX + radius);
+		int maxZ = Math.min(103, centreZ + radius);
+
+		for (int tileX = minX; tileX <= maxX; tileX++) {
+			for (int tileZ = minZ; tileZ <= maxZ; tileZ++) {
+				LinkList stack = this.client.objStacks[level][tileX][tileZ];
+				if (stack == null) {
+					continue;
+				}
+				List<GroundItem> items = this.readStack(stack);
+				if (!items.isEmpty()) {
+					piles.add(new GroundItemPile(tileX, tileZ, items));
+				}
+			}
+		}
+		return piles;
+	}
+
+	/**
+	 * One tile's stack, merged by item id.
+	 *
+	 * Walked tail-first to match every other walk of objStacks in the client, which is what puts
+	 * the top of the pile first.
+	 */
+	private List<GroundItem> readStack(LinkList stack) {
+		List<GroundItem> items = new ArrayList<GroundItem>();
+		for (ClientObj obj = (ClientObj) stack.tail(); obj != null; obj = (ClientObj) stack.prev()) {
+			int id = obj.field873;
+			int count = obj.field875;
+			boolean merged = false;
+			for (int i = 0; i < items.size(); i++) {
+				if (items.get(i).id == id) {
+					GroundItem was = items.get(i);
+					items.set(i, new GroundItem(id, was.name, was.count + count, was.price));
+					merged = true;
+					break;
+				}
+			}
+			if (merged) {
+				continue;
+			}
+			try {
+				ObjType type = ObjType.get(id);
+				if (type == null || type.field811 == null) {
+					continue;              // an item this cache has no name for: nothing to show
+				}
+				items.add(new GroundItem(id, type.field811, count, type.field827));
+			} catch (Throwable error) {
+				// A decode that failed. One item missing beats an overlay that throws.
+			}
+		}
+		return items;
+	}
+
+	// ------------------------------------------------------------------ keys held
+
+	/**
+	 * Whether Alt is held down right now.
+	 *
+	 * Read as a held key rather than from the key queue, because a held key auto-repeats and the
+	 * queue cannot tell a genuine press from someone leaning on it.
+	 */
+	public boolean isAltHeld() {
+		return this.client.actionKey[GameShell.KEY_ALT] == 1;
+	}
+
+	/** Whether Shift is held down right now. */
+	public boolean isShiftHeld() {
+		return this.client.actionKey[GameShell.KEY_SHIFT] == 1;
 	}
 
 	// ------------------------------------------------------------------ world to screen

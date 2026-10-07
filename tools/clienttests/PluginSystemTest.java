@@ -49,6 +49,9 @@ public class PluginSystemTest {
 		System.out.println("7. the settings menu");
 		settingsMenuTests();
 		System.out.println();
+		System.out.println("8. overlays you can click");
+		regionTests();
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -313,6 +316,83 @@ public class PluginSystemTest {
 		}
 	}
 
+	// ---------------------------------------------------------------- 8
+
+	/**
+	 * An overlay claims rectangles while it draws, and the client asks whether a click landed in
+	 * one. The rules worth pinning down are that a region only lives for the frame that drew it,
+	 * that the thing drawn last is the thing clicked, and that a handler which throws does not
+	 * take the click path with it.
+	 */
+	static void regionTests() {
+		InteractiveRegions regions = new InteractiveRegions();
+		final StringBuilder log = new StringBuilder();
+
+		regions.add(10, 10, 100, 20, new Runnable() {
+
+			public void run() {
+				log.append("under;");
+			}
+		}, null, null);
+		regions.add(50, 15, 20, 10, new Runnable() {
+
+			public void run() {
+				log.append("over;");
+			}
+		}, null, null);
+
+		check(regions.click(20, 15), "a click inside a claimed rectangle is taken");
+		check(log.toString().equals("under;"), "...by the region it landed in");
+		check(!regions.click(200, 200), "a click outside every rectangle is left alone");
+		check(!regions.click(20, 100), "...including one below them all");
+
+		log.setLength(0);
+		regions.click(55, 18);
+		check(log.toString().equals("over;"),
+			"where two overlap, the one drawn last wins - that is the one on top");
+
+		// A region is only alive for the frame that drew it.
+		regions.clear();
+		check(!regions.click(20, 15), "a cleared frame claims nothing");
+
+		// The wheel is separate: a click region does not swallow turns, and the reverse.
+		final int[] turned = new int[1];
+		regions.add(0, 0, 50, 50, null, new OverlayGraphics.Scrolled() {
+
+			public void onScroll(int delta) {
+				turned[0] += delta;
+			}
+		}, null);
+		check(!regions.click(10, 10), "a scroll region does not take clicks");
+		check(regions.scroll(10, 10, -3) && turned[0] == -3,
+			"...and takes the wheel, with its direction (" + turned[0] + ")");
+
+		regions.clear();
+		regions.add(0, 0, 50, 50, new Runnable() {
+
+			public void run() {
+				throw new IllegalStateException("this handler is broken");
+			}
+		}, null, null);
+		boolean survived = true;
+		try {
+			check(regions.click(10, 10), "a region whose handler throws still counts as hit...");
+		} catch (Throwable error) {
+			survived = false;
+		}
+		check(survived, "...and the throw does not escape into the client's click handling");
+
+		// Zero-sized regions are a plugin bug that would otherwise swallow nothing visibly.
+		regions.clear();
+		regions.add(5, 5, 0, 10, new Runnable() {
+
+			public void run() {
+				log.append("zero;");
+			}
+		}, null, null);
+		check(!regions.click(5, 5), "a rectangle with no width claims nothing");
+	}
+
 	// ---------------------------------------------------------------- 7
 
 	/** A plugin that offers a row per target and records which one was chosen. */
@@ -553,7 +633,7 @@ public class PluginSystemTest {
 	static int drawn(Overlay overlay, OverlayGraphics g, int[] pixels, int w, int h) {
 		java.util.Arrays.fill(pixels, 0);
 		jagex2.graphics.Pix2D.bind(w, h, pixels);
-		g.reset(w, h);
+		g.reset(w, h, new InteractiveRegions(), null);
 		overlay.render(g);
 		int count = 0;
 		for (int i = 0; i < pixels.length; i++) {
