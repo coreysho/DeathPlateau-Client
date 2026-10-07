@@ -2352,7 +2352,19 @@ public class Client extends GameShell implements PixMap.Target {
 	// sits on "Loading title screen" with nothing to say why. The page passes its own origin here
 	// (Engine-TS serves it), so the browser client follows whatever address it was opened on; a
 	// desktop launch can set -Dlostcity.weburl=https://... for the same reason.
-	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL");
+	// World 1's web address, and the default only when nothing more specific was given. http, not
+	// https: playit does not terminate TLS - the tunnel hands 443 straight to the origin, and the
+	// origin is this server's plain HTTP. Putting a certificate in front of it is a Caddy away and
+	// changes one word here, which is the point of taking a whole URL rather than a host and port.
+	// The rest of it: a dev-world
+	// launch passes lostcity.webhost/webport (the launcher does, for its own tunnel) and a LAN launch
+	// passes lostcity.host, and either of those has to win - a dev client fetching World 1's cache is
+	// the stale-config trap signlink's storeid comment describes.
+	private static final boolean WEBHOST_GIVEN = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null
+		|| setting("lostcity.webport", "LOSTCITY_WEBPORT") != null || HOST_GIVEN;
+	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL") != null
+		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
+		: (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
