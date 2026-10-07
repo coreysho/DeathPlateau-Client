@@ -2009,14 +2009,33 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
 	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
-	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
-	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus");
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "80"));
 	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
 	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
 	// port, which already carries both streams, because the first byte a client sends is what tells
 	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
 	// client below is the client it has always been.
 	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
+	// THE WHOLE URL THE CACHE COMES FROM, scheme and all. WEB_HOST/WEB_PORT below build an http://
+	// one, which is right for a plain tunnel and wrong the moment the server is behind TLS: a page
+	// served over https cannot fetch http, the browser blocks it as mixed content, and the client
+	// sits on "Loading title screen" with nothing to say why. The page passes its own origin here
+	// (Engine-TS serves it), so the browser client follows whatever address it was opened on; a
+	// desktop launch can set -Dlostcity.weburl=https://... for the same reason.
+	// World 1's web address, and the default only when nothing more specific was given. http, not
+	// https: playit does not terminate TLS - the tunnel hands 443 straight to the origin, and the
+	// origin is this server's plain HTTP. Putting a certificate in front of it is a Caddy away and
+	// changes one word here, which is the point of taking a whole URL rather than a host and port.
+	// The rest of it: a dev-world
+	// launch passes lostcity.webhost/webport (the launcher does, for its own tunnel) and a LAN launch
+	// passes lostcity.host, and either of those has to win - a dev client fetching World 1's cache is
+	// the stale-config trap signlink's storeid comment describes.
+	private static final boolean WEBHOST_GIVEN = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null
+		|| setting("lostcity.webport", "LOSTCITY_WEBPORT") != null || HOST_GIVEN;
+	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL") != null
+		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
+		: (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -3042,7 +3061,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL("http://" + WEB_HOST + ":" + WEB_PORT);
+				return new URL(WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT);
 			}
 		} catch (Exception var1) {
 		}
