@@ -233,17 +233,24 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 13, "thirteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 12, "twelve settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
-		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel.
+		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel. Nor
+		// is Ground item names, which went the same way and took the F11 panel's own ground-item
+		// rows with it.
 		boolean roofsGone = true;
+		boolean groundGone = true;
 		for (int i = 0; i < QolSettings.COUNT; i++) {
 			if (QolSettings.label(i).equals("Hide roofs")) {
 				roofsGone = false;
 			}
+			if (QolSettings.label(i).equals("Ground item names")) {
+				groundGone = false;
+			}
 		}
 		check(roofsGone, "...and Hide roofs is not among them any more - it is a plugin");
+		check(groundGone, "...nor Ground item names, which is one too");
 		// The panel has no paging. It has never needed it, and the only thing stopping it is that
 		// nobody has added enough settings - which is worth failing on rather than discovering.
 		check(c.qolPanelHeight() <= 334,

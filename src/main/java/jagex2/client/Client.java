@@ -399,24 +399,15 @@ public class Client extends GameShell implements PixMap.Target {
 	// target tag unless another player happens to be standing on the tile.
 	public static final int WALK_HERE_ACTION = 14;
 
-	// QoL: the ground item settings panel. F11 opens it, F12 peeks at what is hidden. Same shape as
-	// the swaps panel - GroundItemPrefs holds the values and the list, this holds the drawing.
-	private static final int GI_PANEL_KEY = 1018;   // F11
-	private static final int GI_PANEL_W = 340;
-	private static final int GI_PANEL_ROW_H = 15;
-	private static final int GI_PANEL_HEADER_H = 24;
-	private static final int GI_PANEL_FOOTER_H = 22;
-	private static final int GI_PANEL_ACTIONS = 3;  // radius, value floor, reveal - above the list
-	private boolean giPanelOpen;
-
 	// The plugin system. F8 opens the list of what is installed; see jagex2.client.plugin for the
 	// API itself. The manager is null until load() builds it and null again if it could not be
 	// built, so every hook below is guarded - a client with no plugins behaves exactly as it did
 	// before any of this existed.
 	//
-	// Same panel shape as the three above, with one difference: the rows are not a fixed list, so
+	// Same panel shape as the QoL panel, with one difference: the rows are not a fixed list, so
 	// it is built from PluginManager.buildPanelRows() each frame and scrolls when it outgrows the
-	// screen.
+	// screen. (It had three siblings once. The swaps panel and the ground item panel are both
+	// plugin config pages now, which is where a panel about one feature belongs.)
 	public PluginManager plugins;
 	/**
 	 * Set by the Hide roofs plugin (jagex2.client.plugin.builtin.HideRoofsPlugin), read by the
@@ -440,115 +431,15 @@ public class Client extends GameShell implements PixMap.Target {
 	// showContextMenu(), so the every-frame menu that the left click, the tooltip and shift-drop all
 	// read is never rewritten - only the copy the player is looking at.
 	private boolean menuSwapMode;
-	// What each row of that swap menu does. Parallel to menuOption while menuSwapMode is set.
-	// swapRowOp says WHICH of the four things a row is - an explicit op rather than inferring it
-	// from a null verb, because the menu now configures two different features and "null means
-	// reset" stops being readable the moment there is a third meaning.
-	private static final int SWAP_ROW_SET = 0;
-	private static final int SWAP_ROW_HIDE = 2;
-	private static final int SWAP_ROW_HIGHLIGHT = 3;
-	/** A row a plugin added through SettingsMenuOpening; swapRowAction is what choosing it runs. */
-	private static final int SWAP_ROW_PLUGIN = 4;
+	// What choosing each row of that swap menu runs. Parallel to menuOption while menuSwapMode is
+	// set, and null for Cancel.
+	//
+	// It used to be five arrays and a four-valued op, because the client built the rows itself and
+	// had to remember which feature each one belonged to. Every row in this menu is a plugin's
+	// now - the swaps and the ground item rules both - so a row is its label and the Runnable
+	// behind it, and there is nothing left for the client to tell apart.
 	private final Runnable[] swapRowAction = new Runnable[500];
-	private final int[] swapRowOp = new int[500];
-	private final String[] swapRowKind = new String[500];
-	private final String[] swapRowTarget = new String[500];
-	private final String[] swapRowVerb = new String[500];
 
-	// QoL: ground item names. Labels every obj lying on the ground within GROUND_ITEM_RADIUS tiles
-	// of the player, tinted by what the pile is worth.
-	//
-	// WHY A RADIUS AND NOT THE WHOLE SCENE. objStacks is [4][104][104]; walking all of it every
-	// frame is 10,816 null checks to find the handful of tiles that ever hold anything. A box
-	// around the player covers everything close enough to read - past about a dozen tiles the text
-	// is unreadably small and the item models themselves are nearly gone.
-	//
-	// WHY IT DRAWS FROM drawScene() AND NOT draw3DEntityElements(). Ground labels belong *under*
-	// player names, hitsplats and headicons, and all of those draw in draw2DEntityElements().
-	// Calling this immediately before that one puts the labels above the world and below the entity
-	// overlays, which is the order you want when someone is standing on top of a drop pile.
-	// Radius and the value floor now come from GroundItemPrefs (the player cycles them in the F11
-	// panel); what is left here is the geometry and the ceilings, which are about what the client
-	// can draw rather than about taste.
-	private static final int GROUND_ITEM_ROW_H = 12;
-	// Raises the label off the floor, in the same 1/128-of-a-tile units projectFromGround() takes.
-	// Roughly the height of a dropped item's model, so the text clears it instead of sitting in it.
-	private static final int GROUND_ITEM_HEIGHT = 24;
-	// Distinct obj ids TRACKED on one tile, and how many of them are drawn at once. These were one
-	// number at 8: a tile can legally hold more ids than that and the extras were simply dropped, so
-	// a big pile had rows nobody could ever see. Tracking more than is drawn is what gives the wheel
-	// something to scroll to (see handleGroundItemScroll), and only the drawn window pays for a
-	// string build - the tracking pass reads the name, the price and the stackable flag and builds
-	// nothing.
-	private static final int GROUND_ITEM_MAX_PER_TILE = 24;
-	private static final int GI_ROWS_SHOWN = 8;
-	// Whole-frame ceiling, so a deliberately built pile of junk cannot turn the viewport into a
-	// wall of text (or make ObjType.get() the most expensive thing in the frame).
-	private static final int GROUND_ITEM_MAX_LABELS = 48;
-	// Value tiers, richest first, paired with the colour each one draws in. Two lined-up arrays
-	// rather than a chain of ifs so a threshold and its colour cannot drift apart.
-	private static final int[] GROUND_ITEM_TIERS = { 1000000, 100000, 10000, 1000 };
-	private static final int[] GROUND_ITEM_TIER_COLOURS = { 0xFF9040, 0x40C0FF, 0x40FF40, 0xFFFF80 };
-	private static final int GROUND_ITEM_COLOUR = 0xFFFFFF;
-	// Highlighted items ignore the tiers entirely - the point of highlighting a rune scimitar is that
-	// you spot it, not that you are reminded what it is worth. Magenta because none of the five tier
-	// colours is anywhere near it.
-	private static final int GROUND_ITEM_HIGHLIGHT = 0xFF40FF;
-	// What a hidden item looks like while the reveal toggle is on: visible, obviously suppressed.
-	private static final int GROUND_ITEM_HIDDEN = 0x707070;
-	// Hit box for one Alt control. Wider than the glyph on purpose - "-" is four pixels of ink and
-	// the labels are small, so a tight box would be a target you miss.
-	private static final int GI_CONTROL_W = 10;
-	private static final int GI_MINUS_COLOUR = 0xFF6060;
-	private static final int GI_PLUS_COLOUR = 0x60FF60;
-	// Scratch for merging duplicate stacks on a tile, reused for every tile of every frame so the
-	// overlay allocates nothing at all while it runs.
-	private final int[] groundItemIds = new int[GROUND_ITEM_MAX_PER_TILE];
-	private final int[] groundItemCounts = new int[GROUND_ITEM_MAX_PER_TILE];
-	// Hold Alt and every ground item label grows a [-] and a [+] you can click, and hidden items are
-	// shown so you can put them back. Double-tap Alt to leave them shown. Alt rather than an F-key
-	// because this is a modifier over the world, not a screen to open: the thing you want to hide is
-	// already under the cursor, and a hold means you never have to remember to turn it off again.
-	private static final int ALT_DOUBLE_TAP_MS = 400;
-	private boolean altDown;
-	private long altLastPress;
-	// Click targets for the labels drawn under Alt, in viewport-local coordinates. Rebuilt every
-	// frame by drawGroundItems(), read by handleMouseInput() - the click can only ever be tested
-	// against what was actually on screen when it happened.
-	private int giZoneCount;
-	private final String[] giZoneName = new String[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneTop = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneBottom = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneMinusX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZonePlusX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneNameX = new int[GROUND_ITEM_MAX_LABELS];
-	private final int[] giZoneNameEndX = new int[GROUND_ITEM_MAX_LABELS];
-	// Per-row visibility, decided in one pass before the column is laid out. A row the player has
-	// hidden, or one under the value floor, or one whose obj type has no name, is GI_ROW_SKIP - and
-	// the column is then laid out over the rows that remain, so a hidden item does NOT leave a hole
-	// where it used to be. (It did until Corey sent a screenshot of the hole: the column used to be
-	// positioned from the tracked count and each skipped row still advanced the cursor.)
-	private static final int GI_ROW_SKIP = -1;
-	private final int[] giRowColour = new int[GROUND_ITEM_MAX_PER_TILE];
-	// A PILE is one tile's column. Recorded every frame, in viewport-local coordinates, for the same
-	// reason the Alt click zones are: a wheel turn can only ever be tested against what was on the
-	// screen when it happened.
-	private static final int GI_MAX_PILES = 48;
-	private int giPileCount;
-	private final int[] giPileTileX = new int[GI_MAX_PILES];
-	private final int[] giPileTileZ = new int[GI_MAX_PILES];
-	private final int[] giPileLeft = new int[GI_MAX_PILES];
-	private final int[] giPileRight = new int[GI_MAX_PILES];
-	private final int[] giPileTop = new int[GI_MAX_PILES];
-	private final int[] giPileBottom = new int[GI_MAX_PILES];
-	private final int[] giPileRows = new int[GI_MAX_PILES];
-	// ONE scrolled pile, not a scroll position per tile. You scroll the pile under the cursor, and
-	// scrolling a different one starts that one from the top; nothing is remembered once you walk
-	// away. Same call as the reveal toggle not being persisted - this is a peek, not a preference.
-	private int giScrollLevel = -1;
-	private int giScrollTileX = -1;
-	private int giScrollTileZ = -1;
-	private int giScrollOffset;
 	// QoL: the right-click menu scrolls when it is taller than the area it opens in.
 	//
 	// A pile of thirty drops builds a thirty-row "Choose Option", and the placement code clamps its
@@ -616,14 +507,12 @@ public class Client extends GameShell implements PixMap.Target {
 	private String nextMessageChannel = null;
 	private int menuScroll;
 	private int menuRowsShown;
-	// The bar, in the ground-item overlay's colours - same control, same look.
+	// The scroll bar on a long right-click menu. These were the ground item piles' colours first
+	// and the plugin still draws its own bar in them, so the two controls go on looking alike -
+	// but they are this menu's now, and named for it.
+	private static final int MENU_BAR_TRACK = 0x282828;
+	private static final int MENU_BAR_THUMB = 0xC8C8C8;
 	private static final int MENU_BAR_W = 3;
-
-	// The scroll bar, drawn only on a pile that has more rows than it shows.
-	private static final int GI_BAR_W = 2;
-	private static final int GI_BAR_GAP = 3;
-	private static final int GI_BAR_TRACK = 0x282828;
-	private static final int GI_BAR_THUMB = 0xC8C8C8;
 
 	private static final int CHAT_HISTORY_MAX = 10;
 	private final String[] chatHistory = new String[CHAT_HISTORY_MAX];
@@ -1032,69 +921,25 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		this.menuOption[0] = "Cancel";
 		this.menuAction[0] = 1016;
-		this.swapRowVerb[0] = null;
-		this.swapRowKind[0] = null;
-		this.swapRowTarget[0] = null;
-		this.swapRowOp[0] = SWAP_ROW_SET;   // Cancel: no op, and never dispatched
+		this.swapRowAction[0] = null;       // Cancel: nothing to run, and never dispatched
 		int size = 1;
-		// The plugins' rows go in here - between the walk-here rows below them and the ground item
-		// rules above - which is where the left-click swap rows have always sat. The swaps are a
-		// plugin now (jagex2.client.plugin.builtin.MenuSwapperPlugin) and this is how they get in.
+		// Everything below this point is a plugin's. The left-click swaps
+		// (jagex2.client.plugin.builtin.MenuSwapperPlugin) and the ground item rules
+		// (GroundItemsPlugin) both arrive here, in the order the plugins added them.
 		if (this.plugins != null) {
 			java.util.List<SettingsMenuOpening.Target> seen =
 				new java.util.ArrayList<SettingsMenuOpening.Target>();
 			for (int i = 0; i < n; i++) {
 				seen.add(new SettingsMenuOpening.Target(kinds[i], targets[i], verbs[i]));
 			}
-			// Room left, less the two rows a ground item rule needs per target below.
-			int room = this.menuOption.length - size - 2 * n - 1;
+			// Room left, keeping a slot free so a full menu cannot run off the end of the arrays.
+			int room = this.menuOption.length - size - 1;
 			java.util.List<SettingsMenuOpening.Row> rows =
 				this.plugins.onSettingsMenuOpening(seen, hasWalk, room < 0 ? 0 : room);
 			for (int i = 0; i < rows.size() && size < this.menuOption.length - 1; i++) {
 				this.menuOption[size] = rows.get(i).label;
 				this.menuAction[size] = 1016;              // never dispatched; the row carries its own
-				this.swapRowKind[size] = null;
-				this.swapRowTarget[size] = null;
-				this.swapRowVerb[size] = null;
-				this.swapRowOp[size] = SWAP_ROW_PLUGIN;
 				this.swapRowAction[size] = rows.get(i).action;
-				size++;
-			}
-		}
-		// Ground item rules last, so they draw at the TOP of the menu: they are grouped, visible, and
-		// harmless if mis-clicked (nothing here performs a game action). Only for a world menu - the
-		// "hasWalk" test is what tells a viewport right-click from an inventory one, which matters
-		// because ground objs and inventory items share the @lre@ tag and cannot be told apart by it.
-		if (hasWalk && QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			for (int i = 0; i < n; i++) {
-				if (!"lre".equals(kinds[i])) {
-					continue;
-				}
-				boolean dup = false;
-				for (int j = 0; j < i; j++) {
-					if ("lre".equals(kinds[j]) && targets[j].equalsIgnoreCase(targets[i])) {
-						dup = true;
-						break;
-					}
-				}
-				if (dup) {
-					continue;
-				}
-				boolean hidden = GroundItemPrefs.isHidden(targets[i]);
-				boolean lit = GroundItemPrefs.isHighlighted(targets[i]);
-				this.menuOption[size] = (hidden ? "Stop hiding @lre@" : "Hide @lre@") + targets[i];
-				this.swapRowKind[size] = kinds[i];
-				this.swapRowTarget[size] = targets[i];
-				this.swapRowVerb[size] = null;
-				this.swapRowOp[size] = SWAP_ROW_HIDE;
-				this.menuAction[size] = 1016;
-				size++;
-				this.menuOption[size] = (lit ? "Stop highlighting @lre@" : "Highlight @lre@") + targets[i];
-				this.swapRowKind[size] = kinds[i];
-				this.swapRowTarget[size] = targets[i];
-				this.swapRowVerb[size] = null;
-				this.swapRowOp[size] = SWAP_ROW_HIGHLIGHT;
-				this.menuAction[size] = 1016;
 				size++;
 			}
 		}
@@ -1110,152 +955,22 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** Acts on a row of the settings menu. Nothing here ever performs a game action. */
 	private void applySwapChoice(int row) {
-		if (row > 0 && row < this.menuSize && this.swapRowOp[row] == SWAP_ROW_PLUGIN) {
-			Runnable action = this.swapRowAction[row];
-			if (action != null) {
-				try {
-					action.run();
-				} catch (Throwable error) {
-					// The plugin's own code, on the game thread. One bad row must not take the
-					// click handler down with it.
-					DevLog.log("PLUGIN", "a settings menu row threw: " + error);
-				}
-			}
-			return;
-		}
-		if (row <= 0 || row >= this.menuSize || this.swapRowKind[row] == null) {
+		if (row <= 0 || row >= this.menuSize) {
 			return;                                         // Cancel, or a click that missed
 		}
-		String kind = this.swapRowKind[row];
-		String target = this.swapRowTarget[row];
-		String verb = this.swapRowVerb[row];
-		int op = this.swapRowOp[row];
-		if (op == SWAP_ROW_HIDE || op == SWAP_ROW_HIGHLIGHT) {
-			boolean hide = op == SWAP_ROW_HIDE;
-			int mode = hide ? GroundItemPrefs.HIDE : GroundItemPrefs.HIGHLIGHT;
-			boolean was = hide ? GroundItemPrefs.isHidden(target) : GroundItemPrefs.isHighlighted(target);
-			if (!GroundItemPrefs.toggle(target, mode)) {
-				this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-					+ " ground item rules. Remove one with F11 first.", 0);
-				return;
-			}
-			DevLog.log("GROUND", (was ? "un" : "") + (hide ? "hide " : "highlight ") + target);
-			this.addMessage("", was
-				? (hide ? target + " is no longer hidden." : target + " is no longer highlighted.")
-				: (hide ? target + " will be hidden on the ground." : target + " will be highlighted on the ground."), 0);
+		Runnable action = this.swapRowAction[row];
+		if (action == null) {
 			return;
 		}
-	}
-
-	private int giPanelHeight() {
-		return GI_PANEL_HEADER_H + (GI_PANEL_ACTIONS + GroundItemPrefs.count()) * GI_PANEL_ROW_H + GI_PANEL_FOOTER_H;
-	}
-
-	private int giPanelX() {
-		return this.layout.mainX + (512 - GI_PANEL_W) / 2;
-	}
-
-	private int giPanelY() {
-		return this.layout.mainY + (334 - this.giPanelHeight()) / 2;
-	}
-
-	/** Money the way a player reads it, for the value-floor row. */
-	private static String giGp(int v) {
-		if (v == 0) {
-			return "any value";
-		}
-		if (v >= 1000000) {
-			return (v / 1000000) + "m gp+";
-		}
-		if (v >= 1000) {
-			return (v / 1000) + "k gp+";
-		}
-		return v + " gp+";
-	}
-
-	private void drawGiPanel() {
-		int x = this.giPanelX();
-		int y = this.giPanelY();
-		int h = this.giPanelHeight();
-		int rows = GI_PANEL_ACTIONS + GroundItemPrefs.count();
-
-		Pix2D.fillRectTrans(0x000000, y, GI_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, GI_PANEL_W);
-
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Ground items");
-		String close = "F11 / Esc to close";
-		this.fontPlain12.drawString(x + GI_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
-
-		int mouseX = super.mouseX - this.layout.vpX;
-		int mouseY = super.mouseY - this.layout.vpY;
-		for (int i = 0; i < rows; i++) {
-			int rowY = y + GI_PANEL_HEADER_H + i * GI_PANEL_ROW_H;
-			boolean hovered = mouseX >= x + 1 && mouseX < x + GI_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + GI_PANEL_ROW_H;
-			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, GI_PANEL_W - 2, GI_PANEL_ROW_H, 30, x + 1);
-			}
-			int baseline = rowY + GI_PANEL_ROW_H - 4;
-			if (i == 0) {
-				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, "<>");
-				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, "Show items within");
-				this.fontPlain12.drawString(x + 200, 0xFFB000, baseline, GroundItemPrefs.radius() + " tiles");
-			} else if (i == 1) {
-				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, "<>");
-				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, "Only label piles worth");
-				this.fontPlain12.drawString(x + 200, 0xFFB000, baseline, giGp(GroundItemPrefs.minValue()));
-			} else if (i == 2) {
-				boolean on = GroundItemPrefs.showHidden();
-				this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, "Reveal hidden items (double-tap Alt)");
-			} else {
-				int k = i - GI_PANEL_ACTIONS;
-				boolean hide = GroundItemPrefs.mode(k) == GroundItemPrefs.HIDE;
-				this.fontPlain12.drawString(x + 10, hide ? 0x707070 : 0xFF40FF, baseline, hide ? "hide" : "show");
-				this.fontPlain12.drawString(x + 60, hide ? 0x909090 : 0xFFFFFF, baseline, GroundItemPrefs.name(k));
-			}
-		}
-		String hint = GroundItemPrefs.count() == 0
-			? "Hold Alt and click the [-] or [+] on an item on the ground."
-			: "Click an item: hidden -> highlighted -> removed.";
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
-	}
-
-	/** Consumes a click while the ground item panel is open, on the same terms as the other two. */
-	private void handleGiPanelInput() {
-		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
-		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
-		// counting it here closed this panel on its own and swallowed the click, all through the
-		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
-			this.giPanelOpen = false;
-			return;
-		}
-		if (super.mouseClickButton == 0) {
-			return;
-		}
-		int x = this.giPanelX() + this.layout.vpX;
-		int y = this.giPanelY() + this.layout.vpY;
-		int clickX = super.mouseClickX;
-		int clickY = super.mouseClickY;
-		super.mouseClickButton = 0;
-
-		if (clickX < x || clickX >= x + GI_PANEL_W) {
-			return;
-		}
-		int row = (clickY - (y + GI_PANEL_HEADER_H)) / GI_PANEL_ROW_H;
-		if (clickY < y + GI_PANEL_HEADER_H || row < 0 || row >= GI_PANEL_ACTIONS + GroundItemPrefs.count()) {
-			return;
-		}
-		if (row == 0) {
-			GroundItemPrefs.cycleRadius();
-		} else if (row == 1) {
-			GroundItemPrefs.cycleMinValue();
-		} else if (row == 2) {
-			GroundItemPrefs.toggleShowHidden();
-		} else {
-			GroundItemPrefs.cycle(row - GI_PANEL_ACTIONS);
+		try {
+			action.run();
+		} catch (Throwable error) {
+			// The plugin's own code, on the game thread. One bad row must not take the click
+			// handler down with it.
+			DevLog.log("PLUGIN", "a settings menu row threw: " + error);
 		}
 	}
+
 
 	/**
 	 * Builds the Swing plugin sidebar and puts it beside the game, when there is a window to put
@@ -1412,69 +1127,7 @@ public class Client extends GameShell implements PixMap.Target {
 		this.plugins.clickRow(rows.get(row));
 	}
 
-	/**
-	 * Tracks Alt from the held-key state rather than the key queue, because a held key auto-repeats:
-	 * the queue sees a stream of presses and could not tell a genuine double-tap from someone
-	 * leaning on the key. actionKey stays 1 for the whole hold, so a rising edge is a real press.
-	 */
-	private void updateAltState() {
-		boolean down = super.actionKey[GameShell.KEY_ALT] == 1;
-		if (down && !this.altDown) {
-			long now = System.currentTimeMillis();
-			if (now - this.altLastPress < ALT_DOUBLE_TAP_MS) {
-				GroundItemPrefs.toggleShowHidden();
-				this.addMessage("", GroundItemPrefs.showHidden()
-					? "Showing hidden ground items." : "Hidden ground items are hidden again.", 0);
-				this.altLastPress = 0;          // a third tap starts a new pair, not another toggle
-			} else {
-				this.altLastPress = now;
-			}
-		}
-		this.altDown = down;
-	}
 
-	/**
-	 * A click on one of the Alt controls. Returns true when it hit something, in which case the
-	 * click is spent and must not also walk the player.
-	 */
-	private boolean handleGroundItemClick() {
-		int x = super.mouseClickX - this.layout.vpX;
-		int y = super.mouseClickY - this.layout.vpY;
-		for (int i = 0; i < this.giZoneCount; i++) {
-			if (y < this.giZoneTop[i] || y > this.giZoneBottom[i]) {
-				continue;
-			}
-			String name = this.giZoneName[i];
-			if (x >= this.giZoneMinusX[i] && x < this.giZoneMinusX[i] + GI_CONTROL_W) {
-				if (GroundItemPrefs.set(name, GroundItemPrefs.HIDE)) {
-					this.addMessage("", name + " will be hidden on the ground.", 0);
-				} else {
-					this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-						+ " ground item rules. Remove one with F11 first.", 0);
-				}
-				return true;
-			}
-			if (x >= this.giZonePlusX[i] && x < this.giZonePlusX[i] + GI_CONTROL_W) {
-				this.addMessage("", GroundItemPrefs.removeName(name)
-					? name + " is back to normal." : name + " was already normal.", 0);
-				return true;
-			}
-			if (x >= this.giZoneNameX[i] && x < this.giZoneNameEndX[i]) {
-				boolean was = GroundItemPrefs.isHighlighted(name);
-				if (was) {
-					GroundItemPrefs.removeName(name);
-					this.addMessage("", name + " is no longer highlighted.", 0);
-				} else if (GroundItemPrefs.set(name, GroundItemPrefs.HIGHLIGHT)) {
-					this.addMessage("", name + " will be highlighted on the ground.", 0);
-				} else {
-					this.addMessage("", "You can only have " + GroundItemPrefs.MAX
-						+ " ground item rules. Remove one with F11 first.", 0);
-				}
-				return true;
-			}
-		}
-		return false;
-	}
 
 	/**
 	 * Rows a menu can show in an area this tall: never fewer than one, never more than it has.
@@ -1532,288 +1185,6 @@ public class Client extends GameShell implements PixMap.Target {
 		return true;
 	}
 
-	private void drawGroundItems() {
-		this.updateAltState();
-		this.giZoneCount = 0;
-		this.giPileCount = 0;
-		ClientPlayer self = localPlayer;
-		if (self == null) {
-			return;
-		}
-		int level = this.currentLevel;
-		int centreX = self.field1157 >> 7;
-		int centreZ = self.field1158 >> 7;
-		int radius = GroundItemPrefs.radius();
-		// Holding Alt reveals hidden items as well as offering the controls - otherwise a hidden
-		// item would have no [+] to click and could only be recovered from the F11 panel.
-		boolean alt = this.altDown;
-		boolean reveal = GroundItemPrefs.showHidden() || alt;
-		long floor = GroundItemPrefs.minValue();
-		int minX = centreX - radius;
-		if (minX < 0) {
-			minX = 0;
-		}
-		int minZ = centreZ - radius;
-		if (minZ < 0) {
-			minZ = 0;
-		}
-		int maxX = centreX + radius;
-		if (maxX > 103) {
-			maxX = 103;
-		}
-		int maxZ = centreZ + radius;
-		if (maxZ > 103) {
-			maxZ = 103;
-		}
-		int drawn = 0;
-		for (int tileX = minX; tileX <= maxX; tileX++) {
-			for (int tileZ = minZ; tileZ <= maxZ; tileZ++) {
-				if (drawn >= GROUND_ITEM_MAX_LABELS) {
-					return;
-				}
-				LinkList stack = this.objStacks[level][tileX][tileZ];
-				if (stack == null) {
-					continue;
-				}
-				// tail()/prev() rather than head()/next() to match every other walk of objStacks in
-				// this class, so the rows come out in the same order the right-click menu lists them.
-				int distinct = 0;
-				for (ClientObj obj = (ClientObj) stack.tail(); obj != null; obj = (ClientObj) stack.prev()) {
-					int at = -1;
-					for (int i = 0; i < distinct; i++) {
-						if (this.groundItemIds[i] == obj.field873) {
-							at = i;
-							break;
-						}
-					}
-					if (at >= 0) {
-						this.groundItemCounts[at] += obj.field875;
-					} else if (distinct < GROUND_ITEM_MAX_PER_TILE) {
-						this.groundItemIds[distinct] = obj.field873;
-						this.groundItemCounts[distinct] = obj.field875;
-						distinct++;
-					}
-				}
-				if (distinct == 0) {
-					continue;
-				}
-				this.projectFromGround((tileX << 7) + 64, GROUND_ITEM_HEIGHT, (tileZ << 7) + 64);
-				// -1 means behind the camera. The generous box around the 512x334 viewport is not
-				// for correctness - plotLetter() clips - but so a tile off to the side costs one
-				// comparison instead of an ObjType decode and a string build per row.
-				if (this.projectX <= -1 || this.projectX > this.layout.vpW + 128 || this.projectY < -64 || this.projectY > this.layout.vpH + 66) {
-					continue;
-				}
-				// PASS ONE: what each tracked row would look like, and how many rows there are to
-				// draw. This pass exists so the column can be laid out over the rows that will
-				// actually appear - a hidden row is not a row. It reads the name, the price and the
-				// stackable flag and allocates nothing; the label string is built in pass two, for
-				// the drawn window only.
-				int visible = 0;
-				for (int i = 0; i < distinct; i++) {
-					ObjType type = ObjType.get(this.groundItemIds[i]);
-					if (type.field811 == null) {
-						this.giRowColour[i] = GI_ROW_SKIP;
-						continue;
-					}
-					// field827 is the price of one. Deliberately count * price and NOT the
-					// (count + 1) * price sortObjStacks() uses: that +1 is a tie-break to make a
-					// stack of one outrank a non-stackable at the same price, and showing it to
-					// the player would just read as arithmetic the client got wrong. long because
-					// a merged stack times a high price overflows an int.
-					long value = type.field827;
-					if (type.field853) {
-						value = (long) this.groundItemCounts[i] * value;
-					}
-					// The player's list is consulted on the BARE name, not the "x 500" label: a
-					// rule set on one coin has to keep applying to a pile of them.
-					int colour;
-					if (GroundItemPrefs.isHighlighted(type.field811)) {
-						colour = GROUND_ITEM_HIGHLIGHT;              // always shown, floor ignored
-					} else if (GroundItemPrefs.isHidden(type.field811)) {
-						if (!reveal) {
-							this.giRowColour[i] = GI_ROW_SKIP;
-							continue;
-						}
-						colour = GROUND_ITEM_HIDDEN;
-					} else if (value < floor) {
-						this.giRowColour[i] = GI_ROW_SKIP;
-						continue;
-					} else {
-						colour = GROUND_ITEM_COLOUR;
-						for (int tier = 0; tier < GROUND_ITEM_TIERS.length; tier++) {
-							if (value >= (long) GROUND_ITEM_TIERS[tier]) {
-								colour = GROUND_ITEM_TIER_COLOURS[tier];
-								break;
-							}
-						}
-					}
-					this.giRowColour[i] = colour;
-					visible++;
-				}
-				if (visible == 0) {
-					continue;
-				}
-				// The window into those rows. A pile taller than GI_ROWS_SHOWN shows a slice of
-				// itself and the wheel moves the slice; every other pile shows all of itself and
-				// ignores the offset entirely.
-				int shown = visible < GI_ROWS_SHOWN ? visible : GI_ROWS_SHOWN;
-				int offset = 0;
-				if (this.giScrollLevel == level && this.giScrollTileX == tileX
-					&& this.giScrollTileZ == tileZ) {
-					offset = this.giScrollOffset;
-					// Re-clamped here as well as on the wheel, because the pile can shrink between
-					// frames - somebody taking the bottom four items must not leave the column
-					// scrolled past its own end.
-					if (offset > visible - shown) {
-						offset = visible - shown;
-					}
-					if (offset < 0) {
-						offset = 0;
-					}
-				}
-				// PASS TWO. Grow the column upwards: the last row lands on the tile, earlier ones
-				// stack above it, so the pile never covers the item models below it.
-				int rowY = this.projectY - (shown - 1) * GROUND_ITEM_ROW_H;
-				int firstY = rowY;
-				int lastY = rowY;
-				int minLeft = this.projectX;
-				int maxRight = this.projectX;
-				int visIndex = 0;
-				for (int i = 0; i < distinct; i++) {
-					int colour = this.giRowColour[i];
-					if (colour == GI_ROW_SKIP) {
-						continue;
-					}
-					int at = visIndex++;
-					if (at < offset || at >= offset + shown) {
-						continue;
-					}
-					int count = this.groundItemCounts[i];
-					ObjType type = ObjType.get(this.groundItemIds[i]);
-					String label = type.field811;
-					if (count > 1) {
-						label = label + " x " + formatObjCount(count);
-					}
-					if (alt && this.giZoneCount < GROUND_ITEM_MAX_LABELS) {
-						// [-] [+] Name, laid out from the left edge of what centreString would
-						// have drawn, so the row stays centred on the tile as it grows.
-						int nameW = this.fontPlain11.stringWid(label);
-						int totalW = GI_CONTROL_W * 2 + nameW;
-						int left = this.projectX - totalW / 2;
-						int plusX = left + GI_CONTROL_W;
-						int nameX = plusX + GI_CONTROL_W;
-						this.fontPlain11.drawString(left + 1, 0x000000, rowY + 1, "-");
-						this.fontPlain11.drawString(left, GI_MINUS_COLOUR, rowY, "-");
-						this.fontPlain11.drawString(plusX + 1, 0x000000, rowY + 1, "+");
-						this.fontPlain11.drawString(plusX, GI_PLUS_COLOUR, rowY, "+");
-						this.fontPlain11.drawString(nameX + 1, 0x000000, rowY + 1, label);
-						this.fontPlain11.drawString(nameX, colour, rowY, label);
-						int z = this.giZoneCount++;
-						this.giZoneName[z] = type.field811;
-						this.giZoneTop[z] = rowY - this.fontPlain11.height;
-						this.giZoneBottom[z] = rowY + 2;
-						this.giZoneMinusX[z] = left;
-						this.giZonePlusX[z] = plusX;
-						this.giZoneNameX[z] = nameX;
-						this.giZoneNameEndX[z] = nameX + nameW;
-						if (left < minLeft) {
-							minLeft = left;
-						}
-						if (nameX + nameW > maxRight) {
-							maxRight = nameX + nameW;
-						}
-					} else {
-						this.fontPlain11.centreString(this.projectX + 1, rowY + 1, 0x000000, label);
-						this.fontPlain11.centreString(this.projectX, rowY, colour, label);
-						int half = this.fontPlain11.stringWid(label) / 2;
-						if (this.projectX - half < minLeft) {
-							minLeft = this.projectX - half;
-						}
-						if (this.projectX + half > maxRight) {
-							maxRight = this.projectX + half;
-						}
-					}
-					lastY = rowY;
-					drawn++;
-					rowY += GROUND_ITEM_ROW_H;
-				}
-				int top = firstY - this.fontPlain11.height;
-				int bottom = lastY + 2;
-				// THE SCROLL BAR, only on a pile that has more rows than it shows - otherwise it
-				// would be a control with nothing to control. Drawn after the rows, because its x
-				// comes from how wide the widest drawn row turned out to be.
-				if (visible > shown) {
-					int barX = minLeft - GI_BAR_GAP - GI_BAR_W;
-					int track = bottom - top;
-					Pix2D.fillRect(track, top, GI_BAR_TRACK, GI_BAR_W, barX);
-					int thumb = track * shown / visible;
-					if (thumb < 2) {
-						thumb = 2;
-					}
-					int thumbY = top + track * offset / visible;
-					if (thumbY + thumb > top + track) {
-						thumbY = top + track - thumb;
-					}
-					Pix2D.fillRect(thumb, thumbY, GI_BAR_THUMB, GI_BAR_W, barX);
-					minLeft = barX;
-				}
-				if (this.giPileCount < GI_MAX_PILES) {
-					int pz = this.giPileCount++;
-					this.giPileTileX[pz] = tileX;
-					this.giPileTileZ[pz] = tileZ;
-					this.giPileLeft[pz] = minLeft;
-					this.giPileRight[pz] = maxRight;
-					this.giPileTop[pz] = top;
-					this.giPileBottom[pz] = bottom;
-					this.giPileRows[pz] = visible;
-				}
-			}
-		}
-	}
-
-	// QoL: the wheel scrolls the pile under the cursor rather than zooming the camera - the same
-	// shape wheel_chat and wheel_interface already have, and for the same reason: the wheel belongs
-	// to whatever you are pointing at. Called from updateOrbitCamera() just before the zoom branch,
-	// so a turn over a tall pile is consumed before the camera ever sees it.
-	//
-	// Gated on GROUND_ITEMS rather than on a wheel setting of its own: it only does anything at all
-	// on a pile the overlay is drawing, and a pile with nothing to scroll is skipped, so there is no
-	// case where a player would want the overlay on and this off.
-	private boolean handleGroundItemScroll() {
-		if (super.mouseScrollDelta == 0 || !QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			return false;
-		}
-		int x = super.mouseX - this.layout.vpX;
-		int y = super.mouseY - this.layout.vpY;
-		for (int i = 0; i < this.giPileCount; i++) {
-			if (this.giPileRows[i] <= GI_ROWS_SHOWN) {
-				continue;                                    // nothing to scroll: leave it to zoom
-			}
-			if (x < this.giPileLeft[i] || x > this.giPileRight[i]
-				|| y < this.giPileTop[i] || y > this.giPileBottom[i]) {
-				continue;
-			}
-			if (this.giScrollLevel != this.currentLevel || this.giScrollTileX != this.giPileTileX[i]
-				|| this.giScrollTileZ != this.giPileTileZ[i]) {
-				this.giScrollLevel = this.currentLevel;
-				this.giScrollTileX = this.giPileTileX[i];
-				this.giScrollTileZ = this.giPileTileZ[i];
-				this.giScrollOffset = 0;
-			}
-			this.giScrollOffset += super.mouseScrollDelta;
-			int max = this.giPileRows[i] - GI_ROWS_SHOWN;
-			if (this.giScrollOffset > max) {
-				this.giScrollOffset = max;
-			}
-			if (this.giScrollOffset < 0) {
-				this.giScrollOffset = 0;
-			}
-			super.mouseScrollDelta = 0;
-			return true;
-		}
-		return false;
-	}
 
 	/**
 	 * The stats tab's icon for a skill, or null if there is none. Public because the XP drops
@@ -5662,10 +5033,6 @@ public class Client extends GameShell implements PixMap.Target {
 			this.handleQolPanelInput();
 			return;
 		}
-		if (this.giPanelOpen) {
-			this.handleGiPanelInput();
-			return;
-		}
 		if (this.pluginPanelOpen) {
 			this.handlePluginPanelInput();
 			return;
@@ -6080,13 +5447,6 @@ public class Client extends GameShell implements PixMap.Target {
 			if (var2 == 1 && this.plugins != null
 				&& this.plugins.onViewportClick(super.mouseClickX - this.layout.vpX,
 					super.mouseClickY - this.layout.vpY)) {
-				return;
-			}
-			// QoL: a click on one of the Alt ground item controls configures and does nothing else.
-			// Checked before everything below so it cannot also walk the player; a click that misses
-			// every control falls through and behaves normally.
-			if (var2 == 1 && this.altDown && QolSettings.on(QolSettings.GROUND_ITEMS)
-				&& this.handleGroundItemClick()) {
 				return;
 			}
 			// QoL: shift-click an inventory item to drop it instantly, bypassing whatever its
@@ -6684,22 +6044,22 @@ public class Client extends GameShell implements PixMap.Target {
 			// viewport rect below is the same one handleInput() uses to route hover input to the
 			// viewport (see the identical check at ~line 4066) - this client is fixed 765x503, not
 			// resizable, so these bounds are safe to hardcode here too.
-			// QoL: an open menu owns the wheel, then a tall ground-item pile under the cursor, then
-			// the camera. Each consumes the delta when it takes it, so exactly one of the three acts
-			// on a turn - the order is the specificity: a menu is in front of everything, a pile is
-			// a thing you are pointing at, the camera is what is left.
+			// QoL: an open menu owns the wheel, then an overlay that claimed the spot under the
+			// cursor - a tall ground-item pile is one - then the camera. Each consumes the delta
+			// when it takes it, so exactly one of the three acts on a turn: the order is the
+			// specificity - a menu is in front of everything, an overlay is a thing you are
+			// pointing at, the camera is what is left.
 			// (The swaps panel used to go first here, while it was an in-game panel. It is a
 			// plugin's page in the sidebar now, which is a Swing scroll pane and never sees the
 			// game's wheel at all.)
 			this.handleMenuScroll();
-			// An overlay that claimed this spot for the wheel takes the turn, before the ground
-			// items and the camera get a look.
+			// An overlay that claimed this spot for the wheel takes the turn, before the camera
+			// gets a look.
 			if (super.mouseScrollDelta != 0 && this.plugins != null
 				&& this.plugins.onViewportScroll(super.mouseX - this.layout.vpX,
 					super.mouseY - this.layout.vpY, super.mouseScrollDelta)) {
 				super.mouseScrollDelta = 0;
 			}
-			this.handleGroundItemScroll();
 			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
 				if (QolSettings.on(QolSettings.WHEEL_ZOOM)) {
 					this.cameraZoomOffset -= super.mouseScrollDelta * 40;
@@ -6856,7 +6216,7 @@ public class Client extends GameShell implements PixMap.Target {
 						return;
 					}
 
-					// The plugin list, on the same terms as the three panels below it.
+					// The plugin list, on the same terms as the QoL panel below it.
 					if (key == PLUGIN_PANEL_KEY && this.ingame && this.plugins != null) {
 						// One key, two interfaces: where there is a window there is a sidebar, and
 						// F8 shows and hides it. The in-canvas panel is for the applet, which has
@@ -6897,25 +6257,9 @@ public class Client extends GameShell implements PixMap.Target {
 						}
 						continue;
 					}
-					// QoL: the left-click swaps panel, on the same terms as the settings panel above.
-					// QoL: the ground item panel, and the peek at what is hidden. Both gated on the
-					// feature's own QolSettings switch, so turning ground items off turns off the
-					// keys that only make sense with it on.
-					if (key == GI_PANEL_KEY && this.ingame && QolSettings.on(QolSettings.GROUND_ITEMS)) {
-						this.giPanelOpen = !this.giPanelOpen;
-						if (this.giPanelOpen) {
-							this.closeInterfaces();
-						}
-						continue;
-					}
-					if (this.giPanelOpen) {
-						if (key == GameShell.KEY_ESCAPE) {
-							this.giPanelOpen = false;
-						}
-						continue;
-					}
-					// Alt is read as a held key (updateAltState), never from the queue - swallow it here
-					// so an auto-repeating hold cannot fall through into chat or anything else.
+					// Alt is read as a held key, never from the queue - swallow it here so an
+					// auto-repeating hold cannot fall through into chat or anything else. The
+					// Ground items plugin reads it through PluginContext.isAltHeld().
 					if (key == GameShell.KEY_ALT) {
 						continue;
 					}
@@ -8300,10 +7644,12 @@ public class Client extends GameShell implements PixMap.Target {
 		Pix3D.zoom = this.layout.zoom;
 		this.scene.draw(this.cameraX, var4, this.cameraY, this.cameraZ, this.cameraYaw, this.cameraPitch);
 		this.scene.clearLocChanges();
-		// QoL: ground item names, see drawGroundItems(). Here and not in draw3DEntityElements() so
-		// the labels sit under player names, hitsplats and headicons rather than over them.
-		if (QolSettings.on(QolSettings.GROUND_ITEMS)) {
-			this.drawGroundItems();
+		// Plugin overlays on the scene layer - ground item names among them. Here and not in
+		// draw3DEntityElements() so they sit under player names, hitsplats and headicons rather
+		// than over them. First of the two overlay passes in a frame.
+		if (this.plugins != null) {
+			this.plugins.renderOverlays(this.layout.openW, this.layout.openH,
+				jagex2.client.plugin.Overlay.LAYER_SCENE);
 		}
 		this.draw2DEntityElements();
 		this.drawTileHint();
@@ -9002,7 +8348,8 @@ public class Client extends GameShell implements PixMap.Target {
 		// client's own overlay - a plugin draws alongside the game, never over the furniture the
 		// player needs to turn it off.
 		if (this.plugins != null) {
-			this.plugins.renderOverlays(this.layout.openW, this.layout.openH);
+			this.plugins.renderOverlays(this.layout.openW, this.layout.openH,
+				jagex2.client.plugin.Overlay.LAYER_SCREEN);
 		}
 		// Drawn last of the viewport overlays so the settings panels sit on top of everything else.
 		if (this.pluginPanelOpen && this.plugins != null) {
@@ -9010,9 +8357,6 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		if (this.qolPanelOpen) {
 			this.drawQolPanel();
-		}
-		if (this.giPanelOpen) {
-			this.drawGiPanel();
 		}
 		if (this.systemUpdateTimer != 0) {
 			int var10 = this.systemUpdateTimer / 50;
@@ -9180,14 +8524,15 @@ public class Client extends GameShell implements PixMap.Target {
 			ChatIcons.draw(this.fontBold12, this.imageModIcons, var2 + 3, var10, var11,
 				"@sh1@" + this.fitMenuText(this.menuOption[this.menuRowIndex(p)], var4 - 6));
 		}
-		// A menu with rows it is not showing says so, in the ground-item overlay's own colours. A
+		// A menu with rows it is not showing says so, in what were the ground-item overlay's own
+		// colours and are now this menu's - see MENU_BAR_TRACK. A
 		// menu that runs off the bottom of the screen with no mark is what this round is fixing;
 		// one that silently shows two thirds of itself would be the same bug in a smaller box.
 		if (this.menuSize > this.menuRowsShown) {
 			int barX = var2 + var4 - MENU_BAR_W - 1;
 			int trackY = var3 + 19;
 			int track = this.menuRowsShown * MENU_ROW_H;
-			Pix2D.fillRect(track, trackY, GI_BAR_TRACK, MENU_BAR_W, barX);
+			Pix2D.fillRect(track, trackY, MENU_BAR_TRACK, MENU_BAR_W, barX);
 			int thumb = track * this.menuRowsShown / this.menuSize;
 			if (thumb < 3) {
 				thumb = 3;
@@ -9196,7 +8541,7 @@ public class Client extends GameShell implements PixMap.Target {
 			if (thumbY + thumb > trackY + track) {
 				thumbY = trackY + track - thumb;
 			}
-			Pix2D.fillRect(thumb, thumbY, GI_BAR_THUMB, MENU_BAR_W, barX);
+			Pix2D.fillRect(thumb, thumbY, MENU_BAR_THUMB, MENU_BAR_W, barX);
 		}
 	}
 

@@ -147,13 +147,13 @@ public class MenuTest extends MenuShellBase {
 	}
 
 	static int bar() {
-		return painted(GI_BAR_TRACK) + painted(GI_BAR_THUMB);
+		return painted(MENU_BAR_TRACK) + painted(MENU_BAR_THUMB);
 	}
 
 	static int thumbTop() {
 		for (int y = 0; y < 340; y++) {
 			for (int x = 0; x < 520; x++) {
-				if (buf[y * 520 + x] == GI_BAR_THUMB) {
+				if (buf[y * 520 + x] == MENU_BAR_THUMB) {
 					return y;
 				}
 			}
@@ -166,7 +166,7 @@ public class MenuTest extends MenuShellBase {
 		for (int x = 519; x >= 0; x--) {
 			for (int y = 0; y < 340; y++) {
 				int px = buf[y * 520 + x];
-				if (px == GI_BAR_TRACK || px == GI_BAR_THUMB) {
+				if (px == MENU_BAR_TRACK || px == MENU_BAR_THUMB) {
 					return x;
 				}
 			}

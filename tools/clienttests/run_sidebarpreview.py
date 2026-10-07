@@ -31,7 +31,8 @@ PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 
-PAGES = [('list', []), ('config', ['config']), ('hub', ['hub']), ('empty', [])]
+PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']), ('hub', ['hub']),
+         ('empty', [])]
 
 
 def run(*cmd, **kwargs):
@@ -140,10 +141,17 @@ def main():
         if r.returncode != 0:
             fails += 1
 
+        # A cache directory of this run's own. Without it the plugin store, and the ground item
+        # rules the Ground items page sets up for its picture, are written to the real
+        # signlink.findcachedir() - which on this machine is somebody's actual settings.
+        cache = os.path.join(work, 'cache')
+        os.makedirs(cache)
+
         for name, args in PAGES:
             png = os.path.join(out_dir, name + '.png')
             where = os.path.join(work, 'empty-home') if name == 'empty' else home
-            r = run(*(launcher + [java, '-Duser.home=' + where, '-cp', classes + os.pathsep + work,
+            r = run(*(launcher + [java, '-Duser.home=' + where, '-Dlostcity.cachedir=' + cache,
+                                  '-cp', classes + os.pathsep + work,
                                   'jagex2.client.plugin.ui.SidebarPreview', png] + args))
             if r.returncode != 0 or not os.path.exists(png):
                 print('FAIL   %s did not render' % name)

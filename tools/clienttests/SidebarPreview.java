@@ -74,6 +74,25 @@ public class SidebarPreview {
 				}
 			});
 		}
+		// The Ground items page: two config lists and no @ConfigItem at all, which is the other
+		// shape a config page comes in - settings that cycle rather than switch, and a list of
+		// the player's own rules with a remove button on each.
+		if (args.length > 1 && args[1].equals("ground")) {
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("ground-items")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				jagex2.client.GroundItemPrefs.clear();
+				jagex2.client.GroundItemPrefs.set("Dragon bones", jagex2.client.GroundItemPrefs.HIGHLIGHT);
+				jagex2.client.GroundItemPrefs.set("Rune scimitar", jagex2.client.GroundItemPrefs.HIGHLIGHT);
+				jagex2.client.GroundItemPrefs.set("Bones", jagex2.client.GroundItemPrefs.HIDE);
+				jagex2.client.GroundItemPrefs.set("Ashes", jagex2.client.GroundItemPrefs.HIDE);
+				sidebar.showConfig(entry);
+				manager.onClientTick(0);
+				Thread.sleep(300);
+			}
+		}
 		if (config) {
 			if (manager.getPlugins().isEmpty()) {
 				throw new IllegalStateException("no plugins to show a config page for");

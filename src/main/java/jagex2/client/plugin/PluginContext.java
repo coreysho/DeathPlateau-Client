@@ -340,7 +340,7 @@ public final class PluginContext {
 			for (int i = 0; i < items.size(); i++) {
 				if (items.get(i).id == id) {
 					GroundItem was = items.get(i);
-					items.set(i, new GroundItem(id, was.name, was.count + count, was.price));
+					items.set(i, new GroundItem(id, was.name, was.count + count, was.price, was.stackable));
 					merged = true;
 					break;
 				}
@@ -353,7 +353,7 @@ public final class PluginContext {
 				if (type == null || type.field811 == null) {
 					continue;              // an item this cache has no name for: nothing to show
 				}
-				items.add(new GroundItem(id, type.field811, count, type.field827));
+				items.add(new GroundItem(id, type.field811, count, type.field827, type.field853));
 			} catch (Throwable error) {
 				// A decode that failed. One item missing beats an overlay that throws.
 			}

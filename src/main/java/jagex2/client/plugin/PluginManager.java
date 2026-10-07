@@ -59,7 +59,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.HideRoofsPlugin",
 		"jagex2.client.plugin.builtin.XpDropsPlugin",
 		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin",
-		"jagex2.client.plugin.builtin.MenuSwapperPlugin"
+		"jagex2.client.plugin.builtin.MenuSwapperPlugin",
+		"jagex2.client.plugin.builtin.GroundItemsPlugin"
 	};
 
 	/** What the panel shows as the source of a plugin that came with the client. */
@@ -649,19 +650,27 @@ public final class PluginManager {
 	}
 
 	/**
-	 * Draws every running plugin's overlays. Called with the viewport bound, before the client's
-	 * own panels, so a plugin can never draw over a modal panel. The width and height are the
+	 * Draws the overlays on one layer. Called with the viewport bound, before the client's own
+	 * panels, so a plugin can never draw over a modal panel. The width and height are the
 	 * drawable area for this frame, which the display mode can change.
+	 *
+	 * Called twice a frame, scene layer first: see Overlay.LAYER_SCENE.
 	 */
-	public void renderOverlays(int width, int height) {
+	public void renderOverlays(int width, int height, int layer) {
 		if (this.idle()) {
 			return;
 		}
 		// Last frame's regions go before this frame's are drawn, so nothing a plugin has stopped
-		// drawing stays clickable.
-		this.regions.clear();
+		// drawing stays clickable. Done in the scene pass because that is the first of the two
+		// the client makes each frame - clearing in both would throw away what the first drew.
+		if (layer == Overlay.LAYER_SCENE) {
+			this.regions.clear();
+		}
 		for (int i = 0; i < this.overlays.size(); i++) {
 			Overlay overlay = this.overlays.get(i);
+			if (overlay.layer() != layer) {
+				continue;
+			}
 			try {
 				this.graphics.reset(width, height, this.regions, overlay.owner);
 				overlay.render(this.graphics);
