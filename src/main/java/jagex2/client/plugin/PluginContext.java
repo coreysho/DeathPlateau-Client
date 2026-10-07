@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import jagex2.client.Client;
+import jagex2.client.DevLog;
 import jagex2.client.GameShell;
 import jagex2.client.Stats;
 import jagex2.config.ObjType;
@@ -158,6 +159,100 @@ public final class PluginContext {
 		if (message != null) {
 			this.client.addMessage("", message, 0);
 		}
+	}
+
+	/**
+	 * How long must pass between two notifications, in milliseconds.
+	 *
+	 * SHARED BY EVERY PLUGIN, not one allowance each. There is a single PluginContext, so there
+	 * is nothing here to attribute a call to - and the player does not care which plugin is
+	 * shouting, only that something is. One spammy plugin can therefore drown out a well behaved
+	 * one for a second and a half at a time, which is a worse answer than per-plugin budgets and
+	 * a much better one than a tray balloon every frame.
+	 */
+	private static final long NOTIFY_EVERY_MS = 1500L;
+
+	/**
+	 * And between two sounds. Shorter, because a sound effect IS short and a plugin marking two
+	 * things a quarter of a second apart is reasonable where two popups would not be.
+	 */
+	private static final long SOUND_EVERY_MS = 250L;
+
+	private long lastNotify;
+	private long lastSound;
+
+	/**
+	 * Tells the player something: a line in the chatbox, and a desktop notification if they are
+	 * not looking at the game.
+	 *
+	 * The chat line always happens. The desktop half only fires when the window is unfocused -
+	 * popping a tray balloon at someone who is already watching the screen is how a useful
+	 * feature becomes an irritating one - and only if they have left desktop notifications on.
+	 *
+	 * RATE LIMITED, and silently. A plugin that calls this every tick gets one notification
+	 * every {@value #NOTIFY_EVERY_MS}ms and no error, because the alternative is either a
+	 * notification every frame or an exception thrown out of a game handler for something that
+	 * is not the plugin's mistake so much as its enthusiasm.
+	 *
+	 * Nothing is sent to the server. This is the plugin talking to the player.
+	 */
+	public void notify(String message) {
+		this.notify(null, message);
+	}
+
+	/** The same, with a title for the desktop notification. The chat line is just the message. */
+	public void notify(String title, String message) {
+		if (message == null || message.length() == 0) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		if (now - this.lastNotify < NOTIFY_EVERY_MS) {
+			return;
+		}
+		this.lastNotify = now;
+		this.addChatMessage(message);
+		jagex2.client.Notifier.desktop(title, message, this.client.hasFocus);
+	}
+
+	/**
+	 * Plays one of the game's own sound effects, by its id in the cache.
+	 *
+	 * VALIDATED BEFORE IT IS QUEUED, and that is not politeness. An id with no sound behind it
+	 * makes the client's audio loop throw, and its catch for that reports the failure TO THE
+	 * SERVER - so an unchecked id here would be a plugin causing a packet to be sent, which is
+	 * the one thing the plugin API does not do. A bad id is dropped and logged instead.
+	 *
+	 * Rate limited like {@link #notify}, and bounded again by the client's own fifty-sound queue.
+	 * Does nothing when the player has sound effects turned off, which is the answer they already
+	 * gave to this question.
+	 */
+	public void playSound(int id) {
+		if (!this.client.waveEnabled || Client.lowMem) {
+			return;
+		}
+		if (id < 0 || id >= jagex2.sound.Wave.field1471.length
+			|| jagex2.sound.Wave.field1471[id] == null) {
+			DevLog.log("PLUGIN", "a plugin asked for sound " + id + ", which this cache has none of");
+			return;
+		}
+		long now = System.currentTimeMillis();
+		if (now - this.lastSound < SOUND_EVERY_MS) {
+			return;
+		}
+		this.lastSound = now;
+		// The same queue the server's own SYNTH_SOUND fills, and the same cap on it.
+		if (this.client.waveCount < this.client.waveIds.length) {
+			this.client.waveIds[this.client.waveCount] = id;
+			this.client.waveLoops[this.client.waveCount] = 0;
+			this.client.waveDelay[this.client.waveCount] = 0;
+			this.client.waveCount++;
+		}
+	}
+
+	/** Whether this cache has a sound under that id, so a plugin can offer only ones that work. */
+	public boolean hasSound(int id) {
+		return id >= 0 && id < jagex2.sound.Wave.field1471.length
+			&& jagex2.sound.Wave.field1471[id] != null;
 	}
 
 	// ------------------------------------------------------------------ asking the client to act

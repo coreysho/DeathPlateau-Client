@@ -46,9 +46,10 @@ MUTS = [
     # entry goes stale on each of those, which is how four of these mutations ended up silently
     # skipping for a fortnight. Hide roofs is last and the comment above DEFAULTS says why.
     (SETTINGS, 'Hide roofs defaulting ON, which changes the world for everyone who updates',
-     '\n\t\tfalse\n\t};', '\n\t\ttrue\n\t};'),
+     '\n\t\tfalse, true\n\t};', '\n\t\ttrue, true\n\t};'),
     (SETTINGS, 'a label added without a key, so the three parallel arrays disagree',
-     '"Hide roofs"\n\t};', '"Hide roofs", "Something else"\n\t};'),
+     '"Plugin notifications on the desktop"\n\t};',
+     '"Plugin notifications on the desktop", "Something else"\n\t};'),
     # The panel outgrowing its viewport. NOT by adding settings: COUNT comes from three parallel
     # arrays that have to be edited together, and a single-edit version of that breaks the parity
     # check instead and gets attributed to it. Taller rows is the same arithmetic in one edit.

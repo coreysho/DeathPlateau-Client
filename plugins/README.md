@@ -267,7 +267,12 @@ public class MyToolPlugin extends Plugin {
 | Level | What it includes |
 | --- | --- |
 | 0 | Does not say. The default, and never refused - every plugin written before levels existed. |
-| 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as of the release that introduced levels. |
+| 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as it was then. |
+| 2 | `ctx.notify`, `ctx.playSound`, `ctx.hasSound`. |
+
+Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
+for it - overlays became movable underneath them. A level only goes up when there is something new
+to **call**. It is a promise to a compiler, not a changelog.
 
 The number only goes up, and only when something is **added**. A level is a promise that
 everything up to it is present, so nothing in one may ever be removed or change meaning.
@@ -280,6 +285,33 @@ shows it greyed out with the reason. A jar that declares nothing still gets caug
 `LinkageError` out of the constructor or `startUp` is reported as "built for a different client"
 rather than as a mystery - but the net only fires once the jar is already on the player's disk.
 The index's `clientApi` is what keeps it from getting there.
+
+## Telling the player something
+
+```java
+this.ctx.notify("Your prayer is low.");              // chat, and the desktop if unfocused
+this.ctx.notify("Death Plateau", "Your prayer is low.");
+this.ctx.playSound(id);                              // one of the game's own sound effects
+this.ctx.hasSound(id);                               // whether this cache has that one
+```
+
+`notify` always puts a line in the chatbox, and additionally shows a desktop notification **only
+when the game window is not focused**. Popping a tray balloon at someone who is already looking at
+the screen is how a useful feature becomes an irritating one, and it is also why desktop
+notifications default on: the only time one appears is a time it is worth appearing. Players can
+turn that half off in the F9 panel.
+
+**Both are rate limited, silently.** One notification per 1.5 seconds and one sound per 0.25
+seconds, shared across every plugin - there is a single `PluginContext`, so there is nothing to
+attribute a call to. A plugin that calls these every tick gets the limit and no error: throwing
+out of a game handler for something that is only enthusiasm would be worse than dropping it.
+
+**Sound ids are cache-specific and there is no sensible default.** Nothing in the client hardcodes
+one - every sound the game plays is an id the server sent - so which ids exist depends on the cache
+this server ships. `hasSound` is there so a plugin can check rather than guess, and the Idle
+Idle notifier's page has a Test row for finding one by ear. An id with no sound behind it is dropped and
+logged: the client's audio loop reports a playback failure **to the server**, so an unchecked id
+would be a plugin causing a packet to be sent, which is the one thing this API does not do.
 
 ## Moving overlays
 
@@ -299,10 +331,9 @@ way it owns the rest of input.
 What this means if you are writing one:
 
 - **Do not add x and y settings.** Position is the player's, through Alt-drag. Keep settings for
-  things that are actually yours - what to show, how big, which colour. Boosts and Status bars
-  each had an x and a y for the few hours before this existed, and both lost them: two ways to
-  position one overlay means its real position is a sum of both, which nobody can read off
-  either number.
+  things that are actually yours - what to show, how big, which colour. Boosts had an x and a y
+  for the few hours before this existed and lost them: two ways to position one overlay means
+  its real position is a sum of both, which nobody can read off either number.
 - **Draw where you mean to.** Everything you draw is what you occupy, and what you occupy is what
   a player can grab. An overlay that draws a stray pixel in the far corner has a grab area the
   size of the viewport.
@@ -330,21 +361,30 @@ are small enough that a jar of their own would be more ceremony than code:
 | XP drops | yes | Experience gained, in the top-right corner. |
 | Barrows doors | yes | Highlights the door that opens. |
 | Boosts | no | Which stats are boosted or drained, and by how much. |
-| Status bars | no | Hitpoints and prayer as bars beside the game. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
+| Idle notifier | no | Says when you stop gaining experience. |
 
 The first five were client features and are on because turning them off would change what
-existing players see. The last three are additions and start off: an addition that turns itself on
-rewrites everyone's screen on their next launch.
+existing players see. The last three are additions and start off: an addition that turns itself
+on rewrites everyone's screen on their next launch.
 
 ### What is not here, and why
 
 Two things RuneLite has that this deliberately does not:
 
+- **Animation-based idling.** RuneLite's idle notifier catches the moment a woodcutting swing
+  stops; this one waits for the experience that would have followed. Animation state is not
+  something `PluginContext` exposes, and a notifier that guessed at it would fire at the wrong
+  moments. Waiting for the xp is later, but it is never wrong.
+- **Anything reporting health, prayer or special attack.** Not a technical limit. A Status bars
+  plugin shipped for one release and was taken back out, and the low-hitpoints and low-prayer
+  warnings that were briefly part of the Idle notifier went with it. This server does not put a
+  player's vitals in front of them - not as an orb, not as a bar, and not as a popup either,
+  since a notification is only a quieter way of doing the same thing. The tests check for their
+  absence, so none of it can quietly come back.
 - **A regen meter.** RuneLite counts down to the next hitpoint. The regen schedule lives on the
   server and the client is never told it, so the only clock a plugin could use would be one it
   made up - and a countdown that is wrong is worse than none, because a player would trust it.
-  Status bars shows what the client does know.
 - **Virtual levels and combat level on the stats tab.** RuneLite writes over the tab itself. That
   needs drawing into the game's own interfaces, which `PluginContext` does not offer and should
   not offer lightly. The Skills page shows the same numbers without reaching into the interface.
@@ -366,14 +406,15 @@ find it. Settings live with the client's other settings.
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
 python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
+python3 tools/clienttests/run_notifytest.py        # notifications, sound and Idle notifier
 python3 tools/clienttests/run_dragtest.py          # Alt-drag
-python3 tools/clienttests/run_skilltest.py         # Boosts, Status bars and Skills
+python3 tools/clienttests/run_skilltest.py         # Boosts and Skills
 python3 tools/clienttests/run_groundtest.py        # Ground items
 python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to build/preview/*.png
 ```
 
 Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_dragtest.py`,
-`mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
+`mutate_notifytest.py`, `mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
 break is caught **by a named check**. A test that only goes red because something threw is not
 measuring the thing it claims to. Run one before trusting a test you have just written: the first
 run of each of these found holes in its own tests.
@@ -384,7 +425,7 @@ The hub test serves a real index and real jars over localhost and drives the rea
 through them, mostly to check the refusals: an id that would climb out of the plugins folder, a
 url that is not http, a jar that does not match its checksum, a download that is not a jar.
 
-`run_skilltest` drives the three skill plugins through the real manager and checks what a player
+`run_skilltest` drives the two skill plugins through the real manager and checks what a player
 would see - the text the overlays actually draw, the rows the sidebar page actually offers. The
 part worth the most is the experience curve: the Skills page continues the client's experience
 table past where it ends, and the test points that continuation at all 99 levels the client does

@@ -62,12 +62,13 @@ public final class QolSettings {
 	public static final int WHEEL_CHAT = 10;
 	public static final int WHEEL_INTERFACE = 11;
 	public static final int ROOFS_OFF = 12;
+	public static final int DESKTOP_NOTIFY = 13;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
 		"bankpin_keys", "tab_reply", "esc_close", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "roofs_off"
+		"wheel_interface", "roofs_off", "desktop_notify"
 	};
 
 	private static final String[] LABELS = {
@@ -75,7 +76,7 @@ public final class QolSettings {
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
 		"Tab replies to last PM", "Escape closes interfaces", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"Hide roofs"
+		"Hide roofs", "Plugin notifications on the desktop"
 	};
 
 	// Every default is ON, with ONE exception. For the twelve that predate this class that was the
@@ -87,9 +88,17 @@ public final class QolSettings {
 	// convenience and leaves the world alone, and this one changes what the world looks like. Old
 	// School ships its own Roofs toggle off as well, so on is the surprising answer in both places.
 	// It is last in the list for the same reason.
+	// Desktop notifications default ON, which does not break that rule: they only ever fire
+	// while the window is NOT focused, so a plugin cannot pop a tray balloon at someone who is
+	// looking at the game. The only time one appears is a time it is worth appearing. The switch
+	// is here for anyone whose desktop makes them loud anyway.
+	//
+	// Kept out of the array literal on purpose - the roofs test reads these three arrays out of
+	// the source to check they are the same length, and a comma inside a comment in there reads
+	// as another entry.
 	private static final boolean[] DEFAULTS = {
 		true, true, true, true, true, true, true, true, true, true, true, true,
-		false
+		false, true
 	};
 
 	public static final int COUNT = KEYS.length;

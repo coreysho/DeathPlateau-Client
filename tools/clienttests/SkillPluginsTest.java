@@ -1,6 +1,6 @@
 /*
- * Headless test for the three plugins that are nothing but arithmetic over the skills the plugin
- * context already exposes: Boosts, Status bars and Skills.
+ * Headless test for the two plugins that are nothing but arithmetic over the skills the plugin
+ * context already exposes: Boosts and Skills.
  *
  * DRIVEN THE WAY THE CLIENT DRIVES THEM. The plugins are started by the real PluginManager, the
  * overlays draw through the real OverlayGraphics, and the Skills page is read through the same
@@ -33,11 +33,6 @@ public class SkillPluginsTest {
 	static final int ROW_H = 12;
 
 	/** Where the status bars draw, and the colour their fill is. */
-	static final int BAR_X = StatusBarsPlugin.X;
-	static final int BAR_Y = StatusBarsPlugin.Y;
-	static final int BAR_HEIGHT = 120;
-	static final int HP_FILL = 0x4A9E3F;
-
 	static int fails;
 
 	static Client client;
@@ -59,7 +54,7 @@ public class SkillPluginsTest {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed");
 			System.exit(0);
 		}
-		System.out.println("0. the three plugins, started by the real manager");
+		System.out.println("0. the two plugins, started by the real manager");
 		if (!setUp()) {
 			System.out.println();
 			System.out.println("1 FAILED");
@@ -69,13 +64,10 @@ public class SkillPluginsTest {
 		System.out.println("1. Boosts: which stats are up and which are down");
 		boostTests();
 		System.out.println();
-		System.out.println("2. Status bars: the arithmetic that keeps a bar inside its box");
-		statusBarTests();
-		System.out.println();
-		System.out.println("3. Skills: the experience curve, past where the client's table ends");
+		System.out.println("2. Skills: the experience curve, past where the client's table ends");
 		curveTests();
 		System.out.println();
-		System.out.println("4. Skills: the combat level, and the page");
+		System.out.println("3. Skills: the combat level, and the page");
 		skillsPageTests();
 
 		System.out.println();
@@ -112,15 +104,17 @@ public class SkillPluginsTest {
 			}
 		}
 		check(entry("boosts") != null, "Boosts is one of the built-in plugins");
-		check(entry("status-bars") != null, "Status bars is one of the built-in plugins");
 		check(entry("skills") != null, "Skills is one of the built-in plugins");
-		// None of the three asks to be on: they are all additions, and an addition that turns
-		// itself on changes what every existing player sees on their next launch.
+		// Status bars shipped for one release and was taken out again: this server does not put
+		// a player's health, prayer or special attack on the screen, as orbs, bars or anything
+		// else. Checked rather than assumed, so it cannot quietly come back.
+		check(entry("status-bars") == null, "Status bars is gone, and stays gone");
+		// Neither asks to be on: both are additions, and an addition that turns itself on
+		// changes what every existing player sees on their next launch.
 		check(entry("boosts") != null && !entry("boosts").isEnabled()
-			&& entry("status-bars") != null && !entry("status-bars").isEnabled()
 			&& entry("skills") != null && !entry("skills").isEnabled(),
-			"...and none of them turns itself on");
-		return entry("boosts") != null && entry("status-bars") != null && entry("skills") != null;
+			"...and neither turns itself on");
+		return entry("boosts") != null && entry("skills") != null;
 	}
 
 	// ---------------------------------------------------------------- 1
@@ -184,85 +178,6 @@ public class SkillPluginsTest {
 
 	// ---------------------------------------------------------------- 2
 
-	static void statusBarTests() {
-		check(fill(0, 10, 100) == 0, "an empty bar fills nothing");
-		check(fill(10, 10, 100) == 100, "a full bar fills all of it");
-		check(fill(5, 10, 100) == 50, "half full is half (" + fill(5, 10, 100) + ")");
-		// A boosted skill is above its own maximum, which is the one case that would draw
-		// outside the bar if the fraction were multiplied out rather than capped.
-		check(fill(14, 10, 100) == 100, "a boosted level fills the bar rather than overflowing it");
-		// Just after login a skill reads 0/0, and dividing by that throws inside a render loop -
-		// which the manager answers by turning the whole plugin off.
-		// 0/0 does not reach the division - the value being zero answers first - so this is
-		// asked with a real value and no maximum, which is what a skill reads as between login
-		// and the server's first stat update. The catch is so a divide by zero FAILS this check
-		// by name instead of throwing out of the test.
-		int noMax = -1;
-		try {
-			noMax = fill(5, 0, 100);
-		} catch (Throwable dividedByZero) {
-			noMax = -1;
-		}
-		check(noMax == 0, "a maximum of zero fills nothing rather than dividing by it ("
-			+ noMax + ")");
-		check(fill(0, 0, 100) == 0, "...and neither does a skill that is 0 of 0");
-		check(fill(10, 10, 0) == 0, "a bar with no height fills nothing");
-
-		check(StatusBarsPlugin.percent(3, 10) == 30, "percent is a percentage");
-		check(StatusBarsPlugin.percent(1, 0) == 0,
-			"...and is 0 rather than infinite when there is no maximum");
-		check(StatusBarsPlugin.percent(14, 10) == 100, "...and never over 100");
-
-		// The height is a number a player types in, so it can be anything at all. In the
-		// resizable modes the viewport changes size while the game runs, so it is bounded every
-		// frame rather than once.
-		check(clamp(120, 300) == 120, "a height that fits is left alone");
-		check(clamp(9999, 300) == 300, "a height past the viewport is cut to it");
-		check(clamp(-5, 300) == 8, "a negative height becomes the smallest bar, not an inverted one");
-		check(clamp(120, 0) == 0, "no room at all draws nothing");
-		check(clamp(120, 4) == 4, "a viewport shorter than the smallest bar still bounds it");
-
-		// And the bars on screen, through the real overlay.
-		PluginManager.Entry bars = entry("status-bars");
-		levelAll(50);
-		client.skillLevel[StatusBarsPlugin.HITPOINTS] = 25;
-		manager.setEnabled(bars, true);
-		// Only the height is a setting now - where the bars go is Alt-drag's business, so the
-		// pixel checks below read the plugin's own fixed origin rather than setting one.
-		setInt(bars, "height", BAR_HEIGHT);
-		List<Drawn> rows = drawnText();
-		check(find(rows, "25") != null, "the hitpoints number is drawn: " + texts(rows));
-		check(find(rows, "50") != null, "...and the prayer one beside it");
-		// BESIDE, not on top of. Both numbers being drawn says nothing about where: two bars at
-		// the same x draw both of these and look like one bar.
-		Drawn hp = find(rows, "25");
-		Drawn prayer = find(rows, "50");
-		check(hp != null && prayer != null && hp.x != prayer.x,
-			"...in two places, because two bars at one x look like one bar");
-
-		// And the fill itself, read off the pixels. A bar filled from the top paints exactly as
-		// many rows in exactly the same colour as one filled from the bottom, so only WHERE
-		// they are tells the two apart - and a half-empty bar that empties upwards is the one
-		// thing a status bar must not do.
-		//
-		// The backdrop covers the whole bar, so counting painted pixels counts that too; the
-		// fill's own colour is what is counted. Geometry taken from the plugin's own constants
-		// rather than from the text's position, which is centred and so is not the bar's edge.
-		int column = BAR_X + StatusBarsPlugin.BAR_W / 2;
-		int fillRows = rowsOfColour(column, HP_FILL);
-		check(fillRows > 0, "the hitpoints bar paints a fill (" + fillRows + " rows)");
-		check(fillRows > BAR_HEIGHT / 4 && fillRows < BAR_HEIGHT * 3 / 4,
-			"...about half the bar for a half-full skill (" + fillRows + " of " + BAR_HEIGHT + ")");
-		check(lowestOfColour(column, HP_FILL) > BAR_Y + BAR_HEIGHT / 2,
-			"...reaching the bottom of the bar, the way a tank empties");
-		check(highestOfColour(column, HP_FILL) > BAR_Y + BAR_HEIGHT / 4,
-			"...and starting halfway down it, not at the top");
-		manager.setEnabled(bars, false);
-		levelAll(50);
-	}
-
-	// ---------------------------------------------------------------- 3
-
 	static void curveTests() {
 		PluginManager.Entry entry = entry("skills");
 		manager.setEnabled(entry, true);
@@ -319,7 +234,7 @@ public class SkillPluginsTest {
 		manager.setEnabled(entry, false);
 	}
 
-	// ---------------------------------------------------------------- 4
+	// ---------------------------------------------------------------- 3
 
 	static void skillsPageTests() {
 		PluginManager.Entry entry = entry("skills");
@@ -461,36 +376,6 @@ public class SkillPluginsTest {
 	}
 
 	/** How many rows of the given pixel column are exactly this colour. */
-	static int rowsOfColour(int x, int colour) {
-		int count = 0;
-		for (int y = 0; y < H; y++) {
-			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
-				count++;
-			}
-		}
-		return count;
-	}
-
-	/** The lowest row of the column painted in this colour, or -1. */
-	static int lowestOfColour(int x, int colour) {
-		for (int y = H - 1; y >= 0; y--) {
-			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
-				return y;
-			}
-		}
-		return -1;
-	}
-
-	/** The highest row of the column painted in this colour, or -1. */
-	static int highestOfColour(int x, int colour) {
-		for (int y = 0; y < H; y++) {
-			if ((pixels[y * W + x] & 0xFFFFFF) == colour) {
-				return y;
-			}
-		}
-		return -1;
-	}
-
 	static int pageRows() {
 		tick();
 		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
@@ -577,14 +462,6 @@ public class SkillPluginsTest {
 			points += (long) Math.floor(i + 300.0 * Math.pow(2.0, i / 7.0));
 		}
 		return (int) (points / 4);
-	}
-
-	static int fill(int value, int max, int tall) {
-		return StatusBarsPlugin.fillHeight(value, max, tall);
-	}
-
-	static int clamp(int wanted, int available) {
-		return StatusBarsPlugin.clampHeight(wanted, available);
 	}
 
 	/**
