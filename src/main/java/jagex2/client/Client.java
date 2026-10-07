@@ -2286,6 +2286,30 @@ public class Client extends GameShell {
 	public static String SERVER_HOST = System.getProperty("lostcity.host", System.getenv().getOrDefault("LOSTCITY_HOST", "rsps-project-lost-city.duckdns.org"));
 	public static int WEB_PORT = Integer.parseInt(System.getProperty("lostcity.webport", System.getenv().getOrDefault("LOSTCITY_WEBPORT", "8888")));
 
+	/**
+	 * The game port, when it is not 43594 plus the launch offset.
+	 *
+	 * WHY THIS EXISTS. The game port was reachable two ways: the hardcoded 43594, or 43594 plus
+	 * whatever offset the fifth launch argument carried. Both assume the server is reachable on a
+	 * port WE choose, which stops being true the moment it is behind a tunnel - playit.gg, ngrok,
+	 * a Cloudflare tunnel - because those hand out a port and you take what you are given. Saying
+	 * "the port is 51234" needed an offset of -(43594 - 51234) passed as argument two, which is
+	 * arithmetic nobody should be doing to start a game.
+	 *
+	 * 0 means unset, and the old behaviour stands.
+	 */
+	private static final int GAME_PORT = Integer.parseInt(System.getProperty("lostcity.gameport", System.getenv().getOrDefault("LOSTCITY_GAMEPORT", "0")));
+
+	/**
+	 * Where the game socket and the on-demand socket both connect - they share one port.
+	 *
+	 * A method rather than a constant because portOffset is read from the launch arguments in
+	 * main(), long after this class is initialised: a field computed here would always see 0.
+	 */
+	public static int gamePort() {
+		return GAME_PORT > 0 ? GAME_PORT : portOffset + 43594;
+	}
+
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
 	// handleMouseInput(), updateOrbitCamera() and drawScene() for where these are used.
@@ -4460,7 +4484,7 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Connecting to server...";
 				this.drawTitle();
 			}
-			this.stream = new ClientStream(this.openSocket(portOffset + 43594), this);
+			this.stream = new ClientStream(this.openSocket(gamePort()), this);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
