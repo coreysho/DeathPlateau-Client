@@ -236,6 +236,37 @@ public class JaggrabTest {
 				&& Client.gameAddress().indexOf("" + Client.GAME_PORT) >= 0,
 			"and the game address names host and port (" + Client.gameAddress() + ")");
 
+		// THE CACHE GOES OVER A RAW TCP TUNNEL, not playit's shared HTTP edge. The edge answered
+		// this client's own fetch with 403 while serving browsers the same bytes, and the client
+		// cannot report that as anything but "connection problem" - it does a fixed 40-byte
+		// readFully and has nowhere to put a refusal, a redirect or an interstitial. If this check
+		// ever fails because the cache was deliberately put behind a TLS terminator of your own,
+		// that is a decision to make on purpose and to record here, not one to discover from a
+		// player's log a day later.
+		check(Client.webAddress().indexOf(".playit.plus") < 0,
+			"a plain launch does not fetch the cache through playit's HTTP edge ("
+				+ Client.webAddress() + ")");
+		check(Client.WEB_HOST.endsWith(".tun.ply.gg") || Client.WEB_HOST.indexOf('.') < 0,
+			"...it uses a TCP tunnel, or something that is not a playit name at all ("
+				+ Client.WEB_HOST + ")");
+		check(Client.WEB_PORT != 80 && Client.WEB_PORT != 443,
+			"...on a port of its own rather than a shared web port (" + Client.WEB_PORT + ")");
+
+		// AND THE BROWSER'S ADDRESS IS UNTOUCHED. WS_URL is set only by the page that runs this
+		// client under CheerpJ, and that page is read off disk at runtime rather than committed,
+		// so this source cannot see whether it passes weburl or leans on the default below. The
+		// desktop revert must therefore not reach the browser's branch at all - read out of the
+		// source, because there is no way to set WS_URL in this JVM after class load.
+		String decl = read("src/main/java/jagex2/client/Client.java");
+		int url = decl.indexOf("public static final String WEB_URL");
+		int urlEnd = url < 0 ? -1 : decl.indexOf(";", url);
+		String urlBody = url < 0 || urlEnd < 0 ? "" : decl.substring(url, urlEnd);
+		check(urlBody.length() > 0, "WEB_URL is readable");
+		check(urlBody.indexOf("WS_URL != null") >= 0,
+			"the browser and the desktop take different cache defaults, told apart by WS_URL");
+		check(urlBody.indexOf("\"http://death-plateau.playit.plus\"") >= 0,
+			"...and the browser's is still the HTTP edge it is served from, unchanged");
+
 		// getCodeBase must read the same expression the log prints, or the log misdirects.
 		int base = source.indexOf("public URL getCodeBase() {");
 		int baseEnd = base < 0 ? -1 : source.indexOf("\n\t}", base);

@@ -117,6 +117,21 @@ MUTS = [
     (CLIENT, 'the startup banner not naming the cache address',
      'DevLog.log("SESSION", "game " + gameAddress() + "  cache " + webAddress() + "  jaggrab "',
      'DevLog.log("SESSION", "game " + gameAddress() + "  jaggrab "'),
+
+    # ---- THE TRANSPORT. The cache went onto playit's shared HTTP edge and the edge answered the
+    # client's own fetch with 403. Putting it back is one line, and so is undoing it by accident.
+    (CLIENT, "the cache back on playit's HTTP edge, the way it 403'd",
+     '(HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg")',
+     '(HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus")'),
+    (CLIENT, 'the cache back on a shared web port',
+     '(HOST_GIVEN ? "8888" : "53628")',
+     '(HOST_GIVEN ? "8888" : "80")'),
+    (CLIENT, "the desktop given the browser's default again, so WEB_HOST stops deciding",
+     ': (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);',
+     ': (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");'),
+    (CLIENT, "the browser's default dropped along with the desktop's, breaking the webclient",
+     ': (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);',
+     ': null;'),
 ]
 
 

@@ -1392,8 +1392,16 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
 	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
-	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus");
-	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "80"));
+	// A RAW TCP TUNNEL, NOT THE SHARED HTTP EDGE. death-plateau.playit.plus is a playit HTTP(S)
+	// tunnel: its edge terminates and inspects HTTP, and it answered this client's own cache fetch
+	// with 403 while serving browsers the same bytes - a player sat on "connection problem" for a
+	// day over it, and the owner never saw it because a LAN launch passes lostcity.host and never
+	// goes near playit. A .tun.ply.gg tunnel forwards bytes and has no opinion about them, which
+	// is what a 377 client needs: getJagCrc does a fixed 40-byte readFully and cannot report an
+	// interstitial, a redirect or a refusal as anything but four fixed words. The webclient keeps
+	// the HTTP edge - see WEB_URL - so BOTH tunnels have to be up.
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
 	/**
 	 * The port JAGGRAB is served on, or 0 for "this client cannot use JAGGRAB".
 	 *
@@ -1452,25 +1460,30 @@ public class Client extends GameShell implements PixMap.Target {
 	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
 	// client below is the client it has always been.
 	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
-	// THE WHOLE URL THE CACHE COMES FROM, scheme and all. WEB_HOST/WEB_PORT below build an http://
-	// one, which is right for a plain tunnel and wrong the moment the server is behind TLS: a page
-	// served over https cannot fetch http, the browser blocks it as mixed content, and the client
-	// sits on "Loading title screen" with nothing to say why. The page passes its own origin here
-	// (Engine-TS serves it), so the browser client follows whatever address it was opened on; a
-	// desktop launch can set -Dlostcity.weburl=https://... for the same reason.
-	// World 1's web address, and the default only when nothing more specific was given. http, not
-	// https: playit does not terminate TLS - the tunnel hands 443 straight to the origin, and the
-	// origin is this server's plain HTTP. Putting a certificate in front of it is a Caddy away and
-	// changes one word here, which is the point of taking a whole URL rather than a host and port.
-	// The rest of it: a dev-world
-	// launch passes lostcity.webhost/webport (the launcher does, for its own tunnel) and a LAN launch
-	// passes lostcity.host, and either of those has to win - a dev client fetching World 1's cache is
-	// the stale-config trap signlink's storeid comment describes.
+	// THE WHOLE URL THE CACHE COMES FROM, scheme and all, for the cases a host and a port cannot
+	// say. A page served over https cannot fetch http - the browser blocks it as mixed content
+	// before the request leaves - so the browser client needs an address with a scheme on it, and
+	// the page it is served from is the only thing that knows which. Engine-TS's rs2.cgi passes
+	// it. A desktop launch can set -Dlostcity.weburl=https://... for the same reason.
+	//
+	// THE TWO CLIENTS WANT DIFFERENT ADDRESSES, which is why this is not one default:
+	//
+	//   - the browser keeps the HTTP edge it is served from. WS_URL is set only by that page, so
+	//     it is what tells the two apart, and the browser's default here is deliberately left
+	//     exactly as it was: an unverified change to it breaks the webclient for everyone, and
+	//     public/rs2.cgi is read off disk at runtime rather than committed, so this source cannot
+	//     see whether the page passes weburl or leans on this.
+	//   - the desktop takes no default at all, so WEB_HOST and WEB_PORT above decide - one place
+	//     for the tunnel, no second copy of the host to drift out of step with it.
+	//
+	// A dev-world launch passes lostcity.webhost/webport (the launcher does, for its own tunnel)
+	// and a LAN launch passes lostcity.host; either has to win, because a dev client fetching
+	// World 1's cache is the stale-config trap signlink's storeid comment describes.
 	private static final boolean WEBHOST_GIVEN = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null
 		|| setting("lostcity.webport", "LOSTCITY_WEBPORT") != null || HOST_GIVEN;
 	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL") != null
 		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
-		: (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");
+		: (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);
 
 	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
 	// A diagnostic that names a different host than the one the client actually dials is worse
