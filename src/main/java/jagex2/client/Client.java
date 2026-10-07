@@ -2301,6 +2301,25 @@ public class Client extends GameShell {
 	private static final int GAME_PORT = Integer.parseInt(System.getProperty("lostcity.gameport", System.getenv().getOrDefault("LOSTCITY_GAMEPORT", "0")));
 
 	/**
+	 * The host the game socket connects to, when it is not the same one the cache comes from.
+	 *
+	 * WHY THESE CAN DIFFER. One SERVER_HOST was fine while the server was one machine answering on
+	 * two ports. Behind a tunnel they are two tunnels, and a tunnel service names each one
+	 * separately - playit.gg hands out carolyn-fever.tun.ply.gg for one and
+	 * carolyn-scientist.tun.ply.gg for the other. They may resolve to the same address today and
+	 * stop doing tomorrow, which is exactly the sort of thing that should not need a new client
+	 * build to survive.
+	 *
+	 * Empty means unset, and the game socket uses SERVER_HOST as it always did.
+	 */
+	private static final String GAME_HOST = System.getProperty("lostcity.gamehost", System.getenv().getOrDefault("LOSTCITY_GAMEHOST", ""));
+
+	/** Where the game socket connects. Falls back to the host the cache comes from. */
+	public static String gameHost() {
+		return GAME_HOST.length() > 0 ? GAME_HOST : SERVER_HOST;
+	}
+
+	/**
 	 * Where the game socket and the on-demand socket both connect - they share one port.
 	 *
 	 * A method rather than a constant because portOffset is read from the launch arguments in
@@ -3368,6 +3387,13 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.g(I)Ljava/net/Socket;")
 	public Socket openSocket(int port) throws IOException { return new Socket(InetAddress.getByName(SERVER_HOST), port); }
+
+	/**
+	 * The game socket: login and on-demand both use it, and both go to gameHost():gamePort(),
+	 * which may be a different machine to the one the cache is fetched from. Everything else that
+	 * opens a socket - the JAGGRAB fallback above - still talks to SERVER_HOST.
+	 */
+	public Socket openGameSocket() throws IOException { return new Socket(InetAddress.getByName(gameHost()), gamePort()); }
 
 	@ObfuscatedName("client.a(Ljava/lang/Runnable;I)V")
 	public void startThread(Runnable thread, int priority) {
@@ -4484,7 +4510,7 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Connecting to server...";
 				this.drawTitle();
 			}
-			this.stream = new ClientStream(this.openSocket(gamePort()), this);
+			this.stream = new ClientStream(this.openGameSocket(), this);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
