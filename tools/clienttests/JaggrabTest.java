@@ -35,6 +35,9 @@ public class JaggrabTest {
 		System.out.println();
 		System.out.println("3. what this build resolved to, and where the cache comes from");
 		liveTests();
+		System.out.println();
+		System.out.println("4. what a failed fetch says about itself");
+		reportTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
@@ -128,6 +131,133 @@ public class JaggrabTest {
 			"...it uses the web host for the web server's own protocol");
 		check(body.indexOf("jaggrabUsable(") >= 0,
 			"...and skips the attempt entirely when there is nowhere to send it");
+	}
+
+	// ---------------------------------------------------------------- 4
+
+	/*
+	 * A SECOND PLAYER GOT THE SAME FOUR WORDS and they meant something else. "connection problem"
+	 * is every IOException the fetch can throw: a name that does not resolve, a port that refuses,
+	 * and a connect that times out - a DNS or filtering problem, a dead tunnel, and a blocked
+	 * route, which are three different fixes. The loading screen has room for four words, so the
+	 * log carries the rest, and these are the checks that it does. The line is a pure function for
+	 * the same reason the port rule is; the wiring that reaches it is read out of the source.
+	 */
+	static void reportTests() {
+		String from = "http://death-plateau.playit.plus:80/crc12345678-377";
+		// The name in the exception is deliberately NOT the one in the address. Asserting on a
+		// name both of them carry is an assertion the address alone satisfies, and the first run
+		// of this suite proved it: dropping the message entirely left the check still passing.
+		String named = "a-name-the-address-does-not-carry.invalid";
+		check(from.indexOf(named) < 0, "the probe name cannot come from the address");
+
+		// The three failures that used to read alike come out distinguishable.
+		String dns = Client.fetchFailure(from, new java.net.UnknownHostException(named));
+		String refused = Client.fetchFailure(from, new java.net.ConnectException("Connection refused: connect"));
+		String timeout = Client.fetchFailure(from, new java.net.SocketTimeoutException("connect timed out"));
+
+		check(dns.indexOf("UnknownHostException") >= 0, "a name that does not resolve says so");
+		check(dns.indexOf(named) >= 0, "...and says which name, from the exception and not the address");
+		check(refused.indexOf("ConnectException") >= 0 && refused.indexOf("refused") >= 0,
+			"a refused port says so, and carries its own words");
+		check(timeout.indexOf("SocketTimeoutException") >= 0 && timeout.indexOf("timed out") >= 0,
+			"a timed-out connect says so, and carries its own words");
+		check(!dns.equals(refused) && !refused.equals(timeout) && !dns.equals(timeout),
+			"...and no two of the three read alike, which is the whole point");
+
+		// The address travels with the reason. Without it a log cannot tell a client pointed at the
+		// wrong host from a host that is down, and those want opposite fixes too.
+		check(dns.indexOf(from) >= 0, "the reason carries the address it was dialling");
+
+		// An exception with no message must not append the word "null" to the line.
+		String bare = Client.fetchFailure(from, new java.io.EOFException());
+		check(bare.indexOf("null") < 0, "a message-less exception adds no 'null' (" + bare + ")");
+		check(bare.indexOf("EOFException") >= 0, "...and still names its class");
+
+		String source = read("src/main/java/jagex2/client/Client.java");
+
+		// openUrl cannot return without naming where it went: three ways out, three assignments,
+		// each before the connect that can throw. A branch added later without one is the exact
+		// regression this guards, and only the source can see it.
+		int open = source.indexOf("public DataInputStream openUrl(");
+		int shut = open < 0 ? -1 : source.indexOf("\n\t}", open);
+		String body = open < 0 || shut < 0 ? "" : source.substring(open, shut);
+		check(body.length() > 0, "openUrl is readable");
+		int assigns = count(body, "this.lastFetchFrom =");
+		int returns = count(body, "return ");
+		check(returns == 3 && assigns == returns,
+			"every one of openUrl's " + returns + " ways out names its address first ("
+				+ assigns + " assignments)");
+
+		// The field says something before the first fetch. A null would print the word "null" and
+		// leave a report no better off than it was.
+		// Anchored to the DECLARATION. An unanchored pattern finds openUrl's own assignments and
+		// passes however the field is declared - which is how the first run of this suite let a
+		// null declaration through.
+		java.util.regex.Matcher init = java.util.regex.Pattern
+			.compile("public String lastFetchFrom\\s*=\\s*(\"[^\"]*\"|[A-Za-z0-9_]+)\\s*;")
+			.matcher(source);
+		boolean declared = init.find();
+		String initial = declared ? init.group(1) : "(no declaration found)";
+		check(declared && initial.startsWith("\"") && initial.length() > 2,
+			"a client that has fetched nothing still has something to say (" + initial + ")");
+
+		// And getJagCrc's four catches all reach it - the one that fires is the one we never see.
+		int crc = source.indexOf("public void getJagCrc() {");
+		int crcEnd = crc < 0 ? -1 : source.indexOf("\n\t}", crc);
+		String crcBody = crc < 0 || crcEnd < 0 ? "" : source.substring(crc, crcEnd);
+		check(crcBody.length() > 0, "getJagCrc is readable");
+		// Every catch that paints one of the four words also says why. Counting catches outright
+		// would count the retry's own sleep, which has nothing to report; what matters is that no
+		// message reaches the screen without its reason reaching the log.
+		String[] painted = { "EOF problem", "connection problem", "logic problem" };
+		for (int i = 0; i < painted.length; i++) {
+			int at = crcBody.indexOf("var5 = \"" + painted[i] + "\"");
+			int close = at < 0 ? -1 : crcBody.indexOf("\n\t\t\t}", at);
+			String arm = at < 0 || close < 0 ? "" : crcBody.substring(at, close);
+			check(arm.length() > 0 && arm.indexOf("this.cacheFetchFailed(") >= 0,
+				"\"" + painted[i] + "\" does not reach the screen without its reason reaching the log");
+		}
+		check(count(crcBody, "this.cacheFetchFailed(") == painted.length,
+			"...and nothing else reports (" + count(crcBody, "this.cacheFetchFailed(") + " calls)");
+		check(crcBody.indexOf("this.openUrl(path)") >= 0,
+			"...and the path it logs is the path it asked for");
+
+		// What a plain launch would print. A malformed address here is a silent misdirect: every
+		// fetch fails and the log names something that was never a URL.
+		try {
+			java.net.URL url = new java.net.URL(Client.webAddress());
+			check(url.getHost() != null && url.getHost().length() > 0,
+				"a plain launch's cache address is a URL with a host (" + Client.webAddress() + ")");
+		} catch (java.net.MalformedURLException bad) {
+			check(false, "a plain launch's cache address is not a URL: " + Client.webAddress());
+		}
+		check(Client.gameAddress().indexOf(Client.SERVER_HOST) >= 0
+				&& Client.gameAddress().indexOf("" + Client.GAME_PORT) >= 0,
+			"and the game address names host and port (" + Client.gameAddress() + ")");
+
+		// getCodeBase must read the same expression the log prints, or the log misdirects.
+		int base = source.indexOf("public URL getCodeBase() {");
+		int baseEnd = base < 0 ? -1 : source.indexOf("\n\t}", base);
+		String baseBody = base < 0 || baseEnd < 0 ? "" : source.substring(base, baseEnd);
+		check(baseBody.indexOf("new URL(webAddress())") >= 0,
+			"getCodeBase dials the address the log names, from the one expression");
+		check(baseBody.indexOf("WEB_HOST") < 0 && baseBody.indexOf("WEB_URL") < 0,
+			"...and does not build a second one of its own");
+
+		// The startup banner carries both addresses, so a log answers this on its own first lines.
+		int main = source.indexOf("public static void main(String[] args) {");
+		String head = main < 0 ? "" : source.substring(main, Math.min(source.length(), main + 3000));
+		check(head.indexOf("webAddress()") >= 0 && head.indexOf("gameAddress()") >= 0,
+			"a launch logs both addresses before the first frame");
+	}
+
+	static int count(String haystack, String needle) {
+		int n = 0;
+		for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+			n++;
+		}
+		return n;
 	}
 
 	static String read(String path) {

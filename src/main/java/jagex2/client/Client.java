@@ -119,6 +119,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.Vb")
 	public boolean field196 = false;
+	/**
+	 * WHERE THE LAST CACHE FETCH WAS DIALLED, set by openUrl in whichever branch it took. The
+	 * branch is the thing a failure report needs and the thing it cannot see: field196 flips on
+	 * every failure, so two attempts in a row go to two different places. Set before the connect,
+	 * so a fetch that never completes still names its address.
+	 */
+	public String lastFetchFrom = "(nothing fetched yet)";
 
 	@ObfuscatedName("client.mc")
 	public int macroMinimapAngleModifier = 2;
@@ -1465,6 +1472,19 @@ public class Client extends GameShell implements PixMap.Target {
 		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
 		: (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");
 
+	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
+	// A diagnostic that names a different host than the one the client actually dials is worse
+	// than no diagnostic at all, so there is one expression here and both callers read it.
+	public static String webAddress() {
+		return WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT;
+	}
+
+	// THE GAME'S ADDRESS, likewise. In a browser there is no host and port at all - one WebSocket
+	// URL carries both streams - so this says whichever of the two this build is using.
+	public static String gameAddress() {
+		return WS_URL != null ? WS_URL : SERVER_HOST + ":" + GAME_PORT;
+	}
+
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
 	// handleMouseInput(), updateOrbitCamera() and drawScene() for where these are used.
@@ -2420,6 +2440,13 @@ public class Client extends GameShell implements PixMap.Target {
 			// which wasted a round. Any log can now answer it on its own first line.
 			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene");
 
+			// WHERE THIS CLIENT IS DIALLING. getJagCrc() reports a failed cache fetch as
+			// "connection problem" and never says which address it could not reach, so a player's log
+			// could not tell a dead tunnel from a client pointed at the wrong host - and the two want
+			// opposite fixes. Every log now answers it before the first frame.
+			DevLog.log("SESSION", "game " + gameAddress() + "  cache " + webAddress() + "  jaggrab "
+				+ (jaggrabUsable(JAGGRAB_PORT, WS_URL) ? WEB_HOST + ":" + JAGGRAB_PORT : "off"));
+
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
 				portOffset = Integer.parseInt(args[1]);
@@ -2521,7 +2548,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL(WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT);
+				return new URL(webAddress());
 			}
 		} catch (Exception var1) {
 		}
@@ -2555,6 +2582,7 @@ public class Client extends GameShell implements PixMap.Target {
 		// the client makes - and it is skipped entirely when there is nowhere to send JAGGRAB.
 		// See JAGGRAB_PORT for what that cost before.
 		if (this.field196 && jaggrabUsable(JAGGRAB_PORT, WS_URL)) {
+			this.lastFetchFrom = "jaggrab " + WEB_HOST + ":" + JAGGRAB_PORT + "/" + arg0;
 			if (this.field520 != null) {
 				try {
 					this.field520.close();
@@ -2571,8 +2599,10 @@ public class Client extends GameShell implements PixMap.Target {
 			var3.write(("JAGGRAB /" + arg0 + "\n\n").getBytes());
 			return new DataInputStream(var2);
 		} else if (signlink.mainapp == null) {
+			this.lastFetchFrom = webAddress() + "/" + arg0;
 			return new DataInputStream((new URL(this.getCodeBase(), arg0)).openStream());
 		} else {
+			this.lastFetchFrom = "applet /" + arg0;
 			return signlink.openurl(arg0);
 		}
 	}
@@ -15927,6 +15957,23 @@ public class Client extends GameShell implements PixMap.Target {
 		Component.unloadCom(arg1);
 	}
 
+	/**
+	 * WHY A CACHE FETCH FAILED, in the log and not only on the loading screen. getJagCrc()'s four
+	 * catches collapse into four fixed words, and "connection problem" is all three of a name that
+	 * does not resolve, a port that refuses and a connect that times out - which want three
+	 * different fixes, none of them the same as each other. The exception's own class and message
+	 * name which one it was, and lastFetchFrom names the address it was dialling.
+	 */
+	private void cacheFetchFailed(Exception why) {
+		DevLog.log("SESSION", fetchFailure(this.lastFetchFrom, why));
+	}
+
+	/** The line itself, as a pure function, because the wording is the part a test can check. */
+	static String fetchFailure(String from, Exception why) {
+		return "cache fetch failed: " + from + " - " + why.getClass().getName()
+			+ (why.getMessage() == null ? "" : ": " + why.getMessage());
+	}
+
 	@ObfuscatedName("client.k(Z)V")
 	public void getJagCrc() {
 		int var2 = 5;
@@ -15935,8 +15982,9 @@ public class Client extends GameShell implements PixMap.Target {
 		while (this.jagChecksum[8] == 0) {
 			String var5 = "Unknown problem";
 			this.drawProgress(20, "Connecting to web server");
+			String path = "crc" + (int) (Math.random() * 9.9999999E7D) + "-" + 377;
 			try {
-				DataInputStream var6 = this.openUrl("crc" + (int) (Math.random() * 9.9999999E7D) + "-" + 377);
+				DataInputStream var6 = this.openUrl(path);
 				Packet var7 = new Packet(new byte[40]);
 				var6.readFully(var7.data, 0, 40);
 				var6.close();
@@ -15955,12 +16003,15 @@ public class Client extends GameShell implements PixMap.Target {
 			} catch (EOFException var14) {
 				var5 = "EOF problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var14);
 			} catch (IOException var15) {
 				var5 = "connection problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var15);
 			} catch (Exception var16) {
 				var5 = "logic problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var16);
 				if (!signlink.reporterror) {
 					return;
 				}
