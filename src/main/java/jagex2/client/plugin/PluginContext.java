@@ -120,8 +120,12 @@ public final class PluginContext {
 	}
 
 	/**
-	 * Total experience needed to BE the given level: 1 is 0, 2 is 83, 99 is 13,034,431. Levels
-	 * outside 1 to 99 clamp to the ends.
+	 * Total experience needed to BE the given level: 1 is 0, 2 is 83, 99 is 13,034,431.
+	 *
+	 * ANSWERS UP TO LEVEL 100, not 99. The client's table holds 99 entries, for levels 2 to 100,
+	 * because level 100's figure is the experience a full 99 has. Ask for more than 100 and this
+	 * returns level 100's figure for all of them - a plugin that wants true levels past the end
+	 * of the game has to continue the curve itself. Below 1 is 0.
 	 *
 	 * The client's own table is offset by two - its entry 0 is the xp for level 2 - which is the
 	 * sort of thing that is correct once and then wrong in every plugin that copies it. This is

@@ -59,7 +59,10 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.XpDropsPlugin",
 		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin",
 		"jagex2.client.plugin.builtin.MenuSwapperPlugin",
-		"jagex2.client.plugin.builtin.GroundItemsPlugin"
+		"jagex2.client.plugin.builtin.GroundItemsPlugin",
+		"jagex2.client.plugin.builtin.BoostsPlugin",
+		"jagex2.client.plugin.builtin.StatusBarsPlugin",
+		"jagex2.client.plugin.builtin.SkillsPlugin"
 	};
 
 	/** What the panel shows as the source of a plugin that came with the client. */

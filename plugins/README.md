@@ -281,6 +281,38 @@ shows it greyed out with the reason. A jar that declares nothing still gets caug
 rather than as a mystery - but the net only fires once the jar is already on the player's disk.
 The index's `clientApi` is what keeps it from getting there.
 
+## What comes with the client
+
+Eight plugins ship built in. All of them were features of the client before they were plugins, or
+are small enough that a jar of their own would be more ceremony than code:
+
+| Plugin | On by default | What it does |
+| --- | --- | --- |
+| Anti-drag | yes | How long a click is held before an item starts dragging. |
+| Ground items | yes | Names and values over what is on the floor, with rules per item. |
+| Left-click swaps | yes | Which option a left click performs. |
+| XP drops | yes | Experience gained, in the top-right corner. |
+| Barrows doors | yes | Highlights the door that opens. |
+| Boosts | no | Which stats are boosted or drained, and by how much. |
+| Status bars | no | Hitpoints and prayer as bars beside the game. |
+| Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
+
+The first five were client features and are on because turning them off would change what
+existing players see. The last three are additions and start off: an addition that turns itself on
+rewrites everyone's screen on their next launch.
+
+### What is not here, and why
+
+Two things RuneLite has that this deliberately does not:
+
+- **A regen meter.** RuneLite counts down to the next hitpoint. The regen schedule lives on the
+  server and the client is never told it, so the only clock a plugin could use would be one it
+  made up - and a countdown that is wrong is worse than none, because a player would trust it.
+  Status bars shows what the client does know.
+- **Virtual levels and combat level on the stats tab.** RuneLite writes over the tab itself. That
+  needs drawing into the game's own interfaces, which `PluginContext` does not offer and should
+  not offer lightly. The Skills page shows the same numbers without reaching into the interface.
+
 ## Where things are saved
 
 | What | Where |
@@ -297,8 +329,16 @@ find it. Settings live with the client's other settings.
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
 python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
+python3 tools/clienttests/run_skilltest.py         # Boosts, Status bars and Skills
+python3 tools/clienttests/run_groundtest.py        # Ground items
 python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to build/preview/*.png
 ```
+
+Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_skilltest.py`,
+`mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
+break is caught **by a named check**. A test that only goes red because something threw is not
+measuring the thing it claims to. Run one before trusting a test you have just written: the first
+run of each of these found holes in its own tests.
 
 The first covers event delivery and consumption, a handler that throws, settings surviving a
 restart, and loading plugins out of real jars (manifest and scanned, including a corrupt one).
@@ -306,5 +346,12 @@ The hub test serves a real index and real jars over localhost and drives the rea
 through them, mostly to check the refusals: an id that would climb out of the plugins folder, a
 url that is not http, a jar that does not match its checksum, a download that is not a jar.
 
-The last builds the real sidebar over a real plugin jar and paints it into png files you can look
-at, failing if a page comes out blank or if the window does not paint the sidebar at all.
+`run_skilltest` drives the three skill plugins through the real manager and checks what a player
+would see - the text the overlays actually draw, the rows the sidebar page actually offers. The
+part worth the most is the experience curve: the Skills page continues the client's experience
+table past where it ends, and the test points that continuation at all 99 levels the client does
+table, because a formula right at 2 and 99 and wrong at 73 is exactly the bug worth catching.
+
+`run_sidebarpreview` builds the real sidebar over a real plugin jar and paints it into png files
+you can look at, failing if a page comes out blank or if the window does not paint the sidebar at
+all.
