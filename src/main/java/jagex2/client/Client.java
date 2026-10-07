@@ -6240,6 +6240,11 @@ public class Client extends GameShell implements PixMap.Target {
 			this.orbitCameraPitch += this.orbitCameraPitchVelocity / 2;
 
 			// QoL: middle-mouse-drag camera rotation, on top of the arrow-key rotation above.
+			//
+			// In a browser the press never reaches AWT at all, so the page watches the middle button
+			// instead and this is where its drag joins the real one - see BrowserInput. A desktop
+			// client reads two zeroes and carries on.
+			super.pollBrowserCameraDrag();
 			if (super.cameraDragDeltaX != 0 || super.cameraDragDeltaY != 0) {
 				if (QolSettings.on(QolSettings.MMB_CAMERA)) {
 					this.orbitCameraYaw = this.orbitCameraYaw + super.cameraDragDeltaX * CAMERA_DRAG_YAW_NUM / CAMERA_DRAG_DIV & 0x7FF;
