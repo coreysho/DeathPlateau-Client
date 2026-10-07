@@ -281,6 +281,42 @@ shows it greyed out with the reason. A jar that declares nothing still gets caug
 rather than as a mystery - but the net only fires once the jar is already on the player's disk.
 The index's `clientApi` is what keeps it from getting there.
 
+## Moving overlays
+
+**Hold Alt and drag any overlay anywhere in the viewport.** The one under the cursor is outlined
+so you can see what you are about to pick up, it turns white while you hold it, and it stays
+where you drop it. Drop one within a few pixels of where it started and it snaps exactly back.
+
+The move button beside Reload in the plugin panel puts every overlay back where its plugin draws
+it, which is also the way back for one dragged somewhere unreachable.
+
+**No plugin had to change for this, and none can opt out.** An overlay works out where it wants
+to be and `OverlayGraphics` adds the player's offset on the way to the screen, so the overlay
+never learns it moved - which is why the plugins already published are draggable without being
+rebuilt, and why a plugin cannot put itself somewhere the player did not. The client owns it, the
+way it owns the rest of input.
+
+What this means if you are writing one:
+
+- **Do not add x and y settings.** Position is the player's, through Alt-drag. Keep settings for
+  things that are actually yours - what to show, how big, which colour. Boosts and Status bars
+  each had an x and a y for the few hours before this existed, and both lost them: two ways to
+  position one overlay means its real position is a sum of both, which nobody can read off
+  either number.
+- **Draw where you mean to.** Everything you draw is what you occupy, and what you occupy is what
+  a player can grab. An overlay that draws a stray pixel in the far corner has a grab area the
+  size of the viewport.
+- **Scene-layer overlays do not move.** They are drawn over a tile in the world, so an offset on
+  one is a label pointing at the wrong thing. `layer()` decides, and `LAYER_SCENE` opts out by
+  being what it is.
+- Positions are saved in `plugins.dat` under `overlay.<plugin key>#<n>.at`, where n is the
+  overlay's index within your plugin. Reorder your `addOverlay` calls and the ones after the
+  change go back to where you draw them.
+
+Alt is also what Ground items reveals hidden piles with, and the two do not collide: that is a
+key held with no button, and its own controls are on the right button, while dragging needs a
+left press on something a screen overlay drew.
+
 ## What comes with the client
 
 Eight plugins ship built in. All of them were features of the client before they were plugins, or
@@ -318,6 +354,7 @@ Two things RuneLite has that this deliberately does not:
 | What | Where |
 | --- | --- |
 | Plugin jars | `~/.deathplateau/plugins` |
+| Where overlays have been dragged to | `plugins.dat`, as `overlay.<key>#<n>.at` |
 | What the hub installed, and at which version | `installed.txt`, in the plugins folder |
 | Which plugins are on, and their settings | `plugins.dat` in the client's cache folder, beside `qol_settings.dat` |
 
@@ -329,13 +366,14 @@ find it. Settings live with the client's other settings.
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
 python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
+python3 tools/clienttests/run_dragtest.py          # Alt-drag
 python3 tools/clienttests/run_skilltest.py         # Boosts, Status bars and Skills
 python3 tools/clienttests/run_groundtest.py        # Ground items
 python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to build/preview/*.png
 ```
 
-Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_skilltest.py`,
-`mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
+Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_dragtest.py`,
+`mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
 break is caught **by a named check**. A test that only goes red because something threw is not
 measuring the thing it claims to. Run one before trusting a test you have just written: the first
 run of each of these found holes in its own tests.
@@ -351,6 +389,11 @@ would see - the text the overlays actually draw, the rows the sidebar page actua
 part worth the most is the experience curve: the Skills page continues the client's experience
 table past where it ends, and the test points that continuation at all 99 levels the client does
 table, because a formula right at 2 and 99 and wrong at 73 is exactly the bug worth catching.
+
+`run_dragtest` drags a test plugin around with Pix2D bound to an int[] it reads back, so "the
+overlay moved" is a pixel in a new place rather than a field with a new number in it. That
+distinction is the point: the whole mechanism is a translation applied on the way to the screen,
+and an offset that changed without the pixels following would be exactly the bug.
 
 `run_sidebarpreview` builds the real sidebar over a real plugin jar and paints it into png files
 you can look at, failing if a page comes out blank or if the window does not paint the sidebar at

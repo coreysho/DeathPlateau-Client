@@ -55,11 +55,15 @@ public final class StatusBarsPlugin extends Plugin {
 	@ConfigItem(keyName = "height", name = "Bar height")
 	public int height = 120;
 
-	@ConfigItem(keyName = "x", name = "Distance from the left edge")
-	public int x = 6;
-
-	@ConfigItem(keyName = "y", name = "Distance from the top edge")
-	public int y = 40;
+	/**
+	 * Where the bars start, before the player drags them.
+	 *
+	 * NOT A SETTING, for the same reason as Boosts: position is what Alt-drag is for, and two
+	 * ways to set it means the real position is a sum of both. The HEIGHT stays a setting - that
+	 * is a size, not a place, and nothing drags it.
+	 */
+	static final int X = 6;
+	static final int Y = 40;
 
 	protected void startUp() {
 		this.addOverlay(new Overlay() {
@@ -74,15 +78,15 @@ public final class StatusBarsPlugin extends Plugin {
 		if (!this.ctx.isLoggedIn()) {
 			return;
 		}
-		int tall = clampHeight(this.height, g.height() - this.y);
+		int tall = clampHeight(this.height, g.height() - Y);
 		if (tall < 8) {
 			return;
 		}
-		int left = this.x;
-		this.bar(g, left, this.y, tall, this.ctx.getSkillLevel(HITPOINTS),
+		int left = X;
+		this.bar(g, left, Y, tall, this.ctx.getSkillLevel(HITPOINTS),
 			this.ctx.getBaseLevel(HITPOINTS), true);
 		if (this.showPrayer) {
-			this.bar(g, left + BAR_W + GAP, this.y, tall, this.ctx.getSkillLevel(PRAYER),
+			this.bar(g, left + BAR_W + GAP, Y, tall, this.ctx.getSkillLevel(PRAYER),
 				this.ctx.getBaseLevel(PRAYER), false);
 		}
 	}

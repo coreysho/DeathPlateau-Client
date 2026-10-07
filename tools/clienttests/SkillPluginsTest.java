@@ -32,9 +32,9 @@ public class SkillPluginsTest {
 	static final int H = 334;
 	static final int ROW_H = 12;
 
-	/** Where the status bars are put for the pixel checks, and the colour their fill is. */
-	static final int BAR_X = 20;
-	static final int BAR_Y = 40;
+	/** Where the status bars draw, and the colour their fill is. */
+	static final int BAR_X = StatusBarsPlugin.X;
+	static final int BAR_Y = StatusBarsPlugin.Y;
 	static final int BAR_HEIGHT = 120;
 	static final int HP_FILL = 0x4A9E3F;
 
@@ -227,10 +227,8 @@ public class SkillPluginsTest {
 		levelAll(50);
 		client.skillLevel[StatusBarsPlugin.HITPOINTS] = 25;
 		manager.setEnabled(bars, true);
-		// Geometry pinned, so the pixel checks below know where to look without depending on
-		// whatever the defaults happen to be.
-		setInt(bars, "x", BAR_X);
-		setInt(bars, "y", BAR_Y);
+		// Only the height is a setting now - where the bars go is Alt-drag's business, so the
+		// pixel checks below read the plugin's own fixed origin rather than setting one.
 		setInt(bars, "height", BAR_HEIGHT);
 		List<Drawn> rows = drawnText();
 		check(find(rows, "25") != null, "the hitpoints number is drawn: " + texts(rows));

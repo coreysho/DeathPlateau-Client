@@ -79,8 +79,8 @@ MUTS = [
      'return value >= max ? 100 : value * 100 / max;',
      'return value * 100 / max;'),
     (BARS, 'the prayer bar drawn on top of the hitpoints bar',
-     'this.bar(g, left + BAR_W + GAP, this.y, tall,',
-     'this.bar(g, left, this.y, tall,'),
+     'this.bar(g, left + BAR_W + GAP, Y, tall,',
+     'this.bar(g, left, Y, tall,'),
 
     # --- Skills: the curve ------------------------------------------------------------------
     # The formula itself. Each of these is a transcription slip that looks right.

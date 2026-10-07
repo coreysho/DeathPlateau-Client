@@ -45,11 +45,16 @@ public final class BoostsPlugin extends Plugin {
 		description = "\"Attack +4\" instead of \"Attack 64/60\"")
 	public boolean relative = false;
 
-	@ConfigItem(keyName = "x", name = "Distance from the left edge")
-	public int x = 6;
-
-	@ConfigItem(keyName = "y", name = "Distance from the top edge")
-	public int y = 6;
+	/**
+	 * Where the panel starts, before the player drags it.
+	 *
+	 * NOT A SETTING. It was one, for the few hours between this plugin shipping and overlays
+	 * becoming draggable, and two ways to position the same thing is one too many: the final
+	 * place would be this plus the drag offset, which is a sum nobody can reason about from
+	 * either number alone. Hold Alt and move it.
+	 */
+	private static final int X = 6;
+	private static final int Y = 6;
 
 	/**
 	 * One line of the panel: the text and the colour it is drawn in.
@@ -101,14 +106,14 @@ public final class BoostsPlugin extends Plugin {
 		width += padding * 2;
 		int height = padding * 2 + lineHeight * (lines.size() + 1);
 
-		g.fillAlpha(this.x, this.y, width, height, 0x000000, 160);
-		g.box(this.x, this.y, width, height, 0x5A5A5A);
+		g.fillAlpha(X, Y, width, height, 0x000000, 160);
+		g.box(X, Y, width, height, 0x5A5A5A);
 
-		int baseline = this.y + padding + g.lineHeight();
-		g.textFlat(this.x + padding, baseline, TITLE, HEADING);
+		int baseline = Y + padding + g.lineHeight();
+		g.textFlat(X + padding, baseline, TITLE, HEADING);
 		baseline += lineHeight;
 		for (int i = 0; i < lines.size(); i++) {
-			g.text(this.x + padding, baseline, lines.get(i).text, lines.get(i).colour);
+			g.text(X + padding, baseline, lines.get(i).text, lines.get(i).colour);
 			baseline += lineHeight;
 		}
 	}

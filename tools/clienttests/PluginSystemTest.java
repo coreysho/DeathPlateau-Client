@@ -808,7 +808,9 @@ public class PluginSystemTest {
 	static int drawn(Overlay overlay, OverlayGraphics g, int[] pixels, int w, int h) {
 		java.util.Arrays.fill(pixels, 0);
 		jagex2.graphics.Pix2D.bind(w, h, pixels);
-		g.reset(w, h, new InteractiveRegions(), null);
+		// No offset: this is drawing an overlay, not testing where a player dragged it - see
+		// run_dragtest for that.
+		g.reset(w, h, new InteractiveRegions(), null, 0, 0);
 		overlay.render(g);
 		int count = 0;
 		for (int i = 0; i < pixels.length; i++) {

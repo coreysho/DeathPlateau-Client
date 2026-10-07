@@ -103,8 +103,31 @@ final class PluginListPanel extends JPanel {
 			}
 		});
 
+		// Alt-drag has no undo of its own - an overlay dragged somewhere silly has to be dragged
+		// back, and one dragged off the edge of a viewport that has since shrunk cannot be. This
+		// is that undo, and it lives beside reload because both are "put it back how it was".
+		JButton reset = Sidebar.iconButton(Icons.move(14, Theme.TEXT_DIM),
+			Icons.move(14, Theme.ACCENT),
+			"Put every overlay back where its plugin draws it (Alt-drag moves them)");
+		reset.addActionListener(new java.awt.event.ActionListener() {
+
+			public void actionPerformed(java.awt.event.ActionEvent event) {
+				PluginListPanel.this.manager.invokeOnClientThread(new Runnable() {
+
+					public void run() {
+						PluginListPanel.this.manager.resetOverlayPositions();
+					}
+				});
+			}
+		});
+
+		JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
+		buttons.setOpaque(false);
+		buttons.add(reset);
+		buttons.add(reload);
+
 		header.add(box, BorderLayout.CENTER);
-		header.add(reload, BorderLayout.EAST);
+		header.add(buttons, BorderLayout.EAST);
 		return header;
 	}
 

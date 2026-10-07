@@ -65,6 +65,10 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.SkillsPlugin"
 	};
 
+	/** The panel's action rows, matched by label when one is clicked. */
+	public static final String ACTION_RELOAD = "Reload plugins";
+	public static final String ACTION_RESET_OVERLAYS = "Reset overlay positions";
+
 	/** What the panel shows as the source of a plugin that came with the client. */
 	public static final String BUILT_IN_SOURCE = "built in";
 
@@ -193,6 +197,22 @@ public final class PluginManager {
 	/** Plugins found and turned away, for the panel to show. Rebuilt by every {@link #reload()}. */
 	private final List<Refused> refused = new ArrayList<Refused>();
 
+	/** Where the player has dragged each overlay to. */
+	private OverlayPositions positions;
+
+	/** The overlay being dragged right now, or null. */
+	private Overlay dragging;
+
+	/** Cursor position within the dragged overlay's offset, so it does not jump to the cursor. */
+	private int dragGrabX;
+	private int dragGrabY;
+
+	/** What Alt is hovering over, outlined so the player can see what they are about to grab. */
+	private Overlay hovered;
+
+	/** Whether Alt was down last frame, which is what turns dragging on at all. */
+	private boolean dragMode;
+
 	/** Overlays of every running plugin, in render order. Rebuilt whenever one is toggled. */
 	private final List<Overlay> overlays = new ArrayList<Overlay>();
 
@@ -226,6 +246,7 @@ public final class PluginManager {
 		this.graphics = new OverlayGraphics(small, normal, bold);
 		this.pluginDirectory = findPluginDirectory();
 		this.store = new PluginStore(new File(sign.signlink.findcachedir() + STORE_FILE));
+		this.positions = new OverlayPositions(this.store);
 		this.bus = new EventBus(new EventBus.ErrorListener() {
 
 			public void onSubscriberFailed(Object subscriber, Throwable error) {
@@ -682,11 +703,21 @@ public final class PluginManager {
 
 	private void rebuildOverlays() {
 		this.overlays.clear();
+		this.dragging = null;
+		this.hovered = null;
 		for (int i = 0; i < this.entries.size(); i++) {
 			Entry entry = this.entries.get(i);
-			if (entry.enabled) {
-				this.overlays.addAll(entry.plugin.getOverlays());
+			if (!entry.enabled) {
+				continue;
 			}
+			// Keyed here, in the plugin's own order, BEFORE the flat list is sorted by priority.
+			// Sorting mixes every plugin's overlays together, so an index taken after it would
+			// change whenever another plugin was turned on.
+			List<Overlay> own = entry.plugin.getOverlays();
+			for (int j = 0; j < own.size(); j++) {
+				own.get(j).positionKey = entry.key + "#" + j;
+			}
+			this.overlays.addAll(own);
 		}
 		Collections.sort(this.overlays, new Comparator<Overlay>() {
 
@@ -840,8 +871,21 @@ public final class PluginManager {
 				continue;
 			}
 			try {
-				this.graphics.reset(width, height, this.regions, overlay.owner);
+				boolean movable = overlay.layer() == Overlay.LAYER_SCREEN;
+				this.graphics.reset(width, height, this.regions, overlay.owner,
+					movable ? this.positions.x(overlay.positionKey) : 0,
+					movable ? this.positions.y(overlay.positionKey) : 0);
 				overlay.render(this.graphics);
+				// What it drew, kept for the drag code to hit-test against next frame. Read from
+				// the graphics rather than declared by the overlay: what it draws is what it
+				// occupies, and that is also what a player would try to grab.
+				overlay.lastBounds = movable && this.graphics.hasBounds()
+					? new int[] { this.graphics.boundsLeft(), this.graphics.boundsTop(),
+						this.graphics.boundsRight(), this.graphics.boundsBottom() }
+					: null;
+				if (movable && overlay == this.hovered && overlay.lastBounds != null) {
+					this.outline(overlay.lastBounds);
+				}
 			} catch (Throwable error) {
 				Entry entry = this.entryOf(overlay.owner);
 				DevLog.log("PLUGIN", (entry == null ? "an overlay" : entry.name) + " threw while drawing: " + error);
@@ -853,6 +897,162 @@ public final class PluginManager {
 				this.regions.forget(overlay.owner);
 			}
 		}
+	}
+
+	/**
+	 * Draws a box round the overlay Alt is hovering, so a player can see what they will grab.
+	 *
+	 * Drawn through the same graphics the overlay just used, with its offset still applied - so
+	 * the box is marked out in overlay coordinates and lands exactly over what was drawn, rather
+	 * than being offset twice.
+	 */
+	private void outline(int[] bounds) {
+		int x = bounds[0] - this.positions.x(this.hovered.positionKey);
+		int y = bounds[1] - this.positions.y(this.hovered.positionKey);
+		int wide = bounds[2] - bounds[0];
+		int tall = bounds[3] - bounds[1];
+		this.graphics.box(x - 1, y - 1, wide + 2, tall + 2,
+			this.dragging == this.hovered ? DRAG_HELD : DRAG_HOVER);
+	}
+
+	// ------------------------------------------------------------------ dragging overlays
+
+	/** The outline round an overlay Alt is over, and round the one being dragged. */
+	private static final int DRAG_HOVER = 0xB83228;
+	private static final int DRAG_HELD = 0xFFFFFF;
+
+	/**
+	 * Alt-drag: hold Alt and any overlay can be picked up and put anywhere.
+	 *
+	 * Called once a frame, before the overlays are drawn, with the cursor in viewport
+	 * coordinates and the button that is held down. THE CLIENT OWNS THIS, not the plugins: a
+	 * plugin never learns it has been moved, which is why the two already published are
+	 * draggable without being rebuilt, and why a plugin cannot move itself somewhere a player
+	 * did not put it.
+	 *
+	 * Only the screen layer moves. Scene-layer overlays are drawn over a tile in the world, and
+	 * an offset on one of those would just be a label pointing at the wrong thing.
+	 *
+	 * Alt is also what Ground items reveals hidden piles with, and the two do not collide: that
+	 * is a key held with no button, and its own controls are on the right button, while this
+	 * needs a LEFT press on something a screen overlay drew.
+	 */
+	public void onOverlayDrag(int x, int y, int button, boolean alt, int width, int height) {
+		if (this.idle()) {
+			return;
+		}
+		if (!alt) {
+			// Let go of whatever was held: releasing Alt mid-drag leaves it where it is rather
+			// than snapping it back, which is what a player who changed their mind expects.
+			if (this.dragging != null) {
+				this.finishDrag(width, height);
+			}
+			this.dragMode = false;
+			this.hovered = null;
+			return;
+		}
+		this.dragMode = true;
+		if (this.dragging == null) {
+			this.hovered = this.overlayAt(x, y);
+			if (button == 1 && this.hovered != null) {
+				this.dragging = this.hovered;
+				// The grab point, so the overlay does not jump its own top-left to the cursor.
+				this.dragGrabX = x - this.positions.x(this.dragging.positionKey);
+				this.dragGrabY = y - this.positions.y(this.dragging.positionKey);
+			}
+			return;
+		}
+		if (button != 1) {
+			this.finishDrag(width, height);
+			return;
+		}
+		this.moveTo(x - this.dragGrabX, y - this.dragGrabY, width, height);
+	}
+
+	/**
+	 * Puts the dragged overlay at an offset, kept inside the viewport.
+	 *
+	 * Not saved here - this runs every frame of a drag, and writing plugins.dat sixty times a
+	 * second to record a position the player has not settled on yet is a file write per frame
+	 * for no reason.
+	 */
+	private void moveTo(int offsetX, int offsetY, int width, int height) {
+		int[] bounds = this.dragging.lastBounds;
+		if (bounds == null) {
+			return;
+		}
+		int wasX = this.positions.x(this.dragging.positionKey);
+		int wasY = this.positions.y(this.dragging.positionKey);
+		// The box, expressed relative to the offset, so clamping can reason about where the
+		// overlay would END UP rather than where it is.
+		int clampedX = OverlayPositions.clamp(offsetX, bounds[0] - wasX, bounds[2] - wasX, width);
+		int clampedY = OverlayPositions.clamp(offsetY, bounds[1] - wasY, bounds[3] - wasY, height);
+		this.positions.move(this.dragging.positionKey, clampedX, clampedY);
+	}
+
+	/** Snaps the dropped overlay if it is nearly home, saves it, and lets go. */
+	private void finishDrag(int width, int height) {
+		Overlay dropped = this.dragging;
+		this.dragging = null;
+		if (dropped == null) {
+			return;
+		}
+		int x = OverlayPositions.snap(this.positions.x(dropped.positionKey));
+		int y = OverlayPositions.snap(this.positions.y(dropped.positionKey));
+		this.positions.set(dropped.positionKey, x, y);
+		DevLog.log("PLUGIN", "overlay " + dropped.positionKey + " moved to " + x + "," + y);
+	}
+
+	/**
+	 * The overlay under the cursor, topmost first.
+	 *
+	 * Walked backwards, because the overlays are drawn in priority order and the last one drawn
+	 * is the one on top - which is the one a player is pointing at when two overlap.
+	 */
+	private Overlay overlayAt(int x, int y) {
+		for (int i = this.overlays.size() - 1; i >= 0; i--) {
+			Overlay overlay = this.overlays.get(i);
+			int[] bounds = overlay.lastBounds;
+			if (bounds == null) {
+				continue;
+			}
+			if (x >= bounds[0] && x < bounds[2] && y >= bounds[1] && y < bounds[3]) {
+				return overlay;
+			}
+		}
+		return null;
+	}
+
+	/** True while Alt is held over something draggable, so the client can leave the click alone. */
+	public boolean isDragging() {
+		return this.dragging != null;
+	}
+
+	/**
+	 * Whether a click at this point should be taken by the drag rather than by the overlay.
+	 *
+	 * An overlay with a button on it would otherwise have that button pressed by the same click
+	 * that picks it up - and the click that drops it would press whatever is now underneath.
+	 */
+	public boolean dragWantsClick(int x, int y) {
+		return !this.idle() && this.dragMode && this.overlayAt(x, y) != null;
+	}
+
+	/** Puts every overlay back where its plugin draws it. */
+	public void resetOverlayPositions() {
+		for (int i = 0; i < this.entries.size(); i++) {
+			List<Overlay> own = this.entries.get(i).plugin.getOverlays();
+			for (int j = 0; j < own.size(); j++) {
+				this.positions.clear(this.entries.get(i).key + "#" + j);
+				// Last frame's box went with the old position. Left behind, it is a grab area
+				// where the overlay used to be - for the one frame before the next draw
+				// replaces it, which is one frame of Alt grabbing thin air.
+				own.get(j).lastBounds = null;
+			}
+		}
+		this.dragging = null;
+		this.hovered = null;
+		DevLog.log("PLUGIN", "overlay positions reset");
 	}
 
 	private Entry entryOf(Plugin plugin) {
@@ -892,7 +1092,10 @@ public final class PluginManager {
 					item.isBoolean(), entry, item));
 			}
 		}
-		rows.add(new PanelRow(PanelRow.KIND_ACTION, "Reload plugins", "Re-reads the plugins folder", false, false, null, null));
+		rows.add(new PanelRow(PanelRow.KIND_ACTION, ACTION_RELOAD, "Re-reads the plugins folder",
+			false, false, null, null));
+		rows.add(new PanelRow(PanelRow.KIND_ACTION, ACTION_RESET_OVERLAYS,
+			"Puts every overlay back where its plugin draws it", false, false, null, null));
 		return rows;
 	}
 
@@ -1008,7 +1211,13 @@ public final class PluginManager {
 		} else if (row.kind == PanelRow.KIND_CONFIG && row.item != null && row.item.isBoolean()) {
 			row.entry.config.toggle(row.item);
 		} else if (row.kind == PanelRow.KIND_ACTION) {
-			this.reload();
+			// Matched on the label, which is also what the row is identified by in the panel.
+			// Two actions, so "it is an action" is no longer enough to say which.
+			if (ACTION_RESET_OVERLAYS.equals(row.label)) {
+				this.resetOverlayPositions();
+			} else {
+				this.reload();
+			}
 		}
 	}
 }
