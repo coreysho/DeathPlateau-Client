@@ -1387,6 +1387,58 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
 	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus");
 	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "80"));
+	/**
+	 * The port JAGGRAB is served on, or 0 for "this client cannot use JAGGRAB".
+	 *
+	 * JAGGRAB is the 2004 protocol for fetching cache files: a plain socket, "JAGGRAB /name", and
+	 * the bytes come back. The client alternates between it and HTTP on every retry, flipping
+	 * field196 - see openUrl, getJagCrc and getJagFile.
+	 *
+	 * IT USED TO BE HARDCODED TO 43595 ON SERVER_HOST, and that was wrong in two ways at once.
+	 * 43595 is the port the server listens on at home, which is not a port any tunnel forwards,
+	 * and SERVER_HOST is the GAME host - JAGGRAB is a web-server protocol and belongs with the
+	 * web host. On the LAN both mistakes cancel out, because there SERVER_HOST is the server and
+	 * 43595 is real, which is why this went unnoticed: every player coming in over the tunnels
+	 * had half of every cache retry fail before it started, doubling the backoff twice as fast
+	 * and printing "connection problem" on attempts where HTTP would have worked.
+	 *
+	 * So it is off unless there is somewhere real to send it: the server's own port when the
+	 * client is pointed straight at the server, or whatever lostcity.jaggrabport says. Off, every
+	 * retry is HTTP, which is the one transport a tunnel actually carries.
+	 */
+	public static final int JAGGRAB_PORT = jaggrabPort(setting("lostcity.jaggrabport", "LOSTCITY_JAGGRABPORT"), HOST_GIVEN);
+
+	/**
+	 * Which port JAGGRAB should use. Pure, so the rule can be tested without a network.
+	 *
+	 * An explicit setting always wins, including an explicit 0 to turn it off. Otherwise it is
+	 * the server's own 43595 when pointed at the server directly, and nothing at all when going
+	 * through the default tunnels - there is no JAGGRAB tunnel, and pretending there is costs a
+	 * failed connection per retry. Anything unparseable is off rather than a crash at class load.
+	 */
+	static int jaggrabPort(String given, boolean hostGiven) {
+		if (given != null) {
+			try {
+				int port = Integer.parseInt(given.trim());
+				return port > 0 && port <= 65535 ? port : 0;
+			} catch (RuntimeException notANumber) {
+				return 0;
+			}
+		}
+		return hostGiven ? 43595 : 0;
+	}
+
+	/**
+	 * Whether the JAGGRAB half of the retry alternation may be used at all.
+	 *
+	 * Never in a browser: there is no TCP there, and the one WebSocket the page gives us is the
+	 * game stream, which would make "JAGGRAB /title" the first thing the server reads from a
+	 * login connection.
+	 */
+	static boolean jaggrabUsable(int port, String wsUrl) {
+		return port > 0 && wsUrl == null;
+	}
+
 	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
 	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
 	// port, which already carries both streams, because the first byte a client sends is what tells
@@ -1571,6 +1623,28 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int cyclelogic1;
 
 	@ObfuscatedName("client.Gd")
+	/**
+	 * The tile under the cursor, as the last frame's draw resolved it, or -1 for none.
+	 *
+	 * HOW THIS WORKS, because it is not obvious. The scene has exactly one "what is at this
+	 * screen point" slot - World3D.method312 arms it, the next draw answers it into
+	 * World3D.clickTileX/Z - and the client already uses that slot for walk-here. A second
+	 * caller cannot just borrow it: whatever lands in clickTileX is read a frame later by the
+	 * walk code, so a plugin asking what is under the cursor would WALK THE PLAYER THERE.
+	 *
+	 * So the slot is shared with a flag saying whose answer is coming. The plugin's request is
+	 * only armed when nothing else has armed one that frame, the answer is taken before the walk
+	 * code can see it, and the click path clears the flag the moment it arms its own - without
+	 * that last part, clicking the ground while a plugin was hovering would have its walk
+	 * swallowed, which is the failure worth testing for.
+	 */
+	public int hoverTileX = -1;
+
+	public int hoverTileZ = -1;
+
+	/** True while an armed pick belongs to the plugin system rather than to walk-here. */
+	public boolean hoverPickPending;
+
 	public int baseX;
 
 	@ObfuscatedName("client.Hd")
@@ -2477,7 +2551,10 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.b(Ljava/lang/String;)Ljava/io/DataInputStream;")
 	public DataInputStream openUrl(String arg0) throws IOException {
-		if (this.field196) {
+		// field196 alternates on every failed retry, so this branch is half of every cache fetch
+		// the client makes - and it is skipped entirely when there is nowhere to send JAGGRAB.
+		// See JAGGRAB_PORT for what that cost before.
+		if (this.field196 && jaggrabUsable(JAGGRAB_PORT, WS_URL)) {
 			if (this.field520 != null) {
 				try {
 					this.field520.close();
@@ -2485,7 +2562,9 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 				this.field520 = null;
 			}
-			this.field520 = this.openSocket(43595);
+			// WEB_HOST, not SERVER_HOST: this is the web server's protocol, and the two are
+			// different machines the moment anything is tunnelled.
+			this.field520 = new Socket(InetAddress.getByName(WEB_HOST), JAGGRAB_PORT);
 			this.field520.setSoTimeout(10000);
 			InputStream var2 = this.field520.getInputStream();
 			OutputStream var3 = this.field520.getOutputStream();
@@ -3130,6 +3209,17 @@ public class Client extends GameShell implements PixMap.Target {
 			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
 				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
 				this.layout.openW, this.layout.openH);
+			// Asked for only while a plugin is actually reading it, and only when nothing else
+			// has armed the scene's single pick slot this frame. The answer arrives in the next
+			// frame's updateGame, which is as fast as this scene can answer the question at all.
+			if (this.ingame && this.plugins.wantsHoverTile() && !World3D.field1044
+				&& this.mouseInViewport()) {
+				this.scene.method312(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY);
+				this.hoverPickPending = true;
+			} else if (!this.mouseInViewport()) {
+				this.hoverTileX = -1;
+				this.hoverTileZ = -1;
+			}
 		}
 	}
 
@@ -4401,6 +4491,9 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
+			// A pick the plugin system asked for, taken before the walk code below can see it.
+			this.takeHoverPick();
+
 			if (World3D.clickTileX != -1) {
 				int x = World3D.clickTileX;
 				int z = World3D.clickTileZ;
@@ -5335,6 +5428,46 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Takes a scene pick that belongs to a plugin, so the walk code never sees it.
+	 *
+	 * THE WHOLE RISK OF SHARING THE PICK SLOT IS IN THIS METHOD. Left in place, a pick a plugin
+	 * asked for is read a few lines later as a click on the ground and the player walks to
+	 * wherever the cursor happened to be. Taken when it was NOT a plugin's, a real click to walk
+	 * is swallowed and the player stands still.
+	 *
+	 * Which it is comes from hoverPickPending, which the click path clears the moment it arms
+	 * its own pick. Returns whether one was taken, which is how the test tells the two cases
+	 * apart without running a game loop.
+	 */
+	public boolean takeHoverPick() {
+		if (!this.hoverPickPending || World3D.clickTileX == -1) {
+			return false;
+		}
+		this.hoverTileX = World3D.clickTileX;
+		this.hoverTileZ = World3D.clickTileZ;
+		World3D.clickTileX = -1;
+		World3D.clickTileZ = -1;
+		this.hoverPickPending = false;
+		return true;
+	}
+
+	/** The cursor's x in viewport coordinates - the space overlays draw in. */
+	public int viewportMouseX() {
+		return super.mouseX - this.layout.vpX;
+	}
+
+	public int viewportMouseY() {
+		return super.mouseY - this.layout.vpY;
+	}
+
+	/** Whether the cursor is over the game view at all, rather than a panel or outside the window. */
+	public boolean mouseInViewport() {
+		int x = this.viewportMouseX();
+		int y = this.viewportMouseY();
+		return x >= 0 && y >= 0 && x < this.layout.openW && y < this.layout.openH;
 	}
 
 	@ObfuscatedName("client.h(B)V")
@@ -12011,6 +12144,9 @@ public class Client extends GameShell implements PixMap.Target {
 			} else {
 				this.scene.method312(super.mouseClickX - this.layout.vpX, super.mouseClickY - this.layout.vpY);
 			}
+			// This pick is the player's, not a plugin's. Saying so is what stops the answer
+			// being taken by the hover consumer above and the walk never happening.
+			this.hoverPickPending = false;
 		}
 		if (var5 == 903) {
 			// OPHELDU

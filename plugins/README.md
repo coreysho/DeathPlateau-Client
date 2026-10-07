@@ -269,6 +269,7 @@ public class MyToolPlugin extends Plugin {
 | 0 | Does not say. The default, and never refused - every plugin written before levels existed. |
 | 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as it was then. |
 | 2 | `ctx.notify`, `ctx.playSound`, `ctx.hasSound`. |
+| 3 | The cursor: `ctx.getMouseX`, `ctx.getMouseY`, `ctx.getHoverTileX`, `ctx.getHoverTileZ`, `ctx.sceneToWorldX`, `ctx.sceneToWorldZ`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -313,6 +314,41 @@ Idle notifier's page has a Test row for finding one by ear. An id with no sound 
 logged: the client's audio loop reports a playback failure **to the server**, so an unchecked id
 would be a plugin causing a packet to be sent, which is the one thing this API does not do.
 
+## The cursor
+
+```java
+int x = this.ctx.getMouseX();        // viewport coordinates, or -1 when off the game view
+int y = this.ctx.getMouseY();
+int tx = this.ctx.getHoverTileX();   // the scene tile under it, or -1
+int tz = this.ctx.getHoverTileZ();
+int worldX = this.ctx.sceneToWorldX(tx);   // for anything that must outlive the loaded area
+```
+
+**The hovered tile is one frame behind, and costs nothing until you read it.** The scene answers
+"what is at this screen point" while it draws, so the question has to be asked before a frame and
+read after it - twenty milliseconds at fifty frames a second. Answering it is a hit test per tile,
+which the client only ever paid on a click, so **reading it is what asks for the next answer**.
+There is nothing to subscribe to: read it every frame you want it, stop reading and the cost goes
+away within about a fifth of a second.
+
+**Save world coordinates, not scene ones.** Scene coordinates are relative to whichever chunk of
+the map is loaded, so the same tile is a different pair of numbers after you walk far enough for
+the client to reload around you. A marker saved in scene coordinates comes back pointing somewhere
+else.
+
+### Why the tile is deferred rather than asked for directly
+
+The scene has exactly **one** "what is at this screen point" slot, and the client already uses it
+for walk-here: whatever lands in it is read a frame later by the walk code. A plugin borrowing it
+naively would walk the player to wherever the cursor happened to be. So the slot is shared with a
+flag saying whose answer is coming - a plugin's request is only armed when nothing else has armed
+one, the answer is taken before the walk code can see it, and the click path disowns the flag the
+moment it arms its own pick. Without that last part, clicking the ground while a plugin was
+hovering would have its walk swallowed.
+
+None of that is a plugin's problem, and none of it is reachable from one. It is written down
+because it is the reason this reads as a value rather than as a method you call with a point.
+
 ## Moving overlays
 
 **Hold Alt and drag any overlay anywhere in the viewport.** The one under the cursor is outlined
@@ -350,7 +386,7 @@ left press on something a screen overlay drew.
 
 ## What comes with the client
 
-Eight plugins ship built in. All of them were features of the client before they were plugins, or
+Ten plugins ship built in. All of them were features of the client before they were plugins, or
 are small enough that a jar of their own would be more ceremony than code:
 
 | Plugin | On by default | What it does |
@@ -363,9 +399,11 @@ are small enough that a jar of their own would be more ceremony than code:
 | Boosts | no | Which stats are boosted or drained, and by how much. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
 | Idle notifier | no | Says when you stop gaining experience. |
+| Mouse highlight | no | What a left click would do, next to the cursor. |
+| Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
 
 The first five were client features and are on because turning them off would change what
-existing players see. The last three are additions and start off: an addition that turns itself
+existing players see. The last five are additions and start off: an addition that turns itself
 on rewrites everyone's screen on their next launch.
 
 ### What is not here, and why
@@ -406,6 +444,7 @@ find it. Settings live with the client's other settings.
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
 python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
+python3 tools/clienttests/run_mousetest.py         # the cursor, Mouse highlight, Tile indicators
 python3 tools/clienttests/run_notifytest.py        # notifications, sound and Idle notifier
 python3 tools/clienttests/run_dragtest.py          # Alt-drag
 python3 tools/clienttests/run_skilltest.py         # Boosts and Skills
@@ -414,7 +453,7 @@ python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to bu
 ```
 
 Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_dragtest.py`,
-`mutate_notifytest.py`, `mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
+`mutate_mousetest.py`, `mutate_notifytest.py`, `mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
 break is caught **by a named check**. A test that only goes red because something threw is not
 measuring the thing it claims to. Run one before trusting a test you have just written: the first
 run of each of these found holes in its own tests.
