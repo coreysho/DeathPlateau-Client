@@ -176,6 +176,20 @@ public final class PluginContext {
 		return this.client.pluginRoofsHidden;
 	}
 
+	/**
+	 * Keeps the green the cache ships the opened Barrows doors in, so the one that will open for
+	 * you stands out from the five that will not.
+	 *
+	 * DELIBERATELY THIS SPECIFIC. The recolour is chosen while a loc type is being DECODED, far
+	 * below any frame or event, and the only thing that can be said at that point is yes or no.
+	 * A general "recolour this loc" API would be a much bigger promise than the one feature that
+	 * wants it, so this says exactly what it does. Changing it throws away the decoded types and
+	 * built models, so the next frame builds the doors the new way.
+	 */
+	public void setBarrowsDoorsHighlighted(boolean highlighted) {
+		jagex2.config.LocType.setBarrowsDoorsHighlighted(highlighted);
+	}
+
 	// ------------------------------------------------------------------ the right-click menu
 
 	/** Number of entries, including "Cancel" at index 0. */

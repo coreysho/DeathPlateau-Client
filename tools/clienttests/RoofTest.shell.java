@@ -235,7 +235,7 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 15, "fifteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 14, "fourteen settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
 		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel.

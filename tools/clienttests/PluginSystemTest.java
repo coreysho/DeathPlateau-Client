@@ -208,12 +208,14 @@ public class PluginSystemTest {
 			return;
 		}
 		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null
-			&& entry(manager, "xp-drops") != null, "all three built-in plugins are found");
+			&& entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null,
+			"all four built-in plugins are found");
 		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "escape-closes").source),
 			"...and say they came with the client");
 		check(enabled(manager, "escape-closes"), "Escape closes interfaces is on by default, as it was");
 		check(!enabled(manager, "hide-roofs"), "Hide roofs is off by default, as it was");
 		check(enabled(manager, "xp-drops"), "XP drops is on by default, as it was");
+		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
 
 		// A player who turned Escape off back when it was a setting.
 		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");

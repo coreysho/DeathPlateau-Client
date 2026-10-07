@@ -963,9 +963,6 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		QolSettings.toggle(row);
-		if (row == QolSettings.BARROWS_DOORS) {
-			jagex2.config.LocType.resetBarrowsDoors();
-		}
 		DevLog.log("QOL", QolSettings.label(row) + " -> " + (QolSettings.on(row) ? "on" : "off"));
 	}
 

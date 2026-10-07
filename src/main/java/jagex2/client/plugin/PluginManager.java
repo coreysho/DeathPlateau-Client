@@ -56,7 +56,8 @@ public final class PluginManager {
 	private static final String[] BUILT_IN = {
 		"jagex2.client.plugin.builtin.EscapeClosesPlugin",
 		"jagex2.client.plugin.builtin.HideRoofsPlugin",
-		"jagex2.client.plugin.builtin.XpDropsPlugin"
+		"jagex2.client.plugin.builtin.XpDropsPlugin",
+		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin"
 	};
 
 	/** What the panel shows as the source of a plugin that came with the client. */
