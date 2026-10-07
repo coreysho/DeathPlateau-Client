@@ -79,8 +79,54 @@ game - the game keeps whatever size its display mode gives it and the window get
 resizable modes the window's minimum grows by the sidebar's width, so the game is never squeezed
 below its own minimum.
 
-Two tabs: the plugin list, with a search box, a switch per plugin and a cog on any plugin that
-has settings; and the hub above.
+A rail of icons down its outer edge is the way in: the plugin list, the hub, and one per plugin
+that has asked for a page. Clicking a different icon switches page; clicking the open one folds
+the page away and leaves the rail, so the window goes back to the width of the game without
+losing the way back. F8 and the title bar's chevron hide the lot.
+
+### A page of your own
+
+`addPanel(title, icon, rows)` in `startUp()` puts an icon on the rail and a page behind it. The
+page is a `ConfigList` - the same rows the config page uses, with two more things a readout
+wants:
+
+```java
+this.addPanel("Loot nearby", "list", new ConfigList() {
+    public int size()            { return nearby().size(); }
+    public String label(int i)   { return nearby().get(i).name; }
+    public String detail(int i)  { return nearby().get(i).tiles + " tiles away"; }
+    public String value(int i)   { return money(nearby().get(i).worth); }   // right-hand column
+    public int progress(int i)   { return -1; }                             // 0-100, or -1 for no bar
+});
+```
+
+| What | Where it goes |
+| --- | --- |
+| `label(i)` | The row's name. |
+| `detail(i)` | A dimmer second line under it. |
+| `value(i)` | A reading in a column on the right, where the eye can run down it. |
+| `progress(i)` | 0 to 100, drawn as a bar under the row. -1 for none. |
+| `action(i)` / `onAction(i)` | A button on the row. |
+| `emptyMessage()` | Shown instead of the rows when there are none. Say what would put something there. |
+
+**You hand over rows, not components.** There is no way to put a Swing component of your own in
+the sidebar, and that is deliberate: a jar from the hub showing a readout should not also be
+holding the event thread with a blank rectangle to do as it likes with. The cost is real - if
+the list above has no word for what you want to show, you cannot show it. Ask for a new kind of
+row rather than working around it.
+
+**The icon is named, not supplied**: `"chart"`, `"list"`, `"wrench"`, `"download"`, `"refresh"`.
+An unknown name gets the plain one. Plugins do not ship artwork into the client's own furniture,
+and the rail stays one set of icons rather than a row of everybody's.
+
+**It is read on the game thread** and re-read while it is open, so a readout is never frozen at
+what it said when you opened it. Write `size()` and the rest as plain reads of your own state;
+nothing needs locking.
+
+**Guard it if you publish to the hub.** `addPanel` arrived in a client newer than some players
+are running, and calling a method their client does not have throws `NoSuchMethodError` - which
+the manager answers by switching your whole plugin off. See the note in the hub repo's README;
+`XpTrackerPlugin` does it.
 
 The applet has no window to put a panel in, so there F8 opens a simpler list drawn inside the
 game viewport instead. It can toggle plugins and their on/off settings, but it has no text boxes,
@@ -178,7 +224,8 @@ Everything is in `jagex2.client.plugin`.
 | `@PluginDescriptor` | Name, description and saved key. |
 | `@ConfigItem` | A player-facing setting. |
 | `@Subscribe` | Marks an event handler. |
-| `ConfigList` | Rows on the config page that the plugin produces: cycle one, remove one. Read on the game thread, drawn on the UI thread. |
+| `ConfigList` | Rows the plugin produces, on its config page or on a page of its own. Read on the game thread, drawn on the UI thread. |
+| `Plugin.addPanel` | Gives the plugin an icon on the sidebar's rail and a page behind it. See [A page of your own](#a-page-of-your-own). |
 | `Sprite` | An image from the cache, such as `ctx.getSkillIcon(skill)`, drawn with `g.sprite(...)`. |
 
 Events, in `jagex2.client.plugin.event`:

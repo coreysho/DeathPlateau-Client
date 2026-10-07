@@ -104,6 +104,7 @@ public class GroundItemsTest {
 		altTests();
 		settingsMenuTests();
 		configTests();
+		lootPageTests();
 		formatTests();
 
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
@@ -530,13 +531,116 @@ public class GroundItemsTest {
 		GroundItemPrefs.clear();
 	}
 
-	// ---------------------------------------------------------------- 9: words and numbers
+	// ---------------------------------------------------------------- 9: the Loot nearby page
+
+	/**
+	 * The rail page, which asks a different question of the same scene than the overlay does.
+	 *
+	 * Everything here was wrong in the first version and right in the picture, which is the
+	 * argument for the test: an aggregate that silently under-reports looks exactly like one
+	 * that does not.
+	 */
+	static void lootPageTests() {
+		reset();
+		// Three tiles: bones underfoot, two lots of dragon bones at different distances, and a
+		// coin pile. Non-stackables on purpose - that is where the totalling went wrong.
+		pile(MID_X, MID_Z, 1, 1);                       // Thing 0, underfoot
+		pile(MID_X + 2, MID_Z + 1, 1, 2);               // Thing 0 again, two tiles off, two of them
+		pile(MID_X + 5, MID_Z, 2, 1);                   // Thing 0 and Thing 1, five tiles off
+
+		List<ConfigList.Row> rows = lootRows();
+		check(rows.size() == 2, "two kinds of item nearby, however many tiles they are on ("
+			+ rows.size() + ")");
+		if (rows.size() != 2) {
+			return;
+		}
+
+		// Thing 0: 1 + 2 + 1 = 4 of them, at 1gp each because primeTypes prices them at 1.
+		ConfigList.Row thing0 = rows.get(0).label.equals("Thing 0") ? rows.get(0) : rows.get(1);
+		check(thing0.detail != null && thing0.detail.startsWith("4"),
+			"...merged by name across every tile they are on (" + thing0.detail + ")");
+		check(thing0.detail != null && thing0.detail.endsWith("underfoot"),
+			"...reported at the distance of the NEAREST one (" + thing0.detail + ")");
+
+		// The aggregate. Thing 0 is stackable at 1gp, so four of them is 4gp.
+		check("4 gp".equals(thing0.value), "...and worth all of them together (" + thing0.value + ")");
+
+		// AND THE SAME FOR SOMETHING THAT DOES NOT STACK, which is the half that was wrong.
+		// Three separate Thing 1s are three times the price even though a pile of them is not a
+		// stack - the page is asking how much is lying there, not what one is worth.
+		reset();
+		pile(MID_X, MID_Z, 2, 3);                       // three each of Thing 0 and Thing 1
+		rows = lootRows();
+		ConfigList.Row odd = null;
+		for (int i = 0; i < rows.size(); i++) {
+			if (rows.get(i).label.equals("Thing 1")) {
+				odd = rows.get(i);
+			}
+		}
+		check(odd != null && "3 gp".equals(odd.value),
+			"three of a non-stackable are worth three of it on this page ("
+				+ (odd == null ? "missing" : odd.value) + ")");
+
+		// A non-stackable: the overlay says one is worth 500, this page says all of them are.
+		reset();
+		List<GroundItem> three = new ArrayList<GroundItem>();
+		three.add(new GroundItem(1, "Sword", 3, 500, false));
+		check(GroundItemsPlugin.colourFor(three.get(0), false, 1000) == 0,
+			"the overlay still prices a non-stackable at one of it: three 500gp swords miss a "
+				+ "1000gp floor");
+
+		reset();
+		pile(MID_X, MID_Z, 1, 1);
+		rows = lootRows();
+		check(rows.size() == 1 && "1 gp".equals(rows.get(0).value),
+			"a single item reads as its own price");
+
+		// Nothing nearby is an empty page with something to say, not a blank one.
+		reset();
+		check(lootRows().isEmpty(), "an empty floor is an empty page");
+		check(lootPanel().emptyMessage != null && lootPanel().emptyMessage.length() > 0,
+			"...which says what would put something on it");
+
+		// A hidden item is absent from the page exactly as it is absent from the ground.
+		reset();
+		pile(MID_X, MID_Z, 2, 1);
+		check(lootRows().size() == 2, "two items on the floor, two rows");
+		GroundItemPrefs.set("Thing 0", GroundItemPrefs.HIDE);
+		check(lootRows().size() == 1,
+			"hiding one takes it off the page too, so the page and the ground agree");
+		GroundItemPrefs.clear();
+	}
+
+	/**
+	 * The Loot nearby page, read the way the sidebar reads it - through the manager, which is
+	 * the only public way in and so the only one worth testing.
+	 */
+	static PluginManager.PanelSnapshot lootPanel() {
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		for (int i = 0; i < panels.size(); i++) {
+			if (panels.get(i).title.equals("Loot nearby")) {
+				return panels.get(i);
+			}
+		}
+		throw new IllegalStateException("the plugin has no Loot nearby page");
+	}
+
+	static List<ConfigList.Row> lootRows() {
+		return lootPanel().rows;
+	}
+
+	// ---------------------------------------------------------------- 10: words and numbers
 
 	static void formatTests() {
-		check(GroundItemsPlugin.money(0).equals("any value"), "no floor reads as \"any value\"");
-		check(GroundItemsPlugin.money(100).equals("100 gp+"), "100 gp+");
-		check(GroundItemsPlugin.money(5000).equals("5k gp+"), "5k gp+");
-		check(GroundItemsPlugin.money(1000000).equals("1m gp+"), "1m gp+");
+		// The floor is a minimum and says so; a worth is exact and must not.
+		check(GroundItemsPlugin.floor(0).equals("any value"), "no floor reads as \"any value\"");
+		check(GroundItemsPlugin.floor(100).equals("100 gp+"), "a floor of 100 is \"100 gp+\"");
+		check(GroundItemsPlugin.floor(5000).equals("5k gp+"), "5k gp+");
+		check(GroundItemsPlugin.floor(1000000).equals("1m gp+"), "1m gp+");
+		check(GroundItemsPlugin.money(15000).equals("15k gp"),
+			"...but an item WORTH 15000 is \"15k gp\", with no plus: it is not 15k or more");
+		check(GroundItemsPlugin.money(120).equals("120 gp"), "120 gp");
+		check(GroundItemsPlugin.money(2800000L).equals("2m gp"), "2m gp");
 
 		check(GroundItemsPlugin.formatCount(5).equals("5"), "a small count is written out");
 		check(GroundItemsPlugin.formatCount(99999).equals("99999"), "...up to 99999");
@@ -607,7 +711,11 @@ public class GroundItemsTest {
 			type.field845 = BASE_ID + i;
 			type.field811 = "Thing " + i;
 			type.field827 = 1;
-			type.field853 = true;
+			// EVEN IDS STACK, ODD ONES DO NOT. The two answer differently to "what is a pile of
+			// these worth" - a stack multiplies, three separate swords do not - and a fixture
+			// where everything stacked made those two indistinguishable, which is how the loot
+			// page shipped a total that under-reported every non-stackable in the preview.
+			type.field853 = i % 2 == 0;
 			ObjType.field818[i] = type;
 		}
 	}

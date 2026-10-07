@@ -34,8 +34,8 @@ PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']),
-         ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('hub', ['hub']),
-         ('empty', [])]
+         ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('loot', ['loot']),
+         ('hub', ['hub']), ('empty', [])]
 
 
 def run(*cmd, **kwargs):
@@ -165,12 +165,15 @@ def main():
         # A cache directory of this run's own. Without it the plugin store, and the ground item
         # rules the Ground items page sets up for its picture, are written to the real
         # signlink.findcachedir() - which on this machine is somebody's actual settings.
-        cache = os.path.join(work, 'cache')
-        os.makedirs(cache)
-
         for name, args in PAGES:
             png = os.path.join(out_dir, name + '.png')
             where = os.path.join(work, 'empty-home') if name == 'empty' else home
+            # A CACHE DIRECTORY PER PAGE. The pages share a process-less fixture but not their
+            # settings: the ground page sets hide and highlight rules to have something to show,
+            # and with one shared directory those were still in force when the loot page
+            # rendered - so it quietly left out an item and looked right doing it.
+            cache = os.path.join(work, 'cache-' + name)
+            os.makedirs(cache)
             r = run(*(launcher + [java, '-Duser.home=' + where, '-Dlostcity.cachedir=' + cache,
                                   '-cp', classes + os.pathsep + work,
                                   'jagex2.client.plugin.ui.SidebarPreview', png] + args))

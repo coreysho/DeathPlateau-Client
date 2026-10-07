@@ -83,9 +83,21 @@ MUTS = [
      'if (!"lre".equals(target.kind)) {'),
 
     # The config page.
+    # Anchored on the line above it. There are two lists with a removable() of false now - the
+    # display settings and the loot page - and the bare method body matches both, which makes
+    # the mutation ambiguous rather than wrong.
     (PLUGIN, 'the three display settings made removable, like the item rules',
-     'public boolean removable(int index) {\n\t\t\t\treturn false;\n\t\t\t}',
-     'public boolean removable(int index) {\n\t\t\t\treturn true;\n\t\t\t}'),
+     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
+     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn false;\n\t\t\t}',
+     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
+     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn true;\n\t\t\t}'),
+    # And the new page, whose rows are a readout rather than a list of the player's rules.
+    (PLUGIN, 'the loot page totalling one of a non-stackable rather than all of them',
+     'near.worth += (long) item.count * (long) item.price;',
+     'near.worth += item.worth();'),
+    (PLUGIN, 'the loot page using the value floor\'s formatter, so a worth reads as "or more"',
+     'return near == null || near.worth <= 0 ? null : money(near.worth);',
+     'return near == null || near.worth <= 0 ? null : floor((int) near.worth);'),
 ]
 
 
