@@ -99,6 +99,7 @@ public final class GroundItemsPlugin extends Plugin {
 		});
 		this.addConfigList("Display", this.displayList());
 		this.addConfigList("Items", this.itemList());
+		this.addPanel("Loot nearby", "list", this.lootList());
 	}
 
 	// ------------------------------------------------------------------ drawing
@@ -435,7 +436,7 @@ public final class GroundItemsPlugin extends Plugin {
 					return GroundItemPrefs.radius() + " tiles";
 				}
 				if (index == 1) {
-					return money(GroundItemPrefs.minValue());
+					return floor(GroundItemPrefs.minValue());
 				}
 				return GroundItemPrefs.showHidden() ? "Shown" : "Hidden";
 			}
@@ -486,20 +487,156 @@ public final class GroundItemsPlugin extends Plugin {
 		};
 	}
 
+	// ------------------------------------------------------------------ the rail page
+
+	/**
+	 * What is on the floor around you, worth first.
+	 *
+	 * THE SAME THINGS THE OVERLAY NAMES, by running every item through colourFor: a hidden item
+	 * is absent from both, the value floor applies to both, and a highlighted one appears in
+	 * both however cheap it is. A panel that disagreed with the labels on the ground would be
+	 * worse than no panel - you would have to work out which of them was lying.
+	 */
+	private ConfigList lootList() {
+		return new ConfigList() {
+
+			public int size() {
+				return nearby().size();
+			}
+
+			public String label(int index) {
+				Near near = at(index);
+				return near == null ? "" : near.name;
+			}
+
+			public String detail(int index) {
+				Near near = at(index);
+				if (near == null) {
+					return null;
+				}
+				String count = near.count > 1 ? formatCount(near.count) + "  \u00b7  " : "";
+				return count + (near.tiles == 0 ? "underfoot"
+					: near.tiles == 1 ? "1 tile away" : near.tiles + " tiles away");
+			}
+
+			public String value(int index) {
+				Near near = at(index);
+				return near == null || near.worth <= 0 ? null : money(near.worth);
+			}
+
+			public boolean removable(int index) {
+				return false;
+			}
+
+			public String emptyMessage() {
+				return "Nothing worth naming nearby. The Display settings decide what counts.";
+			}
+
+			private Near at(int index) {
+				List<Near> all = nearby();
+				return index >= 0 && index < all.size() ? all.get(index) : null;
+			}
+		};
+	}
+
+	/** One kind of item on the floor, totalled across every tile it is lying on. */
+	static final class Near {
+
+		final String name;
+		int count;
+		long worth;
+		int tiles;
+
+		Near(String name, int tiles) {
+			this.name = name;
+			this.tiles = tiles;
+		}
+	}
+
+	/**
+	 * Everything nameable within the player's radius, merged by name and sorted by worth.
+	 *
+	 * MERGED BY NAME RATHER THAN BY ID because that is the question the panel answers - "how
+	 * much of this is around" - and two ids with one name (a noted item, a charged version) are
+	 * the same answer to it. The overlay merges by id instead, because there it is drawing one
+	 * row per thing on one tile and the ids are what is there.
+	 *
+	 * Read on the game thread, as every ConfigList is.
+	 */
+	private List<Near> nearby() {
+		List<Near> out = new java.util.ArrayList<Near>();
+		if (!this.ctx.isLoggedIn()) {
+			return out;
+		}
+		boolean reveal = GroundItemPrefs.showHidden();
+		long floor = GroundItemPrefs.minValue();
+		int selfX = this.ctx.worldToSceneX(this.ctx.getWorldX());
+		int selfZ = this.ctx.worldToSceneZ(this.ctx.getWorldZ());
+
+		java.util.Map<String, Near> byName = new java.util.LinkedHashMap<String, Near>();
+		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(GroundItemPrefs.radius());
+		for (int i = 0; i < piles.size(); i++) {
+			GroundItemPile pile = piles.get(i);
+			// Chebyshev, not Euclidean: the game moves and reaches in squares, so "three tiles
+			// away" means three steps, not 2.83 of something.
+			int tiles = Math.max(Math.abs(pile.sceneTileX - selfX), Math.abs(pile.sceneTileZ - selfZ));
+			List<Row> rows = visibleRows(pile, reveal, floor);
+			for (int j = 0; j < rows.size(); j++) {
+				GroundItem item = rows.get(j).item;
+				Near near = byName.get(item.name);
+				if (near == null) {
+					near = new Near(item.name, tiles);
+					byName.put(item.name, near);
+				} else if (tiles < near.tiles) {
+					near.tiles = tiles;              // the nearest one of them is the useful one
+				}
+				near.count += item.count;
+				// count * price, NOT item.worth(). worth() answers the overlay's question -
+				// what is ONE of these worth, which is what decides the colour of a label and
+				// whether a pile of twenty swords counts as cheap. This page asks a different
+				// one: how much is lying there. Two 2800gp dragon bones are 5600gp of bones,
+				// and reusing worth() here said 2800 because they do not stack.
+				near.worth += (long) item.count * (long) item.price;
+			}
+		}
+		out.addAll(byName.values());
+		java.util.Collections.sort(out, new java.util.Comparator<Near>() {
+
+			public int compare(Near a, Near b) {
+				// Worth first, then nearest, then by name so the order never jitters between
+				// two reads of the same scene.
+				if (a.worth != b.worth) {
+					return a.worth > b.worth ? -1 : 1;
+				}
+				return a.tiles != b.tiles ? a.tiles - b.tiles : a.name.compareToIgnoreCase(b.name);
+			}
+		});
+		return out;
+	}
+
 	// ------------------------------------------------------------------ formatting
 
-	/** Money the way a player reads it, for the value-floor row. */
-	static String money(int value) {
-		if (value == 0) {
-			return "any value";
-		}
+	/**
+	 * An amount of money the way a player reads it: 15000 is "15k gp".
+	 *
+	 * SEPARATE FROM floor() BELOW, and the difference is a word. The floor setting means "this
+	 * much OR MORE" and says so with a +; an item's actual worth means exactly this much. The
+	 * loot page reused the floor's formatter at first and told the player a 15,000gp scimitar
+	 * was worth "15k gp+", which is not a rounding - it is the wrong claim.
+	 */
+	static String money(long value) {
 		if (value >= 1000000) {
-			return value / 1000000 + "m gp+";
+			return value / 1000000 + "m gp";
 		}
 		if (value >= 1000) {
-			return value / 1000 + "k gp+";
+			return value / 1000 + "k gp";
 		}
-		return value + " gp+";
+		return value + " gp";
+	}
+
+	/** The value floor, as its button reads: a minimum, so "or more" is part of the answer. */
+	static String floor(int value) {
+		return value == 0 ? "any value" : money(value) + "+";
 	}
 
 	/** A stack size the way the client writes it elsewhere: 100K, 10M. */

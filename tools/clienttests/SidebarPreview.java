@@ -15,6 +15,46 @@ import jagex2.client.plugin.PluginManager;
 public class SidebarPreview {
 
 	/** A sample index on localhost: one installable plugin, one served over plain http. */
+	/** A player, some loot around them, and names and prices for it. */
+	private static void primeLoot(Client client) {
+		int base = 900;
+		String[] names = { "Dragon bones", "Rune scimitar", "Coins", "Bones", "Shark" };
+		int[] prices = { 2800, 15000, 1, 120, 900 };
+		jagex2.config.ObjType.field818 = new jagex2.config.ObjType[10];
+		for (int i = 0; i < 10; i++) {
+			jagex2.config.ObjType type = new jagex2.config.ObjType();
+			type.field845 = base + i;
+			type.field811 = i < names.length ? names[i] : "Thing " + i;
+			type.field827 = i < prices.length ? prices[i] : 1;
+			type.field853 = i == 2;             // only the coins stack
+			jagex2.config.ObjType.field818[i] = type;
+		}
+		client.currentLevel = 0;
+		client.ingame = true;
+		Client.localPlayer = new jagex2.dash3d.ClientPlayer();
+		Client.localPlayer.field1157 = 64 * 128;
+		Client.localPlayer.field1158 = 64 * 128;
+		client.objStacks = new jagex2.datastruct.LinkList[4][104][104];
+		// A few tiles at different distances, with different amounts on them.
+		drop(client, 64, 64, base + 3, 1);          // bones, underfoot
+		drop(client, 65, 66, base + 0, 2);          // dragon bones, two tiles off
+		drop(client, 61, 64, base + 2, 15000);      // a coin pile, three tiles off
+		drop(client, 68, 70, base + 1, 1);          // rune scimitar, six tiles off
+		drop(client, 63, 65, base + 4, 3);          // sharks
+	}
+
+	private static void drop(Client client, int tileX, int tileZ, int id, int count) {
+		jagex2.datastruct.LinkList stack = client.objStacks[0][tileX][tileZ];
+		if (stack == null) {
+			stack = new jagex2.datastruct.LinkList();
+			client.objStacks[0][tileX][tileZ] = stack;
+		}
+		jagex2.dash3d.ClientObj obj = new jagex2.dash3d.ClientObj();
+		obj.field873 = id;
+		obj.field875 = count;
+		stack.push(obj);
+	}
+
 	private static String startIndexServer() throws Exception {
 		com.sun.net.httpserver.HttpServer server =
 			com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -73,6 +113,25 @@ public class SidebarPreview {
 					sidebar.openHub();     // redraw now the fetch has landed
 				}
 			});
+		}
+		// The Ground items plugin's rail page, which needs a scene to have anything in it: a
+		// player standing somewhere, loot on the floor around them, and an ObjType cache primed
+		// by hand so the ids have names and prices. Same fixture run_groundtest uses.
+        if (args.length > 1 && args[1].equals("loot")) {
+			primeLoot(client);
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("ground-items")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException("no rail tab for ground-items");
+				}
+				manager.onClientTick(0);
+				Thread.sleep(250);
+			}
 		}
 		// The XP tracker's own page, off the rail: a total with a Reset button, then a row per
 		// skill with its rate, its earnings and a bar for how far through the level it is. The
