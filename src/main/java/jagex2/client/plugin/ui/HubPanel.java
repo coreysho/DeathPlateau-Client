@@ -19,6 +19,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import jagex2.client.plugin.PluginApi;
 import jagex2.client.plugin.hub.Hub;
 import jagex2.client.plugin.hub.HubClient;
 import jagex2.client.plugin.hub.HubEntry;
@@ -266,10 +267,21 @@ final class HubPanel extends JPanel {
 		if (entry.isInsecure()) {
 			text.add(Sidebar.wrappedLabel("served over plain http", Theme.ACCENT, Theme.FONT_SMALL, 150));
 		}
+		// The entry is still listed, so a player can see the plugin exists and why they cannot
+		// have it yet. Downloading it would work perfectly and then fail on the first frame.
+		boolean tooNew = entry.needsNewerClient();
+		if (tooNew) {
+			text.add(Sidebar.wrappedLabel("needs a newer client (plugin API " + entry.clientApi
+				+ "; this client has " + PluginApi.LEVEL + ")", Theme.ACCENT, Theme.FONT_SMALL, 150));
+		}
 
 		JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
 		buttons.setOpaque(false);
-		if (update) {
+		// Nothing that would put this jar on disk, which covers the update case too: a plugin
+		// that works today must not be replaced by a build that cannot run here.
+		if (tooNew) {
+			// Nothing to offer but removal, below.
+		} else if (update) {
 			buttons.add(this.actionButton("Update", entry, true));
 		} else if (!installed) {
 			buttons.add(this.actionButton("Install", entry, true));

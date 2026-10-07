@@ -29,6 +29,18 @@ public final class HubEntry {
 	/** Lower case SHA-256 of the jar, or "" when the index does not give one. */
 	public final String sha256;
 
+	/**
+	 * The lowest {@link jagex2.client.plugin.PluginApi#LEVEL} this jar needs, or 0 for "does not
+	 * say".
+	 *
+	 * The index is the only place this can be read BEFORE the jar is on the player's disk, which
+	 * is the whole point of it being here: an entry the running client cannot support is shown
+	 * with what it needs and no Install button, rather than downloading cleanly and then failing
+	 * on the first frame. The plugin's own apiLevel is still the authority once the jar is local
+	 * - this is advice from an index, and an index can be wrong or out of date.
+	 */
+	public final int clientApi;
+
 	HubEntry(Map<?, ?> object) {
 		this.id = Json.string(object, "id", "").trim();
 		this.name = Json.string(object, "name", this.id).trim();
@@ -37,6 +49,10 @@ public final class HubEntry {
 		this.version = Json.string(object, "version", "").trim();
 		this.url = Json.string(object, "url", "").trim();
 		this.sha256 = Json.string(object, "sha256", "").trim().toLowerCase();
+		// Negative is nonsense from a hand-edited index; read it as "does not say" rather than
+		// as something that would make every client support it.
+		int api = Json.integer(object, "clientApi", 0);
+		this.clientApi = api < 0 ? 0 : api;
 	}
 
 	/**
@@ -89,5 +105,14 @@ public final class HubEntry {
 	/** True when this entry is served over plain http, which the panel says out loud. */
 	public boolean isInsecure() {
 		return this.url.toLowerCase().startsWith("http://");
+	}
+
+	/**
+	 * True when this jar wants a newer client than the one running. Such an entry is still listed
+	 * - a player should be able to see that the plugin exists and what it needs - but it is not
+	 * offered for install.
+	 */
+	public boolean needsNewerClient() {
+		return !jagex2.client.plugin.PluginApi.supports(this.clientApi);
 	}
 }

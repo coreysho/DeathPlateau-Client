@@ -124,6 +124,19 @@ final class PluginListPanel extends JPanel {
 			shown++;
 		}
 
+		// After the working ones, because that is their standing: present, not usable. A refused
+		// plugin shown nowhere is the failure this list is here to prevent - the player installed
+		// something and "it is not in the list" is not an answer.
+		List<PluginManager.Refused> refused = this.manager.getRefused();
+		for (int i = 0; i < refused.size(); i++) {
+			PluginManager.Refused one = refused.get(i);
+			if (filter.length() > 0 && !matches(one, filter)) {
+				continue;
+			}
+			this.rows.add(this.buildRefusedRow(one));
+			shown++;
+		}
+
 		if (shown == 0) {
 			this.rows.add(this.buildEmptyMessage(filter.length() > 0));
 		}
@@ -135,6 +148,42 @@ final class PluginListPanel extends JPanel {
 	private static boolean matches(PluginManager.Entry entry, String filter) {
 		return entry.name.toLowerCase().contains(filter)
 			|| entry.description.toLowerCase().contains(filter);
+	}
+
+	private static boolean matches(PluginManager.Refused refused, String filter) {
+		return refused.name.toLowerCase().contains(filter)
+			|| refused.reason.toLowerCase().contains(filter);
+	}
+
+	/**
+	 * A plugin that would not load: its name struck through, and the reason underneath.
+	 *
+	 * No toggle and no cog, because there is nothing to turn on - the plugin was never built. The
+	 * row exists to say what happened and, where the reason is a client too old for it, what would
+	 * fix it.
+	 */
+	private Component buildRefusedRow(PluginManager.Refused refused) {
+		JPanel row = new JPanel(new BorderLayout(4, 0));
+		row.setBackground(Theme.ROW);
+		row.setAlignmentX(LEFT_ALIGNMENT);
+		row.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.SEPARATOR),
+			BorderFactory.createEmptyBorder(5, 8, 5, 6)));
+
+		JPanel text = new JPanel();
+		text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+		text.setOpaque(false);
+		JLabel name = new JLabel(refused.name);
+		name.setFont(Theme.FONT);
+		name.setForeground(Theme.TEXT_DIM);
+		name.setToolTipText(refused.source);
+		name.setAlignmentX(LEFT_ALIGNMENT);
+		text.add(name);
+		text.add(Sidebar.wrappedLabel(refused.reason, Theme.ACCENT, Theme.FONT_SMALL, 200));
+
+		row.add(text, BorderLayout.CENTER);
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+		return row;
 	}
 
 	private Component buildEmptyMessage(boolean filtering) {

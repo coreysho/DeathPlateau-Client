@@ -51,6 +51,9 @@ http or https; release assets are the usual answer, because their urls are stabl
 Updating a plugin is: upload the new jar, bump its `version` and `sha256` in the index. Every
 client sees the update the next time it opens the hub.
 
+Give every entry a `clientApi` - see [Client API levels](#client-api-levels). It is what stops a
+player on an older client installing a jar that cannot run there.
+
 ### What the hub checks, and what it does not
 
 Before a downloaded jar is moved into the plugins folder:
@@ -221,7 +224,8 @@ Everything is in `jagex2.client.plugin`.
 | `PluginContext` (`ctx`) | What you may read and do: position, skills, the right-click menu, world-to-screen projection, a chat message. |
 | `Overlay` | What you draw. `render(OverlayGraphics)`, `priority()`. |
 | `OverlayGraphics` | Text, rectangles, lines and a ready-made `panel(...)`, in viewport coordinates. `width()` and `height()` are the drawable area for this frame - ask each frame, since the display mode changes it. |
-| `@PluginDescriptor` | Name, description and saved key. |
+| `@PluginDescriptor` | Name, description, saved key and `apiLevel`. |
+| `PluginApi` | `PluginApi.LEVEL` - what this client's API can do, as a number. See below. |
 | `@ConfigItem` | A player-facing setting. |
 | `@Subscribe` | Marks an event handler. |
 | `ConfigList` | Rows the plugin produces, on its config page or on a page of its own. Read on the game thread, drawn on the UI thread. |
@@ -244,6 +248,38 @@ Events, in `jagex2.client.plugin.event`:
 `PluginContext` is deliberately small - it is the promise the client keeps, and everything behind
 it is free to change. If what you need is not there, add a method that answers the question you
 are really asking rather than reaching past it into `Client`.
+
+### Client API levels
+
+A plugin is compiled against the client, so a jar built against a newer client than the one
+running it is a jar calling methods that are not there. That does not fail politely: the first
+call throws `NoSuchMethodError` mid-frame, and a plugin that keeps throwing gets turned off. The
+player sees a plugin that installed cleanly and then quietly stopped working.
+
+So the API has a level. `PluginApi.LEVEL` is what the running client provides, and a plugin says
+what it needs:
+
+```java
+@PluginDescriptor(name = "My tool", apiLevel = 1)
+public class MyToolPlugin extends Plugin {
+```
+
+| Level | What it includes |
+| --- | --- |
+| 0 | Does not say. The default, and never refused - every plugin written before levels existed. |
+| 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as of the release that introduced levels. |
+
+The number only goes up, and only when something is **added**. A level is a promise that
+everything up to it is present, so nothing in one may ever be removed or change meaning.
+
+Say the level that added what you call, not the newest one going: `apiLevel = 2` on a plugin that
+only needs level 1 features locks out clients that would have run it perfectly.
+
+A client below the declared level refuses the plugin before constructing it, and the plugin panel
+shows it greyed out with the reason. A jar that declares nothing still gets caught by a net - a
+`LinkageError` out of the constructor or `startUp` is reported as "built for a different client"
+rather than as a mystery - but the net only fires once the jar is already on the player's disk.
+The index's `clientApi` is what keeps it from getting there.
 
 ## Where things are saved
 
