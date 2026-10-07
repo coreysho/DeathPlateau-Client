@@ -11,15 +11,17 @@ WHAT IT WRITES
 
     src/main/resources/deathplateau/icon-<n>.png   the window icons, read by lostcity.Branding and
                                                    shipped in both jars
-    launcher/launcher.ico                          the Windows file icon, embedded in the launcher
-                                                   .exe by launch4j - a BUILD INPUT, deliberately
-                                                   not under src/main/resources, because anything
-                                                   there is copied into both jars and this is
-                                                   169KB that neither of them would ever read
 
 WHY THE SMALL SIZES ARE A DIFFERENT PICTURE. Below about 32 pixels the whole badge - the
 wordmark, the castle, the ravine - is unreadable, so those entries are a tight crop of the skull.
 What a 16 pixel icon has to do is be recognisable in a taskbar, not be complete.
+
+IT USED TO WRITE A .ICO TOO, for a Windows .exe wrapper around the launcher. That was built and
+dropped: an unsigned wrapped exe draws a SmartScreen warning that reads as "this is a virus" to
+anyone downloading a game client. If it ever comes back - which needs a code-signing certificate
+to be worth doing - the recipe is in the commit that added it, along with the one trap worth
+remembering: Pillow caps every ICO entry at the BASE image's size, so the largest has to be
+passed first or the file silently ends up with one 16x16 entry that Windows scales to everything.
 """
 import os
 import sys
@@ -31,10 +33,8 @@ SOURCE = os.path.join(HERE, 'art', 'death-plateau-badge.webp')
 # The skull, crossed swords and crown, without the wordmark underneath them.
 EMBLEM = (549, 276, 733, 460)
 
-# Sizes a desktop asks for. setIconImages picks per use; Windows wants 256 for its largest view.
+# Sizes a desktop asks for: setIconImages hands the window manager the set and it picks per use.
 PNG_SIZES = (16, 24, 32, 48, 64, 128)
-ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
-
 # Below this, the emblem alone.
 WHOLE_BADGE_FROM = 48
 
@@ -59,21 +59,6 @@ def main():
         at(size).convert('RGB').save(path, optimize=True)
         print('%-52s %7d bytes' % (os.path.relpath(path, ROOT), os.path.getsize(path)))
 
-    # Pillow caps every ICO entry at the BASE image's dimensions, so the base has to be the
-    # largest and the rest go in append_images. Passing the 16 first silently writes a one-entry
-    # file, which Windows then scales to everything.
-    by_size = {s: at(s) for s in ICO_SIZES}
-    biggest = max(ICO_SIZES)
-    ico = os.path.join(ROOT, 'launcher/launcher.ico')
-    by_size[biggest].save(ico, format='ICO', sizes=[(s, s) for s in ICO_SIZES],
-                          append_images=[by_size[s] for s in ICO_SIZES if s != biggest])
-    print('%-52s %7d bytes' % (os.path.relpath(ico, ROOT), os.path.getsize(ico)))
-
-    got = sorted(Image.open(ico).ico.sizes())
-    want = sorted((s, s) for s in ICO_SIZES)
-    if got != want:
-        raise SystemExit('make_icons: the .ico came out with %s, wanted %s' % (got, want))
-    print('every size is in the .ico')
     return 0
 
 

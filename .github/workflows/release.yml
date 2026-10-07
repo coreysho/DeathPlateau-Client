@@ -46,26 +46,15 @@ jobs:
         cp -r src/main/resources/deathplateau launcher/out/
         jar cfe Death-Plateau-Launcher.jar lostcity.Launcher -C launcher/out .
 
-    # WHY AN EXE EXISTS AT ALL. The icon on a .jar in Explorer is the file-type icon Windows
-    # draws for .jar, owned by whichever Java runtime is registered - nothing inside the archive
-    # can change it, and setIconImages only reaches the window. So Windows players get the same
-    # launcher wrapped in an .exe carrying our own icon. The .jar is still published and is still
-    # the real artefact: macOS, Linux and anyone running java -jar use it.
-    #
-    # launch4j is pinned by checksum, not by tag. This step runs on every release and pulls a
-    # binary off the internet into the thing players then download; a version number alone would
-    # let that binary change under us without anything saying so.
-    - name: Wrap the launcher for Windows
-      run: |
-        curl -sSL --retry 3 -o launch4j.tgz \
-          "https://sourceforge.net/projects/launch4j/files/launch4j-3/3.50/launch4j-3.50-linux-x64.tgz/download"
-        echo "a6ad95c2fb6300410543288308b4eeae72ecd1df033928dfc524ba539bbc4d36  launch4j.tgz" | sha256sum -c -
-        tar xzf launch4j.tgz
-        # The bundled launch4j shell script has CRLF line endings and will not execute on Linux;
-        # the jar is the same program. Its classes are Java 8, so this JDK runs it.
-        java -jar launch4j/launch4j.jar launcher/launch4j.xml
-        test -f Death-Plateau-Launcher.exe
-
+    # NO WINDOWS .EXE, DELIBERATELY. The icon on a .jar in Explorer is the file-type icon Windows
+    # draws for .jar and nothing inside the archive can change it, so the only way to put our own
+    # icon on the downloaded file is to wrap the jar in an .exe. That was built and it worked -
+    # launch4j, the badge embedded, one self-contained file - and it is not shipped, because an
+    # unsigned wrapped exe draws a SmartScreen "Windows protected your PC" box on first run and
+    # the occasional antivirus false positive. To a player downloading a game client from a
+    # stranger, that reads as "this is a virus", which is a worse first impression than a generic
+    # Java icon. It needs a code-signing certificate to be worth doing; until there is one, the
+    # jar is what ships. See the commit that added it for the launch4j config and its test.
     - name: Publish
       env:
         GH_TOKEN: ${{ github.token }}
@@ -73,9 +62,7 @@ jobs:
         TAG="client-${{ github.run_number }}"
         # GitHub turns spaces in an asset's file name into dots, so the name players see on the
         # release page is the label after the #
-        gh release create "$TAG" client.jar \
-          "Death-Plateau-Launcher.exe#Death Plateau Launcher (Windows)" \
-          "Death-Plateau-Launcher.jar#Death Plateau Launcher (jar)" \
+        gh release create "$TAG" client.jar "Death-Plateau-Launcher.jar#Death Plateau Launcher" \
           --target "${{ github.sha }}" \
           --title "Client $TAG" \
           --notes "$(git log -1 --format=%s)" \
