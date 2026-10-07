@@ -1387,6 +1387,58 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
 	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus");
 	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "80"));
+	/**
+	 * The port JAGGRAB is served on, or 0 for "this client cannot use JAGGRAB".
+	 *
+	 * JAGGRAB is the 2004 protocol for fetching cache files: a plain socket, "JAGGRAB /name", and
+	 * the bytes come back. The client alternates between it and HTTP on every retry, flipping
+	 * field196 - see openUrl, getJagCrc and getJagFile.
+	 *
+	 * IT USED TO BE HARDCODED TO 43595 ON SERVER_HOST, and that was wrong in two ways at once.
+	 * 43595 is the port the server listens on at home, which is not a port any tunnel forwards,
+	 * and SERVER_HOST is the GAME host - JAGGRAB is a web-server protocol and belongs with the
+	 * web host. On the LAN both mistakes cancel out, because there SERVER_HOST is the server and
+	 * 43595 is real, which is why this went unnoticed: every player coming in over the tunnels
+	 * had half of every cache retry fail before it started, doubling the backoff twice as fast
+	 * and printing "connection problem" on attempts where HTTP would have worked.
+	 *
+	 * So it is off unless there is somewhere real to send it: the server's own port when the
+	 * client is pointed straight at the server, or whatever lostcity.jaggrabport says. Off, every
+	 * retry is HTTP, which is the one transport a tunnel actually carries.
+	 */
+	public static final int JAGGRAB_PORT = jaggrabPort(setting("lostcity.jaggrabport", "LOSTCITY_JAGGRABPORT"), HOST_GIVEN);
+
+	/**
+	 * Which port JAGGRAB should use. Pure, so the rule can be tested without a network.
+	 *
+	 * An explicit setting always wins, including an explicit 0 to turn it off. Otherwise it is
+	 * the server's own 43595 when pointed at the server directly, and nothing at all when going
+	 * through the default tunnels - there is no JAGGRAB tunnel, and pretending there is costs a
+	 * failed connection per retry. Anything unparseable is off rather than a crash at class load.
+	 */
+	static int jaggrabPort(String given, boolean hostGiven) {
+		if (given != null) {
+			try {
+				int port = Integer.parseInt(given.trim());
+				return port > 0 && port <= 65535 ? port : 0;
+			} catch (RuntimeException notANumber) {
+				return 0;
+			}
+		}
+		return hostGiven ? 43595 : 0;
+	}
+
+	/**
+	 * Whether the JAGGRAB half of the retry alternation may be used at all.
+	 *
+	 * Never in a browser: there is no TCP there, and the one WebSocket the page gives us is the
+	 * game stream, which would make "JAGGRAB /title" the first thing the server reads from a
+	 * login connection.
+	 */
+	static boolean jaggrabUsable(int port, String wsUrl) {
+		return port > 0 && wsUrl == null;
+	}
+
 	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
 	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
 	// port, which already carries both streams, because the first byte a client sends is what tells
@@ -2499,7 +2551,10 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.b(Ljava/lang/String;)Ljava/io/DataInputStream;")
 	public DataInputStream openUrl(String arg0) throws IOException {
-		if (this.field196) {
+		// field196 alternates on every failed retry, so this branch is half of every cache fetch
+		// the client makes - and it is skipped entirely when there is nowhere to send JAGGRAB.
+		// See JAGGRAB_PORT for what that cost before.
+		if (this.field196 && jaggrabUsable(JAGGRAB_PORT, WS_URL)) {
 			if (this.field520 != null) {
 				try {
 					this.field520.close();
@@ -2507,7 +2562,9 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 				this.field520 = null;
 			}
-			this.field520 = this.openSocket(43595);
+			// WEB_HOST, not SERVER_HOST: this is the web server's protocol, and the two are
+			// different machines the moment anything is tunnelled.
+			this.field520 = new Socket(InetAddress.getByName(WEB_HOST), JAGGRAB_PORT);
 			this.field520.setSoTimeout(10000);
 			InputStream var2 = this.field520.getInputStream();
 			OutputStream var3 = this.field520.getOutputStream();
