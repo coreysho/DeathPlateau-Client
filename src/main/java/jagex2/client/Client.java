@@ -3146,7 +3146,71 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawTitle();
 		}
 
+		if (this.screenshotWanted) {
+			this.screenshotWanted = false;
+			this.writeScreenshot();
+		}
+
 		this.dragCycles = 0;
+	}
+
+	// ------------------------------------------------------------------ screenshots
+
+	/**
+	 * Set by the camera button, read at the end of the next frame.
+	 *
+	 * A FLAG RATHER THAN A CALL, because the button is Swing and the viewport buffer is written
+	 * by the game loop: copying it from the event thread would catch a frame halfway drawn, with
+	 * a torn line across the middle of whatever the player wanted a picture of. Waiting for the
+	 * end of draw() means the buffer is a whole finished frame and nothing is racing for it.
+	 */
+	private volatile boolean screenshotWanted;
+
+	/** Asks for a screenshot of the next completed frame. Safe to call from any thread. */
+	public void requestScreenshot() {
+		this.screenshotWanted = true;
+	}
+
+	/**
+	 * Writes the game view to ~/.deathplateau/screenshots.
+	 *
+	 * WHAT IS IN IT is areaViewport: the scene, the plugin overlays, and in the resizable layout
+	 * the panels that are composited over it. Not the window's own chrome, and in the fixed
+	 * layout not the surrounding interface either - the frame art there goes straight to the
+	 * screen Graphics one piece at a time and was never gathered anywhere this could copy from.
+	 * What a player wants a picture of is the game, which is what this is.
+	 */
+	private void writeScreenshot() {
+		PixMap area = this.areaViewport;
+		if (area == null || area.data == null) {
+			this.addMessage("", "There is nothing to take a picture of yet.", 0);
+			return;
+		}
+		try {
+			java.io.File dir = new java.io.File(System.getProperty("user.home", "."),
+				".deathplateau/screenshots");
+			if (!dir.isDirectory() && !dir.mkdirs()) {
+				this.addMessage("", "Could not make " + dir.getPath() + " to save the screenshot in.", 0);
+				return;
+			}
+			java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+				area.width, area.height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			image.setRGB(0, 0, area.width, area.height, area.data, 0, area.width);
+			String stamp = new java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss")
+				.format(new java.util.Date());
+			java.io.File file = new java.io.File(dir, "deathplateau_" + stamp + ".png");
+			// A second shot in the same second must not quietly overwrite the first.
+			for (int n = 2; file.exists() && n < 100; n++) {
+				file = new java.io.File(dir, "deathplateau_" + stamp + "_" + n + ".png");
+			}
+			javax.imageio.ImageIO.write(image, "png", file);
+			DevLog.log("SHOT", "wrote " + file.getPath());
+			this.addMessage("", "Screenshot saved as " + file.getName(), 0);
+		} catch (Throwable error) {
+			// A full disk, a read-only home. A failed screenshot is not a reason to lose the game.
+			DevLog.log("SHOT", "screenshot failed: " + error);
+			this.addMessage("", "The screenshot could not be saved: " + error, 0);
+		}
 	}
 
 	@ObfuscatedName("client.b(I)V")

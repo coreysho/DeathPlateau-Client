@@ -22,7 +22,7 @@ import lostcity.Branding;
 import deob.ObfuscatedName;
 import sign.signlink;
 
-public class ViewBox extends JFrame {
+public class ViewBox extends JFrame implements TitleBar.Actions {
 
 	@ObfuscatedName("IEJCKZCR.a")
 	public GameShell shell;
@@ -75,7 +75,7 @@ public class ViewBox extends JFrame {
 			// Already displayable, or a window manager that will not have it. Keep the real bar.
 			return;
 		}
-		this.titleBar = new TitleBar(this, Client.SERVER_NAME);
+		this.titleBar = new TitleBar(this, Client.SERVER_NAME, this);
 		this.add(this.titleBar, BorderLayout.NORTH);
 		this.paintBorder(false);
 		this.getContentPane().setBackground(Theme.TITLE_BAR);
@@ -160,22 +160,56 @@ public class ViewBox extends JFrame {
 		if (sidebar != null) {
 			this.add(sidebar, BorderLayout.EAST);
 		}
-		this.pack();
+		if (this.titleBar != null) {
+			// No sidebar, nothing for the chevron to do, so it is not drawn at all.
+			this.titleBar.setSidebarAvailable(sidebar != null);
+		}
+		// Minimum BEFORE pack, always: see setSidebarVisible.
 		this.applyMinimumSize();
+		this.pack();
+	}
+
+	// ------------------------------------------------------------------ the title bar's buttons
+
+	/**
+	 * The camera button. The client takes the picture itself, at the end of its next frame -
+	 * see Client.requestScreenshot, which explains why it cannot be done from here.
+	 */
+	public void onScreenshot() {
+		if (this.shell instanceof Client) {
+			((Client) this.shell).requestScreenshot();
+		}
+	}
+
+	public void onToggleSidebar() {
+		this.setSidebarVisible(!this.isSidebarVisible());
+	}
+
+	public boolean isSidebarOpen() {
+		return this.isSidebarVisible();
 	}
 
 	/**
 	 * Shows or hides the sidebar, shrinking the window back to the size of the game when it is
 	 * hidden. BorderLayout leaves an invisible component out of its sizing, so a pack() is all it
 	 * takes. Call on the event dispatch thread.
+	 *
+	 * THE MINIMUM SIZE IS LOWERED FIRST, and the order is the whole of it. The minimum includes
+	 * whatever the sidebar is taking, so packing while the old one is still in force clamps the
+	 * window at its old width and hiding the sidebar leaves a strip of empty background where it
+	 * used to be. It did exactly that until the chevron gave a reason to check.
 	 */
 	public void setSidebarVisible(boolean visible) {
 		if (this.sidebar == null || this.sidebar.isVisible() == visible) {
 			return;
 		}
 		this.sidebar.setVisible(visible);
-		this.pack();
+		if (this.titleBar != null) {
+			// F8 and the chevron are the same switch; whichever was used, the arrow turns round.
+			this.titleBar.sidebarChanged();
+		}
 		this.applyMinimumSize();
+		this.pack();
 	}
 
 	public boolean hasSidebar() {

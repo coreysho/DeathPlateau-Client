@@ -27,6 +27,7 @@ SRC = os.path.join(ROOT, 'src/main/java')
 LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 RES = os.path.join(ROOT, 'src/main/resources')
 TEST = os.path.join(HERE, 'PanelPreview.java')
+SHOT = os.path.join(HERE, 'ScreenshotTest.java')
 CLIENT = os.path.join(SRC, 'jagex2/client/Client.java')
 
 fails = 0
@@ -82,8 +83,8 @@ def main():
         if r.returncode != 0:
             print(r.stderr[-4000:])
             raise SystemExit('run_panelpreview: the client does not compile')
-        r = subprocess.run([javac, '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work, TEST],
-                           capture_output=True, text=True)
+        r = subprocess.run([javac, '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work,
+                            TEST, SHOT], capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-6000:])
             raise SystemExit('run_panelpreview: the preview does not compile')
@@ -98,6 +99,22 @@ def main():
             xvfb = shutil.which('xvfb-run')
             if xvfb:
                 launcher = [xvfb, '-a']
+
+        # The camera button, which writes a file rather than a picture to look at.
+        shot_home = os.path.join(work, 'shot-home')
+        os.makedirs(shot_home)
+        r = subprocess.run(launcher + [java, '-Dlostcity.cachedir=' + cache,
+                                       '-cp', os.pathsep.join([classes, RES, work]),
+                                       'jagex2.client.ScreenshotTest', shot_home],
+                           capture_output=True, text=True, cwd=work)
+        said = [l for l in r.stdout.split('\n') if l.strip()]
+        for line in said:
+            print(line)
+        if not said:
+            print(r.stderr[-1500:])
+        if r.returncode != 0:
+            globals()['fails'] = fails + max(1, sum(1 for l in said if l.startswith('FAIL')))
+        print()
 
         for name, arg in (('panel-settings', 'qol'), ('panel-plugins', 'plugins')):
             png = os.path.join(out_dir, name + '.png')
