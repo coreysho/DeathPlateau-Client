@@ -8,7 +8,11 @@
 
 -keep,allowobfuscation public class * { public static void main(java.lang.String[]); }
 -keepclassmembers public class * { public static void main(java.lang.String[]); }
--adaptresourcefilecontents
+# Text resources only. Unfiltered, this rewrites class names inside EVERY resource file - which
+# on a PNG means stamping bytes into the middle of an image. The window icons are resources now,
+# so the filter is what keeps them from being quietly corrupted the day someone ships a
+# proguarded build (release.yml ships the plain jar today).
+-adaptresourcefilecontents !**.png,**
 
 # THE PLUGIN API IS A PUBLISHED CONTRACT. A plugin jar is compiled against these names and loaded
 # by name at run time, so obfuscating them means no plugin ever loads again - and it would fail as
