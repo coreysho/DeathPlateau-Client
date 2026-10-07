@@ -185,9 +185,9 @@ final class PluginListPanel extends JPanel {
 		JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
 		buttons.setOpaque(false);
 
-		// The cog only appears for a plugin that has something to configure, which is also how a
-		// player can tell at a glance which ones do.
-		if (!entry.getConfig().getItems().isEmpty()) {
+		// The cog only appears for a plugin that has something to configure - settings, a list, or
+		// both - which is also how a player can tell at a glance which ones do.
+		if (entry.hasSettings()) {
 			JButton cog = Sidebar.iconButton(Icons.gear(14, Theme.TEXT_DIM), Icons.gear(14, Theme.ACCENT),
 				"Settings for " + entry.name);
 			cog.addActionListener(new java.awt.event.ActionListener() {

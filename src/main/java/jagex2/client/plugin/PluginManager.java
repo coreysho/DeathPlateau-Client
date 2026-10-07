@@ -111,6 +111,19 @@ public final class PluginManager {
 		public PluginConfig getConfig() {
 			return this.config;
 		}
+
+		/**
+		 * Whether this plugin has a config page worth opening: settings, a list, or both.
+		 *
+		 * Both halves matter. A plugin can have settings and no list (XP drops), a list and no
+		 * settings (Left-click swaps), or both - and the second of those is the one that was
+		 * missed: the cog tested for settings alone, so the swaps page could not be reached at
+		 * all. Lists are registered in startUp(), so a stopped list-only plugin has nothing to
+		 * show, which is true rather than awkward: its list is empty until it runs.
+		 */
+		public boolean hasSettings() {
+			return !this.config.getItems().isEmpty() || !this.plugin.getConfigLists().isEmpty();
+		}
 	}
 
 	/** One line of the plugin panel. The panel draws these; it knows nothing about plugins. */

@@ -225,6 +225,18 @@ public class PluginSystemTest {
 		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
 		check(enabled(manager, "menu-swapper"), "Left-click swaps is on by default, as it was");
 
+		// The cog in the plugin list is drawn from hasSettings(), and a plugin can have a config
+		// page because of a LIST rather than any settings - which is exactly what Left-click
+		// swaps is, and exactly what the first version of that test missed, leaving its page
+		// with no way in.
+		check(entry(manager, "menu-swapper").getConfig().getItems().isEmpty(),
+			"Left-click swaps has no settings of its own...");
+		check(entry(manager, "menu-swapper").hasSettings(),
+			"...but still has a page, because it has a list");
+		check(entry(manager, "xp-drops").hasSettings(), "XP drops has a page from its settings");
+		check(!entry(manager, "escape-closes").hasSettings(),
+			"a plugin with neither has no page, and no cog");
+
 		// A player who turned Escape off back when it was a setting.
 		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");
 		plugins.delete();
