@@ -35,11 +35,28 @@ public final class PluginContext {
 
 	private final Client client;
 
+	/**
+	 * The manager, for the one thing the client cannot answer: that a plugin is still interested
+	 * in the tile under the cursor. See {@link #getHoverTileX()}.
+	 */
+	private PluginManager manager;
+
 	/** Scene units per tile - the client stores entity positions at 128 to the tile. */
 	private static final int TILE = 128;
 
 	PluginContext(Client client) {
 		this.client = client;
+	}
+
+	/**
+	 * Set once, by the manager that owns this context.
+	 *
+	 * Not a constructor argument because the manager builds its context before it has finished
+	 * building itself, and handing out a half-made this is the kind of thing that works until
+	 * the day something reads a field during construction.
+	 */
+	void attachManager(PluginManager manager) {
+		this.manager = manager;
 	}
 
 	// ------------------------------------------------------------------ player and world state
@@ -473,6 +490,72 @@ public final class PluginContext {
 	 */
 	public boolean isAltHeld() {
 		return this.client.actionKey[GameShell.KEY_ALT] == 1;
+	}
+
+	// ------------------------------------------------------------------ the cursor
+
+	/**
+	 * Where the cursor is, in the same viewport coordinates an overlay draws in, or -1 when it
+	 * is not over the game at all.
+	 *
+	 * -1 rather than the last place it was: a plugin drawing something at the cursor should stop
+	 * drawing it when the cursor leaves, and "the last known position" is how a tooltip gets
+	 * stranded in a corner.
+	 */
+	public int getMouseX() {
+		return this.client.mouseInViewport() ? this.client.viewportMouseX() : -1;
+	}
+
+	public int getMouseY() {
+		return this.client.mouseInViewport() ? this.client.viewportMouseY() : -1;
+	}
+
+	/**
+	 * The scene tile the cursor is over, or -1 when it is over none.
+	 *
+	 * ONE FRAME BEHIND, and it cannot be otherwise. The scene answers "what is at this screen
+	 * point" while it draws, so the question has to be asked before a frame and read after it.
+	 * At fifty frames a second that is twenty milliseconds, which nobody has ever seen.
+	 *
+	 * COSTS NOTHING UNTIL IT IS READ. Answering it is a hit test per tile, which the client only
+	 * ever paid on a click; reading this is what asks for the next answer, so a plugin that does
+	 * not care never makes anyone pay for it. Read it every frame you want it.
+	 *
+	 * Scene coordinates, the same ones {@link #projectTile} takes - 0 to 103 across the loaded
+	 * area, not world coordinates. {@link #sceneToWorldX(int)} converts when something has to be
+	 * remembered across a region change.
+	 */
+	public int getHoverTileX() {
+		this.keepHoverAlive();
+		return this.client.hoverTileX;
+	}
+
+	public int getHoverTileZ() {
+		this.keepHoverAlive();
+		return this.client.hoverTileZ;
+	}
+
+	/** Tells the manager the answer is still wanted. Harmless before one is attached. */
+	private void keepHoverAlive() {
+		if (this.manager != null) {
+			this.manager.hoverTileRead();
+		}
+	}
+
+	/**
+	 * A scene tile as a world coordinate, which is what to save when something must outlive the
+	 * loaded area.
+	 *
+	 * Scene coordinates are relative to whatever chunk of the map is loaded, so the same tile is
+	 * a different pair of numbers after walking far enough for the client to reload around you.
+	 * A marker saved in scene coordinates comes back pointing somewhere else entirely.
+	 */
+	public int sceneToWorldX(int sceneTileX) {
+		return sceneTileX + this.client.baseX;
+	}
+
+	public int sceneToWorldZ(int sceneTileZ) {
+		return sceneTileZ + this.client.baseZ;
 	}
 
 	/** Whether Shift is held down right now. */

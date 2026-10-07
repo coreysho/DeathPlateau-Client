@@ -31,6 +31,9 @@ package jagex2.client.plugin;
  *     because a plugin calls nothing for it: overlays became movable underneath them. A level
  *     only goes up when there is something new to CALL - a level is a promise to a compiler,
  *     not a changelog.</dd>
+ * <dt>3</dt><dd>The cursor: {@code ctx.getMouseX}, {@code ctx.getMouseY},
+ *     {@code ctx.getHoverTileX}, {@code ctx.getHoverTileZ}, and {@code ctx.sceneToWorldX} /
+ *     {@code sceneToWorldZ} for keeping a tile across a region change.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -39,7 +42,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 2;
+	public static final int LEVEL = 3;
 
 	private PluginApi() {
 	}

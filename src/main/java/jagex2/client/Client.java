@@ -1571,6 +1571,28 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int cyclelogic1;
 
 	@ObfuscatedName("client.Gd")
+	/**
+	 * The tile under the cursor, as the last frame's draw resolved it, or -1 for none.
+	 *
+	 * HOW THIS WORKS, because it is not obvious. The scene has exactly one "what is at this
+	 * screen point" slot - World3D.method312 arms it, the next draw answers it into
+	 * World3D.clickTileX/Z - and the client already uses that slot for walk-here. A second
+	 * caller cannot just borrow it: whatever lands in clickTileX is read a frame later by the
+	 * walk code, so a plugin asking what is under the cursor would WALK THE PLAYER THERE.
+	 *
+	 * So the slot is shared with a flag saying whose answer is coming. The plugin's request is
+	 * only armed when nothing else has armed one that frame, the answer is taken before the walk
+	 * code can see it, and the click path clears the flag the moment it arms its own - without
+	 * that last part, clicking the ground while a plugin was hovering would have its walk
+	 * swallowed, which is the failure worth testing for.
+	 */
+	public int hoverTileX = -1;
+
+	public int hoverTileZ = -1;
+
+	/** True while an armed pick belongs to the plugin system rather than to walk-here. */
+	public boolean hoverPickPending;
+
 	public int baseX;
 
 	@ObfuscatedName("client.Hd")
@@ -3130,6 +3152,17 @@ public class Client extends GameShell implements PixMap.Target {
 			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
 				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
 				this.layout.openW, this.layout.openH);
+			// Asked for only while a plugin is actually reading it, and only when nothing else
+			// has armed the scene's single pick slot this frame. The answer arrives in the next
+			// frame's updateGame, which is as fast as this scene can answer the question at all.
+			if (this.ingame && this.plugins.wantsHoverTile() && !World3D.field1044
+				&& this.mouseInViewport()) {
+				this.scene.method312(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY);
+				this.hoverPickPending = true;
+			} else if (!this.mouseInViewport()) {
+				this.hoverTileX = -1;
+				this.hoverTileZ = -1;
+			}
 		}
 	}
 
@@ -4401,6 +4434,9 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
+			// A pick the plugin system asked for, taken before the walk code below can see it.
+			this.takeHoverPick();
+
 			if (World3D.clickTileX != -1) {
 				int x = World3D.clickTileX;
 				int z = World3D.clickTileZ;
@@ -5335,6 +5371,46 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Takes a scene pick that belongs to a plugin, so the walk code never sees it.
+	 *
+	 * THE WHOLE RISK OF SHARING THE PICK SLOT IS IN THIS METHOD. Left in place, a pick a plugin
+	 * asked for is read a few lines later as a click on the ground and the player walks to
+	 * wherever the cursor happened to be. Taken when it was NOT a plugin's, a real click to walk
+	 * is swallowed and the player stands still.
+	 *
+	 * Which it is comes from hoverPickPending, which the click path clears the moment it arms
+	 * its own pick. Returns whether one was taken, which is how the test tells the two cases
+	 * apart without running a game loop.
+	 */
+	public boolean takeHoverPick() {
+		if (!this.hoverPickPending || World3D.clickTileX == -1) {
+			return false;
+		}
+		this.hoverTileX = World3D.clickTileX;
+		this.hoverTileZ = World3D.clickTileZ;
+		World3D.clickTileX = -1;
+		World3D.clickTileZ = -1;
+		this.hoverPickPending = false;
+		return true;
+	}
+
+	/** The cursor's x in viewport coordinates - the space overlays draw in. */
+	public int viewportMouseX() {
+		return super.mouseX - this.layout.vpX;
+	}
+
+	public int viewportMouseY() {
+		return super.mouseY - this.layout.vpY;
+	}
+
+	/** Whether the cursor is over the game view at all, rather than a panel or outside the window. */
+	public boolean mouseInViewport() {
+		int x = this.viewportMouseX();
+		int y = this.viewportMouseY();
+		return x >= 0 && y >= 0 && x < this.layout.openW && y < this.layout.openH;
 	}
 
 	@ObfuscatedName("client.h(B)V")
@@ -12011,6 +12087,9 @@ public class Client extends GameShell implements PixMap.Target {
 			} else {
 				this.scene.method312(super.mouseClickX - this.layout.vpX, super.mouseClickY - this.layout.vpY);
 			}
+			// This pick is the player's, not a plugin's. Saying so is what stops the answer
+			// being taken by the hover consumer above and the walk never happening.
+			this.hoverPickPending = false;
 		}
 		if (var5 == 903) {
 			// OPHELDU

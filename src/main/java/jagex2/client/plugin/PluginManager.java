@@ -62,7 +62,9 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.GroundItemsPlugin",
 		"jagex2.client.plugin.builtin.BoostsPlugin",
 		"jagex2.client.plugin.builtin.SkillsPlugin",
-		"jagex2.client.plugin.builtin.IdleNotifierPlugin"
+		"jagex2.client.plugin.builtin.IdleNotifierPlugin",
+		"jagex2.client.plugin.builtin.MouseHighlightPlugin",
+		"jagex2.client.plugin.builtin.TileIndicatorsPlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */
@@ -213,6 +215,26 @@ public final class PluginManager {
 	/** Whether Alt was down last frame, which is what turns dragging on at all. */
 	private boolean dragMode;
 
+	/**
+	 * The frame a plugin last asked what tile the cursor is over, or -1 for never.
+	 *
+	 * A LAZY SUBSCRIPTION, and the reason there is no subscribe() to call. Answering "what is
+	 * under the cursor" costs the renderer a hit test per tile, which the client was only ever
+	 * paying on a click. Asking every frame on the off chance a plugin cares would make every
+	 * player pay for a feature almost none of them are running.
+	 *
+	 * So reading the answer is what asks for the next one. A plugin that reads it each frame
+	 * keeps it coming; one that stops reading stops the cost within {@link #HOVER_KEEPALIVE}
+	 * frames. Nothing to turn on, nothing to leak.
+	 */
+	private int hoverWantedAt = -1;
+
+	/** How many frames a read keeps the hover pick alive for. About a fifth of a second. */
+	private static final int HOVER_KEEPALIVE = 10;
+
+	/** The frame counter the keepalive is measured against. */
+	private int frame;
+
 	/** Overlays of every running plugin, in render order. Rebuilt whenever one is toggled. */
 	private final List<Overlay> overlays = new ArrayList<Overlay>();
 
@@ -243,6 +265,7 @@ public final class PluginManager {
 	public PluginManager(Client client, PixFont small, PixFont normal, PixFont bold) {
 		this.client = client;
 		this.ctx = new PluginContext(client);
+		this.ctx.attachManager(this);
 		this.graphics = new OverlayGraphics(small, normal, bold);
 		this.pluginDirectory = findPluginDirectory();
 		this.store = new PluginStore(new File(sign.signlink.findcachedir() + STORE_FILE));
@@ -735,6 +758,9 @@ public final class PluginManager {
 	}
 
 	public void onClientTick(int cycle) {
+		// Counted before the idle check, so the hover keepalive measures frames rather than
+		// frames-in-which-a-plugin-was-running.
+		this.frame++;
 		// Drained before the idle check: the queue is how the sidebar turns the FIRST plugin on,
 		// and at that point nothing is running yet.
 		this.drainTasks();
@@ -1021,6 +1047,22 @@ public final class PluginManager {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Whether the client should ask the scene what tile is under the cursor this frame.
+	 *
+	 * Called by Client once a frame. See {@link #hoverWantedAt} for why this is a question
+	 * rather than a setting.
+	 */
+	public boolean wantsHoverTile() {
+		return !this.idle() && this.hoverWantedAt >= 0
+			&& this.frame - this.hoverWantedAt <= HOVER_KEEPALIVE;
+	}
+
+	/** Records that a plugin wants the tile under the cursor, and keeps it coming. */
+	void hoverTileRead() {
+		this.hoverWantedAt = this.frame;
 	}
 
 	/** True while Alt is held over something draggable, so the client can leave the click alone. */
