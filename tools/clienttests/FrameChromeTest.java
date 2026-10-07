@@ -92,6 +92,34 @@ public class FrameChromeTest {
 		drag(frame, before.width - 1, before.height - 1, 120, 90);
 		check(frame.getBounds().equals(before), "a fixed window cannot be resized by its edges");
 
+		// ---- the two buttons we added to the bar, which are ours rather than the window's
+		frame.setResizable(true);
+		javax.swing.JPanel panel = new javax.swing.JPanel();
+		panel.setPreferredSize(new Dimension(250, 0));
+		frame.setSidebar(panel);
+		frame.validate();
+		check(frame.isSidebarVisible(), "a window with a sidebar starts with it showing");
+		check(frame.isSidebarOpen(), "...and the chevron is told so");
+
+		int wide = frame.getWidth();
+		frame.onToggleSidebar();
+		check(!frame.isSidebarVisible(), "the chevron hides it");
+		check(frame.getWidth() < wide, "...and the window shrinks back to the game ("
+			+ wide + " -> " + frame.getWidth() + ")");
+		frame.onToggleSidebar();
+		check(frame.isSidebarVisible() && frame.getWidth() == wide,
+			"...and brings it back to exactly where it was");
+
+		// The camera asks the client for a picture rather than taking one itself; with a plain
+		// GameShell in the window there is no client to ask, and it must not throw for it.
+		boolean threw = false;
+		try {
+			frame.onScreenshot();
+		} catch (Throwable error) {
+			threw = error != null;
+		}
+		check(!threw, "the camera button does nothing rather than throwing when there is no game");
+
 		frame.dispose();
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);

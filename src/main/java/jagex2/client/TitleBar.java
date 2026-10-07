@@ -60,15 +60,34 @@ public final class TitleBar extends JPanel {
 	static final int MINIMISE = 0;
 	static final int MAXIMISE = 1;
 	static final int CLOSE = 2;
+	static final int SCREENSHOT = 3;
+	static final int SIDEBAR = 4;
+
+	/**
+	 * What the two left-hand buttons do. The window knows how to take a picture of the game and
+	 * where its sidebar is; the title bar only knows where to draw the buttons.
+	 */
+	public interface Actions {
+
+		void onScreenshot();
+
+		void onToggleSidebar();
+
+		/** Whether the sidebar is showing, which decides which way the chevron points. */
+		boolean isSidebarOpen();
+	}
 
 	private final JFrame frame;
+	private final Actions actions;
 	private final Button maximise;
+	private final Button sidebar;
 
 	/** Where in the window the drag started, so the window keeps its grip on the cursor. */
 	private Point grab;
 
-	public TitleBar(JFrame frame, String title) {
+	public TitleBar(JFrame frame, String title, Actions actions) {
 		this.frame = frame;
+		this.actions = actions;
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.TITLE_BAR);
 		this.setOpaque(true);
@@ -97,6 +116,11 @@ public final class TitleBar extends JPanel {
 		JPanel buttons = new JPanel();
 		buttons.setLayout(new BoxLayout(buttons, BoxLayout.X_AXIS));
 		buttons.setOpaque(false);
+		// Ours first, then the window's own three. Nobody expects close to move.
+		buttons.add(new Button(SCREENSHOT));
+		this.sidebar = new Button(SIDEBAR);
+		this.sidebar.setVisible(false);          // until there is a sidebar to show or hide
+		buttons.add(this.sidebar);
 		buttons.add(new Button(MINIMISE));
 		this.maximise = new Button(MAXIMISE);
 		buttons.add(this.maximise);
@@ -111,6 +135,18 @@ public final class TitleBar extends JPanel {
 		this.maximise.setVisible(allowed);
 		this.revalidate();
 		this.repaint();
+	}
+
+	/** Shows the sidebar chevron, once the window has a sidebar for it to act on. */
+	public void setSidebarAvailable(boolean available) {
+		this.sidebar.setVisible(available);
+		this.revalidate();
+		this.repaint();
+	}
+
+	/** Repaints the chevron after the sidebar is shown or hidden by any other route, F8 included. */
+	public void sidebarChanged() {
+		this.sidebar.repaint();
 	}
 
 	// ------------------------------------------------------------------ moving the window
@@ -162,6 +198,12 @@ public final class TitleBar extends JPanel {
 	}
 
 	void toggleMaximised() {
+		// Guarded here as well as where the button is hidden: setMaximiseAllowed only runs when
+		// the client applies a display mode, so between opening the window and that call the
+		// button is on screen and a fixed window must not answer it.
+		if (!this.frame.isResizable()) {
+			return;
+		}
 		if (isMaximised(this.frame)) {
 			this.frame.setExtendedState(Frame.NORMAL);
 		} else {
@@ -206,7 +248,12 @@ public final class TitleBar extends JPanel {
 		}
 
 		private void act() {
-			if (this.kind == MINIMISE) {
+			if (this.kind == SCREENSHOT) {
+				TitleBar.this.actions.onScreenshot();
+			} else if (this.kind == SIDEBAR) {
+				TitleBar.this.actions.onToggleSidebar();
+				this.repaint();
+			} else if (this.kind == MINIMISE) {
 				TitleBar.this.frame.setExtendedState(TitleBar.this.frame.getExtendedState() | Frame.ICONIFIED);
 			} else if (this.kind == MAXIMISE) {
 				TitleBar.this.toggleMaximised();
@@ -232,7 +279,20 @@ public final class TitleBar extends JPanel {
 			g2.setStroke(new BasicStroke(1.2f));
 			int cx = w / 2;
 			int cy = h / 2;
-			if (this.kind == MINIMISE) {
+			if (this.kind == SCREENSHOT) {
+				// A camera: a body, the bump over the lens, and the lens.
+				g2.drawRect(cx - 6, cy - 3, 12, 8);
+				g2.drawLine(cx - 2, cy - 5, cx + 2, cy - 5);
+				g2.drawLine(cx - 2, cy - 5, cx - 3, cy - 3);
+				g2.drawLine(cx + 2, cy - 5, cx + 3, cy - 3);
+				g2.drawOval(cx - 2, cy - 1, 4, 4);
+			} else if (this.kind == SIDEBAR) {
+				// A chevron pointing the way the sidebar will go: closed pulls it out from the
+				// right, open pushes it back.
+				int dir = TitleBar.this.actions.isSidebarOpen() ? 1 : -1;
+				g2.drawLine(cx - 2 * dir, cy - 4, cx + 2 * dir, cy);
+				g2.drawLine(cx + 2 * dir, cy, cx - 2 * dir, cy + 4);
+			} else if (this.kind == MINIMISE) {
 				g2.drawLine(cx - 5, cy, cx + 5, cy);
 			} else if (this.kind == MAXIMISE) {
 				if (isMaximised(TitleBar.this.frame)) {

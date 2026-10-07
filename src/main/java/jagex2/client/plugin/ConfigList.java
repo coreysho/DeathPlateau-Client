@@ -42,17 +42,48 @@ public abstract class ConfigList {
 		public final String action;
 		public final boolean removable;
 
-		Row(int index, String label, String detail, String action, boolean removable) {
+		/** A reading on the right of the row, or null. */
+		public final String value;
+
+		/** 0 to 100 for a bar under the row, or -1 for none. */
+		public final int progress;
+
+		Row(int index, String label, String detail, String action, boolean removable,
+			String value, int progress) {
 			this.index = index;
 			this.label = label;
 			this.detail = detail;
 			this.action = action;
 			this.removable = removable;
+			this.value = value;
+			this.progress = progress < 0 ? -1 : progress > 100 ? 100 : progress;
 		}
 	}
 
 	/** How many rows there are. */
 	public abstract int size();
+
+	/**
+	 * A reading to put on the right of the row - an amount, a rate, a level - or null for none.
+	 *
+	 * SEPARATE FROM detail() because it is a different kind of thing: detail explains the row in
+	 * a dimmer second line under the label, and this is the number the row exists to show, which
+	 * belongs in a column where the eye can run down it.
+	 */
+	public String value(int index) {
+		return null;
+	}
+
+	/**
+	 * Progress through something, 0 to 100, drawn as a bar under the row. -1 for no bar.
+	 *
+	 * The only shape of chart this offers, and deliberately: a plugin that wants to draw needs
+	 * an overlay, and a panel that could draw anything would be a plugin handing the client a
+	 * Swing component, which is the thing a declarative list is here to avoid.
+	 */
+	public int progress(int index) {
+		return -1;
+	}
 
 	/** The row's text. */
 	public abstract String label(int index);
@@ -107,7 +138,8 @@ public abstract class ConfigList {
 				if (label == null) {
 					continue;
 				}
-				rows.add(new Row(i, label, this.detail(i), this.action(i), this.removable(i)));
+				rows.add(new Row(i, label, this.detail(i), this.action(i), this.removable(i),
+					this.value(i), this.progress(i)));
 			} catch (Throwable ignored) {
 				// One bad row, not a blank page.
 			}

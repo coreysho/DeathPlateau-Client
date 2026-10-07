@@ -151,6 +151,57 @@ public final class Icons {
 	}
 
 	/** Reload, on the plugin list's header. */
+	/**
+	 * The icon a plugin's rail page asked for, by name.
+	 *
+	 * A SMALL FIXED SET, and a plain one for anything it does not know. A plugin names an icon
+	 * rather than shipping one so that a jar from the hub cannot put arbitrary artwork into the
+	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
+	 * everybody's. Adding to the set is adding a case here.
+	 */
+	public static Icon named(String name, int size, Color colour) {
+		if ("chart".equals(name)) {
+			return chart(size, colour);
+		}
+		if ("wrench".equals(name)) {
+			return wrench(size, colour);
+		}
+		if ("download".equals(name)) {
+			return download(size, colour);
+		}
+		if ("refresh".equals(name)) {
+			return refresh(size, colour);
+		}
+		return list(size, colour);
+	}
+
+	/** Three rising bars, for a plugin that keeps a count of something. */
+	public static Icon chart(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int size) {
+				int w = Math.max(2, size / 6);
+				int base = size - 3;
+				g.fillRect(3, base - size / 3, w, size / 3);
+				g.fillRect(3 + w + 2, base - size / 2, w, size / 2);
+				g.fillRect(3 + 2 * (w + 2), base - size * 2 / 3, w, size * 2 / 3);
+			}
+		};
+	}
+
+	/** Three stacked lines: the plain one, for a page that is simply a list of things. */
+	public static Icon list(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int size) {
+				int gap = size / 4;
+				for (int i = 0; i < 3; i++) {
+					g.fillRect(3, gap + i * gap - 1, size - 6, 2);
+				}
+			}
+		};
+	}
+
 	public static Icon refresh(int size, Color colour) {
 		return new Vector(size, colour) {
 

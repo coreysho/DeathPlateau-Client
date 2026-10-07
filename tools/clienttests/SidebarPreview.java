@@ -74,6 +74,42 @@ public class SidebarPreview {
 				}
 			});
 		}
+		// The XP tracker's own page, off the rail: a total with a Reset button, then a row per
+		// skill with its rate, its earnings and a bar for how far through the level it is. The
+		// only consumer of the panel API, which is the point of showing it.
+		if (args.length > 1 && args[1].equals("xppanel")) {
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("xptracker")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				// Real levels and experience behind them, so the bars have something to be
+				// partway along: without these every skill reads level 0 and draws no bar.
+				client.skillBaseLevel[8] = 61;
+				client.skillExperience[8] = 350_000;
+				client.skillBaseLevel[14] = 55;
+				client.skillExperience[14] = 180_300;
+				client.skillBaseLevel[2] = 70;
+				client.skillExperience[2] = 760_120;
+				manager.onStatChanged(8, 61, 350_000, 1_250);     // woodcutting
+				manager.onStatChanged(14, 55, 180_300, 420);      // mining
+				manager.onStatChanged(2, 70, 760_120, 8_900);     // strength
+				// The rail reads its panels on the game thread, so the queue has to be drained
+				// before there is a tab to open - twice, because opening it reads them again.
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				// LOUD, because this is the whole claim: a plugin loaded out of a jar in the
+				// plugins folder gets an icon on the rail. openPanel returns false when there
+				// is no tab for it, and a preview that quietly rendered the plugin list instead
+				// would have looked exactly like a pass.
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException(
+						"no rail tab for " + entry.key + ": a jar plugin's panel did not reach the rail");
+				}
+				manager.onClientTick(0);
+				Thread.sleep(250);
+			}
+		}
 		// The Anti-drag page: one @ConfigItem int and nothing else, which is the third shape a
 		// config page comes in - a number the player types rather than a switch or a list.
 		if (args.length > 1 && args[1].equals("antidrag")) {

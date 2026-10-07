@@ -67,6 +67,7 @@ import java.util.Date;
 import java.util.zip.CRC32;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
+import jagex2.client.plugin.ui.Theme;
 import sign.signlink;
 
 public class Client extends GameShell implements PixMap.Target {
@@ -754,12 +755,12 @@ public class Client extends GameShell implements PixMap.Target {
 		int y = this.qolPanelY();
 		int h = this.qolPanelHeight();
 
-		Pix2D.fillRectTrans(0x000000, y, QOL_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, QOL_PANEL_W);
+		Pix2D.fillRectTrans(Theme.PANEL_BACKDROP_RGB, y, QOL_PANEL_W, h, Theme.PANEL_BACKDROP_ALPHA, x);
+		Pix2D.drawRect(y, h, Theme.ACCENT_RGB, x, QOL_PANEL_W);
 
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Client settings");
+		this.fontBold12.drawString(x + 10, Theme.ACCENT_BRIGHT_RGB, y + 17, "Client settings");
 		String close = "F9 / Esc to close";
-		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
+		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), Theme.TEXT_DIM_RGB, y + 17, close);
 
 		int mouseX = super.mouseX - this.layout.vpX;
 		int mouseY = super.mouseY - this.layout.vpY;
@@ -767,7 +768,8 @@ public class Client extends GameShell implements PixMap.Target {
 			int rowY = y + QOL_PANEL_HEADER_H + i * QOL_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + QOL_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + QOL_PANEL_ROW_H;
 			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
+				Pix2D.fillRectTrans(Theme.PANEL_HOVER_RGB, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H,
+					Theme.PANEL_HOVER_ALPHA, x + 1);
 			}
 			int baseline = rowY + QOL_PANEL_ROW_H - 4;
 			// The two stepping rows keep the same box the switches have, so the column still lines up;
@@ -776,23 +778,29 @@ public class Client extends GameShell implements PixMap.Target {
 			if (i == ROW_DRAW_DISTANCE) {
 				int tiles = DisplaySettings.drawDistance();
 				boolean far = tiles > DisplaySettings.DRAW_DISTANCES[0];
-				this.fontPlain12.drawString(x + 10, far ? 0x00C000 : 0x707070, baseline, far ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, far ? 0xFFFFFF : 0x909090, baseline, "Draw distance: " + tiles + " tiles");
+				this.fontPlain12.drawString(x + 10, far ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, far ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, far ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+					baseline, "Draw distance: " + tiles + " tiles");
 				continue;
 			}
 			if (i == ROW_WINDOW) {
 				boolean sized = this.wantMode != Layout.FIXED;
-				this.fontPlain12.drawString(x + 10, sized ? 0x00C000 : 0x707070, baseline, sized ? "[X]" : "[  ]");
-				this.fontPlain12.drawString(x + 36, sized ? 0xFFFFFF : 0x909090, baseline, "Window: " + Layout.modeName(this.wantMode));
+				this.fontPlain12.drawString(x + 10, sized ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, sized ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, sized ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+					baseline, "Window: " + Layout.modeName(this.wantMode));
 				continue;
 			}
 			boolean on = QolSettings.on(i);
-			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
-			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, QolSettings.label(i));
+			this.fontPlain12.drawString(x + 10, on ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+				baseline, on ? "[X]" : "[  ]");
+			this.fontPlain12.drawString(x + 36, on ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB,
+				baseline, QolSettings.label(i));
 		}
 
 		String hint = "Click a row to change it. Saved on this computer.";
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
+		this.fontPlain12.drawString(x + 10, Theme.TEXT_DIM_RGB, y + h - 8, hint);
 	}
 
 	/**
@@ -1048,12 +1056,12 @@ public class Client extends GameShell implements PixMap.Target {
 		int y = this.pluginPanelY();
 		int h = this.pluginPanelHeight();
 
-		Pix2D.fillRectTrans(0x000000, y, PLUGIN_PANEL_W, h, 200, x);
-		Pix2D.drawRect(y, h, 0x8B7B5A, x, PLUGIN_PANEL_W);
+		Pix2D.fillRectTrans(Theme.PANEL_BACKDROP_RGB, y, PLUGIN_PANEL_W, h, Theme.PANEL_BACKDROP_ALPHA, x);
+		Pix2D.drawRect(y, h, Theme.ACCENT_RGB, x, PLUGIN_PANEL_W);
 
-		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Plugins");
+		this.fontBold12.drawString(x + 10, Theme.ACCENT_BRIGHT_RGB, y + 17, "Plugins");
 		String close = "F8 / Esc to close";
-		this.fontPlain12.drawString(x + PLUGIN_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
+		this.fontPlain12.drawString(x + PLUGIN_PANEL_W - 10 - this.fontPlain12.stringWid(close), Theme.TEXT_DIM_RGB, y + 17, close);
 
 		int mouseX = super.mouseX - this.layout.vpX;
 		int mouseY = super.mouseY - this.layout.vpY;
@@ -1067,22 +1075,25 @@ public class Client extends GameShell implements PixMap.Target {
 			boolean hovered = mouseX >= x + 1 && mouseX < x + PLUGIN_PANEL_W - 1
 				&& mouseY >= rowY && mouseY < rowY + PLUGIN_PANEL_ROW_H;
 			if (hovered && row.isClickable()) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, PLUGIN_PANEL_W - 2, PLUGIN_PANEL_ROW_H, 30, x + 1);
+				Pix2D.fillRectTrans(Theme.PANEL_HOVER_RGB, rowY, PLUGIN_PANEL_W - 2, PLUGIN_PANEL_ROW_H,
+					Theme.PANEL_HOVER_ALPHA, x + 1);
 				if (row.hint != null && row.hint.length() > 0) {
 					hint = row.hint;
 				}
 			}
 			int baseline = rowY + PLUGIN_PANEL_ROW_H - 4;
 			if (row.showCheckbox) {
-				this.fontPlain12.drawString(x + 10, row.checked ? 0x00C000 : 0x707070, baseline, row.checked ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 10,
+					row.checked ? Theme.ACCENT_BRIGHT_RGB : Theme.SWITCH_OFF_RGB,
+					baseline, row.checked ? "[X]" : "[  ]");
 			}
-			int colour = row.kind == PluginManager.PanelRow.KIND_ACTION ? 0xFFB000
-				: row.kind == PluginManager.PanelRow.KIND_TEXT ? 0x9F9F9F
-				: row.checked ? 0xFFFFFF : 0x909090;
+			int colour = row.kind == PluginManager.PanelRow.KIND_ACTION ? Theme.ACCENT_BRIGHT_RGB
+				: row.kind == PluginManager.PanelRow.KIND_TEXT ? Theme.TEXT_DIM_RGB
+				: row.checked ? Theme.TEXT_RGB : Theme.TEXT_DIM_RGB;
 			this.fontPlain12.drawString(x + 36, colour, baseline, row.label);
 		}
 
-		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
+		this.fontPlain12.drawString(x + 10, Theme.TEXT_DIM_RGB, y + h - 8, hint);
 	}
 
 	/** Consumes a click while the plugin panel is open, on the same terms as the other three. */
@@ -3135,7 +3146,71 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawTitle();
 		}
 
+		if (this.screenshotWanted) {
+			this.screenshotWanted = false;
+			this.writeScreenshot();
+		}
+
 		this.dragCycles = 0;
+	}
+
+	// ------------------------------------------------------------------ screenshots
+
+	/**
+	 * Set by the camera button, read at the end of the next frame.
+	 *
+	 * A FLAG RATHER THAN A CALL, because the button is Swing and the viewport buffer is written
+	 * by the game loop: copying it from the event thread would catch a frame halfway drawn, with
+	 * a torn line across the middle of whatever the player wanted a picture of. Waiting for the
+	 * end of draw() means the buffer is a whole finished frame and nothing is racing for it.
+	 */
+	private volatile boolean screenshotWanted;
+
+	/** Asks for a screenshot of the next completed frame. Safe to call from any thread. */
+	public void requestScreenshot() {
+		this.screenshotWanted = true;
+	}
+
+	/**
+	 * Writes the game view to ~/.deathplateau/screenshots.
+	 *
+	 * WHAT IS IN IT is areaViewport: the scene, the plugin overlays, and in the resizable layout
+	 * the panels that are composited over it. Not the window's own chrome, and in the fixed
+	 * layout not the surrounding interface either - the frame art there goes straight to the
+	 * screen Graphics one piece at a time and was never gathered anywhere this could copy from.
+	 * What a player wants a picture of is the game, which is what this is.
+	 */
+	private void writeScreenshot() {
+		PixMap area = this.areaViewport;
+		if (area == null || area.data == null) {
+			this.addMessage("", "There is nothing to take a picture of yet.", 0);
+			return;
+		}
+		try {
+			java.io.File dir = new java.io.File(System.getProperty("user.home", "."),
+				".deathplateau/screenshots");
+			if (!dir.isDirectory() && !dir.mkdirs()) {
+				this.addMessage("", "Could not make " + dir.getPath() + " to save the screenshot in.", 0);
+				return;
+			}
+			java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+				area.width, area.height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			image.setRGB(0, 0, area.width, area.height, area.data, 0, area.width);
+			String stamp = new java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss")
+				.format(new java.util.Date());
+			java.io.File file = new java.io.File(dir, "deathplateau_" + stamp + ".png");
+			// A second shot in the same second must not quietly overwrite the first.
+			for (int n = 2; file.exists() && n < 100; n++) {
+				file = new java.io.File(dir, "deathplateau_" + stamp + "_" + n + ".png");
+			}
+			javax.imageio.ImageIO.write(image, "png", file);
+			DevLog.log("SHOT", "wrote " + file.getPath());
+			this.addMessage("", "Screenshot saved as " + file.getName(), 0);
+		} catch (Throwable error) {
+			// A full disk, a read-only home. A failed screenshot is not a reason to lose the game.
+			DevLog.log("SHOT", "screenshot failed: " + error);
+			this.addMessage("", "The screenshot could not be saved: " + error, 0);
+		}
 	}
 
 	@ObfuscatedName("client.b(I)V")

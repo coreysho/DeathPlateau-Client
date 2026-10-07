@@ -31,9 +31,11 @@ LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
+RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']),
-         ('antidrag', ['antidrag']), ('hub', ['hub']), ('empty', [])]
+         ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('hub', ['hub']),
+         ('empty', [])]
 
 
 def run(*cmd, **kwargs):
@@ -127,7 +129,7 @@ def main():
                     full = os.path.join(base, name)
                     z.write(full, os.path.relpath(full, plugin_classes).replace(os.sep, '/'))
 
-        r = run(javac, '-nowarn', '-cp', classes, '-d', work, PREVIEW, PAINT_TEST)
+        r = run(javac, '-nowarn', '-cp', classes, '-d', work, PREVIEW, PAINT_TEST, RAIL_TEST)
         if r.returncode != 0:
             print(r.stderr[-6000:])
             raise SystemExit('run_sidebarpreview: the preview does not compile')
@@ -146,6 +148,19 @@ def main():
                 print(line)
         if r.returncode != 0:
             fails += 1
+
+        # Does folding the rail's page away give the window's width back?
+        r = run(*(launcher + [java, '-Dlostcity.cachedir=' + os.path.join(work, 'railcache'),
+                              '-Duser.home=' + os.path.join(work, 'railhome'),
+                              '-cp', classes + os.pathsep + work,
+                              'jagex2.client.SidebarRailTest']))
+        said = [l for l in r.stdout.split('\n') if l.strip() and not l.startswith('[')]
+        for line in said:
+            print(line)
+        if not said:
+            print(r.stderr[-1500:])
+        if r.returncode != 0:
+            fails += max(1, sum(1 for l in said if l.startswith('FAIL')))
 
         # A cache directory of this run's own. Without it the plugin store, and the ground item
         # rules the Ground items page sets up for its picture, are written to the real

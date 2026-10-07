@@ -55,6 +55,9 @@ public class PluginSystemTest {
 		System.out.println("9. the anti-drag plugin, which is a number rather than a switch");
 		antiDragTests();
 		System.out.println();
+		System.out.println("10. panels: a plugin's own page on the rail");
+		panelTests();
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -337,6 +340,109 @@ public class PluginSystemTest {
 		base.shutDown();
 		check(client.pluginDragCycles == 5,
 			"turning it off leaves the client holding for five again, exactly as an unmodified one does");
+	}
+
+	// ---------------------------------------------------------------- 10
+
+	/** A plugin with a page of its own, of the shape the rail draws. */
+	@PluginDescriptor(name = "Counter", description = "A page", key = "counter")
+	public static class PanelPlugin extends Plugin {
+
+		int count = 3;
+		int pressed = -1;
+		boolean explode;
+
+		protected void startUp() {
+			this.addPanel("Readings", "chart", new ConfigList() {
+
+				public int size() {
+					if (PanelPlugin.this.explode) {
+						throw new IllegalStateException("no");
+					}
+					return PanelPlugin.this.count;
+				}
+
+				public String label(int index) {
+					return "Row " + index;
+				}
+
+				public String value(int index) {
+					return index * 10 + " xp";
+				}
+
+				public int progress(int index) {
+					// Deliberately out of range at both ends: the row is supposed to clamp.
+					return index == 0 ? -40 : index == 1 ? 50 : 300;
+				}
+
+				public void onAction(int index) {
+					PanelPlugin.this.pressed = index;
+				}
+			});
+		}
+	}
+
+	static void panelTests() {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			skipped = true;
+			return;
+		}
+		PanelPlugin plugin = new PanelPlugin();
+		Plugin base = plugin;
+		PluginManager manager;
+		try {
+			manager = new PluginManager(new jagex2.client.Client(), null, null, null);
+			base.attach(new PluginContext(new jagex2.client.Client()),
+				new PluginConfig("counter", new PluginStore(null)));
+		} catch (Throwable error) {
+			check(false, "the plugin attaches (" + error + ")");
+			return;
+		}
+
+		check(base.getPanels().isEmpty(), "a plugin that has not started has no page");
+		base.startUp();
+		check(base.getPanels().size() == 1, "starting it registers one");
+		check(base.getPanels().get(0).title.equals("Readings"), "...under the title it gave");
+
+		List<ConfigList.Row> rows = base.getPanels().get(0).list.snapshot();
+		check(rows.size() == 3, "the page reads three rows (" + rows.size() + ")");
+		check(rows.get(1).label.equals("Row 1") && "10 xp".equals(rows.get(1).value),
+			"...each with a label and a reading of its own");
+		check(rows.get(1).progress == 50, "...and a bar where it asked for one");
+
+		// A bar is a percentage. A plugin handing out -40 or 300 must not paint outside its row.
+		check(rows.get(0).progress == -1,
+			"a negative progress means no bar rather than a backwards one ("
+				+ rows.get(0).progress + ")");
+		check(rows.get(2).progress == 100, "and anything over 100 is full, not wider than the row ("
+			+ rows.get(2).progress + ")");
+
+		// Row order and index are the plugin's: acting on row 2 must reach ITS row 2.
+		base.getPanels().get(0).list.onAction(2);
+		check(plugin.pressed == 2, "pressing a row's button reaches the row it was drawn for");
+
+		// A page that throws is an empty page, not a dead sidebar.
+		plugin.explode = true;
+		List<ConfigList.Row> after = base.getPanels().get(0).list.snapshot();
+		check(after.isEmpty(), "a page whose plugin throws reads as empty rather than taking the "
+			+ "sidebar down (" + after.size() + ")");
+		plugin.explode = false;
+
+		// Only RUNNING plugins are on the rail: the page goes when the plugin does.
+		base.shutDown();
+		base.clearOverlays();
+		check(base.getPanels().isEmpty(), "stopping the plugin takes its page off the rail");
+
+		// And the manager only offers panels for plugins it has running.
+		manager.reload();
+		List<PluginManager.PanelSnapshot> built = manager.snapshotPanels();
+		boolean allRunning = true;
+		for (int i = 0; i < built.size(); i++) {
+			allRunning &= built.get(i).entry.isEnabled();
+		}
+		check(allRunning, "every panel the manager offers belongs to a plugin that is running ("
+			+ built.size() + " panels)");
 	}
 
 	/**
