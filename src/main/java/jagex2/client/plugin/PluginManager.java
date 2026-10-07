@@ -55,8 +55,6 @@ public final class PluginManager {
 	 * would turn "is this class a plugin" into something a stray class could answer by accident.
 	 */
 	private static final String[] BUILT_IN = {
-		"jagex2.client.plugin.builtin.EscapeClosesPlugin",
-		"jagex2.client.plugin.builtin.HideRoofsPlugin",
 		"jagex2.client.plugin.builtin.XpDropsPlugin",
 		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin",
 		"jagex2.client.plugin.builtin.MenuSwapperPlugin",

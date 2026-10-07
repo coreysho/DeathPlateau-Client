@@ -409,12 +409,6 @@ public class Client extends GameShell implements PixMap.Target {
 	// screen. (It had three siblings once. The swaps panel and the ground item panel are both
 	// plugin config pages now, which is where a panel about one feature belongs.)
 	public PluginManager plugins;
-	/**
-	 * Set by the Hide roofs plugin (jagex2.client.plugin.builtin.HideRoofsPlugin), read by the
-	 * renderer. A plugin cannot hook the per-frame decision about what level to draw, so it sets
-	 * this instead - see PluginContext.setRoofsHidden.
-	 */
-	public boolean pluginRoofsHidden;
 	private static final int PLUGIN_PANEL_KEY = 1015; // F8
 	private static final int PLUGIN_PANEL_W = 400;
 	private static final int PLUGIN_PANEL_ROW_H = 15;
@@ -6273,6 +6267,14 @@ public class Client extends GameShell implements PixMap.Target {
 						continue;
 					}
 
+					// QoL: Escape closes whatever interface is currently open, regardless of state.
+					// Not consumed - anything else that wants Escape still gets it, which is how
+					// this has always behaved.
+					if (key == GameShell.KEY_ESCAPE && QolSettings.on(QolSettings.ESC_CLOSE)) {
+						DevLog.log("HOTKEY", "Escape closed interfaces");
+						this.closeInterfaces();
+					}
+
 					if (this.viewportInterfaceId != -1 && this.reportAbuseInterfaceId == this.viewportInterfaceId) {
 						if (key == 8 && this.reportAbuseInput.length() > 0) {
 							this.reportAbuseInput = this.reportAbuseInput.substring(0, this.reportAbuseInput.length() - 1);
@@ -7975,7 +7977,7 @@ public class Client extends GameShell implements PixMap.Target {
 		// rate whatever the player has chosen to look at; and the pitch test the method opens with
 		// leaves var2 at 3 when the camera is looking steeply down, so an early exit inside it
 		// would draw roofs again the moment you tilted the camera - the bug this is not.
-		if (this.pluginRoofsHidden) {
+		if (QolSettings.on(QolSettings.ROOFS_OFF)) {
 			return this.currentLevel;
 		}
 		return var2;

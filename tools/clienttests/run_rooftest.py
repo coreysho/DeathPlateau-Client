@@ -34,8 +34,7 @@ SWAPS = os.path.join(ROOT, 'src/main/java/jagex2/client/MenuSwaps.java')
 SHELL = os.path.join(HERE, 'RoofTest.shell.java')
 
 DECLS = ['layout', 'QOL_PANEL_ROWS', 'QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
-         'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ',
-         'pluginRoofsHidden']
+         'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ']
 METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY']
 
 
@@ -66,6 +65,29 @@ def method(src, name):
             if depth == 0:
                 return src[m.start():j + 1]
     raise SystemExit('run_rooftest: unbalanced braces in %s' % name)
+
+
+def escape_branches(src):
+    """Every `if (key == GameShell.KEY_ESCAPE...)` in the file, as (condition, body)."""
+    out = []
+    at = 0
+    while True:
+        i = src.find('if (key == GameShell.KEY_ESCAPE', at)
+        if i < 0:
+            return out
+        open_brace = src.index('{', i)
+        depth = 0
+        for j in range(open_brace, len(src)):
+            if src[j] == '{':
+                depth += 1
+            elif src[j] == '}':
+                depth -= 1
+                if depth == 0:
+                    out.append((src[i:open_brace], src[open_brace + 1:j]))
+                    at = j
+                    break
+        else:
+            raise SystemExit('run_rooftest: unbalanced braces after an Escape branch')
 
 
 def source_checks(src, settings, swaps):
@@ -100,16 +122,31 @@ def source_checks(src, settings, swaps):
     ret = top.rindex('return var2;')
     out.append(('the toggle is at the one return, after the ANTICHEAT_CYCLELOGIC1 block, so the '
                 'packet that block sends keeps going out on its own schedule',
-                'pluginRoofsHidden' in top[:ret]
-                and top.index('ANTICHEAT_CYCLELOGIC1') < top.index('pluginRoofsHidden')))
+                'QolSettings.ROOFS_OFF' in top[:ret]
+                and top.index('ANTICHEAT_CYCLELOGIC1') < top.index('QolSettings.ROOFS_OFF')))
     out.append(('...and outside the camera-pitch test, so a steeply tilted camera cannot put the '
                 'roofs back',
                 top.count('if (this.cameraPitch < 310) {') == 1
-                and top.index('pluginRoofsHidden') > top.rindex('levelTileFlags')))
+                and top.index('QolSettings.ROOFS_OFF') > top.rindex('levelTileFlags')))
     # The cutscene path is deliberately left alone.
-    out.append(('the cutscene camera is left alone: getTopLevelCutscene() does not read the flag, '
+    out.append(('the cutscene camera is left alone: getTopLevelCutscene() does not read the setting, '
                 'because a scripted shot chose its own level',
-                'pluginRoofsHidden' not in method(src, 'getTopLevelCutscene')))
+                'ROOFS_OFF' not in method(src, 'getTopLevelCutscene')))
+
+    # Escape came back to the panel alongside the roofs toggle, and it is the other kind of
+    # setting: a branch in the key loop rather than one in the renderer. Checked in source, like
+    # the two above, because the key loop is 400 lines inside handleInputKey() and cannot be
+    # lifted out - a source check that pins the two things that have ever been wrong here beats
+    # no check at all.
+    # Several branches test Escape - the two panels close on it too - so this is the one that
+    # closes INTERFACES, found by what it does rather than by where it sits.
+    closers = [(cond, body) for cond, body in escape_branches(src) if 'closeInterfaces()' in body]
+    out.append(('exactly one Escape branch closes interfaces (%d)' % len(closers), len(closers) == 1))
+    cond, body = closers[0] if len(closers) == 1 else ('', '')
+    out.append(('...gated on its switch, so the panel can turn it off',
+                'QolSettings.on(QolSettings.ESC_CLOSE)' in cond))
+    out.append(('...and it does not consume the key, so anything else that wants Escape still gets it',
+                'continue' not in body and 'break' not in body))
     # The default, which is the one place this setting breaks the file's own rule.
     m = re.search(r'private static final boolean\[\] DEFAULTS = \{(.*?)\};', settings, re.S)
     defaults = [x.strip() for x in m.group(1).replace('\n', '').split(',') if x.strip()]
@@ -121,15 +158,21 @@ def source_checks(src, settings, swaps):
     out.append(('the three parallel arrays are the same length: %d keys, %d labels, %d defaults'
                 % (len(keys), len(labels), len(defaults)),
                 len(keys) == len(labels) == len(defaults)))
-    # Hiding roofs left this file to become a plugin, taking the one false with it.
-    out.append(('roofs_off is no longer a QolSettings switch, so every default here is ON again',
-                'roofs_off' not in keys and all(d == 'true' for d in defaults)))
-    plugin = read(os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/HideRoofsPlugin.java'))
-    out.append(('...and the plugin it became is the thing that defaults off, for the same reason: '
-                'it changes how the world looks rather than adding a convenience',
-                'enabledByDefault = false' in plugin))
-    out.append(('...and it carries the old key, so a player who turned it on keeps it on',
-                'legacySetting = "roofs_off"' in plugin))
+    idx = keys.index('roofs_off') if 'roofs_off' in keys else -1
+    out.append(('roofs_off is the one setting that defaults OFF, because it changes how the world '
+                'looks rather than adding a convenience',
+                idx >= 0 and defaults[idx] == 'false'
+                and all(d == 'true' for i, d in enumerate(defaults) if i != idx)))
+    # Both of these were plugins for a while. Neither is one now, and neither may leave a built-in
+    # behind claiming the same feature - two owners for one toggle is how a switch stops working
+    # for reasons nobody can see from either side.
+    manager = read(os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginManager.java'))
+    out.append(('no built-in plugin is still shipped for either of them',
+                'HideRoofsPlugin' not in manager and 'EscapeClosesPlugin' not in manager))
+    builtin = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
+    out.append(('...and neither class is left in the tree for a classpath scan to find',
+                not os.path.exists(os.path.join(builtin, 'HideRoofsPlugin.java'))
+                and not os.path.exists(os.path.join(builtin, 'EscapeClosesPlugin.java'))))
     return out
 
 

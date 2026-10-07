@@ -193,9 +193,15 @@ public class PluginSystemTest {
 	// ---------------------------------------------------------------- 4
 
 	/**
-	 * Escape-closes and Hide-roofs were QolSettings switches before they were plugins. What has
-	 * to hold is that nobody notices: a player who never touched them gets the same behaviour,
-	 * and a player who turned one off keeps it off.
+	 * Every built-in was a QolSettings switch before it was a plugin. What has to hold is that
+	 * nobody notices: a player who never touched one gets the same behaviour, and a player who
+	 * turned one off keeps it off.
+	 *
+	 * NOT EVERY PORT STUCK. "Escape closes interfaces" and "Hide roofs" were the first two and
+	 * have gone back to the F9 panel, so they are not here any more - run_rooftest owns them
+	 * again, including the check that Hide roofs is the one setting defaulting off. Nothing
+	 * built in asks to start disabled now, so that half of defaultEnabled() is only covered by
+	 * the jar case below, which returns false for its own reason.
 	 */
 	static void builtInTests() {
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -217,13 +223,14 @@ public class PluginSystemTest {
 		if (manager == null) {
 			return;
 		}
-		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null
-			&& entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null
-			&& entry(manager, "menu-swapper") != null, "all five built-in plugins are found");
-		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "escape-closes").source),
-			"...and say they came with the client");
-		check(enabled(manager, "escape-closes"), "Escape closes interfaces is on by default, as it was");
-		check(!enabled(manager, "hide-roofs"), "Hide roofs is off by default, as it was");
+		check(entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null
+			&& entry(manager, "menu-swapper") != null && entry(manager, "ground-items") != null,
+			"all four built-in plugins are found");
+		check(entry(manager, "escape-closes") == null && entry(manager, "hide-roofs") == null,
+			"...and the two that went back to the F9 panel are not among them");
+		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "xp-drops").source),
+			"...and they say they came with the client");
+		check(enabled(manager, "ground-items"), "Ground items is on by default, as it was");
 		check(enabled(manager, "xp-drops"), "XP drops is on by default, as it was");
 		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
 		check(enabled(manager, "menu-swapper"), "Left-click swaps is on by default, as it was");
@@ -237,36 +244,32 @@ public class PluginSystemTest {
 		check(entry(manager, "menu-swapper").hasSettings(),
 			"...but still has a page, because it has a list");
 		check(entry(manager, "xp-drops").hasSettings(), "XP drops has a page from its settings");
-		check(!entry(manager, "escape-closes").hasSettings(),
+		check(!entry(manager, "barrows-doors").hasSettings(),
 			"a plugin with neither has no page, and no cog");
 
-		// A player who turned Escape off back when it was a setting.
-		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");
-		plugins.delete();
-		manager = freshManager();
-		check(manager != null && !enabled(manager, "escape-closes"),
-			"a player who turned Escape off keeps it off");
-		check(manager != null && !enabled(manager, "hide-roofs"), "...and Hide roofs is unaffected");
-
-		// And the one that draws: a player who turned XP drops off keeps it off.
-		write(qol, "version=1\nxp_drops=0\n");
+		// A player who turned one off back when it was a setting.
+		write(qol, "version=1\nxp_drops=0\nground_items=1\n");
 		plugins.delete();
 		manager = freshManager();
 		check(manager != null && !enabled(manager, "xp-drops"),
 			"a player who turned XP drops off keeps it off");
+		check(manager != null && enabled(manager, "ground-items"),
+			"...and the one beside it in the same file is unaffected");
 
-		// A player who turned Hide roofs ON back when it was a setting.
-		write(qol, "version=1\nroofs_off=1\n");
+		// The key a setting was saved under is the ONLY thing tying it to its plugin, and the two
+		// names differ - ground_items against ground-items. Getting that wrong loses the choice
+		// silently, so it is worth a second feature rather than trusting the first.
+		write(qol, "version=1\nground_items=0\n");
 		plugins.delete();
 		manager = freshManager();
-		check(manager != null && enabled(manager, "hide-roofs"),
-			"a player who turned Hide roofs on keeps it on");
+		check(manager != null && !enabled(manager, "ground-items"),
+			"a player who turned Ground items off keeps it off");
 
 		// Once the plugin has its own state, the old file is history.
-		write(qol, "version=1\nesc_close=0\n");
-		write(plugins, "escape-closes.enabled=1\n");
+		write(qol, "version=1\nxp_drops=0\n");
+		write(plugins, "xp-drops.enabled=1\n");
 		manager = freshManager();
-		check(manager != null && enabled(manager, "escape-closes"),
+		check(manager != null && enabled(manager, "xp-drops"),
 			"the plugin's own state wins over the setting it replaced");
 
 		qol.delete();
@@ -278,8 +281,8 @@ public class PluginSystemTest {
 	 *
 	 * Client extends Applet, whose constructor refuses to run without a display - so this whole
 	 * section needs one, and the runner provides a virtual one. There is no way round it worth
-	 * having: a PluginManager with no client cannot start HideRoofsPlugin, which is exactly what
-	 * is being tested.
+	 * having: a PluginManager with no client cannot start a built-in that touches one, which is
+	 * exactly what is being tested.
 	 */
 	static PluginManager freshManager() {
 		try {

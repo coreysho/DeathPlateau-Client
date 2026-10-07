@@ -48,8 +48,6 @@ public class RoofTest {
 	static final int ROOF = 0x4;
 
 	RoofTest fresh() {
-		current = this;
-		this.pluginRoofsHidden = roofsHidden;
 		this.levelTileFlags = new byte[4][104][104];
 		this.currentLevel = 0;
 		this.cameraPitch = 200;               // not looking down: the tile tests run
@@ -82,22 +80,9 @@ public class RoofTest {
 		}
 	}
 
-	// Hiding roofs is a plugin now (jagex2.client.plugin.builtin.HideRoofsPlugin), and all the
-	// plugin does is set pluginRoofsHidden - so these tests drive that flag, which is what
-	// getTopLevel actually reads.
-	//
-	// The setting it replaced was static, so the tests below set it both BEFORE building a
-	// client and AFTER - "c = fresh(); roofsOff(true); c.getTopLevel()" is as common here as the
-	// other order. A per-instance flag has to serve both, so this remembers the choice for the
-	// next fixture and applies it to the current one. Keeping both orders working is what makes
-	// this a port of the test rather than a rewrite of it.
-	static boolean roofsHidden;
-	static RoofTest current;
-
 	static void roofsOff(boolean want) {
-		roofsHidden = want;
-		if (current != null) {
-			current.pluginRoofsHidden = want;
+		if (QolSettings.on(QolSettings.ROOFS_OFF) != want) {
+			QolSettings.toggle(QolSettings.ROOFS_OFF);
 		}
 	}
 
@@ -233,24 +218,21 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 12, "twelve settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 14, "fourteen settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
-		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel. Nor
-		// is Ground item names, which went the same way and took the F11 panel's own ground-item
-		// rows with it.
-		boolean roofsGone = true;
+		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),
+			"...the roofs one labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
+		check(QolSettings.label(QolSettings.ESC_CLOSE).equals("Escape closes interfaces"),
+			"...and Escape back beside it");
+		// Ground item names went the other way and stayed gone: it is a plugin with a config page.
 		boolean groundGone = true;
 		for (int i = 0; i < QolSettings.COUNT; i++) {
-			if (QolSettings.label(i).equals("Hide roofs")) {
-				roofsGone = false;
-			}
 			if (QolSettings.label(i).equals("Ground item names")) {
 				groundGone = false;
 			}
 		}
-		check(roofsGone, "...and Hide roofs is not among them any more - it is a plugin");
-		check(groundGone, "...nor Ground item names, which is one too");
+		check(groundGone, "...while Ground item names is not here: that one really is a plugin");
 		// The panel has no paging. It has never needed it, and the only thing stopping it is that
 		// nobody has added enough settings - which is worth failing on rather than discovering.
 		check(c.qolPanelHeight() <= 334,
@@ -269,12 +251,11 @@ public class RoofTest {
 		c.layout = Layout.fixed();
 		check(c.qolPanelY() == (334 - c.qolPanelHeight()) / 2, "...and the fixed screen where it always was");
 		// the toggle round-trips through the real store
-		// Still worth driving the real store once; chat history stands in for the one that left.
-		boolean was = QolSettings.on(QolSettings.CHAT_HISTORY);
-		QolSettings.toggle(QolSettings.CHAT_HISTORY);
-		check(QolSettings.on(QolSettings.CHAT_HISTORY) != was, "the switch flips");
-		QolSettings.toggle(QolSettings.CHAT_HISTORY);
-		check(QolSettings.on(QolSettings.CHAT_HISTORY) == was, "...and flips back");
+		boolean was = QolSettings.on(QolSettings.ROOFS_OFF);
+		QolSettings.toggle(QolSettings.ROOFS_OFF);
+		check(QolSettings.on(QolSettings.ROOFS_OFF) != was, "the switch flips");
+		QolSettings.toggle(QolSettings.ROOFS_OFF);
+		check(QolSettings.on(QolSettings.ROOFS_OFF) == was, "...and flips back");
 	}
 
 }

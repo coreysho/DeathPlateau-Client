@@ -168,22 +168,6 @@ public final class PluginContext {
 	}
 
 	/**
-	 * Hides or shows the roofs over buildings.
-	 *
-	 * A SETTING, NOT A DRAW CALL. The client decides what level to draw the scene at deep inside
-	 * its renderer, every frame, in a method no event could usefully fire from. So a plugin says
-	 * what it wants once and the renderer reads it - which also means a plugin that is turned off
-	 * must put it back, as HideRoofsPlugin does in shutDown().
-	 */
-	public void setRoofsHidden(boolean hidden) {
-		this.client.pluginRoofsHidden = hidden;
-	}
-
-	public boolean areRoofsHidden() {
-		return this.client.pluginRoofsHidden;
-	}
-
-	/**
 	 * Keeps the green the cache ships the opened Barrows doors in, so the one that will open for
 	 * you stands out from the five that will not.
 	 *

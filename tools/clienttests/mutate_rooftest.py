@@ -42,18 +42,24 @@ MUTS = [
      '\tpublic int getTopLevelCutscene() {\n\t\tif (QolSettings.on(QolSettings.ROOFS_OFF)) {\n'
      '\t\t\treturn this.currentLevel;\n\t\t}'),
     (SETTINGS, 'Hide roofs defaulting ON, which changes the world for everyone who updates',
-     'true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,\n'
-     '\t\tfalse', 'true, true, true, true, true, true, true, true, true, true, true, true, true, '
-     'true, true,\n\t\ttrue'),
+     'true, true, true, true, true, true, true, true, true, true, true, true, true,\n\t\tfalse',
+     'true, true, true, true, true, true, true, true, true, true, true, true, true,\n\t\ttrue'),
     (SETTINGS, 'a label added without a key, so the three parallel arrays disagree',
-     '"XP drops", "Ground item names", "Left-click swaps (F10)", "Hide roofs"',
-     '"XP drops", "Ground item names", "Left-click swaps (F10)", "Hide roofs", "Something else"'),
+     '"Anti-drag (items drag after 0.2s)", "Hide roofs"',
+     '"Anti-drag (items drag after 0.2s)", "Hide roofs", "Something else"'),
     # The panel outgrowing its viewport. NOT by adding settings: COUNT comes from three parallel
     # arrays that have to be edited together, and a single-edit version of that breaks the parity
     # check instead and gets attributed to it. Taller rows is the same arithmetic in one edit.
     (CLIENT, 'the panel rows made taller than the viewport can fit',
-     'private static final int QOL_PANEL_ROW_H = 15;',
-     'private static final int QOL_PANEL_ROW_H = 20;'),
+     'private static final int QOL_PANEL_ROW_H = 14;',
+     'private static final int QOL_PANEL_ROW_H = 22;'),
+    # Escape went back to the panel with it, and the switch is the whole point of it being there.
+    (CLIENT, 'Escape closing interfaces whatever the setting says',
+     'if (key == GameShell.KEY_ESCAPE && QolSettings.on(QolSettings.ESC_CLOSE)) {',
+     'if (key == GameShell.KEY_ESCAPE) {'),
+    (CLIENT, 'Escape swallowed once it has closed something, so nothing after it sees the key',
+     '\t\t\t\t\t\tthis.closeInterfaces();\n\t\t\t\t\t}',
+     '\t\t\t\t\t\tthis.closeInterfaces();\n\t\t\t\t\t\tcontinue;\n\t\t\t\t\t}'),
 ]
 
 
