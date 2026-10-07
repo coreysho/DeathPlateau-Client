@@ -41,9 +41,36 @@ public final class PluginLoader {
 		public final Class<?> type;
 		public final String source;
 
-		Found(Class<?> type, String source) {
+		/** The jar's loader, so it can be closed when the plugin is dropped. */
+		final URLClassLoader loader;
+
+		Found(Class<?> type, String source, URLClassLoader loader) {
 			this.type = type;
 			this.source = source;
+			this.loader = loader;
+		}
+	}
+
+	/**
+	 * Closes a jar's class loader, releasing the file.
+	 *
+	 * WHY THIS MATTERS. A URLClassLoader holds its jar open for as long as it exists, and on
+	 * Windows an open file cannot be replaced or deleted. Without this, installing an update over
+	 * a plugin already loaded fails, uninstalling leaves the jar on disk, and Reload re-reads the
+	 * old file - all of them silently, because the failure is an IOException on a file move rather
+	 * than anything the player did wrong.
+	 *
+	 * Closing does NOT unload the classes already loaded from it; those live as long as something
+	 * references them, which is why the manager shuts the plugin down before closing its loader.
+	 */
+	public static void close(Found found) {
+		if (found == null || found.loader == null) {
+			return;
+		}
+		try {
+			found.loader.close();
+		} catch (Throwable error) {
+			DevLog.log("PLUGIN", "could not close the loader for " + found.source + ": " + error);
 		}
 	}
 
@@ -88,7 +115,7 @@ public final class PluginLoader {
 				DevLog.log("PLUGIN", file.getName() + " has no classes in it");
 				return;
 			}
-			ClassLoader loader = new URLClassLoader(new URL[] { file.toURI().toURL() },
+			URLClassLoader loader = new URLClassLoader(new URL[] { file.toURI().toURL() },
 				PluginLoader.class.getClassLoader());
 			int before = found.size();
 			for (int i = 0; i < classNames.size(); i++) {
@@ -98,7 +125,7 @@ public final class PluginLoader {
 				try {
 					Class<?> type = Class.forName(className, false, loader);
 					if (isPlugin(type)) {
-						found.add(new Found(type, file.getName()));
+						found.add(new Found(type, file.getName(), loader));
 					}
 				} catch (Throwable error) {
 					DevLog.log("PLUGIN", "could not load " + className + " from " + file.getName() + ": " + error);
@@ -106,6 +133,10 @@ public final class PluginLoader {
 			}
 			if (found.size() == before) {
 				DevLog.log("PLUGIN", file.getName() + " has no plugin classes in it");
+				try {
+					loader.close();      // nothing came of it, so do not hold the file open
+				} catch (Throwable ignored) {
+				}
 			}
 		} catch (Throwable error) {
 			DevLog.log("PLUGIN", "could not read " + file.getName() + ": " + error);

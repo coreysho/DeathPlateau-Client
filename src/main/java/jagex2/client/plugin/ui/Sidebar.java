@@ -5,6 +5,8 @@ import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.Dimension;
 import java.awt.Graphics;
 
@@ -40,31 +42,36 @@ public final class Sidebar extends JPanel {
 
 	private static final String CARD_LIST = "list";
 	private static final String CARD_CONFIG = "config";
+	private static final String CARD_HUB = "hub";
 
 	private final PluginManager manager;
 	private final CardLayout cards = new CardLayout();
 	private final JPanel pages = new JPanel(this.cards);
 	private final PluginListPanel list;
 	private final ConfigPanel config;
+	private final HubPanel hubPanel;
+	private final java.util.List<Tab> tabs = new java.util.ArrayList<Tab>();
 
 	public Sidebar(PluginManager manager) {
 		this.manager = manager;
 		this.list = new PluginListPanel(manager, this);
 		this.config = new ConfigPanel(manager, this);
+		this.hubPanel = new HubPanel(new jagex2.client.plugin.hub.Hub(manager));
 
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.BACKGROUND);
 		this.setPreferredSize(new Dimension(Theme.WIDTH, 0));
 		this.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Theme.SEPARATOR));
 
-		this.add(this.buildToolbar(), BorderLayout.NORTH);
-
 		this.pages.setBackground(Theme.BACKGROUND);
 		this.pages.add(this.list, CARD_LIST);
 		this.pages.add(this.config, CARD_CONFIG);
+		this.pages.add(this.hubPanel, CARD_HUB);
 		this.add(this.pages, BorderLayout.CENTER);
 
+		this.add(this.buildToolbar(), BorderLayout.NORTH);
 		this.list.rebuild();
+		this.show(CARD_LIST);
 
 		// The manager calls this from the game thread whenever a plugin starts, stops or the
 		// folder is re-read.
@@ -76,36 +83,102 @@ public final class Sidebar extends JPanel {
 		});
 	}
 
-	/** A tab strip with room to grow: for now one tab, which is the plugin list. */
+	/** One tab in the strip: an icon, a hover, and an underline when it is the open one. */
+	private final class Tab extends JLabel {
+
+		private final String card;
+		private final String tip;
+		private boolean selected;
+
+		Tab(Icon icon, String card, String tip) {
+			super(icon);
+			this.card = card;
+			this.tip = tip;
+			this.setToolTipText(tip);
+			this.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			this.paintBorder(false);
+			this.addMouseListener(new MouseAdapter() {
+
+				public void mousePressed(MouseEvent event) {
+					Sidebar.this.show(Tab.this.card);
+				}
+			});
+		}
+
+		void setSelected(boolean selected) {
+			this.selected = selected;
+			this.paintBorder(selected);
+		}
+
+		private void paintBorder(boolean selected) {
+			this.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createMatteBorder(0, 0, 2, 0, selected ? Theme.ACCENT : Theme.DARKER),
+				BorderFactory.createEmptyBorder(6, 10, 4, 10)));
+		}
+
+		boolean isSelected() {
+			return this.selected;
+		}
+
+		String card() {
+			return this.card;
+		}
+
+		String tip() {
+			return this.tip;
+		}
+	}
+
 	private Component buildToolbar() {
 		JPanel toolbar = new JPanel(new BorderLayout());
 		toolbar.setBackground(Theme.DARKER);
 		toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.SEPARATOR));
 
-		JPanel tabs = new JPanel();
-		tabs.setLayout(new javax.swing.BoxLayout(tabs, javax.swing.BoxLayout.X_AXIS));
-		tabs.setOpaque(false);
-		tabs.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 2));
+		JPanel strip = new JPanel();
+		strip.setLayout(new javax.swing.BoxLayout(strip, javax.swing.BoxLayout.X_AXIS));
+		strip.setOpaque(false);
+		strip.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 2));
 
-		JLabel wrench = new JLabel(Icons.wrench(20, Theme.ACCENT));
-		wrench.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(0, 0, 2, 0, Theme.ACCENT),
-			BorderFactory.createEmptyBorder(6, 10, 4, 10)));
-		wrench.setToolTipText("Plugins");
-		tabs.add(wrench);
+		this.tabs.add(new Tab(Icons.wrench(20, Theme.ACCENT), CARD_LIST, "Plugins"));
+		this.tabs.add(new Tab(Icons.download(20, Theme.ACCENT), CARD_HUB, "Plugin hub"));
+		for (int i = 0; i < this.tabs.size(); i++) {
+			strip.add(this.tabs.get(i));
+		}
 
-		toolbar.add(tabs, BorderLayout.WEST);
+		toolbar.add(strip, BorderLayout.WEST);
 		return toolbar;
 	}
 
+	/** Switches tab, and tells the page it is being shown. */
+	private void show(String card) {
+		this.cards.show(this.pages, card);
+		for (int i = 0; i < this.tabs.size(); i++) {
+			this.tabs.get(i).setSelected(this.tabs.get(i).card().equals(card));
+		}
+		if (CARD_HUB.equals(card)) {
+			this.hubPanel.shown();
+			this.hubPanel.rebuild();
+		} else if (CARD_LIST.equals(card)) {
+			this.list.rebuild();
+		}
+	}
+
 	void showList() {
-		this.cards.show(this.pages, CARD_LIST);
-		this.list.rebuild();
+		this.show(CARD_LIST);
 	}
 
 	void showConfig(PluginManager.Entry entry) {
 		this.config.show(entry);
 		this.cards.show(this.pages, CARD_CONFIG);
+		for (int i = 0; i < this.tabs.size(); i++) {
+			// The config page belongs to the plugin list, so its tab stays lit while it is open.
+			this.tabs.get(i).setSelected(this.tabs.get(i).card().equals(CARD_LIST));
+		}
+	}
+
+	/** Opens the hub tab, as clicking its tab does. Used by run_sidebarpreview.py. */
+	public void openHub() {
+		this.show(CARD_HUB);
 	}
 
 	/** Refreshes whichever page is showing. Safe to call from the game thread. */

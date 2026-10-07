@@ -129,6 +129,27 @@ public final class Icons {
 		};
 	}
 
+	/** The hub tab: an arrow into a tray, which is what "install from somewhere else" looks like. */
+	public static Icon download(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(2f, s * 0.14f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+				// The shaft.
+				g.drawLine(s / 2, (int) (s * 0.14), s / 2, (int) (s * 0.56));
+				// The head, as a filled triangle: two strokes read as a blob at tab size.
+				Path2D head = new Path2D.Double();
+				head.moveTo(s * 0.28, s * 0.48);
+				head.lineTo(s * 0.72, s * 0.48);
+				head.lineTo(s / 2.0, s * 0.74);
+				head.closePath();
+				g.fill(head);
+				// The tray it lands in.
+				g.drawLine((int) (s * 0.18), (int) (s * 0.84), (int) (s * 0.82), (int) (s * 0.84));
+			}
+		};
+	}
+
 	/** Reload, on the plugin list's header. */
 	public static Icon refresh(int size, Color colour) {
 		return new Vector(size, colour) {

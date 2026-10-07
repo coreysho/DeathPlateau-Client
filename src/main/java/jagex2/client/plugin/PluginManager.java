@@ -67,7 +67,12 @@ public final class PluginManager {
 		boolean enabled;
 		int renderErrors;
 
-		Entry(String key, String name, String description, String source, Plugin plugin, PluginConfig config) {
+		/** The jar this came out of, kept so its file can be released when the plugin is dropped. */
+		final PluginLoader.Found found;
+
+		Entry(String key, String name, String description, String source, Plugin plugin, PluginConfig config,
+			PluginLoader.Found found) {
+			this.found = found;
 			this.key = key;
 			this.name = name;
 			this.description = description;
@@ -244,6 +249,12 @@ public final class PluginManager {
 				this.stop(entry);
 			}
 		}
+		// Closed before the list is dropped: a jar stays open as long as its loader lives, and on
+		// Windows an open jar cannot be replaced or deleted - which is how a hub install over a
+		// running plugin, or a plain Reload after rebuilding one, fails without saying anything.
+		for (int i = 0; i < this.entries.size(); i++) {
+			PluginLoader.close(this.entries.get(i).found);
+		}
 		this.entries.clear();
 		this.overlays.clear();
 		this.running = 0;
@@ -308,7 +319,7 @@ public final class PluginManager {
 			PluginConfig config = new PluginConfig(key, this.store);
 			plugin.attach(this.ctx, config);
 			config.bind(plugin);
-			this.entries.add(new Entry(key, name, description, found.source, plugin, config));
+			this.entries.add(new Entry(key, name, description, found.source, plugin, config, found));
 		} catch (Throwable error) {
 			// A missing no-argument constructor, a constructor that threw, a class compiled
 			// against a client that has since changed.
@@ -374,6 +385,36 @@ public final class PluginManager {
 		}
 		entry.plugin.clearOverlays();
 		this.rebuildOverlays();
+	}
+
+	/**
+	 * Stops every plugin that came out of one jar and closes it, so the file can be replaced or
+	 * deleted. Used by the hub before it installs over a plugin or removes one.
+	 *
+	 * The plugins are forgotten, not disabled: their saved enabled state is left alone, so a
+	 * reload after an update brings back the ones that were on.
+	 */
+	public void releaseJar(String fileName) {
+		if (fileName == null) {
+			return;
+		}
+		boolean released = false;
+		for (int i = this.entries.size() - 1; i >= 0; i--) {
+			Entry entry = this.entries.get(i);
+			if (!fileName.equals(entry.source)) {
+				continue;
+			}
+			if (entry.enabled) {
+				this.stopQuietly(entry);
+			}
+			PluginLoader.close(entry.found);
+			this.entries.remove(i);
+			released = true;
+		}
+		if (released) {
+			DevLog.log("PLUGIN", "released " + fileName);
+			this.fireChanged();
+		}
 	}
 
 	/** Turns everything off, for client shutdown. */

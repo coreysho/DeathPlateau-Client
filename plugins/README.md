@@ -12,6 +12,12 @@ widget lookups.
 
 ## Installing one
 
+**From the hub.** Open the sidebar's second tab (the download arrow), find the plugin, press
+Install. It downloads, is checked, and appears in the plugin list ready to switch on. See
+[The hub](#the-hub) for what it does and does not guarantee.
+
+**By hand.**
+
 1. Put the jar in `~/.deathplateau/plugins` (`%USERPROFILE%\.deathplateau\plugins` on Windows),
    beside the `client.jar` the launcher keeps there. The client creates the folder on first run.
 2. Start the client. The plugin sidebar is down the right-hand side of the window.
@@ -26,14 +32,55 @@ sandbox. Only install plugins whose source you can see and whose author you trus
 The reload button next to the search box re-reads the folder, so a plugin can be rebuilt and
 picked up without restarting the client.
 
-### The sidebar
+## The hub
+
+The second sidebar tab lists plugins from an index and installs them, so a plugin arrives by
+pressing a button rather than by finding a folder.
+
+The index is read from
+`https://raw.githubusercontent.com/coreysho/DeathPlateau-Plugins/main/index.json`, overridable
+with `-Dlostcity.pluginindex=<url>` (or `LOSTCITY_PLUGININDEX`). Until that repo exists the hub
+says so and shows the address it tried.
+
+### Publishing plugins
+
+Make a repo with an `index.json` at its root - `plugins/index.example.json` in this repo is a
+filled-in sample with every field explained. Put the jars wherever the index can point at over
+http or https; release assets are the usual answer, because their urls are stable.
+
+Updating a plugin is: upload the new jar, bump its `version` and `sha256` in the index. Every
+client sees the update the next time it opens the hub.
+
+### What the hub checks, and what it does not
+
+Before a downloaded jar is moved into the plugins folder:
+
+- the url is http or https, so an index cannot point the client at its own disk
+- the id is letters, digits, dash and underscore, so an index cannot write outside the folder
+- the download is capped at 32MB
+- if the index gives a `sha256`, it must match
+- the file must open as a jar
+
+A failed install leaves whatever was there working: the download lands in a temp file and is only
+moved over once it has passed all of the above.
+
+**None of that makes a plugin safe.** A plugin is ordinary Java running in the client's process
+with the client's access to your machine - there is no sandbox. A checksum proves the jar is the
+one the index meant, not that the jar is harmless. Install what you trust, from people you trust.
+
+An index served over plain http is worth less than one over https: anything that can rewrite the
+index can rewrite the checksum in it. The hub marks plugins whose jar is plain http, and the
+default index address is https.
+
+## The sidebar
 
 A Swing panel beside the game, like RuneLite's, added to the window rather than drawn over the
 game - the game keeps whatever size its display mode gives it and the window gets wider. In the
 resizable modes the window's minimum grows by the sidebar's width, so the game is never squeezed
-below its own minimum. It has the plugin list with
-a search box and a switch per plugin, and a cog on any plugin with settings that opens its config
-page.
+below its own minimum.
+
+Two tabs: the plugin list, with a search box, a switch per plugin and a cog on any plugin that
+has settings; and the hub above.
 
 The applet has no window to put a panel in, so there F8 opens a simpler list drawn inside the
 game viewport instead. It can toggle plugins and their on/off settings, but it has no text boxes,
@@ -150,6 +197,7 @@ are really asking rather than reaching past it into `Client`.
 | What | Where |
 | --- | --- |
 | Plugin jars | `~/.deathplateau/plugins` |
+| What the hub installed, and at which version | `installed.txt`, in the plugins folder |
 | Which plugins are on, and their settings | `plugins.dat` in the client's cache folder, beside `qol_settings.dat` |
 
 Jars live in the home folder because a player has to put them there by hand and has to be able to
@@ -159,10 +207,15 @@ find it. Settings live with the client's other settings.
 
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
+python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
 python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to build/preview/*.png
 ```
 
 The first covers event delivery and consumption, a handler that throws, settings surviving a
 restart, and loading plugins out of real jars (manifest and scanned, including a corrupt one).
-The second builds the real sidebar over a real plugin jar and paints it into png files you can
-look at, failing if a page comes out blank.
+The hub test serves a real index and real jars over localhost and drives the real downloader
+through them, mostly to check the refusals: an id that would climb out of the plugins folder, a
+url that is not http, a jar that does not match its checksum, a download that is not a jar.
+
+The last builds the real sidebar over a real plugin jar and paints it into png files you can look
+at, failing if a page comes out blank or if the window does not paint the sidebar at all.

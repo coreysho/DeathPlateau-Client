@@ -31,7 +31,7 @@ PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 
-PAGES = [('list', []), ('config', ['config']), ('empty', [])]
+PAGES = [('list', []), ('config', ['config']), ('hub', ['hub']), ('empty', [])]
 
 
 def run(*cmd, **kwargs):

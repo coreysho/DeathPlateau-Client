@@ -14,6 +14,35 @@ import jagex2.client.plugin.PluginManager;
 
 public class SidebarPreview {
 
+	/** A sample index on localhost: one installable plugin, one served over plain http. */
+	private static String startIndexServer() throws Exception {
+		com.sun.net.httpserver.HttpServer server =
+			com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+		final byte[] body = ("{\"plugins\":["
+			+ "{\"id\":\"coordinates\",\"name\":\"Coordinates\",\"author\":\"Corey\","
+			+ "\"version\":\"1.0\",\"description\":\"Shows your world position\","
+			+ "\"url\":\"https://example.invalid/coordinates.jar\"},"
+			+ "{\"id\":\"xptracker\",\"name\":\"XP tracker\",\"author\":\"Corey\","
+			+ "\"version\":\"2.1\",\"description\":\"Session experience and xp per hour\","
+			+ "\"url\":\"https://example.invalid/xptracker.jar\"},"
+			+ "{\"id\":\"tilemarkers\",\"name\":\"Tile markers\",\"author\":\"Someone\","
+			+ "\"version\":\"0.3\",\"description\":\"Mark tiles on the ground\","
+			+ "\"url\":\"http://example.invalid/tiles.jar\"}"
+			+ "]}").getBytes("UTF-8");
+		server.createContext("/index.json", new com.sun.net.httpserver.HttpHandler() {
+
+			public void handle(com.sun.net.httpserver.HttpExchange exchange) throws java.io.IOException {
+				exchange.sendResponseHeaders(200, body.length);
+				java.io.OutputStream out = exchange.getResponseBody();
+				out.write(body);
+				out.close();
+			}
+		});
+		server.setExecutor(null);
+		server.start();
+		return "http://127.0.0.1:" + server.getAddress().getPort() + "/index.json";
+	}
+
 	public static void main(String[] args) throws Exception {
 		File out = new File(args[0]);
 		boolean config = args.length > 1 && args[1].equals("config");
@@ -24,7 +53,25 @@ public class SidebarPreview {
 		PluginManager manager = new PluginManager(client, null, null, null);
 		manager.reload();
 
+		// The hub page is only worth a picture with plugins in it, so the preview serves a real
+		// index over localhost and lets the hub fetch it for real - which also means this picture
+		// is proof the fetch and the row layout work, not just that the panel draws.
+		boolean hub = args.length > 1 && args[1].equals("hub");
+		if (hub) {
+			System.setProperty("lostcity.pluginindex", startIndexServer());
+		}
+
 		Sidebar sidebar = new Sidebar(manager);
+		if (hub) {
+			sidebar.openHub();
+			Thread.sleep(1500);            // the fetch runs on the hub's own thread
+			javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+				public void run() {
+					sidebar.openHub();     // redraw now the fetch has landed
+				}
+			});
+		}
 		if (config) {
 			if (manager.getPlugins().isEmpty()) {
 				throw new IllegalStateException("no plugins to show a config page for");
