@@ -669,6 +669,55 @@ public final class PluginManager {
 		return rows;
 	}
 
+	/** One of a plugin's config lists, read in full, ready for the panel to draw. */
+	public static final class ListSnapshot {
+
+		public final String title;
+		public final List<ConfigList.Row> rows;
+		public final String emptyMessage;
+
+		private final ConfigList list;
+
+		ListSnapshot(String title, ConfigList list) {
+			this.title = title;
+			this.list = list;
+			this.rows = list.snapshot();
+			this.emptyMessage = list.emptyMessage();
+		}
+
+		/** Presses a row's button. CALL ON THE GAME THREAD. */
+		public void act(int index) {
+			this.list.onAction(index);
+		}
+
+		/** Removes a row. CALL ON THE GAME THREAD. */
+		public void remove(int index) {
+			this.list.onRemove(index);
+		}
+	}
+
+	/**
+	 * The plugin's config lists, each read in full. CALL ON THE GAME THREAD: that is the whole
+	 * point of a snapshot - the rows usually come from state the game loop writes, and reading
+	 * them from the UI thread is a race whose prize is an index out of bounds.
+	 */
+	public List<ListSnapshot> snapshotConfigLists(Entry entry) {
+		List<ListSnapshot> out = new ArrayList<ListSnapshot>();
+		if (entry == null) {
+			return out;
+		}
+		List<Plugin.NamedList> lists = entry.plugin.getConfigLists();
+		for (int i = 0; i < lists.size(); i++) {
+			Plugin.NamedList named = lists.get(i);
+			try {
+				out.add(new ListSnapshot(named.title, named.list));
+			} catch (Throwable error) {
+				DevLog.log("PLUGIN", entry.name + "'s \"" + named.title + "\" list threw: " + error);
+			}
+		}
+		return out;
+	}
+
 	/** Acts on a clicked row. Anything not clickable is ignored. */
 	public void clickRow(PanelRow row) {
 		if (row == null) {

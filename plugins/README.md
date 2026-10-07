@@ -160,6 +160,10 @@ Without it every class in the jar is checked instead, which also works and is ju
   loaded on startup and saved when changed. Booleans are clickable in the panel; ints and Strings
   are text boxes in the sidebar. Never rename a `keyName` after release - it resets that setting
   for everyone.
+- **Lists are not settings.** A `@ConfigItem` is one value the player chooses. For rows the
+  plugin accumulates - the swaps you have set, the items you are hiding - add a `ConfigList` in
+  `startUp()`. The config page lists them with a button to cycle a row and one to remove it.
+  There is no "add" field, because those rows are made in game.
 
 ## The API
 
@@ -174,6 +178,8 @@ Everything is in `jagex2.client.plugin`.
 | `@PluginDescriptor` | Name, description and saved key. |
 | `@ConfigItem` | A player-facing setting. |
 | `@Subscribe` | Marks an event handler. |
+| `ConfigList` | Rows on the config page that the plugin produces: cycle one, remove one. Read on the game thread, drawn on the UI thread. |
+| `Sprite` | An image from the cache, such as `ctx.getSkillIcon(skill)`, drawn with `g.sprite(...)`. |
 
 Events, in `jagex2.client.plugin.event`:
 

@@ -80,11 +80,32 @@ public class SidebarPreview {
 			}
 			// The config page is only reachable for a plugin with settings, which is the point of
 			// the preview: show the page a cog actually opens.
+			// The XP tracker: settings AND a config list, which is the page worth a picture.
+			PluginManager.Entry chosen = null;
 			for (PluginManager.Entry entry : manager.getPlugins()) {
-				if (!entry.getConfig().getItems().isEmpty()) {
-					sidebar.showConfig(entry);
-					break;
+				if (entry.key.equals("xptracker")) {
+					chosen = entry;
+				} else if (chosen == null && !entry.getConfig().getItems().isEmpty()) {
+					chosen = entry;
 				}
+			}
+			if (chosen != null) {
+				// Running, so its list exists: a stopped plugin has registered nothing.
+				manager.setEnabled(chosen, true);
+				// Some experience, through the real event path, so the list has rows to draw.
+				manager.onStatChanged(8, 61, 350_000, 1_250);     // woodcutting
+				manager.onStatChanged(14, 55, 180_300, 420);      // mining
+				manager.onStatChanged(2, 70, 760_120, 8_900);     // strength
+				sidebar.showConfig(chosen);
+				// The lists are read on the game thread, so the queue has to be drained before
+				// the page has anything to draw.
+				manager.onClientTick(0);
+				Thread.sleep(300);
+				javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+					public void run() {
+					}
+				});
 			}
 		}
 

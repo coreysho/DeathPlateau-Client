@@ -16,7 +16,9 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 
+import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 
@@ -38,6 +40,13 @@ final class ConfigPanel extends JPanel {
 	private PluginManager.Entry entry;
 	private final JLabel title = new JLabel();
 	private final JPanel items = new JPanel();
+
+	/**
+	 * The plugin's lists, read on the game thread. Null until the first read lands, which is why
+	 * rebuild() draws the settings immediately and the lists a moment later rather than waiting:
+	 * the page appears the instant the cog is pressed either way.
+	 */
+	private List<PluginManager.ListSnapshot> lists;
 
 	ConfigPanel(PluginManager manager, Sidebar sidebar) {
 		this.manager = manager;
@@ -80,7 +89,37 @@ final class ConfigPanel extends JPanel {
 
 	void show(PluginManager.Entry entry) {
 		this.entry = entry;
+		this.lists = null;
 		this.rebuild();
+		this.readLists();
+	}
+
+	/**
+	 * Asks the game thread for the plugin's lists and redraws when they arrive.
+	 *
+	 * Every list is read over there, in one go, and the panel only ever draws the copy - see
+	 * ConfigList for why.
+	 */
+	private void readLists() {
+		final PluginManager.Entry target = this.entry;
+		if (target == null) {
+			return;
+		}
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				final List<PluginManager.ListSnapshot> read = ConfigPanel.this.manager.snapshotConfigLists(target);
+				SwingUtilities.invokeLater(new Runnable() {
+
+					public void run() {
+						if (ConfigPanel.this.entry == target) {
+							ConfigPanel.this.lists = read;
+							ConfigPanel.this.rebuild();
+						}
+					}
+				});
+			}
+		});
 	}
 
 	/** Rebuilds from the plugin's current values. Must be called on the event dispatch thread. */
@@ -108,8 +147,130 @@ final class ConfigPanel extends JPanel {
 			this.items.add(this.buildItem(list.get(i)));
 		}
 
+		if (this.lists != null) {
+			for (int i = 0; i < this.lists.size(); i++) {
+				this.buildList(this.lists.get(i));
+			}
+		}
+
+		if (list.isEmpty() && (this.lists == null || this.lists.isEmpty())) {
+			this.items.add(Sidebar.leftStrip(
+				Sidebar.wrappedLabel("This plugin has no settings.", Theme.TEXT_DIM, Theme.FONT_SMALL, 195),
+				8, 10, 8, 10));
+		}
+
 		this.items.revalidate();
 		this.items.repaint();
+	}
+
+	/** A heading, then a row per entry, or the list's own message when it is empty. */
+	private void buildList(final PluginManager.ListSnapshot snapshot) {
+		JPanel heading = new JPanel(new BorderLayout());
+		heading.setBackground(Theme.DARKER);
+		heading.setAlignmentX(LEFT_ALIGNMENT);
+		heading.setBorder(BorderFactory.createEmptyBorder(5, 8, 4, 8));
+		heading.add(Sidebar.label(snapshot.title + "  (" + snapshot.rows.size() + ")",
+			Theme.ACCENT, Theme.FONT_BOLD), BorderLayout.WEST);
+		heading.setMaximumSize(new Dimension(Integer.MAX_VALUE, heading.getPreferredSize().height));
+		this.items.add(heading);
+
+		if (snapshot.rows.isEmpty()) {
+			this.items.add(Sidebar.leftStrip(
+				Sidebar.wrappedLabel(snapshot.emptyMessage, Theme.TEXT_DIM, Theme.FONT_SMALL, 195),
+				8, 10, 8, 10));
+			return;
+		}
+		for (int i = 0; i < snapshot.rows.size(); i++) {
+			this.items.add(this.buildListRow(snapshot, snapshot.rows.get(i)));
+		}
+	}
+
+	private Component buildListRow(final PluginManager.ListSnapshot snapshot, final ConfigList.Row row) {
+		JPanel panel = new JPanel(new BorderLayout(6, 2));
+		panel.setBackground(Theme.ROW);
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		panel.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.SEPARATOR),
+			BorderFactory.createEmptyBorder(5, 8, 5, 6)));
+
+		int textWidth = 120;
+		JPanel text = new JPanel();
+		text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+		text.setOpaque(false);
+		text.add(Sidebar.wrappedLabel(row.label, Theme.TEXT, Theme.FONT, textWidth));
+		if (row.detail != null && row.detail.length() > 0) {
+			text.add(Sidebar.wrappedLabel(row.detail, Theme.TEXT_DIM, Theme.FONT_SMALL, textWidth));
+		}
+
+		JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+		buttons.setOpaque(false);
+		if (row.action != null && row.action.length() > 0) {
+			// The button is labelled with where the setting IS, not with a verb, because that is
+			// what a player needs to read; pressing it moves to the next one.
+			JButton action = this.smallButton(row.action, Theme.ACCENT);
+			action.setToolTipText("Change this");
+			action.addActionListener(new ActionListener() {
+
+				public void actionPerformed(ActionEvent event) {
+					ConfigPanel.this.runOnList(snapshot, row.index, true);
+				}
+			});
+			buttons.add(action);
+		}
+		if (row.removable) {
+			JButton remove = this.smallButton("\u00d7", Theme.TEXT_DIM);
+			remove.setToolTipText("Remove");
+			remove.addActionListener(new ActionListener() {
+
+				public void actionPerformed(ActionEvent event) {
+					ConfigPanel.this.runOnList(snapshot, row.index, false);
+				}
+			});
+			buttons.add(remove);
+		}
+
+		panel.add(text, BorderLayout.CENTER);
+		panel.add(buttons, BorderLayout.EAST);
+		panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, panel.getPreferredSize().height));
+		return panel;
+	}
+
+	private JButton smallButton(String label, java.awt.Color colour) {
+		JButton button = new JButton(label);
+		button.setFont(Theme.FONT_SMALL);
+		button.setForeground(colour);
+		button.setBackground(Theme.DARKER);
+		button.setFocusPainted(false);
+		button.setFocusable(false);
+		button.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(Theme.SWITCH_OFF),
+			BorderFactory.createEmptyBorder(2, 6, 2, 6)));
+		button.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+		return button;
+	}
+
+	/**
+	 * Cycles or removes a row, on the game thread, then re-reads the list.
+	 *
+	 * Re-read rather than patched: removing a row renumbers every row after it, and a panel that
+	 * guessed at the new numbering would act on the wrong one next time.
+	 */
+	private void runOnList(final PluginManager.ListSnapshot snapshot, final int index, final boolean action) {
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				try {
+					if (action) {
+						snapshot.act(index);
+					} else {
+						snapshot.remove(index);
+					}
+				} catch (Throwable error) {
+					jagex2.client.DevLog.log("PLUGIN", "a config list threw: " + error);
+				}
+			}
+		});
+		this.readLists();
 	}
 
 	private Component buildItem(final PluginConfig.Item item) {

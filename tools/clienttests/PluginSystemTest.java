@@ -42,6 +42,9 @@ public class PluginSystemTest {
 		System.out.println("5. the XP drops plugin draws what it used to");
 		xpDropTests();
 		System.out.println();
+		System.out.println("6. config lists");
+		configListTests();
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -291,6 +294,110 @@ public class PluginSystemTest {
 		} catch (Exception error) {
 			check(false, "could not write " + file + ": " + error);
 		}
+	}
+
+	// ---------------------------------------------------------------- 6
+
+	/** A list backed by a plain array, standing in for a plugin's own state. */
+	static final class Fruit extends ConfigList {
+
+		final java.util.List<String> names = new java.util.ArrayList<String>();
+		final java.util.List<Boolean> ripe = new java.util.ArrayList<Boolean>();
+		int thrown;
+
+		public int size() {
+			return this.names.size();
+		}
+
+		public String label(int index) {
+			// Every third row throws, to prove one bad row does not take the page with it.
+			if (index == 2) {
+				this.thrown++;
+				throw new IllegalStateException("this row is broken");
+			}
+			return this.names.get(index);
+		}
+
+		public String detail(int index) {
+			return "a fruit";
+		}
+
+		public String action(int index) {
+			return this.ripe.get(index).booleanValue() ? "Ripe" : "Green";
+		}
+
+		public void onAction(int index) {
+			this.ripe.set(index, Boolean.valueOf(!this.ripe.get(index).booleanValue()));
+		}
+
+		public void onRemove(int index) {
+			this.names.remove(index);
+			this.ripe.remove(index);
+		}
+
+		public String emptyMessage() {
+			return "No fruit.";
+		}
+
+		void add(String name) {
+			this.names.add(name);
+			this.ripe.add(Boolean.FALSE);
+		}
+	}
+
+	/** A plugin that does nothing but own a list. */
+	public static final class FruitPlugin extends Plugin {
+
+		final Fruit fruit = new Fruit();
+
+		protected void startUp() {
+			this.addConfigList("Fruit", this.fruit);
+		}
+	}
+
+	static void configListTests() {
+		FruitPlugin plugin = new FruitPlugin();
+		Plugin base = plugin;
+		base.attach(null, null);
+		base.startUp();
+
+		plugin.fruit.add("apple");
+		plugin.fruit.add("pear");
+		plugin.fruit.add("fig");          // index 2: the one that throws
+		plugin.fruit.add("plum");
+
+		List<ConfigList.Row> rows = base.getConfigLists().get(0).list.snapshot();
+		check(base.getConfigLists().size() == 1, "a plugin can register a list");
+		check("Fruit".equals(base.getConfigLists().get(0).title), "...under a title");
+		check(rows.size() == 3, "a row that throws is left out, the rest are kept (" + rows.size() + " of 4)");
+		check(plugin.fruit.thrown == 1, "...and it really did throw");
+		check(rows.get(0).label.equals("apple") && rows.get(0).action.equals("Green")
+			&& "a fruit".equals(rows.get(0).detail) && rows.get(0).removable,
+			"a row carries its label, detail, action and whether it can go");
+
+		// The index on a row is the list's own, not the row's position in the snapshot - which
+		// is what makes acting on a row still right when an earlier row was skipped.
+		check(rows.get(2).index == 3 && rows.get(2).label.equals("plum"),
+			"a row keeps the list's index, not the snapshot's (" + rows.get(2).index + ")");
+
+		PluginManager.ListSnapshot snapshot = new PluginManager.ListSnapshot("Fruit", plugin.fruit);
+		snapshot.act(0);
+		check(plugin.fruit.ripe.get(0).booleanValue(), "pressing a row's button cycles it");
+		snapshot.remove(3);
+		check(plugin.fruit.names.size() == 3 && !plugin.fruit.names.contains("plum"),
+			"removing a row removes the right one");
+
+		base.shutDown();
+		base.clearOverlays();
+		check(base.getConfigLists().isEmpty(), "stopping the plugin drops its lists");
+
+		FruitPlugin empty = new FruitPlugin();
+		Plugin emptyBase = empty;
+		emptyBase.attach(null, null);
+		emptyBase.startUp();
+		check(emptyBase.getConfigLists().get(0).list.snapshot().isEmpty()
+			&& "No fruit.".equals(emptyBase.getConfigLists().get(0).list.emptyMessage()),
+			"an empty list says so in its own words");
 	}
 
 	// ---------------------------------------------------------------- 5

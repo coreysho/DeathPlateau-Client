@@ -43,6 +43,21 @@ public abstract class Plugin {
 
 	private final List<Overlay> overlays = new ArrayList<Overlay>();
 
+	/** A list on this plugin's config page, under its heading. */
+	static final class NamedList {
+
+		final String title;
+		final ConfigList list;
+
+		NamedList(String title, ConfigList list) {
+			this.title = title;
+			this.list = list;
+		}
+	}
+
+	/** Lists this plugin shows on its config page, in the order they were added. */
+	private final List<NamedList> configLists = new ArrayList<NamedList>();
+
 	/** Set by the manager so a plugin cannot lie about whether it is running. */
 	private boolean running;
 
@@ -79,8 +94,22 @@ public abstract class Plugin {
 		}
 	}
 
+	/**
+	 * Adds a list to this plugin's config page - the swaps it has, the items it is hiding. Call
+	 * it from startUp(); lists added there go when the plugin stops, like overlays.
+	 */
+	protected final void addConfigList(String title, ConfigList list) {
+		if (title != null && list != null) {
+			this.configLists.add(new NamedList(title, list));
+		}
+	}
+
 	final List<Overlay> getOverlays() {
 		return this.overlays;
+	}
+
+	final List<NamedList> getConfigLists() {
+		return this.configLists;
 	}
 
 	final void clearOverlays() {
@@ -88,6 +117,7 @@ public abstract class Plugin {
 			this.overlays.get(i).owner = null;
 		}
 		this.overlays.clear();
+		this.configLists.clear();
 	}
 
 	public final boolean isRunning() {

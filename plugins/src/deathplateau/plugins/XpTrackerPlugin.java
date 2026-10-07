@@ -61,6 +61,48 @@ public final class XpTrackerPlugin extends Plugin {
 	protected void startUp() {
 		this.reset();
 		this.addOverlay(this.overlay);
+		// A config list: the rows come from what the plugin has accumulated, not from anything
+		// typed in, which is what a ConfigList is for. Removing one forgets that skill.
+		this.addConfigList("Skills this session", new jagex2.client.plugin.ConfigList() {
+
+			public int size() {
+				return tracked().size();
+			}
+
+			public String label(int index) {
+				int skill = tracked().get(index).intValue();
+				return ctx.getSkillName(skill);
+			}
+
+			public String detail(int index) {
+				int skill = tracked().get(index).intValue();
+				return format(gained[skill]) + " xp";
+			}
+
+			public void onRemove(int index) {
+				int skill = tracked().get(index).intValue();
+				total -= gained[skill];
+				gained[skill] = 0;
+				if (total <= 0) {
+					reset();
+				}
+			}
+
+			public String emptyMessage() {
+				return "Gain some experience and the skills appear here.";
+			}
+		});
+	}
+
+	/** The skills with experience this session, in skill order - the rows of the config list. */
+	private java.util.List<Integer> tracked() {
+		java.util.List<Integer> skills = new java.util.ArrayList<Integer>();
+		for (int skill = 0; skill < this.gained.length && skill < this.ctx.getSkillCount(); skill++) {
+			if (this.gained[skill] > 0) {
+				skills.add(Integer.valueOf(skill));
+			}
+		}
+		return skills;
 	}
 
 	protected void shutDown() {
