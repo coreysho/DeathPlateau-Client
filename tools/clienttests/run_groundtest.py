@@ -34,7 +34,7 @@ SHELL = os.path.join(HERE, 'GroundItemsTest.shell.java')
 # Declarations the extracted methods read. One line each in Client.java; pulled by name so a
 # renamed field is a loud failure here rather than a silent divergence.
 DECLS = [
-    'QOL_PANEL_ORIGIN', 'GROUND_ITEM_ROW_H', 'GROUND_ITEM_HEIGHT', 'GROUND_ITEM_MAX_PER_TILE',
+    'layout', 'GROUND_ITEM_ROW_H', 'GROUND_ITEM_HEIGHT', 'GROUND_ITEM_MAX_PER_TILE',
     'GI_ROWS_SHOWN', 'GROUND_ITEM_MAX_LABELS', 'GROUND_ITEM_TIERS', 'GROUND_ITEM_TIER_COLOURS',
     'GROUND_ITEM_COLOUR', 'GROUND_ITEM_HIGHLIGHT', 'GROUND_ITEM_HIDDEN', 'GI_CONTROL_W',
     'GI_MINUS_COLOUR', 'GI_PLUS_COLOUR', 'groundItemIds', 'groundItemCounts',
@@ -87,11 +87,13 @@ def main():
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         sources = []
-        for root, _dirs, files in os.walk(os.path.join(ROOT, 'src/main/java')):
+        # launcher/src too: the client jar compiles it in (Client.relaunchForUpdate uses it)
+        for root, _dirs, files in [w for d in ('src/main/java', 'launcher/src')
+                                   for w in os.walk(os.path.join(ROOT, d))]:
             sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
         # The whole client, not a subset: the extracted code calls into it and the point of this
         # harness is that those calls are the real ones.
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-d', classes] + sources,
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources,
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-4000:])
@@ -107,7 +109,7 @@ def main():
         out = os.path.join(work, 'GroundItemsTest.java')
         with open(out, 'w', encoding='utf-8') as f:
             f.write(shell)
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-cp', classes, '-d', work, out],
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work, out],
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-6000:])

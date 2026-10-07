@@ -1,5 +1,6 @@
 package jagex2.dash3d;
 
+import jagex2.client.DevLog;
 import deob.ObfuscatedName;
 import jagex2.datastruct.LinkList;
 import jagex2.graphics.Pix2D;
@@ -105,6 +106,27 @@ public class World3D {
 
 	@ObfuscatedName("KJCMXHNO.pb")
 	public static boolean[][][][] field1068 = new boolean[8][32][51][51];
+
+	// ---------------------------------------------------------------------------------------------
+	// DRAW DISTANCE. 377 draws the tiles within 25 of the player and no further: the tile loops in
+	// draw() run from -25 to 25 around him, init() builds its per-angle visibility table for a 51x51
+	// square of tiles, and method311 marks a tile visible only out to a depth of 3500 (27 tiles).
+	// Beyond that is black, whatever the window's size.
+	//
+	// DISTANCE is that 25, and everything above follows it, so the client can be told to draw
+	// further: the tables are rebuilt for the new radius (Client.updateSceneVisibility) and the far
+	// clip grows with it, exactly 3500 at 25 so the fixed screen is untouched.
+	//
+	// It cannot go past MAX_DISTANCE. The scene the server loads is 104x104 tiles with the player
+	// near the middle of it (field1015/field1016), so 52 tiles is the edge of everything the client
+	// has - drawing further would need the server to send a bigger area, which is not the client's
+	// to decide.
+	public static final int MIN_DISTANCE = 25;
+	public static final int MAX_DISTANCE = 52;
+	/** What the next init() will build for. */
+	public static int drawDistance = MIN_DISTANCE;
+	/** What the tables in field1068 were actually built for; the tile loops use this. */
+	private static int distance = MIN_DISTANCE;
 
 	@ObfuscatedName("KJCMXHNO.s")
 	public int field1019;
@@ -475,13 +497,16 @@ public class World3D {
 
 	@ObfuscatedName("KJCMXHNO.a(IIIIIIIILZOXDNIET;IZIB)Z")
 	public boolean method287(int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, ModelSource arg8, int arg9, boolean arg10, int arg11, byte arg12) {
+		// Returns false and adds NOTHING when a tile under the entity is full - it is not clipped or
+		// queued, it simply is not drawn that frame. See Square.CAPACITY for why that cap used to make
+		// the largest thing on screen the first to disappear.
 		for (int var14 = arg1; var14 < arg1 + arg3; var14++) {
 			for (int var21 = arg2; var21 < arg2 + arg4; var21++) {
 				if (var14 < 0 || var21 < 0 || var14 >= this.field1015 || var21 >= this.field1016) {
 					return false;
 				}
 				Square var22 = this.field1018[arg0][var14][var21];
-				if (var22 != null && var22.field1390 >= 5) {
+				if (var22 != null && var22.field1390 >= Square.CAPACITY) {
 					return false;
 				}
 			}
@@ -956,7 +981,15 @@ public class World3D {
 		field1075 = arg0;
 		field1070 = arg5 / 2;
 		field1071 = arg0 / 2;
-		boolean[][][][] var6 = new boolean[9][32][53][53];
+		int r = drawDistance;
+		if (r < MIN_DISTANCE) {
+			r = MIN_DISTANCE;
+		} else if (r > MAX_DISTANCE) {
+			r = MAX_DISTANCE;
+		}
+		distance = r;
+		field1068 = new boolean[8][32][r * 2 + 1][r * 2 + 1];
+		boolean[][][][] var6 = new boolean[9][32][r * 2 + 3][r * 2 + 3];
 		for (int var7 = 128; var7 <= 384; var7 += 32) {
 			for (int var15 = 0; var15 < 2048; var15 += 64) {
 				field1035 = Model.sinTable[var7];
@@ -965,8 +998,8 @@ public class World3D {
 				field1038 = Model.cosTable[var15];
 				int var16 = (var7 - 128) / 32;
 				int var17 = var15 / 64;
-				for (int var18 = -26; var18 <= 26; var18++) {
-					for (int var19 = -26; var19 <= 26; var19++) {
+				for (int var18 = -r - 1; var18 <= r + 1; var18++) {
+					for (int var19 = -r - 1; var19 <= r + 1; var19++) {
 						int var20 = var18 * 128;
 						int var21 = var19 * 128;
 						boolean var22 = false;
@@ -976,37 +1009,37 @@ public class World3D {
 								break;
 							}
 						}
-						var6[var16][var17][var18 + 25 + 1][var19 + 25 + 1] = var22;
+						var6[var16][var17][var18 + r + 1][var19 + r + 1] = var22;
 					}
 				}
 			}
 		}
 		for (int var8 = 0; var8 < 8; var8++) {
 			for (int var9 = 0; var9 < 32; var9++) {
-				for (int var10 = -25; var10 < 25; var10++) {
-					for (int var11 = -25; var11 < 25; var11++) {
+				for (int var10 = -r; var10 < r; var10++) {
+					for (int var11 = -r; var11 < r; var11++) {
 						boolean var12 = false;
 						label82: for (int var13 = -1; var13 <= 1; var13++) {
 							for (int var14 = -1; var14 <= 1; var14++) {
-								if (var6[var8][var9][var10 + var13 + 25 + 1][var11 + var14 + 25 + 1]) {
+								if (var6[var8][var9][var10 + var13 + r + 1][var11 + var14 + r + 1]) {
 									var12 = true;
 									break label82;
 								}
-								if (var6[var8][(var9 + 1) % 31][var10 + var13 + 25 + 1][var11 + var14 + 25 + 1]) {
+								if (var6[var8][(var9 + 1) % 31][var10 + var13 + r + 1][var11 + var14 + r + 1]) {
 									var12 = true;
 									break label82;
 								}
-								if (var6[var8 + 1][var9][var10 + var13 + 25 + 1][var11 + var14 + 25 + 1]) {
+								if (var6[var8 + 1][var9][var10 + var13 + r + 1][var11 + var14 + r + 1]) {
 									var12 = true;
 									break label82;
 								}
-								if (var6[var8 + 1][(var9 + 1) % 31][var10 + var13 + 25 + 1][var11 + var14 + 25 + 1]) {
+								if (var6[var8 + 1][(var9 + 1) % 31][var10 + var13 + r + 1][var11 + var14 + r + 1]) {
 									var12 = true;
 									break label82;
 								}
 							}
 						}
-						field1068[var8][var9][var10 + 25][var11 + 25] = var12;
+						field1068[var8][var9][var10 + r][var11 + r] = var12;
 					}
 				}
 			}
@@ -1019,9 +1052,11 @@ public class World3D {
 		int var5 = field1038 * arg0 - field1037 * arg1 >> 16;
 		int var6 = field1036 * var5 + field1035 * arg3 >> 16;
 		int var7 = field1036 * arg3 - field1035 * var5 >> 16;
-		if (var6 >= 50 && var6 <= 3500) {
-			int var8 = (var4 << 9) / var6 + field1070;
-			int var9 = (var7 << 9) / var6 + field1071;
+		// 377's far clip is 3500 - 27 tiles, just past its 25-tile loop. It grows a tile at a time
+		// with the draw distance, and is 3500 exactly at 25, so the fixed screen is unchanged.
+		if (var6 >= 50 && var6 <= 3500 + (distance - MIN_DISTANCE) * 128) {
+			int var8 = var4 * Pix3D.zoom / var6 + field1070;
+			int var9 = var7 * Pix3D.zoom / var6 + field1071;
 			return var8 >= field1072 && var8 <= field1074 && var9 >= field1073 && var9 <= field1075;
 		} else {
 			return false;
@@ -1061,19 +1096,19 @@ public class World3D {
 		field1030 = arg0 / 128;
 		field1031 = arg4 / 128;
 		field1024 = arg1;
-		field1026 = field1030 - 25;
+		field1026 = field1030 - distance;
 		if (field1026 < 0) {
 			field1026 = 0;
 		}
-		field1028 = field1031 - 25;
+		field1028 = field1031 - distance;
 		if (field1028 < 0) {
 			field1028 = 0;
 		}
-		field1027 = field1030 + 25;
+		field1027 = field1030 + distance;
 		if (field1027 > this.field1015) {
 			field1027 = this.field1015;
 		}
-		field1029 = field1031 + 25;
+		field1029 = field1031 + distance;
 		if (field1029 > this.field1016) {
 			field1029 = this.field1016;
 		}
@@ -1085,7 +1120,7 @@ public class World3D {
 				for (int var35 = field1028; var35 < field1029; var35++) {
 					Square var36 = var33[var34][var35];
 					if (var36 != null) {
-						if (var36.field1394 <= arg1 && (field1069[var34 - field1030 + 25][var35 - field1031 + 25] || this.field1017[var8][var34][var35] - arg3 >= 2000)) {
+						if (var36.field1394 <= arg1 && (field1069[var34 - field1030 + distance][var35 - field1031 + distance] || this.field1017[var8][var34][var35] - arg3 >= 2000)) {
 							var36.field1395 = true;
 							var36.field1396 = true;
 							if (var36.field1390 > 0) {
@@ -1105,11 +1140,11 @@ public class World3D {
 		}
 		for (int var9 = this.field1019; var9 < this.field1014; var9++) {
 			Square[][] var22 = this.field1018[var9];
-			for (int var23 = -25; var23 <= 0; var23++) {
+			for (int var23 = -distance; var23 <= 0; var23++) {
 				int var24 = field1030 + var23;
 				int var25 = field1030 - var23;
 				if (var24 >= field1026 || var25 < field1027) {
-					for (int var26 = -25; var26 <= 0; var26++) {
+					for (int var26 = -distance; var26 <= 0; var26++) {
 						int var27 = field1031 + var26;
 						int var28 = field1031 - var26;
 						if (var24 >= field1026) {
@@ -1150,11 +1185,11 @@ public class World3D {
 		}
 		for (int var10 = this.field1019; var10 < this.field1014; var10++) {
 			Square[][] var11 = this.field1018[var10];
-			for (int var12 = -25; var12 <= 0; var12++) {
+			for (int var12 = -distance; var12 <= 0; var12++) {
 				int var13 = field1030 + var12;
 				int var14 = field1030 - var12;
 				if (var13 >= field1026 || var14 < field1027) {
-					for (int var15 = -25; var15 <= 0; var15++) {
+					for (int var15 = -distance; var15 <= 0; var15++) {
 						int var16 = field1031 + var15;
 						int var17 = field1031 - var15;
 						if (var13 >= field1026) {
@@ -1692,14 +1727,14 @@ public class World3D {
 		if (var43 < 50) {
 			return;
 		}
-		int var45 = (var21 << 9) / var25 + Pix3D.centerX;
-		int var46 = (var24 << 9) / var25 + Pix3D.centerY;
-		int var47 = (var27 << 9) / var31 + Pix3D.centerX;
-		int var48 = (var30 << 9) / var31 + Pix3D.centerY;
-		int var49 = (var33 << 9) / var37 + Pix3D.centerX;
-		int var50 = (var36 << 9) / var37 + Pix3D.centerY;
-		int var51 = (var39 << 9) / var43 + Pix3D.centerX;
-		int var52 = (var42 << 9) / var43 + Pix3D.centerY;
+		int var45 = var21 * Pix3D.zoom / var25 + Pix3D.centerX;
+		int var46 = var24 * Pix3D.zoom / var25 + Pix3D.centerY;
+		int var47 = var27 * Pix3D.zoom / var31 + Pix3D.centerX;
+		int var48 = var30 * Pix3D.zoom / var31 + Pix3D.centerY;
+		int var49 = var33 * Pix3D.zoom / var37 + Pix3D.centerX;
+		int var50 = var36 * Pix3D.zoom / var37 + Pix3D.centerY;
+		int var51 = var39 * Pix3D.zoom / var43 + Pix3D.centerX;
+		int var52 = var42 * Pix3D.zoom / var43 + Pix3D.centerY;
 		Pix3D.field1593 = 0;
 		if ((var48 - var52) * (var49 - var51) - (var47 - var51) * (var50 - var52) > 0) {
 			Pix3D.hclip = false;
@@ -1765,8 +1800,8 @@ public class World3D {
 				Ground.field920[var10] = var29;
 				Ground.field921[var10] = var30;
 			}
-			Ground.field917[var10] = (var26 << 9) / var30 + Pix3D.centerX;
-			Ground.field918[var10] = (var29 << 9) / var30 + Pix3D.centerY;
+			Ground.field917[var10] = var26 * Pix3D.zoom / var30 + Pix3D.centerX;
+			Ground.field918[var10] = var29 * Pix3D.zoom / var30 + Pix3D.centerY;
 		}
 		Pix3D.field1593 = 0;
 		int var11 = arg2.field908.length;
@@ -1846,15 +1881,15 @@ public class World3D {
 		for (int var4 = 0; var4 < var2; var4++) {
 			Occlude var5 = var3[var4];
 			if (var5.field1482 == 1) {
-				int var6 = var5.field1478 - field1030 + 25;
-				if (var6 >= 0 && var6 <= 50) {
-					int var7 = var5.field1480 - field1031 + 25;
+				int var6 = var5.field1478 - field1030 + distance;
+				if (var6 >= 0 && var6 <= distance * 2) {
+					int var7 = var5.field1480 - field1031 + distance;
 					if (var7 < 0) {
 						var7 = 0;
 					}
-					int var8 = var5.field1481 - field1031 + 25;
-					if (var8 > 50) {
-						var8 = 50;
+					int var8 = var5.field1481 - field1031 + distance;
+					if (var8 > distance * 2) {
+						var8 = distance * 2;
 					}
 					boolean var9 = false;
 					while (var7 <= var8) {
@@ -1882,15 +1917,15 @@ public class World3D {
 					}
 				}
 			} else if (var5.field1482 == 2) {
-				int var11 = var5.field1480 - field1031 + 25;
-				if (var11 >= 0 && var11 <= 50) {
-					int var12 = var5.field1478 - field1030 + 25;
+				int var11 = var5.field1480 - field1031 + distance;
+				if (var11 >= 0 && var11 <= distance * 2) {
+					int var12 = var5.field1478 - field1030 + distance;
 					if (var12 < 0) {
 						var12 = 0;
 					}
-					int var13 = var5.field1479 - field1030 + 25;
-					if (var13 > 50) {
-						var13 = 50;
+					int var13 = var5.field1479 - field1030 + distance;
+					if (var13 > distance * 2) {
+						var13 = distance * 2;
 					}
 					boolean var14 = false;
 					while (var12 <= var13) {
@@ -1920,22 +1955,22 @@ public class World3D {
 			} else if (var5.field1482 == 4) {
 				int var16 = var5.field1487 - field1033;
 				if (var16 > 128) {
-					int var17 = var5.field1480 - field1031 + 25;
+					int var17 = var5.field1480 - field1031 + distance;
 					if (var17 < 0) {
 						var17 = 0;
 					}
-					int var18 = var5.field1481 - field1031 + 25;
-					if (var18 > 50) {
-						var18 = 50;
+					int var18 = var5.field1481 - field1031 + distance;
+					if (var18 > distance * 2) {
+						var18 = distance * 2;
 					}
 					if (var17 <= var18) {
-						int var19 = var5.field1478 - field1030 + 25;
+						int var19 = var5.field1478 - field1030 + distance;
 						if (var19 < 0) {
 							var19 = 0;
 						}
-						int var20 = var5.field1479 - field1030 + 25;
-						if (var20 > 50) {
-							var20 = 50;
+						int var20 = var5.field1479 - field1030 + distance;
+						if (var20 > distance * 2) {
+							var20 = distance * 2;
 						}
 						boolean var21 = false;
 						label153: for (int var22 = var19; var22 <= var20; var22++) {

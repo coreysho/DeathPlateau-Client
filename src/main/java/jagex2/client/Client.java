@@ -48,7 +48,7 @@ import jagex2.jstring.JString;
 import jagex2.sound.AreaSounds;
 import jagex2.sound.Wave;
 import jagex2.wordenc.WordFilter;
-import jagex2.wordenc.WordPack;
+import jagex2.wordenc.ChatText;
 import java.applet.AppletContext;
 import java.awt.Color;
 import java.awt.Font;
@@ -68,7 +68,7 @@ import java.util.zip.CRC32;
 import jagex2.client.plugin.PluginManager;
 import sign.signlink;
 
-public class Client extends GameShell {
+public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.K")
 	public int[] jagChecksum = new int[9];
@@ -341,13 +341,15 @@ public class Client extends GameShell {
 	//
 	// Drawn into areaViewport rather than over the whole screen, because drawGame() has no single
 	// fullscreen buffer - it composes the frame out of separate bound surfaces (viewport, sidebar,
-	// chatback, backbase) and blits each one. The viewport is 512x334 at screen offset (4,4), which
-	// is where the XP drops already draw, so the panel is laid out in viewport-local coordinates and
-	// QOL_PANEL_ORIGIN is added back when hit-testing against the screen-space mouse position.
+	// chatback, backbase) and blits each one. The panel is laid out in viewport-local coordinates,
+	// centred where a main interface would be (layout.mainX/mainY), and the viewport's origin in the
+	// mouse's coordinates (layout.vpX/vpY: 4,4 on the fixed screen) is added back when hit-testing.
 	private static final int QOL_PANEL_KEY = 1016; // F9
-	private static final int QOL_PANEL_ORIGIN = 4;
 	private static final int QOL_PANEL_W = 320;
-	private static final int QOL_PANEL_ROW_H = 15;
+	// 14, not the 15 it was: the panel has no paging and has to fit the fixed screen's 334px
+	// viewport, and the draw distance row is the twentieth. RoofTest's panelTests() fails the build
+	// the moment it stops fitting, so this is the number to shave next time a setting is added.
+	private static final int QOL_PANEL_ROW_H = 14;
 	private static final int QOL_PANEL_HEADER_H = 24;
 	private static final int QOL_PANEL_FOOTER_H = 22;
 	private boolean qolPanelOpen;
@@ -381,7 +383,25 @@ public class Client extends GameShell {
 	private static final int SWAP_PANEL_ROW_H = 15;
 	private static final int SWAP_PANEL_HEADER_H = 24;
 	private static final int SWAP_PANEL_FOOTER_H = 22;
-	private static final int SWAP_PANEL_ACTIONS = 1; // "clear all", above the list
+	// "Clear all swaps", above the list. The action rows do NOT scroll: it stays pinned under the
+	// header, so the way out of a long list is the first thing under the title rather than something
+	// to go and find. Only the swaps below it move.
+	private static final int SWAP_PANEL_ACTIONS = 1;
+	// THE SWAPS LIST SCROLLS, which is the only reason MenuSwaps.MAX could go from 16 to 128: the
+	// old cap was the panel's height, not the storage. The bar is drawScrollbar() - the same one the
+	// bank, the chatbox and every interface list use - so there is one scrollbar in this client and
+	// not a second one that looks nearly like it. 16 is the width of its "scrollbar" sprites.
+	private static final int SWAP_PANEL_SCROLL_W = 16;
+	// The panel is as tall as the open area leaves room for, less this margin top and bottom, so it
+	// never sits flush against the edge of the viewport or under the chatbox. That is what makes it
+	// work in all three display modes: 334px of open height in FIXED gives 18 rows, and the bigger
+	// open area of a resizable window is used rather than wasted (1280x800 classic gives 38).
+	private static final int SWAP_PANEL_MARGIN = 6;
+	// Rows per notch of the wheel. Three, not one: with 128 swaps allowed, a list a player actually
+	// filled would take a minute to walk one row at a time.
+	private static final int SWAP_PANEL_WHEEL_ROWS = 3;
+	/** How far the swaps list is scrolled, in pixels. Zeroed when the panel opens. */
+	private int swapScrollPx;
 	// handleViewportOptions() gives the "Walk here" entry this action. Swapping to it is how a
 	// player says "left-clicking this must not interact with it" - the reason walk-here is offered
 	// at all, and why it has to be promoted by action rather than by name: the entry carries no
@@ -872,16 +892,24 @@ public class Client extends GameShell {
 	// near the top-right of the viewport (same anchor the ::fpson debug counter uses, offset
 	// below it when that's also on). Newest drop is always at index 0/top, since addXpDrop()
 	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
+	// The last two rows of the panel are not QolSettings switches: they are the window and the draw
+	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
+	// are about this machine's screen and what it can push. Neither is a switch: both step through
+	// their values, so each keeps the tick box its neighbours have and spells out what it is on.
+	private static final int ROW_WINDOW = QolSettings.COUNT;
+	private static final int ROW_DRAW_DISTANCE = QolSettings.COUNT + 1;
+	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 2;
+
 	private int qolPanelHeight() {
-		return QOL_PANEL_HEADER_H + QolSettings.COUNT * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
+		return QOL_PANEL_HEADER_H + QOL_PANEL_ROWS * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
 	}
 
 	private int qolPanelX() {
-		return (512 - QOL_PANEL_W) / 2;
+		return this.layout.mainX + (512 - QOL_PANEL_W) / 2;
 	}
 
 	private int qolPanelY() {
-		return (334 - this.qolPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.qolPanelHeight()) / 2;
 	}
 
 	/** Called with areaViewport bound, so coordinates here are viewport-local. */
@@ -897,21 +925,37 @@ public class Client extends GameShell {
 		String close = "F9 / Esc to close";
 		this.fontPlain12.drawString(x + QOL_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
-		for (int i = 0; i < QolSettings.COUNT; i++) {
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
+		for (int i = 0; i < QOL_PANEL_ROWS; i++) {
 			int rowY = y + QOL_PANEL_HEADER_H + i * QOL_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + QOL_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + QOL_PANEL_ROW_H;
 			if (hovered) {
 				Pix2D.fillRectTrans(0xFFFFFF, rowY, QOL_PANEL_W - 2, QOL_PANEL_ROW_H, 30, x + 1);
 			}
-			boolean on = QolSettings.on(i);
 			int baseline = rowY + QOL_PANEL_ROW_H - 4;
+			// The two stepping rows keep the same box the switches have, so the column still lines up;
+			// it is ticked when the row is on anything other than the client's old behaviour, and what
+			// it is on is spelled out in the label.
+			if (i == ROW_DRAW_DISTANCE) {
+				int tiles = DisplaySettings.drawDistance();
+				boolean far = tiles > DisplaySettings.DRAW_DISTANCES[0];
+				this.fontPlain12.drawString(x + 10, far ? 0x00C000 : 0x707070, baseline, far ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, far ? 0xFFFFFF : 0x909090, baseline, "Draw distance: " + tiles + " tiles");
+				continue;
+			}
+			if (i == ROW_WINDOW) {
+				boolean sized = this.wantMode != Layout.FIXED;
+				this.fontPlain12.drawString(x + 10, sized ? 0x00C000 : 0x707070, baseline, sized ? "[X]" : "[  ]");
+				this.fontPlain12.drawString(x + 36, sized ? 0xFFFFFF : 0x909090, baseline, "Window: " + Layout.modeName(this.wantMode));
+				continue;
+			}
+			boolean on = QolSettings.on(i);
 			this.fontPlain12.drawString(x + 10, on ? 0x00C000 : 0x707070, baseline, on ? "[X]" : "[  ]");
 			this.fontPlain12.drawString(x + 36, on ? 0xFFFFFF : 0x909090, baseline, QolSettings.label(i));
 		}
 
-		String hint = "Click a row to toggle. Saved to the client cache folder.";
+		String hint = "Click a row to change it. Saved on this computer.";
 		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
 	}
 
@@ -920,17 +964,22 @@ public class Client extends GameShell {
 	 * meant for a toggle can never also walk the player or open a menu behind the panel.
 	 */
 	private void handleQolPanelInput() {
-		// The server can push an interface at any time (a dialogue, a trade request). If one appears
-		// it would draw over the panel, so stand down rather than keep swallowing input underneath it.
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// The server can push an interface at any time (a bank, a trade request). One of those draws
+		// over the panel, so stand down rather than keep swallowing input underneath it.
+		//
+		// A CHATBOX interface does not: it draws in the chatbox, where the panel is not. It used to be
+		// in this list, which made F9 useless anywhere the server keeps a chatbox interface up - the
+		// whole tutorial, every quest dialogue - because the panel closed itself again a tick after it
+		// opened, sometimes between the click landing and the frame that would have read it.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.qolPanelOpen = false;
 			return;
 		}
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.qolPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.qolPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.qolPanelX() + this.layout.vpX;
+		int y = this.qolPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -939,7 +988,17 @@ public class Client extends GameShell {
 			return;
 		}
 		int row = (clickY - (y + QOL_PANEL_HEADER_H)) / QOL_PANEL_ROW_H;
-		if (clickY < y + QOL_PANEL_HEADER_H || row < 0 || row >= QolSettings.COUNT) {
+		if (clickY < y + QOL_PANEL_HEADER_H || row < 0 || row >= QOL_PANEL_ROWS) {
+			return;
+		}
+		if (row == ROW_WINDOW) {
+			this.setDisplayMode(DisplaySettings.nextMode(this.wantMode));
+			DevLog.log("QOL", "Window -> " + Layout.modeName(this.wantMode));
+			return;
+		}
+		if (row == ROW_DRAW_DISTANCE) {
+			this.setDrawDistance(DisplaySettings.nextDistance(DisplaySettings.drawDistance()));
+			DevLog.log("QOL", "Draw distance -> " + DisplaySettings.drawDistance() + " tiles");
 			return;
 		}
 		QolSettings.toggle(row);
@@ -1247,54 +1306,138 @@ public class Client extends GameShell {
 		}
 	}
 
+	/**
+	 * How many rows the panel shows at once - the pinned action rows and as many swaps as the
+	 * window has room for under them. Everything past that is reached with the scrollbar.
+	 *
+	 * Takes the number of swaps rather than reading MenuSwaps, because MenuSwaps.count() touches the
+	 * file on disk and the geometry is what RoofTest's panelTests() drives with 0, 16, 40 and MAX.
+	 */
+	private int swapPanelRows(int swaps) {
+		int want = SWAP_PANEL_ACTIONS + swaps;
+		int room = (this.layout.openH - 2 * SWAP_PANEL_MARGIN - SWAP_PANEL_HEADER_H - SWAP_PANEL_FOOTER_H)
+			/ SWAP_PANEL_ROW_H;
+		// A window too small to show one swap under the actions cannot happen - resizable mode never
+		// lays out below the fixed frame (Layout.MIN_H) and fixed is 334 - but the panel would be
+		// nothing but a header and a footer if it did, so the floor is here rather than assumed.
+		if (room < SWAP_PANEL_ACTIONS + 1) {
+			room = SWAP_PANEL_ACTIONS + 1;
+		}
+		return want < room ? want : room;
+	}
+
+	private int swapPanelHeight(int swaps) {
+		return SWAP_PANEL_HEADER_H + this.swapPanelRows(swaps) * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H;
+	}
+
 	private int swapPanelHeight() {
-		return SWAP_PANEL_HEADER_H + (SWAP_PANEL_ACTIONS + MenuSwaps.count()) * SWAP_PANEL_ROW_H + SWAP_PANEL_FOOTER_H;
+		return this.swapPanelHeight(MenuSwaps.count());
 	}
 
 	private int swapPanelX() {
-		return (512 - SWAP_PANEL_W) / 2;
+		return this.layout.mainX + (512 - SWAP_PANEL_W) / 2;
+	}
+
+	/**
+	 * Centred in the open area - the part of the viewport no side panel or chatbox covers - which is
+	 * the same y the old "mainY + (334 - h) / 2" gave in every mode, because mainY is itself half of
+	 * whatever the open area has over 334. Written as the open area now that the panel can be taller
+	 * than 334: in a resizable window that is still centred, and the clamp keeps a panel that has
+	 * somehow outgrown its room hanging off the bottom rather than off the top, where the header and
+	 * the way to close it are.
+	 */
+	private int swapPanelY(int swaps) {
+		int y = (this.layout.openH - this.swapPanelHeight(swaps)) / 2;
+		return y < 0 ? 0 : y;
 	}
 
 	private int swapPanelY() {
-		return (334 - this.swapPanelHeight()) / 2;
+		return this.swapPanelY(MenuSwaps.count());
+	}
+
+	/** How far the list can be scrolled, in pixels: zero while every swap is already on screen. */
+	private int swapScrollMax(int swaps) {
+		int hidden = swaps - (this.swapPanelRows(swaps) - SWAP_PANEL_ACTIONS);
+		return hidden > 0 ? hidden * SWAP_PANEL_ROW_H : 0;
+	}
+
+	/**
+	 * The scroll position, clamped as it is read. Clamping here and not at every place that moves it
+	 * is what makes removing a swap safe: cycle() can shorten the list under a panel scrolled to the
+	 * bottom, and the next frame simply reads a smaller number.
+	 */
+	private int swapScroll(int swaps) {
+		int max = this.swapScrollMax(swaps);
+		if (this.swapScrollPx > max) {
+			this.swapScrollPx = max;
+		}
+		if (this.swapScrollPx < 0) {
+			this.swapScrollPx = 0;
+		}
+		return this.swapScrollPx;
+	}
+
+	/**
+	 * The first swap shown. Rows are drawn whole - the list scrolls a row at a time even though the
+	 * position underneath is pixels - because half a line of "Attack on Guard" cut off by the footer
+	 * is harder to read than a list that steps.
+	 */
+	private int swapFirstRow(int swaps) {
+		return this.swapScroll(swaps) / SWAP_PANEL_ROW_H;
 	}
 
 	/** Called with areaViewport bound, so coordinates here are viewport-local. */
 	private void drawSwapPanel() {
+		int swaps = MenuSwaps.count();
 		int x = this.swapPanelX();
-		int y = this.swapPanelY();
-		int h = this.swapPanelHeight();
-		int rows = SWAP_PANEL_ACTIONS + MenuSwaps.count();
+		int y = this.swapPanelY(swaps);
+		int h = this.swapPanelHeight(swaps);
+		int rows = this.swapPanelRows(swaps);
+		int listRows = rows - SWAP_PANEL_ACTIONS;
+		int first = this.swapFirstRow(swaps);
+		int scrollMax = this.swapScrollMax(swaps);
+		// The bar takes its column out of every row's width, not just the ones beside it, so the
+		// "on <target>" of a long entry stops at the same place whether it is scrolled past or not.
+		int inner = SWAP_PANEL_W - (scrollMax > 0 ? SWAP_PANEL_SCROLL_W + 1 : 0);
 
 		Pix2D.fillRectTrans(0x000000, y, SWAP_PANEL_W, h, 200, x);
 		Pix2D.drawRect(y, h, 0x8B7B5A, x, SWAP_PANEL_W);
 
 		this.fontBold12.drawString(x + 10, 0xFFB000, y + 17, "Left-click swaps");
-		String close = "F10 / Esc to close";
+		String close = swaps > listRows
+			? (first + 1) + "-" + (first + listRows) + " of " + swaps + "   F10 / Esc to close"
+			: "F10 / Esc to close";
 		this.fontPlain12.drawString(x + SWAP_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < rows; i++) {
 			int rowY = y + SWAP_PANEL_HEADER_H + i * SWAP_PANEL_ROW_H;
-			boolean hovered = mouseX >= x + 1 && mouseX < x + SWAP_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
+			boolean hovered = mouseX >= x + 1 && mouseX < x + inner - 1 && mouseY >= rowY && mouseY < rowY + SWAP_PANEL_ROW_H;
 			if (hovered) {
-				Pix2D.fillRectTrans(0xFFFFFF, rowY, SWAP_PANEL_W - 2, SWAP_PANEL_ROW_H, 30, x + 1);
+				Pix2D.fillRectTrans(0xFFFFFF, rowY, inner - 2, SWAP_PANEL_ROW_H, 30, x + 1);
 			}
 			int baseline = rowY + SWAP_PANEL_ROW_H - 4;
 			if (i == 0) {
-				boolean can = MenuSwaps.count() > 0;
+				boolean can = swaps > 0;
 				this.fontPlain12.drawString(x + 10, can ? 0xC00000 : 0x707070, baseline, "[x]");
 				this.fontPlain12.drawString(x + 36, can ? 0xFFFFFF : 0x909090, baseline, "Clear all swaps");
 			} else {
-				int k = i - SWAP_PANEL_ACTIONS;
+				int k = first + i - SWAP_PANEL_ACTIONS;
 				this.fontPlain12.drawString(x + 10, 0x9F9F9F, baseline, ">");
 				this.fontPlain12.drawString(x + 36, 0xFFFFFF, baseline, MenuSwaps.verb(k));
 				String on = MenuSwaps.isAny(k) ? "any " + MenuSwaps.kindLabel(k) : MenuSwaps.target(k);
 				this.fontPlain12.drawString(x + 170, MenuSwaps.isAny(k) ? 0xFFB000 : 0xC8C8C8, baseline, "on " + on);
 			}
 		}
-		String hint = MenuSwaps.count() == 0
+		// Only when there is something off screen: an always-drawn bar with nowhere to go says the
+		// list is longer than it is, and drawScrollbar's grip arithmetic divides by (content - view).
+		if (scrollMax > 0) {
+			this.drawScrollbar(first * SWAP_PANEL_ROW_H, x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W,
+				listRows * SWAP_PANEL_ROW_H, swaps * SWAP_PANEL_ROW_H,
+				y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H);
+		}
+		String hint = swaps == 0
 			? "Shift + right-click something to set one. " + MenuSwaps.MAX + " can be stored."
 			: "Click a swap: this target -> any of its kind -> removed.";
 		this.fontPlain12.drawString(x + 10, 0x9F9F9F, y + h - 8, hint);
@@ -1302,15 +1445,58 @@ public class Client extends GameShell {
 
 	/** Consumes a click while the swaps panel is open, on the same terms as the settings panel. */
 	private void handleSwapPanelInput() {
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
+		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
+		// counting it here closed this panel on its own and swallowed the click, all through the
+		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.swapPanelOpen = false;
 			return;
 		}
+		int swaps = MenuSwaps.count();
+		int x = this.swapPanelX() + this.layout.vpX;
+		int y = this.swapPanelY(swaps) + this.layout.vpY;
+		int rows = this.swapPanelRows(swaps);
+		int listRows = rows - SWAP_PANEL_ACTIONS;
+		int listY = y + SWAP_PANEL_HEADER_H + SWAP_PANEL_ACTIONS * SWAP_PANEL_ROW_H;
+		int listH = listRows * SWAP_PANEL_ROW_H;
+		int barX = x + SWAP_PANEL_W - 1 - SWAP_PANEL_SCROLL_W;
+		int scrollMax = this.swapScrollMax(swaps);
+
+		// The bar answers a HELD button, not a click, which is what makes its two arrows repeat and
+		// its grip follow the mouse - the same deal handleScrollInput() gives every interface list.
+		// Done before the click is consumed below, so a press that lands on the bar never also
+		// counts as a press on the row behind it.
+		if (scrollMax > 0 && super.mouseButton == 1 && super.mouseX >= barX && super.mouseX < barX + SWAP_PANEL_SCROLL_W
+			&& super.mouseY >= listY && super.mouseY < listY + listH) {
+			if (super.mouseY < listY + 16) {
+				this.swapScrollPx -= this.dragCycles * 4;
+			} else if (super.mouseY >= listY + listH - 16) {
+				this.swapScrollPx += this.dragCycles * 4;
+			} else {
+				// The grip, sized as drawScrollbar() draws it, so the press lands where it looks.
+				int grip = (listH - 32) * listH / (swaps * SWAP_PANEL_ROW_H);
+				if (grip < 8) {
+					grip = 8;
+				}
+				// A list shorter than three rows cannot reach this branch today (the bar is only
+				// drawn once there are more swaps than rows, and the smallest window has 17 rows),
+				// but the divisor is a row height away from zero and a divide by zero here would
+				// take the client down.
+				int span = listH - 32 - grip;
+				if (span < 1) {
+					span = 1;
+				}
+				this.swapScrollPx = scrollMax * (super.mouseY - listY - 16 - grip / 2) / span;
+			}
+			this.swapScroll(swaps);
+			super.mouseClickButton = 0;
+			return;
+		}
+
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.swapPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.swapPanelY() + QOL_PANEL_ORIGIN;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1318,15 +1504,44 @@ public class Client extends GameShell {
 		if (clickX < x || clickX >= x + SWAP_PANEL_W) {
 			return;
 		}
+		// A click in the bar's column that got here (the press was elsewhere, or the bar is not
+		// drawn) must not fall through onto the row behind it.
+		if (scrollMax > 0 && clickX >= barX && clickY >= listY && clickY < listY + listH) {
+			return;
+		}
 		int row = (clickY - (y + SWAP_PANEL_HEADER_H)) / SWAP_PANEL_ROW_H;
-		if (clickY < y + SWAP_PANEL_HEADER_H || row < 0 || row >= SWAP_PANEL_ACTIONS + MenuSwaps.count()) {
+		if (clickY < y + SWAP_PANEL_HEADER_H || row < 0 || row >= rows) {
 			return;
 		}
 		if (row == 0) {
 			MenuSwaps.clear();
 		} else {
-			MenuSwaps.cycle(row - SWAP_PANEL_ACTIONS);
+			// The scroll position is what turns a row on screen into a swap in the list.
+			MenuSwaps.cycle(this.swapFirstRow(swaps) + row - SWAP_PANEL_ACTIONS);
 		}
+	}
+
+	/**
+	 * The wheel over the swaps panel. Arbitrated in updateOrbitCamera() with the menu, the ground
+	 * item pile and the camera rather than in handleSwapPanelInput(), because that is where the one
+	 * wheel delta of a cycle is handed out and the camera zoom would otherwise have eaten it before
+	 * the panel was ever asked - updateOrbitCamera() runs in update(), handleSwapPanelInput() in the
+	 * draw. Consumed whether it scrolled anything or not, on the same terms as the panel swallowing
+	 * clicks: while it is open, it owns the mouse.
+	 */
+	private void handleSwapPanelScroll() {
+		if (!this.swapPanelOpen || super.mouseScrollDelta == 0) {
+			return;
+		}
+		int swaps = MenuSwaps.count();
+		int x = this.swapPanelX() + this.layout.vpX;
+		int y = this.swapPanelY(swaps) + this.layout.vpY;
+		if (super.mouseX >= x && super.mouseX < x + SWAP_PANEL_W
+			&& super.mouseY >= y && super.mouseY < y + this.swapPanelHeight(swaps)) {
+			this.swapScrollPx += super.mouseScrollDelta * SWAP_PANEL_ROW_H * SWAP_PANEL_WHEEL_ROWS;
+			this.swapScroll(swaps);
+		}
+		super.mouseScrollDelta = 0;
 	}
 
 	private int giPanelHeight() {
@@ -1334,11 +1549,11 @@ public class Client extends GameShell {
 	}
 
 	private int giPanelX() {
-		return (512 - GI_PANEL_W) / 2;
+		return this.layout.mainX + (512 - GI_PANEL_W) / 2;
 	}
 
 	private int giPanelY() {
-		return (334 - this.giPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.giPanelHeight()) / 2;
 	}
 
 	/** Money the way a player reads it, for the value-floor row. */
@@ -1369,8 +1584,8 @@ public class Client extends GameShell {
 		String close = "F11 / Esc to close";
 		this.fontPlain12.drawString(x + GI_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < rows; i++) {
 			int rowY = y + GI_PANEL_HEADER_H + i * GI_PANEL_ROW_H;
 			boolean hovered = mouseX >= x + 1 && mouseX < x + GI_PANEL_W - 1 && mouseY >= rowY && mouseY < rowY + GI_PANEL_ROW_H;
@@ -1405,15 +1620,19 @@ public class Client extends GameShell {
 
 	/** Consumes a click while the ground item panel is open, on the same terms as the other two. */
 	private void handleGiPanelInput() {
-		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1 || this.chatInterfaceId != -1) {
+		// Only the two that DRAW OVER the panel stand it down. A chatbox interface does not: it sits
+		// in the chatbox, well clear, and the server re-pushes it every tick through a dialogue - so
+		// counting it here closed this panel on its own and swallowed the click, all through the
+		// tutorial and every quest conversation. Same guard as handleQolPanelInput.
+		if (this.viewportInterfaceId != -1 || this.fullscreenInterfaceId0 != -1) {
 			this.giPanelOpen = false;
 			return;
 		}
 		if (super.mouseClickButton == 0) {
 			return;
 		}
-		int x = this.giPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.giPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.giPanelX() + this.layout.vpX;
+		int y = this.giPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1489,11 +1708,11 @@ public class Client extends GameShell {
 	}
 
 	private int pluginPanelX() {
-		return (512 - PLUGIN_PANEL_W) / 2;
+		return this.layout.mainX + (512 - PLUGIN_PANEL_W) / 2;
 	}
 
 	private int pluginPanelY() {
-		return (334 - this.pluginPanelHeight()) / 2;
+		return this.layout.mainY + (334 - this.pluginPanelHeight()) / 2;
 	}
 
 	/**
@@ -1525,8 +1744,8 @@ public class Client extends GameShell {
 		String close = "F8 / Esc to close";
 		this.fontPlain12.drawString(x + PLUGIN_PANEL_W - 10 - this.fontPlain12.stringWid(close), 0x9F9F9F, y + 17, close);
 
-		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
-		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
+		int mouseX = super.mouseX - this.layout.vpX;
+		int mouseY = super.mouseY - this.layout.vpY;
 		String hint = total > shown
 			? "Scroll for more. Jars go in .deathplateau/plugins in your home folder."
 			: "Click a row to toggle. Jars go in .deathplateau/plugins in your home folder.";
@@ -1574,8 +1793,8 @@ public class Client extends GameShell {
 		// Drawn before input is handled, so a first frame with no rows yet means there is nothing
 		// to hit-test against - the click is still eaten, as it is for every other panel.
 		java.util.List<PluginManager.PanelRow> rows = this.pluginPanelRows;
-		int x = this.pluginPanelX() + QOL_PANEL_ORIGIN;
-		int y = this.pluginPanelY() + QOL_PANEL_ORIGIN;
+		int x = this.pluginPanelX() + this.layout.vpX;
+		int y = this.pluginPanelY() + this.layout.vpY;
 		int clickX = super.mouseClickX;
 		int clickY = super.mouseClickY;
 		super.mouseClickButton = 0;
@@ -1617,8 +1836,8 @@ public class Client extends GameShell {
 	 * click is spent and must not also walk the player.
 	 */
 	private boolean handleGroundItemClick() {
-		int x = super.mouseClickX - QOL_PANEL_ORIGIN;
-		int y = super.mouseClickY - QOL_PANEL_ORIGIN;
+		int x = super.mouseClickX - this.layout.vpX;
+		int y = super.mouseClickY - this.layout.vpY;
 		for (int i = 0; i < this.giZoneCount; i++) {
 			if (y < this.giZoneTop[i] || y > this.giZoneBottom[i]) {
 				continue;
@@ -1780,7 +1999,7 @@ public class Client extends GameShell {
 				// -1 means behind the camera. The generous box around the 512x334 viewport is not
 				// for correctness - plotLetter() clips - but so a tile off to the side costs one
 				// comparison instead of an ObjType decode and a string build per row.
-				if (this.projectX <= -1 || this.projectX > 640 || this.projectY < -64 || this.projectY > 400) {
+				if (this.projectX <= -1 || this.projectX > this.layout.vpW + 128 || this.projectY < -64 || this.projectY > this.layout.vpH + 66) {
 					continue;
 				}
 				// PASS ONE: what each tracked row would look like, and how many rows there are to
@@ -1963,8 +2182,8 @@ public class Client extends GameShell {
 		if (super.mouseScrollDelta == 0 || !QolSettings.on(QolSettings.GROUND_ITEMS)) {
 			return false;
 		}
-		int x = super.mouseX - QOL_PANEL_ORIGIN;
-		int y = super.mouseY - QOL_PANEL_ORIGIN;
+		int x = super.mouseX - this.layout.vpX;
+		int y = super.mouseY - this.layout.vpY;
 		for (int i = 0; i < this.giPileCount; i++) {
 			if (this.giPileRows[i] <= GI_ROWS_SHOWN) {
 				continue;                                    // nothing to scroll: leave it to zoom
@@ -2005,7 +2224,7 @@ public class Client extends GameShell {
 		if (!showTracker && this.xpDrops.isEmpty()) {
 			return;
 		}
-		int rightX = 507;
+		int rightX = this.layout.openW - 5;
 		int y = displayFps ? 68 : 22;
 
 		// The tracker panel: skill icon + that skill's total xp + a bar showing progress to the next
@@ -2268,23 +2487,43 @@ public class Client extends GameShell {
 	public int nextMidiSong = -1;
 
 	@ObfuscatedName("client.N")
-	public static BigInteger LOGIN_RSAN = new BigInteger("7162900525229798032761816791230527296329313291232324290237849263501208207972894053929065636522363163621000728841182238772712427862772219676577293600221789");
+	// The public half of the server's login RSA key (engine: `npm run rsa`, data/config/login-rsa.pem).
+	// Rotated 2026-09-27: the old 512-bit key's private half was public on GitHub. Change these only
+	// together with the server's key AND the p2(...) build number in login() below.
+	public static BigInteger LOGIN_RSAN = new BigInteger("153884090520538728936878302027910202920542948295897114523288142356390821628154839790201213541418821317049841112218678628942025501794640330604458662944406617266109433307208963311978451516363571029097291301242557629716636019046289026568724861317137936845248862778762767562566708241027964593626362603622200050473");
 
 	@ObfuscatedName("client.sc")
 	public static int nodeId = 10;
 
-	// Server address the standalone client connects to. Override at launch with
-	// -Dlostcity.host=... / -Dlostcity.webport=... (or LOSTCITY_HOST / LOSTCITY_WEBPORT
-	// env vars) so friends outside the LAN can point at your public DuckDNS domain
-	// instead of the LXC's internal IP, without touching source.
 	// The server's name and slogan, wherever the client says them: the window, the login screen and
 	// the loading and error messages. (The logo is an image, content/title/logo.png.)
 	public static final String SERVER_NAME = "Death Plateau";
 	public static final String SLOGAN = "The true golden era.";
 	public static final int SLOGAN_COLOUR = 0xE8C35A;
 
-	public static String SERVER_HOST = System.getProperty("lostcity.host", System.getenv().getOrDefault("LOSTCITY_HOST", "rsps-project-lost-city.duckdns.org"));
-	public static int WEB_PORT = Integer.parseInt(System.getProperty("lostcity.webport", System.getenv().getOrDefault("LOSTCITY_WEBPORT", "8888")));
+	// Server address the standalone client connects to. Override at launch with -Dlostcity.host /
+	// lostcity.port / lostcity.webhost / lostcity.webport (or the LOSTCITY_HOST, LOSTCITY_PORT,
+	// LOSTCITY_WEBHOST, LOSTCITY_WEBPORT env vars), without touching source.
+	// (2026-09-27) The public way in is a playit.gg tunnel in front of the home server, so the home IP is
+	// never handed out: one tunnel for the game (TCP 43594 on the server) and one for the web/cache
+	// server (TCP 8888), each with its own host and port. Point lostcity.host at the server directly
+	// (e.g. -Dlostcity.host=192.168.4.97 on the LAN) and both ports fall back to the server's own
+	// 43594 and 8888, and the web host follows the game host, unless they are given too.
+	private static String setting(String property, String env) {
+		String value = System.getProperty(property);
+		return value != null ? value : System.getenv(env);
+	}
+	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
+	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
+	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
+	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
+	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
+	// port, which already carries both streams, because the first byte a client sends is what tells
+	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
+	// client below is the client it has always been.
+	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -2883,6 +3122,21 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.ni")
 	public long sceneLoadStartTime;
+	/**
+	 * When THIS scene load began. Not sceneLoadStartTime, which is restarted every six minutes to pace
+	 * the error report and would take the stuck note back off the screen each time.
+	 */
+	private long sceneLoadBegan;
+	/** checkScene's last answer: 0 once the scene is built, else -1 to -4. See sceneStuckNote. */
+	private int sceneStuckReason;
+	/** The note currently painted under "Loading - please wait", so it is repainted only when it changes. */
+	private String sceneStuckShown;
+	/**
+	 * How long a scene may sit unfinished before the loading screen starts saying why. Long enough
+	 * that an ordinary load on a slow connection never shows it - those finish in a second or two off
+	 * a warm cache, and a cold one is a progress bar before this point, not a stuck scene.
+	 */
+	private static final long SCENE_STUCK_MS = 20000L;
 
 	@ObfuscatedName("client.Ii")
 	public long lastWaveStartTime;
@@ -3180,7 +3434,7 @@ public class Client extends GameShell {
 			var2 += var2;
 		}
 		DESIGN_HAIR_COLOUR = new int[] { 9104, 10275, 7595, 3610, 7975, 8526, 918, 38802, 24466, 10145, 58654, 5027, 1457, 16565, 34991, 25486 };
-		LOGIN_RSAE = new BigInteger("58778699976184461502525193738213253649000149147835990136706041084440742975821");
+		LOGIN_RSAE = new BigInteger("65537");
 	}
 
 	// ----
@@ -3189,6 +3443,10 @@ public class Client extends GameShell {
 		try {
 			System.out.println(SERVER_NAME);
 			DevLog.log("SESSION", "=== DEV CLIENT === logging every menu action, chat message, and login/logout to console + dev-client.log");
+			// WHICH DIAGNOSTICS THIS BUILD HAS. Two logs in a row came back with no [animframe] lines
+			// and there was no way to tell "frames are fine" from "this client predates that check",
+			// which wasted a round. Any log can now answer it on its own first line.
+			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -3291,7 +3549,7 @@ public class Client extends GameShell {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL("http://" + SERVER_HOST + ":" + WEB_PORT);
+				return new URL("http://" + WEB_HOST + ":" + WEB_PORT);
 			}
 		} catch (Exception var1) {
 		}
@@ -3343,7 +3601,15 @@ public class Client extends GameShell {
 	}
 
 	@ObfuscatedName("client.g(I)Ljava/net/Socket;")
-	public Socket openSocket(int port) throws IOException { return new Socket(InetAddress.getByName(SERVER_HOST), port); }
+	public Socket openSocket(int port) throws IOException {
+		// Every socket this client opens comes through here - the game stream and OnDemand's update
+		// stream alike - which is what makes the browser case one line rather than a port of the
+		// networking. jagex2/io/WsSocket.java.
+		if (WS_URL != null) {
+			return new jagex2.io.WsSocket(WS_URL);
+		}
+		return new Socket(InetAddress.getByName(SERVER_HOST), port);
+	}
 
 	@ObfuscatedName("client.a(Ljava/lang/Runnable;I)V")
 	public void startThread(Runnable thread, int priority) {
@@ -3397,6 +3663,11 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a()V")
 	public void load() {
+		// A player who left the window resizable gets it back, in the layout they left it in. Only a
+		// standalone client has a window to resize; an applet is the size its page makes it.
+		if (super.frame != null && DisplaySettings.resizable()) {
+			this.setDisplayMode(DisplaySettings.mode());
+		}
 		this.drawProgress(20, "Starting up");
 
 		if (signlink.sunjava) {
@@ -3698,8 +3969,17 @@ public class Client extends GameShell {
 				}
 			}
 
-			for (int i = 0; i < 5; i++) {
-				this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+			// 0-4 are 377's own (block, damage, poison, and the two disease splats); 5-7 are Old School's
+			// venom, heal and max hit, at the numbers Old School gives the first two. A server whose media
+			// stops at 4 leaves the rest null, and the draw falls back to the plain damage splat.
+			for (int i = 0; i < 8; i++) {
+				try {
+					this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+				} catch (Exception e) {
+					if (i < 5) {
+						throw e;
+					}
+				}
 			}
 
 			for (int i = 0; i < 6; i++) {
@@ -3903,7 +4183,15 @@ public class Client extends GameShell {
 				distance[x] = offset * sin >> 16;
 			}
 
+			World3D.drawDistance = DisplaySettings.drawDistance();
 			World3D.init(334, distance, 800, 500, 512);
+			this.sceneDistances = distance;
+			this.sceneVisW = 512;
+			this.sceneVisH = 334;
+			this.sceneVisZoom = 512;
+			this.sceneVisDistance = World3D.drawDistance;
+			// A window already resizable when the game started was laid out before these existed.
+			this.updateSceneVisibility();
 			WordFilter.unpack(jagWordenc);
 
 			this.mouseTracking = new MouseTracking(this);
@@ -3949,6 +4237,10 @@ public class Client extends GameShell {
 		}
 
 		drawCycle++;
+
+		if (this.layout.resizable) {
+			this.prepareResizableFrame();
+		}
 
 		if (this.ingame) {
 			this.drawGame();
@@ -4101,6 +4393,12 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a(IZLjava/lang/String;)V")
 	public void drawProgress(int percent, String message) {
+		// load() draws these before the game loop has started, so nothing else has looked at the
+		// window yet: a resizable window is centred here rather than at the first game frame.
+		this.syncLayout();
+		if (this.layout.resizable) {
+			this.prepareResizableFrame();
+		}
 		this.lastProgressPercent = percent;
 		this.lastProgressMessage = message;
 		this.loadTitle();
@@ -4139,7 +4437,9 @@ public class Client extends GameShell {
 	public void drawError() {
 		Graphics var2 = this.getBaseComponent().getGraphics();
 		var2.setColor(Color.black);
-		var2.fillRect(0, 0, 765, 503);
+		// the whole window, not just the fixed frame: an error page in a resizable window would
+		// otherwise leave the title art showing around its edges
+		var2.fillRect(0, 0, Math.max(765, this.layout.width), Math.max(503, this.layout.height));
 		this.setFramerate(1);
 		if (this.errorLoading) {
 			this.flameActive = false;
@@ -4460,7 +4760,7 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Connecting to server...";
 				this.drawTitle();
 			}
-			this.stream = new ClientStream(this.openSocket(portOffset + 43594), this);
+			this.stream = new ClientStream(this.openSocket(portOffset + GAME_PORT), this);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
@@ -4498,9 +4798,13 @@ public class Client extends GameShell {
 				// Build handshake, not the RS protocol revision - must match
 				// Environment.ENGINE_REVISION on the server, or login is refused with
 				// "your client is out of date". 378 = the walk-merge skeleton guard. 379 = P_DIALOGPROMPT,
-				// server prot 9, which an older client has no length for.
-				this.login.p2(379);
-				this.login.p1(lowMem ? 1 : 0);
+				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
+				// 381 = chat as typed (ChatText): public, private and clan lines are their characters, not WordPack.
+				this.login.p2(381);
+				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
+				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
+				// instead, so a jar from before them keeps working rather than being turned away.
+				this.login.p1((lowMem ? 1 : 0) | 0x2);
 				for (int var11 = 0; var11 < 9; var11++) {
 					this.login.p4(this.jagChecksum[var11]);
 				}
@@ -4648,6 +4952,11 @@ public class Client extends GameShell {
 				this.loginMessage1 = "Please reload this page.";
 				if (this.relaunchForUpdate()) {
 					this.loginMessage1 = "Updating - restarting in a moment...";
+				} else if (System.getProperty(UPDATE_ATTEMPT) != null) {
+					// already came back from the launcher with the newest client and the server still
+					// says no: it is the SERVER that is mid-update, so there is nothing to download
+					this.loginMessage0 = "Already up to date.";
+					this.loginMessage1 = "Please try again in a few minutes.";
 				}
 			} else if (var8 == 7) {
 				this.loginMessage0 = "This world is full.";
@@ -4685,6 +4994,8 @@ public class Client extends GameShell {
 				this.menuSize = 0;
 				this.menuVisible = false;
 				this.sceneLoadStartTime = System.currentTimeMillis();
+				this.sceneLoadBegan = System.currentTimeMillis();
+				this.sceneStuckShown = null;
 			} else if (var8 == 16) {
 				this.loginMessage0 = "Login attempts exceeded.";
 				this.loginMessage1 = "Please wait 1 minute and try again.";
@@ -4807,7 +5118,7 @@ public class Client extends GameShell {
 		Pix2D.cls();
 		this.imageMapback.plotSprite(0, 0);
 		this.areaSidebar = new PixMap(261, this.getBaseComponent(), 190);
-		this.areaViewport = new PixMap(334, this.getBaseComponent(), 512);
+		this.createViewportArea();
 		Pix2D.cls();
 		this.areaBackbase1 = new PixMap(23, this.getBaseComponent(), 519);
 		this.areaBackbase2 = new PixMap(37, this.getBaseComponent(), 246);
@@ -5310,9 +5621,24 @@ public class Client extends GameShell {
 			this.showPopupMessage(null, "Loading - please wait.");
 			this.sceneState = 1;
 			this.sceneLoadStartTime = System.currentTimeMillis();
+			this.sceneLoadBegan = System.currentTimeMillis();
+			this.sceneStuckShown = null;
 		}
 		if (this.sceneState == 1) {
 			int var2 = this.checkScene();
+			this.sceneStuckReason = var2;
+			// The loading screen is painted ONCE, where the load starts, and nothing repaints it while
+			// the scene is coming in - so a scene that never finishes looks exactly like one that is
+			// merely slow, for ever. checkScene can sit at -3 indefinitely (a loc whose models will
+			// never resolve) with no timeout and no way out of it, and on 2026-09-29 a character had to
+			// be moved by editing its save from outside the server because of it. Once the load has
+			// plainly stopped getting anywhere, repaint with the reason underneath so the next one
+			// reports itself.
+			String note = this.sceneStuckNote();
+			if (note != null && !note.equals(this.sceneStuckShown)) {
+				this.sceneStuckShown = note;
+				this.showPopupMessage(note, "Loading - please wait.");
+			}
 			if (var2 != 0 && System.currentTimeMillis() - this.sceneLoadStartTime > 360000L) {
 				signlink.reporterror(this.username + " glcfb " + this.serverSeed + "," + var2 + "," + lowMem + "," + this.fileStreams[0] + "," + this.onDemand.remaining() + "," + this.currentLevel + "," + this.sceneCenterZoneX + "," + this.sceneCenterZoneZ);
 				this.sceneLoadStartTime = System.currentTimeMillis();
@@ -5353,6 +5679,7 @@ public class Client extends GameShell {
 			return -4;
 		} else {
 			this.sceneState = 2;
+			this.sceneStuckShown = null;
 			World.field125 = this.currentLevel;
 			this.buildScene();
 			// MAP_BUILD_COMPLETE
@@ -5850,11 +6177,11 @@ public class Client extends GameShell {
 		this.handlePrivateChatInput();
 		this.lastHoveredInterfaceId = 0;
 		this.field611 = 0;
-		if (super.mouseX > 4 && super.mouseY > 4 && super.mouseX < 516 && super.mouseY < 338) {
+		if (this.layout.inViewport(super.mouseX, super.mouseY)) {
 			if (this.viewportInterfaceId == -1) {
 				this.handleViewportOptions();
 			} else {
-				this.handleInterfaceInput(4, Component.get(this.viewportInterfaceId), 0, 0, 4, super.mouseX, super.mouseY);
+				this.handleInterfaceInput(this.layout.vpY + this.layout.mainY, Component.get(this.viewportInterfaceId), 0, 0, this.layout.vpX + this.layout.mainX, super.mouseX, super.mouseY);
 			}
 		}
 		if (this.viewportHoveredInterfaceIndex != this.lastHoveredInterfaceId) {
@@ -5955,13 +6282,13 @@ public class Client extends GameShell {
 					var6 = var6.substring(ChatIcons.leading(var6).length());
 				}
 				if ((var5 == 3 || var5 == 7) && (var5 == 7 || this.chatPrivateMode == 0 || this.chatPrivateMode == 1 && this.isFriend(var6))) {
-					int var10 = 329 - var3 * 13;
-					if (super.mouseX > 4 && super.mouseY - 4 > var10 - 10 && super.mouseY - 4 <= var10 + 3) {
-						int var11 = this.fontPlain12.stringWidTag("From:  " + var6 + this.messageText[var4]) + 25;
+					int var10 = this.layout.openH - 5 - var3 * 13;
+					if (super.mouseX > this.layout.vpX && super.mouseY - this.layout.vpY > var10 - 10 && super.mouseY - this.layout.vpY <= var10 + 3) {
+						int var11 = this.fontPlain12.stringWid("From:  " + var6 + this.messageText[var4]) + 25;
 						if (var11 > 450) {
 							var11 = 450;
 						}
-						if (super.mouseX < var11 + 4) {
+						if (super.mouseX < var11 + this.layout.vpX) {
 							if (this.staffmodlevel >= 1) {
 								this.menuOption[this.menuSize] = "Report abuse @whi@" + var6;
 								this.menuAction[this.menuSize] = 2507;
@@ -6321,8 +6648,8 @@ public class Client extends GameShell {
 			int var3 = super.mouseX;
 			int var4 = super.mouseY;
 			if (this.menuArea == 0) {
-				var3 -= 4;
-				var4 -= 4;
+				var3 -= this.layout.vpX;
+				var4 -= this.layout.vpY;
 			}
 			if (this.menuArea == 1) {
 				var3 -= SIDE_X;
@@ -6349,8 +6676,8 @@ public class Client extends GameShell {
 			int var8 = super.mouseClickX;
 			int var9 = super.mouseClickY;
 			if (this.menuArea == 0) {
-				var8 -= 4;
-				var9 -= 4;
+				var8 -= this.layout.vpX;
+				var9 -= this.layout.vpY;
 			}
 			if (this.menuArea == 1) {
 				var8 -= SIDE_X;
@@ -6850,9 +7177,12 @@ public class Client extends GameShell {
 			// the camera. Each consumes the delta when it takes it, so exactly one of the three acts
 			// on a turn - the order is the specificity: a menu is in front of everything, a pile is
 			// a thing you are pointing at, the camera is what is left.
+			// The swaps panel goes first: while it is open it is in front of all three and swallows
+			// the turn either way, exactly as it already swallows clicks. See handleSwapPanelScroll.
+			this.handleSwapPanelScroll();
 			this.handleMenuScroll();
 			this.handleGroundItemScroll();
-			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && super.mouseX > 4 && super.mouseY > 4 && super.mouseX < 516 && super.mouseY < 338) {
+			if (super.mouseScrollDelta != 0 && this.sidebarInterfaceId == -1 && this.chatInterfaceId == -1 && this.fullscreenInterfaceId0 == -1 && this.fullscreenInterfaceId1 == -1 && this.viewportInterfaceId == -1 && this.layout.inViewport(super.mouseX, super.mouseY)) {
 				if (QolSettings.on(QolSettings.WHEEL_ZOOM)) {
 					this.cameraZoomOffset -= super.mouseScrollDelta * 40;
 				}
@@ -7053,6 +7383,9 @@ public class Client extends GameShell {
 					if (key == SWAP_PANEL_KEY && this.ingame && QolSettings.on(QolSettings.MENU_SWAPPER)) {
 						this.swapPanelOpen = !this.swapPanelOpen;
 						if (this.swapPanelOpen) {
+							// Back to the top every time it opens: a panel that remembered where it
+							// was left would open on the middle of the list with no sign of why.
+							this.swapScrollPx = 0;
 							this.closeInterfaces();
 						}
 						continue;
@@ -7133,6 +7466,11 @@ public class Client extends GameShell {
 								this.removeFriend(username);
 							}
 
+							if (this.socialInputType == 3) {
+								// the line as typed, case and all (ChatText, not WordPack)
+								this.socialInput = ChatText.format(this.socialInput);
+							}
+
 							if (this.socialInputType == 3 && this.socialInput.length() > 0) {
 								// MESSAGE_PRIVATE
 								this.out.p1isaac(227);
@@ -7140,10 +7478,9 @@ public class Client extends GameShell {
 
 								int start = this.out.pos;
 								this.out.p8(this.socialName37);
-								WordPack.pack(this.socialInput, this.out);
+								ChatText.pack(this.socialInput, this.out);
 								this.out.psize1(this.out.pos - start);
 
-								this.socialInput = WordPack.toSentenceCase(this.socialInput);
 								// this.socialInput = WordFilter.filter(this.socialInput); // client-side profanity filter disabled per Corey's request
 
 								this.addMessage(JString.formatDisplayName(JString.fromBase37(this.socialName37)), this.socialInput, 6);
@@ -7393,11 +7730,14 @@ public class Client extends GameShell {
 							} else if (this.chatTyped.startsWith("/") && this.chatTyped.length() > 1) {
 								// CLAN_MESSAGE (custom): the server sends the line back to everybody in the
 								// channel, this player included, so there is no local echo
-								this.out.p1isaac(9);
-								this.out.p1(0);
-								int start = this.out.pos;
-								WordPack.pack(WordPack.toSentenceCase(this.chatTyped.substring(1)), this.out);
-								this.out.psize1(this.out.pos - start);
+								String clanLine = ChatText.format(this.chatTyped.substring(1));
+								if (clanLine.length() > 0) {
+									this.out.p1isaac(9);
+									this.out.p1(0);
+									int start = this.out.pos;
+									ChatText.pack(clanLine, this.out);
+									this.out.psize1(this.out.pos - start);
+								}
 							} else {
 								String lower = this.chatTyped.toLowerCase();
 
@@ -7459,37 +7799,39 @@ public class Client extends GameShell {
 									this.chatTyped = this.chatTyped.substring(6);
 								}
 
-								// MESSAGE_PUBLIC
-								this.out.p1isaac(49);
-								this.out.p1(0);
+								// the line as typed, case and all (ChatText, not WordPack); a colour or effect
+								// prefix with nothing after it says nothing
+								this.chatTyped = ChatText.format(this.chatTyped);
+								if (this.chatTyped.length() > 0) {
+									// MESSAGE_PUBLIC
+									this.out.p1isaac(49);
+									this.out.p1(0);
 
-								int start = this.out.pos;
-								this.out.p1_alt2(colour);
-								this.out.p1_alt1(effect);
-								this.chatPacket.pos = 0;
-								WordPack.pack(this.chatTyped, this.chatPacket);
-								this.out.pdata(this.chatPacket.data, this.chatPacket.pos, 0);
-								this.out.psize1(this.out.pos - start);
+									int start = this.out.pos;
+									this.out.p1_alt2(colour);
+									this.out.p1_alt1(effect);
+									ChatText.pack(this.chatTyped, this.out);
+									this.out.psize1(this.out.pos - start);
 
-								this.chatTyped = WordPack.toSentenceCase(this.chatTyped);
-								// this.chatTyped = WordFilter.filter(this.chatTyped); // client-side profanity filter disabled per Corey's request
+									// this.chatTyped = WordFilter.filter(this.chatTyped); // client-side profanity filter disabled per Corey's request
 
-								localPlayer.chatMessage = this.chatTyped;
-								localPlayer.chatColour = colour;
-								localPlayer.chatEffect = effect;
-								localPlayer.chatTimer = 150;
+									localPlayer.chatMessage = this.chatTyped;
+									localPlayer.chatColour = colour;
+									localPlayer.chatEffect = effect;
+									localPlayer.chatTimer = 150;
 
-								String icons = localPlayer.icons.length() > 0 ? localPlayer.icons : ChatIcons.forPlayer(this.staffmodlevel == 3 ? 2 : this.staffmodlevel);
-								this.addMessage(icons + localPlayer.name, localPlayer.chatMessage, 2);
+									String icons = localPlayer.icons.length() > 0 ? localPlayer.icons : ChatIcons.forPlayer(this.staffmodlevel == 3 ? 2 : this.staffmodlevel);
+									this.addMessage(icons + localPlayer.name, localPlayer.chatMessage, 2);
 
-								if (this.chatPublicMode == 2) {
-									this.chatPublicMode = 3;
-									this.redrawPrivacySettings = true;
-									// CHAT_SETMODE
-									this.out.p1isaac(176);
-									this.out.p1(this.chatPublicMode);
-									this.out.p1(this.chatPrivateMode);
-									this.out.p1(this.chatTradeMode);
+									if (this.chatPublicMode == 2) {
+										this.chatPublicMode = 3;
+										this.redrawPrivacySettings = true;
+										// CHAT_SETMODE
+										this.out.p1isaac(176);
+										this.out.p1(this.chatPublicMode);
+										this.out.p1(this.chatPrivateMode);
+										this.out.p1(this.chatTradeMode);
+									}
 								}
 							}
 
@@ -7950,6 +8292,7 @@ public class Client extends GameShell {
 		var3.quickPlotSprite(-171, 254);
 		this.imageTitle8.bind();
 		var3.quickPlotSprite(-171, -180);
+		this.buildTitleBackdrop();
 		Pix32 var7 = new Pix32(this.jagTitle, "logo", 0);
 		this.imageTitle2.bind();
 		var7.plotSprite(18, 382 - var7.wi / 2 - 128);
@@ -7957,6 +8300,38 @@ public class Client extends GameShell {
 		Object var9 = null;
 		Object var10 = null;
 		System.gc();
+	}
+
+	/**
+	 * The title screen's BACKGROUND as one 765x503 picture - the hall, its pillars and its braziers,
+	 * with no logo and no login box - for filling a resizable window around the centred title
+	 * screen (see fillTitleSurround). Taken at this exact point of loadTitleBackground because it is
+	 * the one moment all nine pieces hold nothing but the background: the logo goes into imageTitle2
+	 * on the next line, and imageTitle4 is the middle of the picture until drawTitle() paints the
+	 * login box into it a frame later. A backdrop with either of those in it would show a second
+	 * logo, or a second login box, behind the real one.
+	 */
+	private void buildTitleBackdrop() {
+		if (this.imageTitle0 == null) {
+			return;
+		}
+		PixMap backdrop = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
+		PixMap[] pieces = { this.imageTitle0, this.imageTitle1, this.imageTitle2, this.imageTitle7, this.imageTitle4,
+			this.imageTitle8, this.imageTitle3, this.imageTitle5, this.imageTitle6 };
+		int[] px = { 0, 637, 128, 128, 202, 562, 202, 0, 562 };
+		int[] py = { 0, 0, 0, 171, 171, 171, 371, 265, 265 };
+		for (int i = 0; i < pieces.length; i++) {
+			PixMap piece = pieces[i];
+			if (piece != null) {
+				copyRect(piece.data, piece.width, 0, 0, piece.width, piece.height, backdrop.data, Layout.FIXED_W, Layout.FIXED_H, px[i], py[i]);
+			}
+		}
+		backdrop.setPixels();
+		this.titleBlur = this.blurredBackdrop(backdrop);
+		this.imageTitle2.bind();
+		// the loading screen has already filled the window - with black, because this did not exist
+		// yet when it did - so ask for it to be filled again now that it does
+		this.letterCleared = false;
 	}
 
 	@ObfuscatedName("client.i(Z)V")
@@ -8345,6 +8720,9 @@ public class Client extends GameShell {
 			Pix3D.lineOffset = this.areaViewportOffset;
 		}
 		this.sceneDelta = 0;
+		if (this.layout.resizable) {
+			this.presentGame(true);
+		}
 	}
 
 	@ObfuscatedName("client.L(I)V")
@@ -8417,9 +8795,13 @@ public class Client extends GameShell {
 		int var11 = Pix3D.cycle;
 		Model.checkHover = true;
 		Model.pickedCount = 0;
-		Model.mouseX = super.mouseX - 4;
-		Model.mouseY = super.mouseY - 4;
+		Model.mouseX = super.mouseX - this.layout.vpX;
+		Model.mouseY = super.mouseY - this.layout.vpY;
 		Pix2D.cls();
+		// The scene and what is drawn over it at a projected point (names, hitsplats, ground items)
+		// at the layout's projection. Everything after - interfaces, whose models are drawn at 377's
+		// fixed scale - at 512.
+		Pix3D.zoom = this.layout.zoom;
 		this.scene.draw(this.cameraX, var4, this.cameraY, this.cameraZ, this.cameraYaw, this.cameraPitch);
 		this.scene.clearLocChanges();
 		// QoL: ground item names, see drawGroundItems(). Here and not in draw3DEntityElements() so
@@ -8430,8 +8812,13 @@ public class Client extends GameShell {
 		this.draw2DEntityElements();
 		this.drawTileHint();
 		this.updateTextures(var11);
+		Pix3D.zoom = 512;
 		this.draw3DEntityElements();
-		this.areaViewport.draw(4, 4, super.graphics);
+		// In resizable mode the viewport is put on the screen once, at the end of drawGame(), with
+		// the panels and an open menu laid over it.
+		if (!this.layout.resizable) {
+			this.areaViewport.draw(4, 4, super.graphics);
+		}
 		this.cameraX = var5;
 		this.cameraY = var6;
 		this.cameraZ = var7;
@@ -8440,6 +8827,13 @@ public class Client extends GameShell {
 	}
 
 	@ObfuscatedName("client.a(IZ)V")
+	/** How many npcs have been dropped for sitting outside the 104x104 scene. */
+	private static int offScene = 0;
+
+
+
+
+
 	public void pushPlayers(boolean arg1) {
 		for (int var4 = 0; var4 < this.npcCount; var4++) {
 			ClientNpc var5 = this.npcs[this.npcIds[var4]];
@@ -8447,6 +8841,19 @@ public class Client extends GameShell {
 			if (var5 != null && var5.method351() && var5.field1370.field1447 == arg1 && var5.field1370.method473()) {
 				int var7 = var5.field1157 >> 7;
 				int var8 = var5.field1158 >> 7;
+				// THE NPC EXISTS BUT IS NOT PUT IN THE SCENE, which is the last way one can be absent
+				// that nothing reported. The server sent it, the client has it in npcs[], and then it
+				// is dropped here for being outside the 104x104 the scene covers - so no model is ever
+				// asked for and the npcmodel and animframe counters stay silent while the thing is
+				// plainly gone. That is the shape of what the owner describes: away for a tick, back
+				// the next, with every other instrument quiet.
+				if (!(var7 >= 0 && var7 < 104 && var8 >= 0 && var8 < 104)) {
+					offScene++;
+					if (offScene <= 12 || offScene % 200 == 0) {
+						DevLog.log("offscene", "npc #" + offScene + " not in scene: tile " + var7 + "," + var8
+							+ " (scene is 0..103)  key=" + var5.field1370.field1431 + " size=" + var5.field1148);
+					}
+				}
 				if (var7 >= 0 && var7 < 104 && var8 >= 0 && var8 < 104) {
 					if (var5.field1148 == 1 && (var5.field1157 & 0x7F) == 64 && (var5.field1158 & 0x7F) == 64) {
 						if (this.tileLastOccupiedCycle[var7][var8] == this.sceneCycle) {
@@ -8535,7 +8942,18 @@ public class Client extends GameShell {
 					}
 				}
 				var2.method272(this.sceneDelta);
-				this.scene.method285(-1, var2, (int) var2.field976, (int) var2.field978, false, 0, this.currentLevel, 60, (int) var2.field977, var2.field983);
+				// A projectile belongs to the one tile its centre is over (padding 0), not every tile within
+				// 60 units of it as 377 had. A dart leaving a player who stands against a wall sits within 60
+				// of the tile edge, so it spanned the wall's tile as well, and a sprite spanning two tiles
+				// makes the scene hold back the walls of both until it is drawn - which reordered them: the
+				// wall BEHIND an open door came out after the door and painted over it, so the door seemed
+				// to vanish for the first ticks of every toxic blowpipe shot (reported with a video,
+				// 2026-09-27). Any projectile did it near a wall; the blowpipe fires from beside one four
+				// times as often. With a one-tile span the scene's order is exactly what it is with no
+				// projectile at all (tools/clienttests/run_projectilespantest.py: 194k frames, no wall moved,
+				// against 30k that moved at 60). A projectile is small; the cost is at most a sliver of dart
+				// overdrawn by a wall on the next tile for a frame.
+				this.scene.method285(-1, var2, (int) var2.field976, (int) var2.field978, false, 0, this.currentLevel, 0, (int) var2.field977, var2.field983);
 			}
 			var2 = (ClientProj) this.projectiles.next();
 		}
@@ -8829,7 +9247,11 @@ public class Client extends GameShell {
 								this.projectX += 15;
 								this.projectY -= 10;
 							}
-							this.imageHitmarks[var19.field1178[var25]].plotSprite(this.projectY - 12, this.projectX - 12);
+							int hitmark = var19.field1178[var25];
+							if (hitmark < 0 || hitmark >= this.imageHitmarks.length || this.imageHitmarks[hitmark] == null) {
+								hitmark = 1; // a type this media has no splat for draws as ordinary damage, not a crash
+							}
+							this.imageHitmarks[hitmark].plotSprite(this.projectY - 12, this.projectX - 12);
 							this.fontPlain11.centreString(this.projectX, this.projectY + 4, 0, String.valueOf(var19.field1177[var25]));
 							this.fontPlain11.centreString(this.projectX - 1, this.projectY + 3, 16777215, String.valueOf(var19.field1177[var25]));
 						}
@@ -8918,7 +9340,7 @@ public class Client extends GameShell {
 				if (this.chatEffect[var3] == 4) {
 					int var14 = this.fontBold12.stringWid(var9);
 					int var15 = (150 - this.chatTimer[var3]) * (var14 + 100) / 150;
-					Pix2D.setClipping(0, this.projectX - 50, 334, this.projectX + 50);
+					Pix2D.setClipping(0, this.projectX - 50, this.layout.vpH, this.projectX + 50);
 					this.fontBold12.drawString(this.projectX + 50 - var15, 0, this.projectY + 1, var9);
 					this.fontBold12.drawString(this.projectX + 50 - var15, var10, this.projectY, var9);
 					Pix2D.resetClipping();
@@ -8931,7 +9353,7 @@ public class Client extends GameShell {
 					} else if (var16 > 125) {
 						var17 = var16 - 125;
 					}
-					Pix2D.setClipping(this.projectY - this.fontBold12.height - 1, 0, this.projectY + 5, 512);
+					Pix2D.setClipping(this.projectY - this.fontBold12.height - 1, 0, this.projectY + 5, this.layout.vpW);
 					this.fontBold12.centreString(this.projectX, this.projectY + 1 + var17, 0, var9);
 					this.fontBold12.centreString(this.projectX, this.projectY + var17, var10, var9);
 					Pix2D.resetClipping();
@@ -8978,8 +9400,8 @@ public class Client extends GameShell {
 		int var16 = var7 * var10 - var9 * var14 >> 16;
 		int var17 = var7 * var9 + var10 * var14 >> 16;
 		if (var17 >= 50) {
-			this.projectX = (var13 << 9) / var17 + Pix3D.centerX;
-			this.projectY = (var16 << 9) / var17 + Pix3D.centerY;
+			this.projectX = var13 * Pix3D.zoom / var17 + Pix3D.centerX;
+			this.projectY = var16 * Pix3D.zoom / var17 + Pix3D.centerY;
 		} else {
 			this.projectX = -1;
 			this.projectY = -1;
@@ -9032,31 +9454,32 @@ public class Client extends GameShell {
 	public void draw3DEntityElements() {
 		this.drawPrivateMessages();
 		if (this.crossMode == 1) {
-			this.imageCross[this.crossCycle / 100].plotSprite(this.crossY - 8 - 4, this.crossX - 8 - 4);
+			this.imageCross[this.crossCycle / 100].plotSprite(this.crossY - 8 - this.layout.vpY, this.crossX - 8 - this.layout.vpX);
 		}
 		if (this.crossMode == 2) {
-			this.imageCross[this.crossCycle / 100 + 4].plotSprite(this.crossY - 8 - 4, this.crossX - 8 - 4);
+			this.imageCross[this.crossCycle / 100 + 4].plotSprite(this.crossY - 8 - this.layout.vpY, this.crossX - 8 - this.layout.vpX);
 		}
 		if (this.viewportOverlayInterfaceId != -1) {
 			this.updateInterfaceAnimation(this.sceneDelta, this.viewportOverlayInterfaceId);
-			this.drawInterface(0, 0, Component.get(this.viewportOverlayInterfaceId), 0);
+			this.drawViewportOverlay(Component.get(this.viewportOverlayInterfaceId));
 		}
 		if (this.viewportInterfaceId != -1) {
 			this.updateInterfaceAnimation(this.sceneDelta, this.viewportInterfaceId);
-			this.drawInterface(0, 0, Component.get(this.viewportInterfaceId), 0);
+			this.drawInterface(this.layout.mainY, this.layout.mainX, Component.get(this.viewportInterfaceId), 0);
 		}
 		this.updateWorldLocation();
 		if (!this.menuVisible) {
 			this.handleInput();
 			this.drawTooltip();
-		} else if (this.menuArea == 0) {
+		} else if (this.menuArea == 0 && !this.layout.resizable) {
+			// (resizable: presentGame() draws it, over the panels as well as the scene)
 			this.drawMenu();
 		}
 		if (this.inMultizone == 1) {
-			this.imageOverlayMultiway.plotSprite(296, 472);
+			this.imageOverlayMultiway.plotSprite(this.layout.openH - 38, this.layout.openW - 40);
 		}
 		if (displayFps) {
-			short var2 = 507;
+			int var2 = this.layout.openW - 5;
 			byte var3 = 20;
 			int var4 = 16776960;
 			if (super.fps < 30 && lowMem) {
@@ -9083,7 +9506,7 @@ public class Client extends GameShell {
 		// client's own overlay - a plugin draws alongside the game, never over the furniture the
 		// player needs to turn it off.
 		if (this.plugins != null) {
-			this.plugins.renderOverlays();
+			this.plugins.renderOverlays(this.layout.openW, this.layout.openH);
 		}
 		// QoL: XP drop counter, see drawXpDrops() above.
 		if (QolSettings.on(QolSettings.XP_DROPS)) {
@@ -9107,9 +9530,9 @@ public class Client extends GameShell {
 			int var11 = var10 / 60;
 			int var12 = var10 % 60;
 			if (var12 < 10) {
-				this.fontPlain12.drawString(4, 16776960, 329, "System update in: " + var11 + ":0" + var12);
+				this.fontPlain12.drawString(4, 16776960, this.layout.openH - 5, "System update in: " + var11 + ":0" + var12);
 			} else {
-				this.fontPlain12.drawString(4, 16776960, 329, "System update in: " + var11 + ":" + var12);
+				this.fontPlain12.drawString(4, 16776960, this.layout.openH - 5, "System update in: " + var11 + ":" + var12);
 			}
 			cyclelogic3++;
 			if (cyclelogic3 > 112) {
@@ -9141,7 +9564,7 @@ public class Client extends GameShell {
 					var6 = var6.substring(var7.length());
 				}
 				if ((var5 == 3 || var5 == 7) && (var5 == 7 || this.chatPrivateMode == 0 || this.chatPrivateMode == 1 && this.isFriend(var6))) {
-					int var8 = 329 - var3 * 13;
+					int var8 = this.layout.openH - 5 - var3 * 13;
 					if (this.messageCont[var4]) {
 						var2.drawString(4 + this.messageIndent[var4], 0, var8, this.messageText[var4]);
 						var2.drawString(4 + this.messageIndent[var4], 65535, var8 - 1, this.messageText[var4]);
@@ -9167,7 +9590,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (var5 == 5 && this.chatPrivateMode < 2) {
-					int var11 = 329 - var3 * 13;
+					int var11 = this.layout.openH - 5 - var3 * 13;
 					var2.drawString(4, 0, var11, this.messageText[var4]);
 					var2.drawString(4, 65535, var11 - 1, this.messageText[var4]);
 					var3++;
@@ -9176,7 +9599,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (var5 == 6 && this.chatPrivateMode < 2) {
-					int var12 = 329 - var3 * 13;
+					int var12 = this.layout.openH - 5 - var3 * 13;
 					String toLine = this.messageCont[var4] ? this.messageText[var4] : "To " + var6 + ": " + this.messageText[var4];
 					int toX = this.messageCont[var4] ? 4 + this.messageIndent[var4] : 4;
 					var2.drawString(toX, 0, var12, toLine);
@@ -9243,8 +9666,8 @@ public class Client extends GameShell {
 		int var7 = super.mouseX;
 		int var8 = super.mouseY;
 		if (this.menuArea == 0) {
-			var7 -= 4;
-			var8 -= 4;
+			var7 -= this.layout.vpX;
+			var8 -= this.layout.vpY;
 		}
 		if (this.menuArea == 1) {
 			var7 -= SIDE_X;
@@ -9314,6 +9737,25 @@ public class Client extends GameShell {
 	}
 
 	@ObfuscatedName("client.a(IIIIII)V")
+	/**
+	 * The minimap icon for a loc, or null when there is none to draw.
+	 *
+	 * imageMapscene holds ONE HUNDRED sprites and drawMinimapLoc used to index it with the loc's own
+	 * mapscene id and no check at all. A loc carrying a higher id - which is what an import from a
+	 * later cache produces, OSRS numbering them past 200 - threw ArrayIndexOutOfBoundsException from
+	 * inside update(), and GameShell.run calls update() with no try/catch, so the loop thread ended
+	 * and the window froze on whatever it had last painted. On 2026-09-29 that was "Loading - please
+	 * wait" after a Zul-andra teleport, for ever, through restarts, and the character had to be moved
+	 * by editing its save from outside the server.
+	 *
+	 * Those four locs have had their ids taken off (content zulandra.loc), but an icon that cannot be
+	 * drawn must never be able to do this again, whatever puts it there.
+	 */
+	private Pix8 mapsceneOf(LocType loc) {
+		int id = loc.field1649;
+		return id < 0 || id >= this.imageMapscene.length ? null : this.imageMapscene[id];
+	}
+
 	public void drawMinimapLoc(int arg0, int arg1, int arg2, int arg3, int arg5) {
 		int var7 = this.scene.method300(arg1, arg2, arg0);
 		if (var7 != 0) {
@@ -9387,7 +9829,7 @@ public class Client extends GameShell {
 					}
 				}
 			} else {
-				Pix8 var17 = this.imageMapscene[var16.field1649];
+				Pix8 var17 = this.mapsceneOf(var16);
 				if (var17 != null) {
 					int var18 = (var16.field1655 * 4 - var17.wi) / 2;
 					int var19 = (var16.field1629 * 4 - var17.hi) / 2;
@@ -9403,7 +9845,7 @@ public class Client extends GameShell {
 			int var24 = var20 >> 14 & 0x7FFF;
 			LocType var25 = LocType.method561(var24);
 			if (var25.field1649 != -1) {
-				Pix8 var26 = this.imageMapscene[var25.field1649];
+				Pix8 var26 = this.mapsceneOf(var25);
 				if (var26 != null) {
 					int var27 = (var25.field1655 * 4 - var26.wi) / 2;
 					int var28 = (var25.field1629 * 4 - var26.hi) / 2;
@@ -9434,7 +9876,7 @@ public class Client extends GameShell {
 			int var33 = var32 >> 14 & 0x7FFF;
 			LocType var34 = LocType.method561(var33);
 			if (var34.field1649 != -1) {
-				Pix8 var35 = this.imageMapscene[var34.field1649];
+				Pix8 var35 = this.mapsceneOf(var34);
 				if (var35 != null) {
 					int var36 = (var34.field1655 * 4 - var35.wi) / 2;
 					int var37 = (var34.field1629 * 4 - var35.hi) / 2;
@@ -10423,7 +10865,7 @@ public class Client extends GameShell {
 					}
 				}
 				if (!ignored && this.overrideChat == 0) {
-					String text = WordPack.method453(this.in, this.psize - 21);
+					String text = ChatText.unpack(this.in, this.psize - 21);
 					this.addClanMessage(JString.formatDisplayName(JString.fromBase37(channel)), ChatIcons.forPlayer(icons) + JString.formatDisplayName(JString.fromBase37(from)), text);
 				}
 				this.ptype = -1;
@@ -10484,7 +10926,7 @@ public class Client extends GameShell {
 						// QoL: remember who sent this so Tab can reply to them
 						this.lastPmFrom37 = var91;
 						this.hasLastPmFrom = true;
-						String var98 = WordPack.method453(this.in, this.psize - 13);
+						String var98 = ChatText.unpack(this.in, this.psize - 13);
 						// client-side profanity filter disabled per Corey's request
 						//if (var94 != 3) {
 						//	var98 = WordFilter.filter(var98);
@@ -10705,6 +11147,8 @@ public class Client extends GameShell {
 				}
 				this.sceneState = 1;
 				this.sceneLoadStartTime = System.currentTimeMillis();
+				this.sceneLoadBegan = System.currentTimeMillis();
+				this.sceneStuckShown = null;
 				this.showPopupMessage(null, "Loading - please wait.");
 				if (this.ptype == 222) {
 					int var119 = 0;
@@ -11985,7 +12429,7 @@ public class Client extends GameShell {
 						this.chatPacket.pos = 0;
 						arg4.gdata_alt2(this.chatPacket.data, var18, 0);
 						this.chatPacket.pos = 0;
-						String var24 = WordPack.method453(this.chatPacket, var18);
+						String var24 = ChatText.unpack(this.chatPacket, var18);
 						String var25 = var24; // WordFilter.filter(var24) disabled per Corey's request (client-side profanity filter)
 						arg2.chatMessage = var25;
 						arg2.chatColour = var16 >> 8;
@@ -12120,6 +12564,9 @@ public class Client extends GameShell {
 			}
 			int var9 = arg0.gBit(1);
 			var5.field1370 = NpcType.get(arg0.gBit(13));
+			// Get the model data moving the moment the npc appears, not the first time something
+			// tries to draw it - see NpcType.requestModels.
+			var5.field1370.requestModels();
 			var5.field1148 = var5.field1370.field1445;
 			var5.field1147 = var5.field1370.field1454;
 			var5.field1166 = var5.field1370.field1448;
@@ -12141,6 +12588,10 @@ public class Client extends GameShell {
 			if ((var8 & 0x1) != 0) {
 				// CHANGETYPE
 				var7.field1370 = NpcType.get(arg0.g2_alt2());
+				// The one that matters for a boss that changes form: Zulrah's changetype arrives
+				// while it is submerged on another level, so this gets the new colour's model a
+				// couple of ticks' head start on the rise that draws it.
+				var7.field1370.requestModels();
 				var7.field1148 = var7.field1370.field1445;
 				var7.field1147 = var7.field1370.field1454;
 				var7.field1166 = var7.field1370.field1448;
@@ -12255,23 +12706,24 @@ public class Client extends GameShell {
 		// and the rest of it drawn off the bottom, where the raster clips it: invisible rows that
 		// cannot be clicked. Each area caps at its own height - 20 rows in the viewport, 15 in the
 		// sidebar, 4 in the chatbox - and menuScroll moves the window.
-		if (super.mouseClickX > 4 && super.mouseClickY > 4 && super.mouseClickX < 516 && super.mouseClickY < 338) {
+		if (this.layout.inViewport(super.mouseClickX, super.mouseClickY)) {
 			// A menu wider than its area used to be pushed off the left edge and clipped - "Uncharge
 			// Trident of the Seas" in the 190-wide sidebar lost its first letters. The width is capped
 			// to the area now, and drawMenu() shortens any row that does not fit with "...".
-			var2 = Math.min(var2, 512);
-			int rows0 = this.menuRowsFor(334);
+			// (The viewport is 512x334 on the fixed screen and the whole window when resizable.)
+			var2 = Math.min(var2, this.layout.vpW);
+			int rows0 = this.menuRowsFor(this.layout.vpH);
 			int var4 = rows0 * MENU_ROW_H + MENU_CHROME_H;
-			int var5 = super.mouseClickX - 4 - var2 / 2;
-			if (var2 + var5 > 512) {
-				var5 = 512 - var2;
+			int var5 = super.mouseClickX - this.layout.vpX - var2 / 2;
+			if (var2 + var5 > this.layout.vpW) {
+				var5 = this.layout.vpW - var2;
 			}
 			if (var5 < 0) {
 				var5 = 0;
 			}
-			int var6 = super.mouseClickY - 4;
-			if (var4 + var6 > 334) {
-				var6 = 334 - var4;
+			int var6 = super.mouseClickY - this.layout.vpY;
+			if (var4 + var6 > this.layout.vpH) {
+				var6 = this.layout.vpH - var4;
 			}
 			if (var6 < 0) {
 				var6 = 0;
@@ -12625,9 +13077,9 @@ public class Client extends GameShell {
 		}
 		if (var5 == 14) {
 			if (this.menuVisible) {
-				this.scene.method312(var3 - 4, var4 - 4);
+				this.scene.method312(var3 - this.layout.vpX, var4 - this.layout.vpY);
 			} else {
-				this.scene.method312(super.mouseClickX - 4, super.mouseClickY - 4);
+				this.scene.method312(super.mouseClickX - this.layout.vpX, super.mouseClickY - this.layout.vpY);
 			}
 		}
 		if (var5 == 903) {
@@ -13226,6 +13678,12 @@ public class Client extends GameShell {
 		this.redrawSidebar = true;
 	}
 
+	// The npc index of the local player's own follower, or -1 for none. The server keeps it in the
+	// follower slot's own varp - content scripts/quests/quest_fluffs/configs/quest_fluffs.varp,
+	// [follower_uid], transmitted with clientcode 12 - whose value is the pet's uid,
+	// (npc type << 16) | npc index. Set in updateVarp(); read by addNpcOptions() below.
+	public int followerNpcIndex = -1;
+
 	@ObfuscatedName("client.a(LSLDUQHOR;IIIB)V")
 	public void addNpcOptions(NpcType arg0, int arg1, int arg2, int arg3) {
 		if (this.menuSize >= 400) {
@@ -13235,6 +13693,13 @@ public class Client extends GameShell {
 			arg0 = arg0.method476();
 		}
 		if (arg0 == null || !arg0.field1434) {
+			return;
+		}
+		// A pet's options belong to its owner. Old School has hidden them from everyone else since
+		// 15 May 2014 - "The options on other players' pets are no longer visible" - so somebody
+		// else's pet gets no menu entries at all, not even Examine, and left-clicking through it
+		// walks you there. Your own follower is the npc followerNpcIndex names and is untouched.
+		if (arg0.follower && arg3 != this.followerNpcIndex) {
 			return;
 		}
 		String var6 = arg0.field1455;
@@ -13423,6 +13888,19 @@ public class Client extends GameShell {
 
 	@ObfuscatedName("client.a(IILEWIXBTLV;II)V")
 	public void drawInterface(int arg0, int arg1, Component arg2, int arg3) {
+		// the outermost call draws the tooltip a component queued (queueTooltip), after everything else
+		this.tooltipDepth++;
+		try {
+			this.drawInterfaceLayer(arg0, arg1, arg2, arg3);
+		} finally {
+			this.tooltipDepth--;
+			if (this.tooltipDepth == 0) {
+				this.drawQueuedTooltip();
+			}
+		}
+	}
+
+	private void drawInterfaceLayer(int arg0, int arg1, Component arg2, int arg3) {
 		if (arg2.type != 0 || arg2.children == null || arg2.hide && this.viewportHoveredInterfaceIndex != arg2.id && this.sidebarHoveredInterfaceIndex != arg2.id && this.chatHoveredInterfaceIndex != arg2.id) {
 			return;
 		}
@@ -13449,7 +13927,11 @@ public class Client extends GameShell {
 					var14.field713 = 0;
 				}
 				this.drawInterface(var16, var15, var14, var14.field713);
-				if (var14.scroll > var14.height) {
+				// A HIDDEN scroll layer draws no scrollbar. 377 drew one for every layer with a scroll
+				// height whether or not the layer itself was showing, and a window that swaps between
+				// hidden lists (the drop table's five lengths, npc_drops.if) stacked all five bars on
+				// the same spot: the one on top was the longest list's, which never moved.
+				if (var14.scroll > var14.height && this.isLayerShown(var14)) {
 					this.drawScrollbar(var14.field713, var14.width + var15, var14.height, var14.scroll, var16);
 				}
 			} else if (var14.type != 1) {
@@ -13588,6 +14070,12 @@ public class Client extends GameShell {
 						Pix2D.fillRectTrans(var32, var16, var14.width, var14.height, 256 - (var14.trans & 0xFF), var15);
 					} else {
 						Pix2D.drawRectTrans(var15, var14.width, var32, var14.height, var16, 256 - (var14.trans & 0xFF));
+					}
+				} else if (var14.type == 4 && (var14.clientCode == 331 || var14.clientCode == 329 || var14.clientCode == 332)) {
+					// the skill tab's hover (see OSRS TOOLTIPS): a box, not text on the tab. 332 is a line
+					// the 331 before it takes in (tooltipWords) and draws nothing of its own.
+					if (var14.clientCode != 332) {
+						this.queueTooltip(this.tooltipWords(arg2, var11, var14), var15, var16, var14.width, var14.height, Math.max(arg1, 0), Math.max(arg0, 0), Math.min(arg2.width + arg1, Pix2D.width2d), Math.min(arg2.height + arg0, Pix2D.height2d));
 					}
 				} else if (var14.type == 4) {
 					PixFont var33 = var14.font;
@@ -13779,61 +14267,149 @@ public class Client extends GameShell {
 						}
 					}
 					if (var14.type == 8 && (this.field580 == var14.id || this.field340 == var14.id || this.field425 == var14.id) && this.field189 == 100) {
-						int var62 = 0;
-						int var63 = 0;
-						PixFont var64 = this.fontPlain12;
-						String var65 = var14.text;
-						while (var65.length() > 0) {
-							int var72 = var65.indexOf("\\n");
-							String var73;
-							if (var72 == -1) {
-								var73 = var65;
-								var65 = "";
-							} else {
-								var73 = var65.substring(0, var72);
-								var65 = var65.substring(var72 + 2);
-							}
-							int var74 = var64.stringWidTag(var73);
-							if (var74 > var62) {
-								var62 = var74;
-							}
-							var63 += var64.height + 1;
-						}
-						var62 += 6;
-						var63 += 7;
-						int var66 = var14.width + var15 - 5 - var62;
-						int var67 = var14.height + var16 + 5;
-						if (var66 < var15 + 5) {
-							var66 = var15 + 5;
-						}
-						if (var62 + var66 > arg2.width + arg1) {
-							var66 = arg2.width + arg1 - var62;
-						}
-						if (var63 + var67 > arg2.height + arg0) {
-							var67 = arg2.height + arg0 - var63;
-						}
-						Pix2D.fillRect(var63, var67, 16777120, var62, var66);
-						Pix2D.drawRect(var67, var63, 0, var66, var62);
-						String var68 = var14.text;
-						int var69 = var64.height + var67 + 2;
-						while (var68.length() > 0) {
-							int var70 = var68.indexOf("\\n");
-							String var71;
-							if (var70 == -1) {
-								var71 = var68;
-								var68 = "";
-							} else {
-								var71 = var68.substring(0, var70);
-								var68 = var68.substring(var70 + 2);
-							}
-							var64.drawStringTag(0, var66 + 3, var69, false, var71);
-							var69 += var64.height + 1;
-						}
+						// OSRS's tooltip box and placement (see OSRS TOOLTIPS), inside the layer AND the area it
+						// is drawn on: a side tab's root is 512x334 to the packer, and 377 clamped to that.
+						this.queueTooltip(var14.text, var15, var16, var14.width, var14.height, Math.max(arg1, 0), Math.max(arg0, 0), Math.min(arg2.width + arg1, Pix2D.width2d), Math.min(arg2.height + arg0, Pix2D.height2d));
 					}
 				}
 			}
 		}
 		Pix2D.setClipping(var7, var6, var9, var8);
+	}
+
+	// Whether drawInterface draws this layer: not hidden, or hidden but raised by a hover (overlayer).
+	private boolean isLayerShown(Component com) {
+		return !com.hide || this.viewportHoveredInterfaceIndex == com.id || this.sidebarHoveredInterfaceIndex == com.id || this.chatHoveredInterfaceIndex == com.id;
+	}
+
+	// ---- OSRS TOOLTIPS ------------------------------------------------------------------------------
+	// OSRS draws every hover box the same way (its client scripts 2344 and 9444, read out of the
+	// current cache): a 0xFFFFA0 box with a 1px black edge, black p12 text 12px a line, 2px in from
+	// the left edge and the first line's cell 1px below the top, 4px wider than the widest line and
+	// 12 * lines + 7 tall. It sits 5px right of the hovered thing's left edge and 5px below its bottom;
+	// if that runs off the right of the layer it is pushed back in, and if it runs off the bottom it
+	// goes ABOVE the hovered thing instead (5px clear of its top) rather than over it.
+	//
+	// A line may have two columns, "label|value": the value is right-aligned 4px clear of the label,
+	// as the skill tab's "Attack XP:   13,034,431" is.
+	//
+	// Used by 377's own tooltip component (type 8), whose box was 377's - wider, 13px lines, and
+	// clamped to the ROOT, which for a side tab is the 512x334 the packer gives every root, so a
+	// prayer's tooltip ran off the right of the tab and over the prayers below - and by a text
+	// component with client code 331 (or 329, the Total level's), which is the skill tab's hover.
+	private String tooltipText;
+	private int tooltipX;
+	private int tooltipY;
+	private int tooltipDepth;
+
+	private static final int TOOLTIP_BG = 0xFFFFA0;
+	private static final int TOOLTIP_LINE = 12;
+
+	// Lay the box out now (the bounds are the layer's, which only this call knows) and draw it when
+	// the outermost drawInterface finishes, so nothing drawn after it in child order - the prayer
+	// points under the grid, a later layer - lands on top of it.
+	private void queueTooltip(String text, int ax, int ay, int aw, int ah, int boundL, int boundT, int boundR, int boundB) {
+		if (text == null || text.length() == 0) {
+			return;
+		}
+		PixFont font = this.fontPlain12;
+		String[] lines = splitTooltip(text);
+		int widest = 0;
+		for (String line : lines) {
+			widest = Math.max(widest, tooltipLineWidth(font, line));
+		}
+		int w = widest + 4;
+		int h = lines.length * TOOLTIP_LINE + 7;
+		int x = ax + 5;
+		int y = ay + ah + 5;
+		if (x + w > boundR) {
+			x = boundR - w;
+		}
+		if (x < boundL) {
+			x = boundL;
+		}
+		if (y + h > boundB) {
+			y = ay - h - 5;
+		}
+		if (y < boundT) {
+			y = boundT;
+		}
+		this.tooltipText = text;
+		this.tooltipX = x;
+		this.tooltipY = y;
+	}
+
+	private void drawQueuedTooltip() {
+		String text = this.tooltipText;
+		this.tooltipText = null;
+		if (text == null) {
+			return;
+		}
+		PixFont font = this.fontPlain12;
+		String[] lines = splitTooltip(text);
+		int widest = 0;
+		for (String line : lines) {
+			widest = Math.max(widest, tooltipLineWidth(font, line));
+		}
+		int w = widest + 4;
+		int h = lines.length * TOOLTIP_LINE + 7;
+		int x = this.tooltipX;
+		int y = this.tooltipY;
+		Pix2D.fillRect(h, y, TOOLTIP_BG, w, x);
+		Pix2D.drawRect(y, h, 0, x, w);
+		int baseline = y + 1 + font.height;
+		for (String line : lines) {
+			int bar = line.indexOf('|');
+			if (bar == -1) {
+				font.drawStringTag(0, x + 2, baseline, false, line);
+			} else {
+				String value = line.substring(bar + 1);
+				font.drawStringTag(0, x + 2, baseline, false, line.substring(0, bar));
+				font.drawStringTag(0, x + w - 2 - font.stringWidTag(value), baseline, false, value);
+			}
+			baseline += TOOLTIP_LINE;
+		}
+	}
+
+	private static String[] splitTooltip(String text) {
+		return text.split("\\\\n");
+	}
+
+	private static int tooltipLineWidth(PixFont font, String line) {
+		int bar = line.indexOf('|');
+		if (bar == -1) {
+			return font.stringWidTag(line);
+		}
+		return font.stringWidTag(line.substring(0, bar)) + 4 + font.stringWidTag(line.substring(bar + 1));
+	}
+
+	// A client-code-331 text's words: its active text while its scripts' comparators hold (the skill
+	// tab: "below 99" shows the next-level lines), %1..%5 filled in from its scripts with thousands
+	// commas, then the non-empty text of every client-code-332 text after it in the same layer - the
+	// XP lock's "XP locked", which the server sets and clears with if_settext.
+	private String tooltipWords(Component layer, int index, Component com) {
+		String text = this.fillTooltipNumbers(com, this.executeInterfaceScript(com) && com.activeText != null && com.activeText.length() > 0 ? com.activeText : com.text);
+		for (int i = index + 1; i < layer.children.length; i++) {
+			Component extra = Component.get(layer.children[i]);
+			if (extra != null && extra.type == 4 && extra.clientCode == 332 && extra.text != null && extra.text.length() > 0) {
+				text = text + "\\n" + this.fillTooltipNumbers(extra, extra.text);
+			}
+		}
+		return text;
+	}
+
+	private String fillTooltipNumbers(Component com, String text) {
+		if (text == null) {
+			return "";
+		}
+		for (int n = 1; n <= 5; n++) {
+			String tag = "%" + n;
+			int at;
+			while ((at = text.indexOf(tag)) != -1) {
+				text = text.substring(0, at) + String.format(java.util.Locale.US, "%,d", this.executeClientScript(n - 1, com)) + text.substring(at + 2);
+			}
+		}
+		return text;
 	}
 
 	@ObfuscatedName("client.a(ZIIIII)V")
@@ -14233,7 +14809,9 @@ public class Client extends GameShell {
 			}
 			if (var13.type == 0) {
 				this.handleInterfaceInput(var15, var13, arg2, var13.field713, var14, arg5, arg7);
-				if (var13.scroll > var13.height) {
+				// ...nor takes scroll input: a hidden list ahead of the shown one in child order ate the
+				// wheel (it zeroes mouseScrollDelta) and its bar answered drags over the same pixels
+				if (var13.scroll > var13.height && this.isLayerShown(var13)) {
 					this.handleScrollInput(var13.scroll, var15, var13, arg7, arg2, arg5, var13.height, var13.width + var14);
 					// QoL: mouse wheel scrolls any scrollable interface panel (e.g. bank) when hovering over it
 					if (QolSettings.on(QolSettings.WHEEL_INTERFACE) && super.mouseScrollDelta != 0 && arg5 >= var14 && arg7 >= var15 && arg5 < var13.width + var14 && arg7 < var13.height + var15) {
@@ -14589,6 +15167,12 @@ public class Client extends GameShell {
 			return;
 		}
 		int var4 = this.varps[arg1];
+		if (var3 == 12) {
+			// The follower slot: the uid of the pet following you, (npc type << 16) | npc index, or
+			// null (-1) when nothing is. Only the index is wanted here - which npc in this.npcs[] is
+			// mine - and 0 means the slot has never been written this session.
+			this.followerNpcIndex = var4 <= 0 ? -1 : var4 & 0xFFFF;
+		}
 		if (var3 == 1) {
 			if (var4 == 1) {
 				Pix3D.initColourTable(0.9D);
@@ -14765,15 +15349,31 @@ public class Client extends GameShell {
 				for (int i = 0; i < this.skillExperience.length; i++) {
 					total += this.skillExperience[i];
 				}
-				arg1.text = "Total XP: " + String.format("%,d", total);
+				arg1.text = "Total XP:|" + String.format(java.util.Locale.US, "%,d", total);
 			} else if (var4 == 328) {
 				// 474's Equipment Stats: you, standing in what you wear, idling
 				if (localPlayer != null) {
 					arg1.modelType = 6;
+					// A fold of the appearance, as 474's client sets it here. Every worn item sits above
+					// bit 15 of it and the mask drops them all, so this is the SAME number whatever the
+					// player is holding and it is no use as a cache key: Component.loadModel builds the
+					// body from the whole appearance instead and ignores this. Kept so a type-6
+					// component still has a model id at all.
 					arg1.model = (int) (localPlayer.field1676 ^ localPlayer.field1676 >>> 32) & 0x7FFF;
-					arg1.anim = localPlayer.field1181;
-					// and turning, as OSRS's Equipment Stats model does: a full turn about every 14s
-					arg1.yan = loopCycle * 3 & 0x7FF;
+					// A new stance (a weapon changed while the window is open) starts at its first frame:
+					// the frame counter belongs to the old one and can run past the new one's end.
+					if (arg1.anim != localPlayer.field1181) {
+						arg1.anim = localPlayer.field1181;
+						arg1.field717 = 0;
+						arg1.field709 = 0;
+					}
+					// The camera OSRS's client gives content type 328 (and 327, the character design
+					// screen below): looking down at you from 150 (26 degrees), rocking 45 degrees either
+					// side of facing you, one sway about every five seconds. OSRS's own 84:4 is zoom 550,
+					// every angle 0, and leaves the angles to this. It was a steady full turn at eye
+					// level, which put the camera at your feet and showed your back half the time.
+					arg1.xan = 150;
+					arg1.yan = (int) (Math.sin((double) loopCycle / 40.0D) * 256.0D) & 0x7FF;
 				}
 			} else if (var4 == 327) {
 				arg1.xan = 150;
@@ -15192,7 +15792,14 @@ public class Client extends GameShell {
 			var2.centreString(CHAT_W / 2, CHAT_H - 6, 0, this.chatbackInput + "*");
 			Pix2D.hline(0, 0, CHAT_LOG_H, CHAT_W);
 		} else if (this.modalMessage != null) {
-			this.fontBold12.centreString(CHAT_W / 2, CHAT_IF_Y + 40, 0, this.modalMessage);
+			// Drawn the way the chat log draws a game message - through ChatIcons, so colour tags
+			// colour it, shadow tags shadow it and @cr4@ is a badge sprite. centreString drew the
+			// tags as letters, which both printed "@sh1@@cya@[Yell]" at the player and measured the
+			// line far too wide, so it was centred on the wrong width and ran off both edges. The
+			// server wraps game messages to 456 pixels measuring the same way ChatIcons.width does,
+			// so a line fits the box once its tags stop taking space.
+			int modalX = CHAT_W / 2 - ChatIcons.width(this.fontBold12, this.modalMessage) / 2;
+			ChatIcons.draw(this.fontBold12, this.imageModIcons, modalX, CHAT_IF_Y + 40, 0, this.modalMessage);
 			this.fontBold12.centreString(CHAT_W / 2, CHAT_IF_Y + 60, 128, "Click to continue");
 		} else if (this.chatInterfaceId != -1) {
 			this.drawInterface(CHAT_IF_Y, CHAT_IF_X, Component.get(this.chatInterfaceId), 0);
@@ -15515,7 +16122,17 @@ public class Client extends GameShell {
 	// -Dlostcity.* settings, which downloads the new client and opens it, and then this one exits.
 	// Any other jar - a dev build run from build/libs, say - is left alone, so a developer's own
 	// client is never swapped for the release. Returns whether a restart is on its way.
+	// set on the client the launcher starts after an update relaunch - see relaunchForUpdate
+	private static final String UPDATE_ATTEMPT = "lostcity.updateattempt";
+
 	private boolean relaunchForUpdate() {
+		// ONCE PER CHAIN. The launcher hands the new client this property, so a client that has already
+		// been through it does not go round again: between a client release and the server's deploy the
+		// newest client IS refused (the server takes only its own revision), and without this the pair
+		// looped - refused, relaunch, download nothing new, refused - with no way out but killing it.
+		if (System.getProperty(UPDATE_ATTEMPT) != null) {
+			return false;
+		}
 		try {
 			java.io.File jar = new java.io.File(Client.class.getProtectionDomain().getCodeSource().getLocation().toURI());
 			java.io.File userHome = new java.io.File(System.getProperty("user.home"));
@@ -15543,6 +16160,7 @@ public class Client extends GameShell {
 			// replace client.jar - so it must not be running out of it.
 			java.io.File copy = new java.io.File(home, "launcher-run.jar");
 			java.nio.file.Files.copy(jar.toPath(), copy.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			cmd.add("-D" + UPDATE_ATTEMPT + "=1"); // the launcher passes every -Dlostcity.* on to the client
 			cmd.add("-cp");
 			cmd.add(copy.getAbsolutePath());
 			cmd.add("lostcity.Launcher");
@@ -15550,6 +16168,12 @@ public class Client extends GameShell {
 			Thread t = new Thread(() -> {
 				try {
 					Thread.sleep(2000); // long enough to read the message
+					// this window goes before the launcher's opens, so there are never two on screen
+					ViewBox self = this.frame; // null as an applet, where there is no window of ours
+					if (self != null) {
+						self.setVisible(false);
+						self.dispose();
+					}
 					new ProcessBuilder(cmd).directory(dir).start();
 				} catch (Exception e) {
 					e.printStackTrace();
@@ -15631,7 +16255,7 @@ public class Client extends GameShell {
 
 	// Split on spaces to fit. The first line fits beside its prefix; the rest are indented to sit
 	// under it (chat) or start at the margin (game, trade and "To" lines, whose prefix is the line).
-	// A word too long for a line on its own is cut. A colour tag carries onto the next line.
+	// A word too long for a line on its own is cut. In a game message a colour tag carries onto the next line.
 	private java.util.List<String> wrapChat(String sender, String text, int type) {
 		java.util.List<String> out = new java.util.ArrayList<>();
 		PixFont font = this.fontPlain12;
@@ -15640,10 +16264,14 @@ public class Client extends GameShell {
 			return out;
 		}
 		int prefix = this.chatPrefixWidth(sender, text, type);
+		// Only a game message is drawn reading its tags. Every other line - a player's chat above
+		// all - is drawn with drawString, which prints "@red@" as five characters, so it is measured
+		// the same way and no colour is carried onto its next line.
+		boolean tags = type == 0;
 		boolean indented = !(type == 0 || type == 4 || type == 5 || type == 8);
 		int first = CHAT_WIDTH - prefix;
 		int rest = indented ? first : CHAT_WIDTH;
-		if (ChatIcons.width(font, text) <= first || first < 60) {
+		if (this.chatWidth(font, tags, text) <= first || first < 60) {
 			out.add(text);
 			return out;
 		}
@@ -15652,14 +16280,14 @@ public class Client extends GameShell {
 		String remaining = text;
 		int width = first;
 		while (remaining.length() > 0) {
-			if (ChatIcons.width(font, remaining) <= width) {
+			if (this.chatWidth(font, tags, remaining) <= width) {
 				out.add(remaining);
 				break;
 			}
 			int cut = -1;
 			for (int i = 1; i < remaining.length(); i++) {
 				if (remaining.charAt(i) == ' ') {
-					if (ChatIcons.width(font, remaining.substring(0, i)) > width) {
+					if (this.chatWidth(font, tags, remaining.substring(0, i)) > width) {
 						break;
 					}
 					cut = i;
@@ -15667,13 +16295,13 @@ public class Client extends GameShell {
 			}
 			if (cut <= 0) {
 				cut = 1;
-				while (cut < remaining.length() && ChatIcons.width(font, remaining.substring(0, cut + 1)) <= width) {
+				while (cut < remaining.length() && this.chatWidth(font, tags, remaining.substring(0, cut + 1)) <= width) {
 					cut++;
 				}
 			}
 			String line = remaining.substring(0, cut);
 			out.add(line);
-			for (int i = 0; i + 4 < line.length(); i++) {
+			for (int i = 0; tags && i + 4 < line.length(); i++) {
 				if (line.charAt(i) == '@' && line.charAt(i + 4) == '@') {
 					String tag = line.substring(i + 1, i + 4);
 					if (tag.equals("sh1") || tag.equals("sh0")) {
@@ -15694,6 +16322,12 @@ public class Client extends GameShell {
 			width = rest;
 		}
 		return out;
+	}
+
+	// A chatbox line's width: read for tags and icons (a game message), or every character as it is
+	// drawn (chat - see wrapChat).
+	private int chatWidth(PixFont font, boolean tags, String text) {
+		return tags ? ChatIcons.width(font, text) : font.stringWid(text);
 	}
 
 	private void pushMessage(String sender, String text, int type, boolean cont, int indent) {
@@ -15939,6 +16573,7 @@ public class Client extends GameShell {
 		this.flameBuffer3 = null;
 		this.imageFlamesLeft = null;
 		this.imageFlamesRight = null;
+		this.titleBlur = null;
 	}
 
 	@ObfuscatedName("client.c(B)V")
@@ -16302,20 +16937,55 @@ public class Client extends GameShell {
 	}
 
 	@ObfuscatedName("client.a(ILjava/lang/String;Ljava/lang/String;)V")
+	/**
+	 * What to say under "Loading - please wait" when the scene has plainly stopped coming in, or null
+	 * while it is still making normal progress.
+	 *
+	 * The four codes are checkScene's own, and they are worth telling apart because they fail in
+	 * different places: -1 and -2 are a map or scenery FILE that has not arrived, so the download is
+	 * the thing to look at; -3 is a loc whose models cannot be resolved, which never recovers on its
+	 * own and means this client's cache does not match the world it is on; -4 is waiting on the
+	 * server. The outstanding file count separates a download still running from one that has
+	 * finished and left the scene short anyway.
+	 */
+	private String sceneStuckNote() {
+		if (this.sceneState != 1 || this.sceneStuckReason == 0) {
+			return null;
+		}
+		if (System.currentTimeMillis() - this.sceneLoadBegan < SCENE_STUCK_MS) {
+			return null;
+		}
+		String why;
+		if (this.sceneStuckReason == -1) {
+			why = "still waiting for map data";
+		} else if (this.sceneStuckReason == -2) {
+			why = "still waiting for scenery data";
+		} else if (this.sceneStuckReason == -3) {
+			why = "scenery models will not load - this client's cache does not match this world";
+		} else if (this.sceneStuckReason == -4) {
+			why = "waiting for the server";
+		} else {
+			why = "not finishing";
+		}
+		int outstanding = this.onDemand == null ? -1 : this.onDemand.remaining();
+		return why + " (code " + this.sceneStuckReason + ", " + outstanding + " files outstanding)";
+	}
+
 	public void showPopupMessage(String arg1, String arg2) {
 		if (this.areaViewport != null) {
 			this.areaViewport.bind();
 			Pix3D.lineOffset = this.areaViewportOffset;
-			int var4 = 151;
+			int var4 = this.layout.mainY + 151;
+			int cx = this.layout.mainX + 256;
 			if (arg1 != null) {
 				var4 -= 7;
 			}
-			this.fontPlain12.centreString(257, var4, 0, arg2);
-			this.fontPlain12.centreString(256, var4 - 1, 16777215, arg2);
+			this.fontPlain12.centreString(cx + 1, var4, 0, arg2);
+			this.fontPlain12.centreString(cx, var4 - 1, 16777215, arg2);
 			var4 += 15;
 			if (arg1 != null) {
-				this.fontPlain12.centreString(257, var4, 0, arg1);
-				this.fontPlain12.centreString(256, var4 - 1, 16777215, arg1);
+				this.fontPlain12.centreString(cx + 1, var4, 0, arg1);
+				this.fontPlain12.centreString(cx, var4 - 1, 16777215, arg1);
 			}
 			this.areaViewport.draw(4, 4, super.graphics);
 		} else if (super.drawArea != null) {
@@ -16364,5 +17034,617 @@ public class Client extends GameShell {
 		this.areaBackmid1 = null;
 		super.drawArea = new PixMap(503, this.getBaseComponent(), 765);
 		this.redrawFrame = true;
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Resizable mode (F9, "Resizable window"). Layout says where everything goes and why; this is the
+	// client's side of it.
+	//
+	// In fixed mode none of this runs: the layout is Layout.fixed(), PixMap.target is null, the mouse
+	// is AWT's, and every area goes on the screen where 377 put it.
+	//
+	// In resizable mode the areas of the fixed frame (the stone, the sidebar, the chat, the tab rows,
+	// the minimap) are still drawn exactly as they always were, but PixMap.target (this) catches them
+	// and copies them into frameBuffer - the fixed frame, 765x503 - instead of the screen. The viewport
+	// is the whole window. Each frame presentGame() copies the three panels out of frameBuffer onto
+	// the viewport where the window has room for them, draws an open viewport menu over the lot, and
+	// puts the viewport on the screen in one piece. The title screen and a fullscreen interface,
+	// which are 765x503 by nature, are drawn in the middle of the window.
+
+	private Layout layout = Layout.fixed();
+	/** What the player asked for; the layout follows it at the next frame (syncLayout). */
+	private int wantMode = Layout.FIXED;
+	/** The fixed frame the panels are cut from, in resizable mode. */
+	private int[] frameBuffer;
+	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
+	private java.awt.Graphics screenGraphics;
+	private java.awt.Graphics letterGraphics;
+	/** The window has been filled around the centred 765x503 screen. */
+	private boolean letterCleared;
+	/** The title art shrunk, blurred and dimmed, for filling the window around the centred screen. */
+	private PixMap titleBlur;
+	/**
+	 * How small the blurred copy is kept. 128x84 holds the 765x503 art's shape to within a pixel of
+	 * its aspect, and shrinking that far is itself most of the blur: one pixel of it is the average
+	 * of about 36 of the art's, so nothing sharp survives the shrink.
+	 */
+	private static final int BLUR_W = 128;
+	private static final int BLUR_H = 84;
+	/** Box passes over the small copy, to take out the blockiness that averaging leaves behind. */
+	private static final int BLUR_PASSES = 3;
+	/**
+	 * How much of the art's brightness the surround keeps, out of 256. Dark enough that the crisp
+	 * title screen in the middle is plainly the brighter thing, and the one to look at.
+	 */
+	private static final int BLUR_DIM = 108;
+	/** How far the shadow around the centred screen reaches, and how dark it is where it meets it. */
+	private static final int SHADOW = 26;
+	private static final int SHADOW_ALPHA = 120;
+	/** World3D.init's pitch distances, kept from load() to rebuild its visibility for a new viewport. */
+	private int[] sceneDistances;
+	/** The viewport World3D's visibility tables were last built for. */
+	private int sceneVisW;
+	private int sceneVisH;
+	private int sceneVisZoom;
+	private int sceneVisDistance;
+	/** When the layout last changed: the visibility tables and the saved size wait for it to settle. */
+	private long layoutChangedAt;
+	private boolean layoutSettled = true;
+
+	/**
+	 * Move the window to one of the three display modes (Layout.FIXED/CLASSIC/MODERN) and remember
+	 * it. Takes effect at the next frame. The window itself only has two states - the fixed 765x503
+	 * or free to be dragged - so switching between the two resizable layouts leaves it alone and
+	 * only the panels move.
+	 */
+	public void setDisplayMode(int mode) {
+		this.wantMode = mode < Layout.FIXED || mode >= Layout.MODES ? Layout.FIXED : mode;
+		DisplaySettings.setMode(this.wantMode);
+		if (super.frame != null) {
+			super.frame.setMode(this.wantMode != Layout.FIXED, DisplaySettings.width(), DisplaySettings.height(), DisplaySettings.maximized());
+		}
+	}
+
+	/** Fixed or the classic layout; kept for what only wants to know whether the window is free. */
+	public void setResizable(boolean on) {
+		this.setDisplayMode(on ? Layout.CLASSIC : Layout.FIXED);
+	}
+
+	public boolean isResizable() {
+		return this.layout.resizable;
+	}
+
+	public int displayMode() {
+		return this.layout.mode;
+	}
+
+	/** Bring the layout into line with the request and the window's size. Game thread only. */
+	public void syncLayout() {
+		Layout next;
+		if (this.wantMode == Layout.FIXED) {
+			if (!this.layout.resizable) {
+				return;
+			}
+			next = Layout.fixed();
+		} else {
+			java.awt.Component c = this.getBaseComponent();
+			int w = c.getWidth();
+			int h = c.getHeight();
+			if (w <= 0 || h <= 0) {
+				return;
+			}
+			next = Layout.resizable(this.wantMode, w, h);
+		}
+		if (next.sameAs(this.layout)) {
+			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
+				this.layoutSettled = true;
+				this.updateSceneVisibility();
+				if (this.layout.resizable && super.frame != null) {
+					DisplaySettings.setWindow(this.layout.width, this.layout.height, super.frame.isMaximized());
+				}
+			}
+			return;
+		}
+		this.applyLayout(next);
+	}
+
+	private void applyLayout(Layout next) {
+		Layout was = this.layout;
+		boolean first = was.resizable != next.resizable;
+		this.layout = next;
+		super.remapMouse = next.resizable;
+		PixMap.target = next.resizable ? this : null;
+
+		java.awt.Graphics g = this.acquireGraphics();
+		if (g != null) {
+			// (The old ones are left to the collector rather than disposed: the title screen's flame
+			// thread may be half way through drawing with one.)
+			this.screenGraphics = g;
+			if (next.resizable) {
+				this.letterGraphics = g.create();
+				this.letterGraphics.translate(next.letterX, next.letterY);
+			} else {
+				this.letterGraphics = g;
+			}
+			super.graphics = next.resizable && !this.ingame ? this.letterGraphics : this.screenGraphics;
+			if (was.resizable && !next.resizable) {
+				// until the window has shrunk back to 765x503, nothing of the resizable screen is left
+				// showing around the fixed one
+				g.setColor(java.awt.Color.black);
+				g.fillRect(0, 0, was.width, was.height);
+			}
+		}
+		if (next.resizable) {
+			if (this.frameBuffer == null) {
+				this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
+			}
+		} else {
+			this.frameBuffer = null;
+		}
+		if (this.areaViewport != null) {
+			this.createViewportArea();
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+		}
+		// Switching mode rebuilds the scene's visibility now; a window being dragged to a new size
+		// waits until it stops (syncLayout), drawing with the last size's tables meanwhile.
+		this.layoutChangedAt = System.currentTimeMillis();
+		this.layoutSettled = false;
+		if (first || this.sceneVisW == 0) {
+			this.updateSceneVisibility();
+		}
+		// A menu laid out for the old viewport would be somewhere else now.
+		if (this.menuVisible) {
+			this.menuVisible = false;
+			this.menuSwapMode = false;
+		}
+		if (!next.resizable) {
+			super.mouseX = super.rawMouseX;
+			super.mouseY = super.rawMouseY;
+		}
+		this.letterCleared = false;
+		this.redrawFrame = true;
+	}
+
+	/** The viewport's buffer and scanline table, at the layout's size. */
+	private void createViewportArea() {
+		this.areaViewport = new PixMap(this.layout.vpH, this.getBaseComponent(), this.layout.vpW);
+		Pix3D.init3D(this.layout.vpH, this.layout.vpW);
+		this.areaViewportOffset = Pix3D.lineOffset;
+	}
+
+	/**
+	 * World3D precomputes, for each camera angle, which tiles can land inside the viewport. That
+	 * depends on the viewport's size and the projection, so a new layout needs new tables. On the
+	 * fixed screen they are built once, in load(), exactly as 377 built them.
+	 */
+	private void updateSceneVisibility() {
+		if (this.sceneDistances == null) {
+			return;
+		}
+		int w = this.layout.vpW;
+		int h = this.layout.vpH;
+		int zoom = this.layout.zoom;
+		int dist = DisplaySettings.drawDistance();
+		if (w == this.sceneVisW && h == this.sceneVisH && zoom == this.sceneVisZoom && dist == this.sceneVisDistance) {
+			return;
+		}
+		int was = Pix3D.zoom;
+		Pix3D.zoom = zoom;
+		World3D.drawDistance = dist;
+		World3D.init(h, this.sceneDistances, 800, 500, w);
+		Pix3D.zoom = was;
+		this.sceneVisW = w;
+		this.sceneVisH = h;
+		this.sceneVisZoom = zoom;
+		this.sceneVisDistance = dist;
+	}
+
+	/**
+	 * How far the scene is drawn, in tiles (DisplaySettings.DRAW_DISTANCES). Rebuilding World3D's
+	 * per-angle visibility tables takes a moment - a fraction of a second at the far end - so it is
+	 * done here, once, when the row is clicked, and not per frame. Game thread only: the tables and
+	 * the radius the tile loops index them with are two statics, and a frame half way through
+	 * reading them while they change would read off the end of one.
+	 */
+	public void setDrawDistance(int tiles) {
+		DisplaySettings.setDrawDistance(tiles);
+		this.updateSceneVisibility();
+		this.redrawFrame = true;
+	}
+
+	public int drawDistance() {
+		return DisplaySettings.drawDistance();
+	}
+
+	/**
+	 * Resizable: turn the raw canvas mouse into the client's coordinates (see Layout). An open
+	 * menu, or an item being dragged, keeps the mouse in the area it belongs to, so its coordinates
+	 * run on smoothly past that area's edge instead of jumping into another one.
+	 */
+	public void mapInput() {
+		this.syncLayout();
+		if (!this.layout.resizable) {
+			return;
+		}
+		int rx = super.rawMouseX;
+		int ry = super.rawMouseY;
+		int cx = super.rawClickX;
+		int cy = super.rawClickY;
+		if (!this.ingame || this.fullscreenInterfaceId0 != -1) {
+			int lx = this.layout.letterX;
+			int ly = this.layout.letterY;
+			super.mouseX = rx == -1 && ry == -1 ? -1 : rx - lx;
+			super.mouseY = rx == -1 && ry == -1 ? -1 : ry - ly;
+			super.mouseClickX = cx - lx;
+			super.mouseClickY = cy - ly;
+			return;
+		}
+		int area = this.mouseArea();
+		super.mouseX = this.layout.mapX(rx, ry, area);
+		super.mouseY = this.layout.mapY(rx, ry, area);
+		super.mouseClickX = this.layout.mapX(cx, cy, area);
+		super.mouseClickY = this.layout.mapY(cx, cy, area);
+	}
+
+	private int mouseArea() {
+		if (this.menuVisible) {
+			return this.menuArea == 1 ? Layout.SIDEBAR : this.menuArea == 2 ? Layout.CHAT : Layout.VIEWPORT;
+		}
+		if (this.objDragArea == 1 || this.bankTabDragFrom >= 1) {
+			return Layout.VIEWPORT;
+		}
+		if (this.objDragArea == 2) {
+			return Layout.SIDEBAR;
+		}
+		if (this.objDragArea == 3) {
+			return Layout.CHAT;
+		}
+		return Layout.ANY;
+	}
+
+	/**
+	 * Resizable, at the top of each frame: the title screen draws on the centred Graphics and the
+	 * game on the window's, and the first centred frame fills the window around it.
+	 */
+	private void prepareResizableFrame() {
+		if (this.screenGraphics == null) {
+			return;
+		}
+		boolean letter = !this.ingame || super.drawArea != null;
+		if (letter && !this.letterCleared) {
+			this.fillTitleSurround(this.screenGraphics, this.layout.width, this.layout.height);
+			this.letterCleared = true;
+			this.redrawFrame = true;
+		} else if (!letter) {
+			this.letterCleared = false;
+		}
+		super.graphics = this.ingame ? this.screenGraphics : this.letterGraphics;
+	}
+
+	/**
+	 * The window behind the centred 765x503 screen - the title screen and the loading bar. It used
+	 * to be black, so the login screen sat in a letterbox on anything bigger than 765x503; the title
+	 * art fills it instead, and the real title screen is drawn crisp over the middle of it as
+	 * before, so the logo, the login box and its buttons are pixel for pixel what they always were.
+	 *
+	 * BLURRED AND DIMMED, not tiled and not drawn sharp. This was tiled at first - the art is a hall
+	 * mirrored down its own middle, so a flipped copy joins it edge to edge with no seam - and the
+	 * seam was never the problem. The problem is that the picture has no outside: its left and right
+	 * 128 pixels are the brazier strips (imageTitle0 and imageTitle1), which end in a hard rectangle
+	 * because at 765x503 that edge IS the edge of the screen and nobody ever sees it. Repeat the art
+	 * and those rectangles land in the middle of the window, so the fire reads as two boxes pasted on
+	 * the wall. Drawing it sharp at any size has the same trouble somewhere.
+	 *
+	 * So the surround is the art with everything that could show a join taken out of it: shrunk to
+	 * BLUR_W x BLUR_H by averaging, box-blurred BLUR_PASSES times and dimmed to BLUR_DIM/256, then
+	 * scaled back over the whole window. What is left is the shape and colour of the hall - dark
+	 * stone, a warm glow at each side where the braziers were - with no edge anywhere in it, and the
+	 * real title screen sits crisp in the middle of it, plainly the thing you are meant to look at.
+	 * The blur is built once with the art, so the only per-frame cost is one scaled blit.
+	 *
+	 * In game (a fullscreen interface over the scene) there is no title art loaded and the surround
+	 * stays black, as it was.
+	 */
+	private void fillTitleSurround(java.awt.Graphics g, int w, int h) {
+		PixMap blur = this.titleBlur;
+		if (blur == null || this.ingame) {
+			g.setColor(java.awt.Color.black);
+			g.fillRect(0, 0, w, h);
+			return;
+		}
+		blur.setPixels();
+		// Bilinear for this blit and this blit only. The hint lives on the Graphics, and the centred
+		// title screen is drawn through the same one - it must stay nearest-neighbour or every pixel
+		// of the login box goes soft.
+		java.awt.Graphics2D g2 = g instanceof java.awt.Graphics2D ? (java.awt.Graphics2D) g : null;
+		Object previous = null;
+		if (g2 != null) {
+			previous = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+		}
+		g.drawImage(blur.image, 0, 0, w, h, blur);
+		if (g2 != null) {
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+				previous == null ? java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR : previous);
+			// A shadow hugging the centred screen, so its edge reads as the edge of something laid on
+			// the window rather than as the art stopping. Rings of black a pixel thick, fading outwards,
+			// drawn OUTSIDE the 765x503 - the title screen is blitted over that rectangle every frame
+			// and would wipe anything drawn inside it.
+			int lx = this.layout.letterX;
+			int ly = this.layout.letterY;
+			for (int i = 0; i < SHADOW; i++) {
+				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
+				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
+				g2.drawRect(lx - i - 1, ly - i - 1, Layout.FIXED_W + 2 * i + 1, Layout.FIXED_H + 2 * i + 1);
+			}
+		}
+	}
+
+	/**
+	 * The art shrunk, blurred and dimmed, for fillTitleSurround. Shrinking by averaging whole blocks
+	 * is the blur that does most of the work - 765x503 down to 128x84 throws away every edge in the
+	 * picture at once - and the box passes after it take the blockiness out of what is left, so that
+	 * scaling it back up bilinear has only smooth gradients to interpolate.
+	 */
+	private PixMap blurredBackdrop(PixMap src) {
+		int[] small = new int[BLUR_W * BLUR_H];
+		for (int y = 0; y < BLUR_H; y++) {
+			int y0 = y * src.height / BLUR_H;
+			int y1 = (y + 1) * src.height / BLUR_H;
+			for (int x = 0; x < BLUR_W; x++) {
+				int x0 = x * src.width / BLUR_W;
+				int x1 = (x + 1) * src.width / BLUR_W;
+				int r = 0;
+				int gr = 0;
+				int b = 0;
+				int n = 0;
+				for (int sy = y0; sy < y1; sy++) {
+					int row = sy * src.width;
+					for (int sx = x0; sx < x1; sx++) {
+						int p = src.data[row + sx];
+						r += p >> 16 & 0xFF;
+						gr += p >> 8 & 0xFF;
+						b += p & 0xFF;
+						n++;
+					}
+				}
+				small[y * BLUR_W + x] = n == 0 ? 0 : ((r / n) << 16) + ((gr / n) << 8) + b / n;
+			}
+		}
+		for (int pass = 0; pass < BLUR_PASSES; pass++) {
+			boxBlur(small, BLUR_W, BLUR_H);
+		}
+		PixMap out = new PixMap(BLUR_H, this.getBaseComponent(), BLUR_W);
+		for (int i = 0; i < small.length; i++) {
+			int p = small[i];
+			int r = ((p >> 16 & 0xFF) * BLUR_DIM) >> 8;
+			int gr = ((p >> 8 & 0xFF) * BLUR_DIM) >> 8;
+			int b = ((p & 0xFF) * BLUR_DIM) >> 8;
+			out.data[i] = (r << 16) + (gr << 8) + b;
+		}
+		out.setPixels();
+		return out;
+	}
+
+	/** One 3x3 box pass over the small copy, in place. Edges average the neighbours they have. */
+	private static void boxBlur(int[] px, int w, int h) {
+		int[] tmp = new int[px.length];
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				int r = 0;
+				int g = 0;
+				int b = 0;
+				int n = 0;
+				for (int dy = -1; dy <= 1; dy++) {
+					int sy = y + dy;
+					if (sy < 0 || sy >= h) {
+						continue;
+					}
+					for (int dx = -1; dx <= 1; dx++) {
+						int sx = x + dx;
+						if (sx < 0 || sx >= w) {
+							continue;
+						}
+						int p = px[sy * w + sx];
+						r += p >> 16 & 0xFF;
+						g += p >> 8 & 0xFF;
+						b += p & 0xFF;
+						n++;
+					}
+				}
+				tmp[y * w + x] = ((r / n) << 16) + ((g / n) << 8) + b / n;
+			}
+		}
+		System.arraycopy(tmp, 0, px, 0, px.length);
+	}
+
+	/** PixMap.target: see the top of this section. */
+	public boolean draw(PixMap area, int x, int y, java.awt.Graphics g) {
+		if (!this.layout.resizable || this.letterGraphics == null) {
+			return false;
+		}
+		if (!this.ingame || area == super.drawArea) {
+			area.drawDirect(y, x, this.letterGraphics);
+			return true;
+		}
+		if (this.areaViewport == null) {
+			return false;
+		}
+		if (area == this.areaViewport) {
+			this.presentGame(false);
+			return true;
+		}
+		copyRect(area.data, area.width, 0, 0, area.width, area.height, this.frameBuffer, Layout.FIXED_W, Layout.FIXED_H, x, y);
+		return true;
+	}
+
+	/**
+	 * The panels over the viewport, an open viewport menu over them, and the lot onto the screen.
+	 *
+	 * In the modern layout a panel is mixed with the scene behind it rather than laid on top of it
+	 * (Layout.panelAlpha). Old School does that with panel art drawn to be see-through; the art in
+	 * the 377 cache is the fixed screen's, which is solid, so what happens here is the whole panel
+	 * faded - its text and its icons along with its background. That is why the chatbox and the
+	 * inventory only give up a quarter of themselves and the tab rows almost nothing: any more and
+	 * the things a player reads and aims at start to swim in the scene behind them. Faithful
+	 * transparency needs Old School's own panel sprites in the cache, which is a content change, not
+	 * a client one.
+	 */
+	private void presentGame(boolean menu) {
+		if (this.areaViewport == null || this.frameBuffer == null) {
+			return;
+		}
+		int[] dst = this.areaViewport.data;
+		int dw = this.areaViewport.width;
+		int dh = this.areaViewport.height;
+		for (int p = 0; p < this.layout.panels; p++) {
+			int alpha = this.layout.panelAlpha(p);
+			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
+			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
+			if (alpha >= Layout.OPAQUE) {
+				copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
+			} else {
+				blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+			}
+		}
+		if (menu && this.menuVisible && this.menuArea == 0) {
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+			this.drawMenu();
+		}
+		if (this.screenGraphics != null) {
+			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+		}
+	}
+
+	/**
+	 * The same block, mixed with what is already there: alpha parts of the source to 256 - alpha of
+	 * the destination, per channel, the way Pix2D's own translucent fills do it. Used for the modern
+	 * layout's panels, so the scene shows through them.
+	 */
+	private static void blendRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy, int alpha) {
+		if (dx < 0) {
+			sx -= dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			sy -= dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		int rest = 256 - alpha;
+		for (int row = 0; row < h; row++) {
+			int from = (sy + row) * sw + sx;
+			int to = (dy + row) * dw + dx;
+			for (int col = 0; col < w; col++) {
+				int a = src[from + col];
+				int b = dst[to + col];
+				// red and blue in one multiply, green in another. The red-and-blue sum reaches
+				// 0xFF00FF00, which is a negative int, so it is shifted back with >>> and not >>.
+				int rb = ((a & 0xFF00FF) * alpha + (b & 0xFF00FF) * rest) >>> 8 & 0xFF00FF;
+				int g = ((a & 0xFF00) * alpha + (b & 0xFF00) * rest) >>> 8 & 0xFF00;
+				dst[to + col] = rb | g;
+			}
+		}
+	}
+
+	/** A w x h block of src (stride sw) at (sx, sy) to dst (dw x dh) at (dx, dy), clipped to dst. */
+	private static void copyRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy) {
+		if (dx < 0) {
+			sx -= dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			sy -= dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		for (int row = 0; row < h; row++) {
+			System.arraycopy(src, (sy + row) * sw + sx, dst, (dy + row) * dw + dx, w);
+		}
+	}
+
+	/**
+	 * A walkable overlay (the wilderness level, a minigame's score) is laid out on a 512x334 root
+	 * against the fixed viewport's corners. Resizable keeps each piece at its own corner of the open
+	 * area: a child whose middle is right of the root's middle moves right with the window's width,
+	 * one below the middle moves down with its height. A rectangle that covers the whole root - the
+	 * darkness of a cave without a light source - covers the whole window instead. Fixed mode draws
+	 * the overlay as it always was.
+	 */
+	private void drawViewportOverlay(Component root) {
+		if (!this.layout.resizable || root.children == null || root.childX == null || root.childY == null) {
+			this.drawInterface(0, 0, root, 0);
+			return;
+		}
+		int dx = this.layout.openW - Layout.VIEWPORT_W;
+		int dy = this.layout.openH - Layout.VIEWPORT_H;
+		int n = root.children.length;
+		int[] ox = root.childX.clone();
+		int[] oy = root.childY.clone();
+		int ow = root.width;
+		int oh = root.height;
+		Component[] filled = new Component[n];
+		int[] fw = new int[n];
+		int[] fh = new int[n];
+		try {
+			for (int i = 0; i < n; i++) {
+				Component child = Component.get(root.children[i]);
+				if (child == null) {
+					continue;
+				}
+				if (child.type == 3 && ox[i] <= 0 && oy[i] <= 0 && ox[i] + child.width >= ow && oy[i] + child.height >= oh) {
+					filled[i] = child;
+					fw[i] = child.width;
+					fh[i] = child.height;
+					root.childX[i] = 0;
+					root.childY[i] = 0;
+					child.width = this.layout.vpW;
+					child.height = this.layout.vpH;
+					continue;
+				}
+				if (ox[i] + child.width / 2 > ow / 2) {
+					root.childX[i] = ox[i] + dx;
+				}
+				if (oy[i] + child.height / 2 > oh / 2) {
+					root.childY[i] = oy[i] + dy;
+				}
+			}
+			root.width = this.layout.vpW;
+			root.height = this.layout.vpH;
+			this.drawInterface(0, 0, root, 0);
+		} finally {
+			System.arraycopy(ox, 0, root.childX, 0, n);
+			System.arraycopy(oy, 0, root.childY, 0, n);
+			root.width = ow;
+			root.height = oh;
+			for (int i = 0; i < n; i++) {
+				if (filled[i] != null) {
+					filled[i].width = fw[i];
+					filled[i].height = fh[i];
+				}
+			}
+		}
 	}
 }

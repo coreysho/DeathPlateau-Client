@@ -782,7 +782,9 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 				}
 
 				this.socketOpenTime = now;
-				this.socket = this.app.openSocket(Client.portOffset + 43594);
+				// the port the client logs in on (Client.GAME_PORT, e.g. a playit.gg tunnel's), not a hard 43594:
+				// behind a tunnel there is nothing at 43594, and the maps and models never arrive
+				this.socket = this.app.openSocket(Client.portOffset + Client.GAME_PORT);
 				this.in = this.socket.getInputStream();
 				this.out = this.socket.getOutputStream();
 

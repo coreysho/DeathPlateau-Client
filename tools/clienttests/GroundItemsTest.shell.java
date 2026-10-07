@@ -1,6 +1,7 @@
 // Shell for tools/clienttests/run_groundtest.py. The declarations and the four methods under test
 // are spliced in from jagex2/client/Client.java at run time - everything below them is the harness.
 import jagex2.client.GameShell;
+import jagex2.client.Layout;
 import jagex2.client.GroundItemPrefs;
 import jagex2.client.QolSettings;
 import jagex2.config.ObjType;
@@ -70,6 +71,10 @@ class FontStub {
 public class GroundItemsTest extends GiShellBase {
 
 	// @@DECLS@@
+
+	// The fixed viewport's origin in the mouse's coordinates (Layout.fixed().vpX/vpY), which is
+	// where the harness puts the mouse relative to the labels it draws in viewport pixels.
+	static final int QOL_PANEL_ORIGIN = 4;
 
 	// @@METHODS@@
 

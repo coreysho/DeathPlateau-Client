@@ -2,7 +2,9 @@
 // spliced in from jagex2/client/Client.java at run time - everything below them is the harness.
 import jagex2.client.QolSettings;
 import jagex2.client.GameShell;
+import jagex2.client.Layout;
 import jagex2.graphics.Pix2D;
+import jagex2.graphics.Pix8;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,6 +54,20 @@ class MenuFontStub {
 
 	public void drawStringTag(int colour, int x, int y, boolean shadow, String s) {
 		rows.add(new MenuRow(x, y, colour, s));
+	}
+}
+
+/**
+ * The rows go through ChatIcons now (a player's crown before the name). The real one takes a
+ * PixFont; this one hands the text to the recording font, which is what the harness measures.
+ */
+class ChatIcons {
+	static void draw(MenuFontStub font, Pix8[] icons, int x, int y, int colour, String text) {
+		font.drawStringTag(colour, x, y, true, text.startsWith("@sh1@") ? text.substring(5) : text);
+	}
+
+	static int width(MenuFontStub font, String text) {
+		return font.stringWidTag(text);
 	}
 }
 
@@ -169,6 +185,8 @@ public class MenuTest extends MenuShellBase {
 		reachTests();
 		System.out.println("5. the scroll bar");
 		barTests();
+		System.out.println("7. resizable: a window-sized viewport under the panels");
+		resizableTests();
 		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS")
 			: (fail + " FAILED of " + (pass + fail)));
@@ -217,9 +235,10 @@ public class MenuTest extends MenuShellBase {
 			"...and fits: y " + s.menuY + " + h " + s.menuHeight);
 		MenuTest b = new MenuTest().menu(30);
 		b.openAt(200, 400);
-		check(b.menuArea == 2 && b.menuRowsShown == 4,
-			"the chatbox's 96px shows 4 (" + b.menuRowsShown + ")");
-		check(b.menuY >= 0 && b.menuY + b.menuHeight <= 96,
+		int chatRows = (CHAT_H - MENU_CHROME_H) / MENU_ROW_H;
+		check(b.menuArea == 2 && b.menuRowsShown == chatRows,
+			"the chatbox's " + CHAT_H + "px shows " + chatRows + " (" + b.menuRowsShown + ")");
+		check(b.menuY >= 0 && b.menuY + b.menuHeight <= CHAT_H,
 			"...and fits: y " + b.menuY + " + h " + b.menuHeight);
 	}
 
@@ -321,6 +340,56 @@ public class MenuTest extends MenuShellBase {
 			"...and the last window ends on Cancel");
 		check(c.menuRowIndex(c.menuRowsShown - 1) == 0,
 			"...which is index 0, so nothing is off the bottom of the array");
+	}
+
+	// ---------------------------------------------------------------- 7
+	/** A right-click at WINDOW point (x, y), through the same mapping the client's mouse goes through. */
+	void openAtWindow(int x, int y) {
+		this.openAt(this.layout.mapX(x, y, Layout.ANY), this.layout.mapY(x, y, Layout.ANY));
+	}
+
+	static void resizableTests() {
+		MenuTest c = new MenuTest().menu(30);
+		c.layout = Layout.resizable(1280, 800);
+		c.openAtWindow(700, 300);
+		check(c.menuVisible && c.menuArea == 0, "a right-click on the scene of a 1280x800 window opens a viewport menu");
+		check(c.menuRowsShown == 30, "...and the window's 800px shows all 30 rows (" + c.menuRowsShown + ")");
+		check(c.menuX == 700 - c.menuWidth / 2 && c.menuY == 300,
+			"...centred on the click in window pixels: " + c.menuX + "," + c.menuY);
+		c.menu(30);
+		c.menuVisible = false;
+		c.openAtWindow(1100, 600);
+		check(c.menuArea == 1, "a right-click on the inventory in the bottom-right panel is a sidebar menu");
+		check(c.menuY >= 0 && c.menuY + c.menuHeight <= 261 && c.menuRowsShown == 15,
+			"...capped to the sidebar as it always was: y " + c.menuY + " + h " + c.menuHeight);
+		c.menu(30);
+		// just left of the side panel (x 1031..1280) and just above the chatbox (y 635..800)
+		c.openAtWindow(1025, 630);
+		check(c.menuArea == 0, "the scene right beside both panels is still the viewport");
+		check(c.menuX + c.menuWidth <= 1280 && c.menuY + c.menuHeight <= 800 && c.menuX >= 0 && c.menuY >= 0,
+			"...and its menu stays on the window, over the panels if it must: " + c.menuX + "," + c.menuY
+				+ " " + c.menuWidth + "x" + c.menuHeight);
+		c.menu(30);
+		c.openAtWindow(100, 700);
+		check(c.menuArea == 2, "a right-click on the chatbox in the bottom-left is a chatbox menu");
+		// The hover highlight: a viewport menu is hit-tested in window pixels, however far from the
+		// fixed 512x334 it is.
+		c.menu(5);
+		c.openAtWindow(900, 500);
+		c.mouseX = c.layout.mapX(c.menuX + 10, c.menuY + 31, Layout.VIEWPORT);
+		c.mouseY = c.layout.mapY(c.menuX + 10, c.menuY + 31, Layout.VIEWPORT);
+		List<MenuRow> rows = c.redrawWindow();
+		check(!rows.isEmpty() && rows.get(0).colour == 16776960,
+			"...the row under the mouse lights up (top row colour " + (rows.isEmpty() ? -1 : rows.get(0).colour) + ")");
+	}
+
+	List<MenuRow> redrawWindow() {
+		this.fontBold12.rows.clear();
+		int[] big = new int[1280 * 800];
+		Pix2D.bind(1280, 800, big);
+		this.drawMenu();
+		Pix2D.bind(520, 340, buf);
+		return this.fontBold12.rows;
 	}
 
 	// ---------------------------------------------------------------- 5

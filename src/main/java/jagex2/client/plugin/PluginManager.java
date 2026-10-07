@@ -510,16 +510,17 @@ public final class PluginManager {
 
 	/**
 	 * Draws every running plugin's overlays. Called with the viewport bound, before the client's
-	 * own panels, so a plugin can never draw over a modal panel.
+	 * own panels, so a plugin can never draw over a modal panel. The width and height are the
+	 * drawable area for this frame, which the display mode can change.
 	 */
-	public void renderOverlays() {
+	public void renderOverlays(int width, int height) {
 		if (this.idle()) {
 			return;
 		}
 		for (int i = 0; i < this.overlays.size(); i++) {
 			Overlay overlay = this.overlays.get(i);
 			try {
-				this.graphics.reset();
+				this.graphics.reset(width, height);
 				overlay.render(this.graphics);
 			} catch (Throwable error) {
 				Entry entry = this.entryOf(overlay.owner);

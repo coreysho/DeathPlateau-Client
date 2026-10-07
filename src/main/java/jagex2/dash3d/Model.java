@@ -5,6 +5,7 @@ import jagex2.graphics.Pix2D;
 import jagex2.graphics.Pix3D;
 import jagex2.io.OnDemandProvider;
 import jagex2.io.Packet;
+import jagex2.client.DevLog;
 
 public class Model extends ModelSource {
 
@@ -1075,12 +1076,28 @@ public class Model extends ModelSource {
 	}
 
 	@ObfuscatedName("LZYQDKJV.a(IB)V")
+	/** How many frames have drawn in the base pose because their animation had not arrived. */
+	private static int missingFrames = 0;
+
 	public void applyTransform(int arg0) {
 		if (this.field1225 == null || arg0 == -1) {
 			return;
 		}
 		AnimFrame var3 = AnimFrame.get(arg0);
 		if (var3 == null) {
+			// THE FRAME IS NOT HERE YET, so no transform is applied and the model draws in its BASE
+			// POSE for this frame instead of the pose the animation wanted. On a snake that is a jump
+			// big enough to read as the thing blinking.
+			//
+			// Animation sets stream on demand exactly like models do - Client.java handles archive 1
+			// by calling AnimFrame.method262 on whatever arrives - and Zulrah brought 477 newly
+			// imported frames with it. This says how often a frame is wanted before it lands, which
+			// the npcmodel counter could not: that one went quiet on the second fight while the
+			// flicker did not.
+			missingFrames++;
+			if (missingFrames <= 12 || missingFrames % 200 == 0) {
+				DevLog.log("animframe", "not posed #" + missingFrames + " - frame " + arg0 + " not loaded");
+			}
 			return;
 		}
 		AnimBase var4 = var3.base;
@@ -1555,8 +1572,8 @@ public class Model extends ModelSource {
 			int var29 = var17 * var27 - var16 * var28 >> 16;
 			int var30 = var16 * var27 + var17 * var28 >> 16;
 			field1235[var19] = var30 - var18;
-			field1233[var19] = (var26 << 9) / var30 + var8;
-			field1234[var19] = (var29 << 9) / var30 + var9;
+			field1233[var19] = var26 * Pix3D.zoom / var30 + var8;
+			field1234[var19] = var29 * Pix3D.zoom / var30 + var9;
 			if (this.field1211 > 0) {
 				field1236[var19] = var26;
 				field1237[var19] = var29;
@@ -1579,22 +1596,22 @@ public class Model extends ModelSource {
 			return;
 		}
 		int var14 = arg3 * arg7 + arg4 * arg5 >> 16;
-		int var15 = var14 - this.field1218 << 9;
+		int var15 = (var14 - this.field1218) * Pix3D.zoom;
 		if (var15 / var13 >= Pix2D.centerX2d) {
 			return;
 		}
-		int var16 = this.field1218 + var14 << 9;
+		int var16 = (this.field1218 + var14) * Pix3D.zoom;
 		if (var16 / var13 <= -Pix2D.centerX2d) {
 			return;
 		}
 		int var17 = arg2 * arg6 - arg1 * var10 >> 16;
 		int var18 = this.field1218 * arg1 >> 16;
-		int var19 = var17 + var18 << 9;
+		int var19 = (var17 + var18) * Pix3D.zoom;
 		if (var19 / var13 <= -Pix2D.centerY2d) {
 			return;
 		}
 		int var20 = (super.field1709 * arg2 >> 16) + var18;
-		int var21 = var17 - var20 << 9;
+		int var21 = (var17 - var20) * Pix3D.zoom;
 		if (var21 / var13 >= Pix2D.centerY2d) {
 			return;
 		}
@@ -1663,8 +1680,8 @@ public class Model extends ModelSource {
 			int var48 = arg1 * var42 + arg2 * var45 >> 16;
 			field1235[var36] = var48 - var11;
 			if (var48 >= 50) {
-				field1233[var36] = (var44 << 9) / var48 + var32;
-				field1234[var36] = (var47 << 9) / var48 + var33;
+				field1233[var36] = var44 * Pix3D.zoom / var48 + var32;
+				field1234[var36] = var47 * Pix3D.zoom / var48 + var33;
 			} else {
 				field1233[var36] = -5000;
 				var23 = true;
@@ -1905,14 +1922,14 @@ public class Model extends ModelSource {
 			int var13 = this.field1203[arg0];
 			if (var10 >= 50) {
 				int var14 = (50 - var8) * field1260[var10 - var8];
-				field1246[var4] = (((field1236[var7] - var11) * var14 >> 16) + var11 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var7] - var12) * var14 >> 16) + var12 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var7] - var11) * var14 >> 16) + var11) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var7] - var12) * var14 >> 16) + var12) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1205[arg0] - var13) * var14 >> 16) + var13;
 			}
 			if (var9 >= 50) {
 				int var15 = (50 - var8) * field1260[var9 - var8];
-				field1246[var4] = (((field1236[var6] - var11) * var15 >> 16) + var11 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var6] - var12) * var15 >> 16) + var12 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var6] - var11) * var15 >> 16) + var11) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var6] - var12) * var15 >> 16) + var12) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1204[arg0] - var13) * var15 >> 16) + var13;
 			}
 		}
@@ -1926,14 +1943,14 @@ public class Model extends ModelSource {
 			int var18 = this.field1204[arg0];
 			if (var8 >= 50) {
 				int var19 = (50 - var9) * field1260[var8 - var9];
-				field1246[var4] = (((field1236[var5] - var16) * var19 >> 16) + var16 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var5] - var17) * var19 >> 16) + var17 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var5] - var16) * var19 >> 16) + var16) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var5] - var17) * var19 >> 16) + var17) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1203[arg0] - var18) * var19 >> 16) + var18;
 			}
 			if (var10 >= 50) {
 				int var20 = (50 - var9) * field1260[var10 - var9];
-				field1246[var4] = (((field1236[var7] - var16) * var20 >> 16) + var16 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var7] - var17) * var20 >> 16) + var17 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var7] - var16) * var20 >> 16) + var16) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var7] - var17) * var20 >> 16) + var17) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1205[arg0] - var18) * var20 >> 16) + var18;
 			}
 		}
@@ -1947,14 +1964,14 @@ public class Model extends ModelSource {
 			int var23 = this.field1205[arg0];
 			if (var9 >= 50) {
 				int var24 = (50 - var10) * field1260[var9 - var10];
-				field1246[var4] = (((field1236[var6] - var21) * var24 >> 16) + var21 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var6] - var22) * var24 >> 16) + var22 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var6] - var21) * var24 >> 16) + var21) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var6] - var22) * var24 >> 16) + var22) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1204[arg0] - var23) * var24 >> 16) + var23;
 			}
 			if (var8 >= 50) {
 				int var25 = (50 - var10) * field1260[var8 - var10];
-				field1246[var4] = (((field1236[var5] - var21) * var25 >> 16) + var21 << 9) / 50 + var2;
-				field1247[var4] = (((field1237[var5] - var22) * var25 >> 16) + var22 << 9) / 50 + var3;
+				field1246[var4] = (((field1236[var5] - var21) * var25 >> 16) + var21) * Pix3D.zoom / 50 + var2;
+				field1247[var4] = (((field1237[var5] - var22) * var25 >> 16) + var22) * Pix3D.zoom / 50 + var3;
 				field1248[var4++] = ((this.field1203[arg0] - var23) * var25 >> 16) + var23;
 			}
 		}

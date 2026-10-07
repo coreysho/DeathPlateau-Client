@@ -1,10 +1,13 @@
 package jagex2.client;
 
 import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.Frame;
 import java.awt.Graphics;
 import java.awt.Insets;
 
 import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
 
 import deob.ObfuscatedName;
 import sign.signlink;
@@ -37,10 +40,10 @@ public class ViewBox extends JFrame {
 	/**
 	 * Puts a panel down the right-hand side of the window, beside the game.
 	 *
-	 * The game canvas is a fixed 765x503 and must stay that way - it is a raster the client blits
-	 * whole - so the sidebar is added to the EAST of the BorderLayout and the WINDOW grows to fit
-	 * it. The game is not resized, moved or drawn over. This is how the plugin sidebar attaches;
-	 * see jagex2.client.plugin.ui.Sidebar.
+	 * The game canvas is added to CENTER and the sidebar to EAST, so the WINDOW grows to fit the
+	 * sidebar and the game keeps whatever size its display mode gives it. The game is not resized,
+	 * moved or drawn over. This is how the plugin sidebar attaches; see
+	 * jagex2.client.plugin.ui.Sidebar.
 	 *
 	 * Call on the event dispatch thread.
 	 */
@@ -53,6 +56,7 @@ public class ViewBox extends JFrame {
 			this.add(sidebar, BorderLayout.EAST);
 		}
 		this.pack();
+		this.applyMinimumSize();
 	}
 
 	/**
@@ -66,6 +70,7 @@ public class ViewBox extends JFrame {
 		}
 		this.sidebar.setVisible(visible);
 		this.pack();
+		this.applyMinimumSize();
 	}
 
 	public boolean hasSidebar() {
@@ -74,6 +79,62 @@ public class ViewBox extends JFrame {
 
 	public boolean isSidebarVisible() {
 		return this.sidebar != null && this.sidebar.isVisible();
+	}
+
+	/** Width the sidebar is taking up, which the window needs on top of the game's own minimum. */
+	private int sidebarWidth() {
+		return this.sidebar != null && this.sidebar.isVisible() ? this.sidebar.getPreferredSize().width : 0;
+	}
+
+	/**
+	 * The smallest the window may be dragged to in resizable mode: the game's minimum plus the
+	 * window's borders plus whatever the sidebar is taking. Without the sidebar's share, dragging
+	 * the window in would squeeze the game below Layout.MIN_W and the panels would overlap.
+	 *
+	 * Only applies while resizable - a fixed window cannot be dragged at all, and giving it a
+	 * minimum would stop pack() shrinking it back when the sidebar is hidden.
+	 */
+	private void applyMinimumSize() {
+		if (!this.isResizable()) {
+			this.setMinimumSize(null);
+			return;
+		}
+		Insets in = this.getInsets();
+		this.setMinimumSize(new Dimension(Layout.MIN_W + this.sidebarWidth() + in.left + in.right,
+			Layout.MIN_H + in.top + in.bottom));
+	}
+
+	/**
+	 * Fixed: the 765x503 window 377 always had, which cannot be resized. Resizable: a window that
+	 * can be dragged to any size from 765x503 up or maximised, opened at w x h (the size it was
+	 * left at). Done on the event thread; the client picks up the new size at its next frame.
+	 */
+	public void setMode(final boolean resizable, final int w, final int h, final boolean maximized) {
+		SwingUtilities.invokeLater(new Runnable() {
+			public void run() {
+				if (resizable) {
+					ViewBox.this.setResizable(true);
+					ViewBox.this.shell.setPreferredSize(new Dimension(w, h));
+					ViewBox.this.pack();
+					ViewBox.this.applyMinimumSize();
+					ViewBox.this.setLocationRelativeTo(null);
+					if (maximized) {
+						ViewBox.this.setExtendedState(ViewBox.this.getExtendedState() | Frame.MAXIMIZED_BOTH);
+					}
+				} else {
+					ViewBox.this.setExtendedState(Frame.NORMAL);
+					ViewBox.this.setMinimumSize(null);
+					ViewBox.this.setResizable(false);
+					ViewBox.this.shell.setPreferredSize(new Dimension(Layout.FIXED_W, Layout.FIXED_H));
+					ViewBox.this.pack();
+				}
+				ViewBox.this.shell.requestFocus();
+			}
+		});
+	}
+
+	public boolean isMaximized() {
+		return (this.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH;
 	}
 
 	public void update(Graphics g) {

@@ -29,10 +29,11 @@ DECLS = [
     'MENU_ROW_H', 'MENU_CHROME_H', 'menuScroll', 'menuRowsShown', 'MENU_BAR_W',
     'GI_BAR_TRACK', 'GI_BAR_THUMB',
     'menuOption', 'menuSize', 'menuVisible', 'menuArea', 'menuX', 'menuY', 'menuWidth',
-    'menuHeight', 'menuSwapMode',
+    'menuHeight', 'menuSwapMode', 'layout', 'CHAT_X', 'CHAT_Y', 'CHAT_W', 'CHAT_H', 'SIDE_X',
+    'imageModIcons',
 ]
 METHODS = ['menuRowsFor', 'menuRowIndex', 'menuRowY', 'handleMenuScroll', 'drawMenu',
-           'showContextMenu']
+           'showContextMenu', 'fitMenuText']
 
 
 def read(p):
@@ -92,9 +93,11 @@ def main():
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         sources = []
-        for root, _dirs, files in os.walk(os.path.join(ROOT, 'src/main/java')):
+        # launcher/src too: the client jar compiles it in (Client.relaunchForUpdate uses it)
+        for root, _dirs, files in [w for d in ('src/main/java', 'launcher/src')
+                                   for w in os.walk(os.path.join(ROOT, d))]:
             sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-d', classes] + sources,
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources,
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-4000:])
@@ -108,7 +111,7 @@ def main():
         out = os.path.join(work, 'MenuTest.java')
         with open(out, 'w', encoding='utf-8') as f:
             f.write(shell)
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-cp', classes, '-d', work, out],
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work, out],
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-6000:])

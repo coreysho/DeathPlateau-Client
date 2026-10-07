@@ -2,6 +2,7 @@ package lostcity;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -21,8 +22,10 @@ import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
 import javax.swing.JFrame;
+import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.SwingUtilities;
 
@@ -36,14 +39,70 @@ import javax.swing.SwingUtilities;
 // first start with no client at all is an error.
 //
 //   java -jar Death-Plateau-Launcher.jar           update if needed, then play
+//   java -jar Death-Plateau-Launcher.jar --dev     ...on the dev world, without asking
 //   java -jar Death-Plateau-Launcher.jar --check   update if needed, then exit (for testing)
 //
-// Any -Dlostcity.* property given to the launcher (lostcity.host, lostcity.webport) is passed on to
+// Any -Dlostcity.* property given to the launcher (lostcity.host, .port, .webhost, .webport) is passed on to
 // the client. Java 8, no dependencies: the one thing a player needs is the Java they already have.
+//
+// WHICH WORLD. The window has two buttons, World 1 and the dev world. Nobody has to press either: after
+// a few seconds World 1 starts on its own, as it always has, and pressing World 1 starts it at once. The
+// dev world (World 2, node 11) is a second server in the same container, for staff only - the server
+// turns everybody else away with "This world is full". It has its own game and web ports, found by
+// devEndpoint(): the server's own ports plus one when lostcity.host points straight at it (the LAN, or
+// Tailscale), else the dev world's own playit.gg tunnels below; lostcity.dev.host / .port / .webhost /
+// .webport override any of it. --dev, --world=1, or -Dlostcity.world=dev|1 choose without the buttons.
 public final class Launcher {
     private static final String REPO = "coreysho/DeathPlateau-Client";
     private static final String ASSET = "client.jar";
     private static final String API = "https://api.github.com/repos/" + REPO + "/releases/latest";
+
+    // The dev world's playit.gg tunnels - one to the dev game port (43595 on the server) and one to its
+    // web port (8889), made like World 1's (Client.SERVER_HOST / WEB_HOST). With lostcity.host given (the
+    // LAN or Tailscale) the server's own ports are used instead, and lostcity.dev.* overrides either.
+    private static final String DEV_TUNNEL_HOST = "carolyn-sternness.tun.ply.gg";
+    private static final int DEV_TUNNEL_PORT = 55662;
+    private static final String DEV_TUNNEL_WEBHOST = "carolyn-adapt.tun.ply.gg";
+    private static final int DEV_TUNNEL_WEBPORT = 55673;
+
+    // the 377 client's own node ids: World 1 is 10, the dev world 11 ("World 2" in the friends list)
+    private static final int DEV_NODE_ID = 11;
+    // how long World 1 waits for somebody to pick the dev world instead
+    private static final long CHOICE_MILLIS = 3000;
+    private static final String WORLD_1 = "1", DEV = "dev";
+
+    // SELF-UPDATE. The launcher is compiled into client.jar as well as into its own jar (build.gradle),
+    // so the newest launcher is already on the player's disk the moment the client updates - it is just
+    // not the copy they double-click. So once client.jar is current, a launcher that differs from the
+    // one inside it hands over: it starts THAT launcher and steps aside. Players keep the jar they have
+    // for good, and a launcher change reaches everybody the way a client change does.
+    // The handed-over launcher carries this property, so it never hands over again.
+    private static final String HANDOFF = "lostcity.launcherhandoff";
+    /**
+     * Bump this whenever the launcher changes in a way players should get. It is the ONLY thing that
+     * moves them onto a new launcher, so a change left unbumped simply never reaches them (which is
+     * where they stood before any of this - nothing breaks).
+     *
+     * The number is read back OUT OF THE CLASS FILE inside client.jar, by finding STAMP's text in it:
+     * javac folds the two constants below into that one string literal, and a literal sits in the
+     * constant pool verbatim whichever compiler built the jar (gradle's and the release workflow's
+     * javac disagree on everything else in there, so comparing the class bytes would hand over on
+     * every single start). Nothing is loaded out of that jar to read it.
+     *
+     *   1  the launcher as first released
+     *   2  hands over to the launcher inside client.jar; World 1 / Dev world buttons; its window closes
+     *      as the game opens, and cannot be resized
+     *   3  the dev world gets its own client cache (storeid 33), so the two worlds stop overwriting
+     *      each other's config - see the note where the storeid is passed
+     *   4  keeps a log in ~/.deathplateau/launcher.log, because a double-clicked launcher has no
+     *      console and its output was gone exactly when it was wanted
+     *   5  the game's own stdout and stderr go to ~/.deathplateau/client.log, so an exception that
+     *      ends GameShell's loop can be read afterwards instead of just freezing the window
+     */
+    private static final int VERSION = 5;
+    private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
+    @SuppressWarnings("unused") // read out of the compiled class, not called
+    private static final String STAMP = STAMP_PREFIX + VERSION;
 
     private static final Pattern TAG = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"");
     private static final Pattern URL_ = Pattern.compile("\"browser_download_url\"\\s*:\\s*\"([^\"]*/" + Pattern.quote(ASSET) + ")\"");
@@ -57,10 +116,36 @@ public final class Launcher {
     private JFrame frame;
     private JLabel label;
     private JProgressBar bar;
+    private JButton world1Button, devButton;
+
+    // WORLD_1, DEV, or null while nobody has chosen - guarded by choiceLock
+    private final Object choiceLock = new Object();
+    private String choice;
+    private long windowShownAt;
+    private boolean devFailed;
 
     public static void main(String[] args) {
-        boolean check = args.length > 0 && args[0].equals("--check");
-        new Launcher().run(check);
+        Launcher launcher = new Launcher();
+        boolean check = false;
+        launcher.choice = world(System.getProperty("lostcity.world"));
+        for (String arg : args) {
+            if (arg.equals("--check")) {
+                check = true;
+            } else if (arg.equals("--dev")) {
+                launcher.choice = DEV;
+            } else if (arg.startsWith("--world=")) {
+                launcher.choice = world(arg.substring("--world=".length()));
+            }
+        }
+        launcher.run(check);
+    }
+
+    private static String world(String name) {
+        if (name == null) {
+            return null;
+        }
+        name = name.trim().toLowerCase();
+        return name.equals(DEV) || name.equals("2") ? DEV : name.equals(WORLD_1) ? WORLD_1 : null;
     }
 
     private void run(boolean check) {
@@ -73,7 +158,10 @@ public final class Launcher {
         }
         migrate();
 
-        try {
+        if (System.getProperty(HANDOFF) != null) {
+            // the launcher that handed over checked and downloaded a moment ago
+            log("handed over to: skipping the update check");
+        } else try {
             status("Checking for updates...");
             String json = fetch(API);
             Matcher tag = TAG.matcher(json);
@@ -100,14 +188,118 @@ public final class Launcher {
             System.exit(0);
         }
 
-        status("Starting...");
-        try {
-            launch();
-        } catch (IOException e) {
-            fail("Couldn't start the game: " + e.getMessage());
-            return;
+        if (handOver()) {
+            System.exit(0);
         }
-        System.exit(0);
+
+        for (;;) {
+            String world = awaitChoice();
+            String[] dev = null;
+            if (world.equals(DEV)) {
+                dev = devEndpoint();
+                if (dev == null) {
+                    // no way to the dev world from here - say so, and let them choose again
+                    message("The dev world has no public address yet.\n\n"
+                        + "Start the launcher with -Dlostcity.host=<the server's address> (the LAN or Tailscale),\n"
+                        + "or give -Dlostcity.dev.host, .port, .webhost and .webport.");
+                    choose(null);
+                    continue;
+                }
+            }
+            status(dev == null ? "Starting World 1..." : "Starting the dev world...");
+            try {
+                launch(dev);
+            } catch (IOException e) {
+                fail("Couldn't start the game: " + e.getMessage());
+                return;
+            }
+            System.exit(0);
+        }
+    }
+
+    // The world to start: one chosen already (--dev, lostcity.world), else whichever button is pressed
+    // first - and World 1 if neither is within CHOICE_MILLIS of the window opening, so a player who never
+    // looks at the buttons starts the game just as before. After a dev world that could not be reached,
+    // nothing starts by itself: it waits for a button.
+    private String awaitChoice() {
+        for (;;) {
+            long left;
+            boolean waitForButton;
+            synchronized (choiceLock) {
+                if (choice != null) {
+                    return choice;
+                }
+                left = windowShownAt + CHOICE_MILLIS - System.currentTimeMillis();
+                waitForButton = devFailed;
+                if (!waitForButton && left <= 0) {
+                    choice = WORLD_1;
+                    return choice;
+                }
+            }
+            // not while holding the lock: status() waits for the Swing thread, which takes it in choose()
+            status(waitForButton ? "Choose a world." : "Starting World 1 in " + ((left + 999) / 1000) + "...   (or choose the dev world)");
+            synchronized (choiceLock) {
+                if (choice == null) {
+                    try {
+                        choiceLock.wait(waitForButton ? 0 : Math.max(1, Math.min(left, 1000)));
+                    } catch (InterruptedException e) {
+                        choice = WORLD_1;
+                    }
+                }
+            }
+        }
+    }
+
+    // a button (on the Swing thread), or null to take the choice back after a dev world that failed
+    private void choose(String world) {
+        synchronized (choiceLock) {
+            if (world == null) {
+                devFailed = true;
+            }
+            choice = world;
+            choiceLock.notifyAll();
+        }
+        run(() -> {
+            if (world1Button != null) {
+                world1Button.setEnabled(world == null);
+                devButton.setEnabled(world == null);
+            }
+        });
+    }
+
+    // The dev world's {game host, game port, web host, web port}, or null if there is no way there. Each
+    // lostcity.dev.* given wins. Else, with the server's own address given (lostcity.host - the LAN or
+    // Tailscale), its game and web ports plus one, the way 377 numbered its worlds (portOffset). Else the
+    // dev world's tunnels (DEV_TUNNEL_*), when there are some.
+    static String[] devEndpoint() {
+        String host = setting("lostcity.host", "LOSTCITY_HOST");
+        String gameHost, webHost;
+        int gamePort, webPort;
+        if (host != null) {
+            gameHost = host;
+            webHost = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : host;
+            gamePort = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : "43594") + 1;
+            webPort = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : "8888") + 1;
+        } else {
+            gameHost = DEV_TUNNEL_HOST;
+            gamePort = DEV_TUNNEL_PORT;
+            webHost = DEV_TUNNEL_WEBHOST;
+            webPort = DEV_TUNNEL_WEBPORT;
+        }
+        gameHost = System.getProperty("lostcity.dev.host", gameHost);
+        gamePort = Integer.parseInt(System.getProperty("lostcity.dev.port", String.valueOf(gamePort)));
+        webHost = System.getProperty("lostcity.dev.webhost", webHost.isEmpty() ? gameHost : webHost);
+        webPort = Integer.parseInt(System.getProperty("lostcity.dev.webport", String.valueOf(webPort)));
+        if (gameHost.isEmpty() || gamePort <= 0 || webHost.isEmpty() || webPort <= 0) {
+            return null;
+        }
+        return new String[] { gameHost, String.valueOf(gamePort), webHost, String.valueOf(webPort) };
+    }
+
+    // as Client.setting: a -D property, else the environment variable
+    private static String setting(String property, String env) {
+        String value = System.getProperty(property);
+        return value != null ? value : System.getenv(env);
     }
 
     // ~/.lostcity is where the client lived before the server was named Death Plateau. Its client
@@ -184,23 +376,201 @@ public final class Launcher {
         log("updated to " + tag);
     }
 
-    private void launch() throws IOException {
+    /**
+     * Start the launcher inside client.jar and step aside, when it is not the one running. Returns
+     * whether it has taken over. Anything at all goes wrong - no jar, no launcher in it, no reading it,
+     * no starting it - and this one simply carries on, because a launcher that cannot start the game is
+     * the one failure a player cannot fix for themselves.
+     */
+    private boolean handOver() {
+        if (System.getProperty(HANDOFF) != null) {
+            return false; // already the newest: it was handed to us
+        }
+        try {
+            if (!jar.isFile()) {
+                return false;
+            }
+            int theirs = stampIn(entry(jar, "lostcity/Launcher.class"));
+            if (theirs <= VERSION) {
+                // the same launcher, an older one, or a client.jar from before stamps: stay here.
+                // NEVER hand over to an older one - that is how two launchers hand a player back and
+                // forth for ever.
+                return false;
+            }
+            log("the launcher in " + jar.getName() + " is version " + theirs + ", this one is " + VERSION);
+            // from a COPY: on Windows a running jar is locked, and client.jar has to stay replaceable
+            File copy = new File(dir, "launcher-run.jar");
+            Files.copy(jar.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            List<String> cmd = new ArrayList<>();
+            cmd.add(javaBinary());
+            for (String key : System.getProperties().stringPropertyNames()) {
+                if (key.startsWith("lostcity.")) {
+                    cmd.add("-D" + key + "=" + System.getProperty(key));
+                }
+            }
+            String world;
+            synchronized (choiceLock) {
+                world = choice;
+            }
+            if (world != null) {
+                cmd.add("-Dlostcity.world=" + world); // --dev / --world=, as a property it reads back
+            }
+            cmd.add("-D" + HANDOFF + "=1");
+            cmd.add("-cp");
+            cmd.add(copy.getAbsolutePath());
+            cmd.add("lostcity.Launcher");
+            log("handing over to the launcher in " + jar.getName() + ": " + cmd);
+            new ProcessBuilder(cmd).directory(dir).start();
+            hide(); // its window opens in a moment; two would look like two launchers
+            return true;
+        } catch (Throwable e) {
+            log("hand-over failed, carrying on with this launcher: " + e);
+            return false;
+        }
+    }
+
+    /** The launcher version stamped into a compiled Launcher.class, or -1 if it carries none. */
+    private static int stampIn(byte[] clazz) {
+        if (clazz == null) {
+            return -1;
+        }
+        byte[] want = STAMP_PREFIX.getBytes(StandardCharsets.US_ASCII);
+        for (int i = 0; i + want.length < clazz.length; i++) {
+            int j = 0;
+            while (j < want.length && clazz[i + j] == want[j]) {
+                j++;
+            }
+            if (j < want.length) {
+                continue;
+            }
+            int n = 0, at = i + want.length;
+            while (at < clazz.length && clazz[at] >= '0' && clazz[at] <= '9') {
+                n = n * 10 + (clazz[at++] - '0');
+                if (n > 1000000) {
+                    n = -1; // not a version number
+                    break;
+                }
+            }
+            if (at > i + want.length && n >= 0) {
+                return n;
+            }
+            // the prefix on its own is in the pool too (stampIn asks for it by name): keep looking for
+            // the one the number is written on the end of
+        }
+        return -1;
+    }
+
+    private static byte[] entry(File jarFile, String name) {
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(jarFile)) {
+            java.util.zip.ZipEntry e = zip.getEntry(name);
+            return e == null ? null : read(zip.getInputStream(e));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static byte[] read(InputStream in) {
+        if (in == null) {
+            return null;
+        }
+        try (InputStream open = in) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            for (int n = open.read(buf); n > 0; n = open.read(buf)) {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // dev: devEndpoint()'s answer for the dev world, null for World 1 (the client's defaults, as ever)
+    private void launch(String[] dev) throws IOException {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(javaBinary());
+        String[] names = { "host", "port", "webhost", "webport" };
+        for (String key : System.getProperties().stringPropertyNames()) {
+            if (!key.startsWith("lostcity.")) {
+                continue;
+            }
+            // for the dev world, the address settings are replaced below rather than passed on
+            String name = key.substring("lostcity.".length());
+            if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev.") || name.equals("world"))) {
+                continue;
+            }
+            cmd.add("-D" + key + "=" + System.getProperty(key));
+        }
+        if (dev != null) {
+            // Where the client connects (its SERVER_HOST, GAME_PORT, WEB_HOST, WEB_PORT). The same four
+            // again as lostcity.dev.*, with lostcity.world: a dev client that is told to update restarts
+            // this launcher with its -Dlostcity.* settings (Client.relaunchForUpdate), and they bring it
+            // straight back here.
+            for (int i = 0; i < names.length; i++) {
+                cmd.add("-Dlostcity." + names[i] + "=" + dev[i]);
+                cmd.add("-Dlostcity.dev." + names[i] + "=" + dev[i]);
+            }
+            cmd.add("-Dlostcity.world=" + DEV);
+        }
+        cmd.add("-jar");
+        cmd.add(jar.getAbsolutePath());
+        if (dev != null) {
+            // Client.main's node-id, port-offset, memory, members, storeid. Node 11 is "World 2" in the
+            // friends list. The port is the exact one above (a tunnel's is anything), so no offset.
+            cmd.add(String.valueOf(DEV_NODE_ID));
+            cmd.add("0");
+            cmd.add("highmem");
+            cmd.add("members");
+            // 33, NOT 32: the dev world gets its own cache directory. signlink.findcachedir names it
+            // ".file_store_" + storeid and accepts 32 to 34, and both worlds used to say 32 - one
+            // directory holding one world's config at a time, for two servers that are deliberately
+            // never on the same content.
+            //
+            // That is not merely wasteful, it strands people. A map's locs are checked in
+            // Client.checkScene: for every loc in the square it does `var4 &= locType.method566()`,
+            // and if that stays false checkScene returns -3 and the scene NEVER finishes loading -
+            // no timeout, no recovery, and no way out, because the cache is on disk and the same
+            // stale config comes back on the next login. It happened on 2026-09-29: a teleport to
+            // Zul-andra, whose map places loc 18635 - the very newest loc in the build, from the
+            // Zulrah round - onto a client still holding World 1's older config. The character could
+            // only be recovered by editing its save from outside the server.
+            cmd.add("33");
+        }
+        log("running " + cmd);
+        // THE GAME'S OWN OUTPUT GOES TO A FILE, because otherwise it goes nowhere. GameShell.run
+        // calls update() and draw() with no try/catch, so one exception ends the loop thread: the
+        // window keeps showing its last painted frame, nothing updates again, and the client cannot
+        // even report it. It looks exactly like a scene that is loading slowly and never finishes -
+        // which is how a Zul-andra teleport presented on 2026-09-29, with the stack trace going to a
+        // stderr nobody was reading. Redirected here, so the next one can be read afterwards.
+        // The redirect is the child's own, set by the OS, so it keeps working once this exits.
+        startClient(cmd);
+        // ...and this window goes now, not whenever the JVM gets round to exiting: the game's own
+        // window takes a few seconds to appear, and a launcher still on screen beside it looks like a
+        // second client (reported from play 2026-09-27)
+        hide();
+    }
+
+    // take the window down at once, from whichever thread
+    private void hide() {
+        JFrame f = frame;
+        frame = null;
+        if (f != null) {
+            run(() -> {
+                f.setVisible(false);
+                f.dispose();
+            });
+        }
+    }
+
+    private static String javaBinary() {
         String bin = System.getProperty("java.home") + File.separator + "bin" + File.separator;
         boolean windows = System.getProperty("os.name").toLowerCase().contains("win");
         String java = bin + (windows ? "javaw.exe" : "java");
         if (!new File(java).isFile()) {
             java = bin + (windows ? "java.exe" : "java");
         }
-        List<String> cmd = new ArrayList<>();
-        cmd.add(java);
-        for (String key : System.getProperties().stringPropertyNames()) {
-            if (key.startsWith("lostcity.")) {
-                cmd.add("-D" + key + "=" + System.getProperty(key));
-            }
-        }
-        cmd.add("-jar");
-        cmd.add(jar.getAbsolutePath());
-        new ProcessBuilder(cmd).directory(dir).start();
+        return java;
     }
 
     private static HttpURLConnection open(String url) throws IOException {
@@ -228,7 +598,7 @@ public final class Launcher {
         }
     }
 
-    // ---- the window: a title, one line of status, a progress bar ----
+    // ---- the window: a title, one line of status, the two worlds, a progress bar ----
 
     private void window() {
         run(() -> {
@@ -238,14 +608,41 @@ public final class Launcher {
             bar.setIndeterminate(true);
             label.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
             bar.setBorder(BorderFactory.createEmptyBorder(0, 12, 12, 12));
+
+            world1Button = new JButton("World 1");
+            devButton = new JButton("Dev world (staff only)");
+            world1Button.addActionListener(e -> choose(WORLD_1));
+            devButton.addActionListener(e -> choose(DEV));
+            boolean open;
+            synchronized (choiceLock) {
+                open = choice == null;
+            }
+            world1Button.setEnabled(open);
+            devButton.setEnabled(open);
+            JPanel worlds = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+            worlds.add(world1Button);
+            worlds.add(devButton);
+
             frame.getContentPane().add(label, BorderLayout.NORTH);
+            frame.getContentPane().add(worlds, BorderLayout.CENTER);
             frame.getContentPane().add(bar, BorderLayout.SOUTH);
-            frame.setPreferredSize(new Dimension(360, 100));
+            frame.getRootPane().setDefaultButton(world1Button); // Enter plays World 1
+            frame.setResizable(false); // the game's window is fixed; two resizable windows read as two clients
+            frame.setPreferredSize(new Dimension(360, 140));
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.pack();
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
+            world1Button.requestFocusInWindow();
+            windowShownAt = System.currentTimeMillis();
         });
+    }
+
+    private void message(String text) {
+        log(text.replace('\n', ' '));
+        if (frame != null) {
+            run(() -> JOptionPane.showMessageDialog(frame, text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
+        }
     }
 
     private void status(String text) {
@@ -279,11 +676,97 @@ public final class Launcher {
         System.exit(1);
     }
 
+    /**
+     * Everything log(), status() and fail() say, kept in ~/.deathplateau/launcher.log.
+     *
+     * A launcher that is double-clicked has no console, so the one occasion anybody wants this output
+     * - something went wrong and the game did not start - is the one occasion it has gone. On
+     * 2026-09-29 a dev world came up on the wrong client cache and the question "which launcher
+     * actually ran, and what did it pass the client?" could not be answered at all; the line this
+     * already writes at the launch site names the storeid, and would have said so outright.
+     *
+     * Not the `dir` field, because log() is static and is called before there is an instance.
+     */
+    private static final File LOG = new File(new File(System.getProperty("user.home"), ".deathplateau"), "launcher.log");
+    /** Rolled to launcher.log.old past this, so a log cannot grow without end on a machine nobody tidies. */
+    private static final long LOG_MAX = 256L * 1024L;
+    private static boolean logStarted;
+
     private static void log(String text) {
         System.out.println("[launcher] " + text);
+        // NOTHING in here may throw. A launcher that dies because it could not write its own log is
+        // worse than a launcher with no log, and this runs before the window exists, so a failure
+        // would not even have anywhere to show itself.
+        try {
+            File home = LOG.getParentFile();
+            if (!home.isDirectory() && !home.mkdirs()) {
+                return;
+            }
+            if (!logStarted) {
+                logStarted = true;
+                if (LOG.length() > LOG_MAX) {
+                    File old = new File(home, "launcher.log.old");
+                    old.delete();
+                    LOG.renameTo(old);
+                }
+                // A header per run, because the interesting question is usually "what happened the
+                // LAST time I started it", and runs otherwise run together.
+                append(System.lineSeparator() + "---- " + stamp() + "  launcher " + VERSION
+                    + "  java " + System.getProperty("java.version")
+                    + "  " + System.getProperty("os.name") + System.lineSeparator());
+            }
+            append(stamp() + "  " + text + System.lineSeparator());
+        } catch (Throwable ignored) {
+            // a log is never worth a crash
+        }
     }
 
+    /**
+     * Start the game with its stdout and stderr appended to ~/.deathplateau/client.log.
+     *
+     * Kept apart from the plain ProcessBuilder call the hand-over uses: that one starts another
+     * LAUNCHER, which writes launcher.log itself and would interleave two runs into one file.
+     */
+    private void startClient(List<String> cmd) throws IOException {
+        File out = new File(dir, "client.log");
+        try {
+            if (out.length() > LOG_MAX) {
+                File old = new File(dir, "client.log.old");
+                old.delete();
+                out.renameTo(old);
+            }
+            append(out, System.lineSeparator() + "---- " + stamp() + "  " + cmd + System.lineSeparator());
+            new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
+        } catch (Throwable e) {
+            // A log is never worth not starting the game for.
+            log("could not redirect the game's output (" + e + ") - starting it anyway");
+            new ProcessBuilder(cmd).directory(dir).start();
+        }
+    }
+
+    private static void append(File file, String line) throws IOException {
+        FileOutputStream out = new FileOutputStream(file, true);
+        try {
+            out.write(line.getBytes(StandardCharsets.UTF_8));
+        } finally {
+            out.close();
+        }
+    }
+
+    private static void append(String line) throws IOException {
+        append(LOG, line);
+    }
+
+    private static String stamp() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
+    }
+
+    // on the Swing thread - directly, when that is where we are already (a button's handler)
     private static void run(Runnable r) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            r.run();
+            return;
+        }
         try {
             SwingUtilities.invokeAndWait(r);
         } catch (Exception e) {

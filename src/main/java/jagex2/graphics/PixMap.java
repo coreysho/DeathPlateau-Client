@@ -12,6 +12,19 @@ import java.awt.image.ImageProducer;
 
 public class PixMap implements ImageProducer, ImageObserver {
 
+	/**
+	 * Where draw() really goes. Null - the fixed screen - and every area is put on the Graphics it
+	 * is handed, at the place it is handed, as it always was. Resizable mode sets it so the frame
+	 * pieces, the sidebar, the chatbox and the minimap are copied into the fixed layout they were
+	 * drawn for instead, and put on the screen from there where the window has room for them.
+	 */
+	public interface Target {
+		/** True when the target took the area; false puts it on the Graphics as usual. */
+		boolean draw(PixMap area, int x, int y, Graphics g);
+	}
+
+	public static Target target;
+
 	@ObfuscatedName("ISZGOOMR.c")
 	public int width;
 
@@ -57,6 +70,14 @@ public class PixMap implements ImageProducer, ImageObserver {
 
 	@ObfuscatedName("ISZGOOMR.a(IILjava/awt/Graphics;Z)V")
 	public void draw(int y, int x, Graphics g) {
+		if (target != null && target.draw(this, x, y, g)) {
+			return;
+		}
+		this.drawDirect(y, x, g);
+	}
+
+	/** Straight onto the Graphics, whatever the target says. */
+	public void drawDirect(int y, int x, Graphics g) {
 		this.setPixels();
 		g.drawImage(this.image, x, y, this);
 	}

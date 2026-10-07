@@ -29,7 +29,9 @@ picked up without restarting the client.
 ### The sidebar
 
 A Swing panel beside the game, like RuneLite's, added to the window rather than drawn over the
-game - the canvas keeps its exact 765x503 and the window gets wider. It has the plugin list with
+game - the game keeps whatever size its display mode gives it and the window gets wider. In the
+resizable modes the window's minimum grows by the sidebar's width, so the game is never squeezed
+below its own minimum. It has the plugin list with
 a search box and a switch per plugin, and a cog on any plugin with settings that opens its config
 page.
 
@@ -121,7 +123,7 @@ Everything is in `jagex2.client.plugin`.
 | `Plugin` | What you extend. `startUp`, `shutDown`, `addOverlay`, `ctx`, `config`. |
 | `PluginContext` (`ctx`) | What you may read and do: position, skills, the right-click menu, world-to-screen projection, a chat message. |
 | `Overlay` | What you draw. `render(OverlayGraphics)`, `priority()`. |
-| `OverlayGraphics` | Text, rectangles, lines and a ready-made `panel(...)`, in viewport coordinates. |
+| `OverlayGraphics` | Text, rectangles, lines and a ready-made `panel(...)`, in viewport coordinates. `width()` and `height()` are the drawable area for this frame - ask each frame, since the display mode changes it. |
 | `@PluginDescriptor` | Name, description and saved key. |
 | `@ConfigItem` | A player-facing setting. |
 | `@Subscribe` | Marks an event handler. |

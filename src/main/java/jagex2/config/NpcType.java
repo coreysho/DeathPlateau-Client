@@ -7,6 +7,7 @@ import jagex2.dash3d.Model;
 import jagex2.datastruct.LruCache;
 import jagex2.io.Jagfile;
 import jagex2.io.Packet;
+import jagex2.client.DevLog;
 
 public class NpcType {
 
@@ -33,6 +34,12 @@ public class NpcType {
 
 	@ObfuscatedName("SLDUQHOR.p")
 	public boolean field1439 = true;
+
+	// Config code 108, added by this server (Engine-TS tools/pack/config/NpcConfig.ts, "follower=yes"):
+	// this npc is somebody's pet. Old School gives a follower no minimap dot - hence field1439 going
+	// false with it, which is the cache's own "no minimap dot" flag - and shows its right-click options
+	// to its owner alone. Client.addNpcOptions does the second half.
+	public boolean follower = false;
 
 	@ObfuscatedName("SLDUQHOR.q")
 	public int field1440 = -1;
@@ -75,6 +82,9 @@ public class NpcType {
 
 	@ObfuscatedName("SLDUQHOR.o")
 	public static LruCache field1438 = new LruCache(30);
+
+	/** How many frames have been skipped for want of a model, across every npc. */
+	private static int unbuiltCount = 0;
 
 	@ObfuscatedName("SLDUQHOR.C")
 	public static int field1452;
@@ -215,6 +225,9 @@ public class NpcType {
 				}
 			} else if (var4 == 107) {
 				this.field1434 = false;
+			} else if (var4 == 108) {
+				this.follower = true;
+				this.field1439 = false;
 			}
 		}
 	}
@@ -317,6 +330,33 @@ public class NpcType {
 				}
 			}
 			if (var7) {
+				// WHY THE NPC IS NOT DRAWN THIS FRAME, which until now was silent.
+				//
+				// Returning null here means the caller draws nothing: the npc vanishes for that frame
+				// and comes back when its model data is resident. One frame of that is exactly what a
+				// player reports as "it flickers", and nothing anywhere said it had happened - the
+				// server cannot see it, and the only other instrument was a client harness that could
+				// not reliably reach the fight.
+				//
+				// Rate-limited to one line per npc type: a model that is not ready is not ready on every
+				// frame until it loads, and an unthrottled log would be the whole file.
+				// COUNTED, not just announced. The first version logged once per npc and that could not
+				// tell a single blink while a model streams in from a model that never arrives and is
+				// re-requested every frame for ever - which are different bugs with different fixes.
+				// The count says which: a handful of frames is the stream, hundreds is a loop.
+				// RATE LIMITED TOO HARD TO ANSWER THE QUESTION. This logged the first 12 and then
+				// every 200th, so a session with 13 of these and a session with 199 of them produced
+				// identical logs - and "how often" was exactly what had to be known. Every 10th after
+				// the first 12 stays readable and still counts.
+				unbuiltCount++;
+				if (unbuiltCount <= 12 || unbuiltCount % 10 == 0) {
+					StringBuilder ids = new StringBuilder();
+					for (int i = 0; i < this.field1429.length; i++) {
+						ids.append(i > 0 ? "," : "").append(this.field1429[i]);
+					}
+					DevLog.log("npcmodel", "not drawn #" + unbuiltCount + " - model data not ready: key="
+						+ this.field1431 + " models=" + ids);
+				}
 				return null;
 			}
 			Model[] var9 = new Model[this.field1429.length];
@@ -354,6 +394,47 @@ public class NpcType {
 			var12.field1227 = true;
 		}
 		return var12;
+	}
+
+	/**
+	 * Ask the on-demand loader for this npc's model data NOW, rather than at the moment something
+	 * tries to draw it.
+	 *
+	 * WHY: Model.method360 both answers "is the data here?" and, when it is not, REQUESTS it - and
+	 * NpcType.method475 is the only thing that calls it, at draw time. So the first frame an npc is
+	 * drawn is the frame the request goes out, and the npc is not drawn at all until the data lands.
+	 * Caught in a Zulrah fight, from the owner's own dev-client.log:
+	 *
+	 *   [18:02:35.675] [npcmodel] not drawn #3 - model data not ready: key=4920 models=24241
+	 *   ... six consecutive frames ...
+	 *   [18:02:47.448] [npcmodel] not drawn #9  - key=4921   the magma form, twelve seconds later
+	 *   [18:03:01.887] [npcmodel] not drawn #11 - key=4922   tanzanite, fourteen seconds after that
+	 *
+	 * One blink per colour, at the exact moment that colour first surfaces. Zulrah is the worst case
+	 * because changeType swaps it between three models of about 22KB each, but nothing here is about
+	 * Zulrah: every npc in the game is drawn for the first time one request too late.
+	 *
+	 * Called when the client LEARNS a type - an npc entering the local list, and a changetype - both
+	 * of which happen before anything asks for a model. For Zulrah the changetype lands while it is
+	 * submerged on another level, so the request gets a couple of ticks' head start on the rise.
+	 *
+	 * Costs nothing when the data is already here: method360 returns true and does not re-request.
+	 */
+	public void requestModels() {
+		if (this.field1425 != null) {
+			// a multi npc has no models of its own - ask for whichever child it resolves to
+			NpcType var1 = this.method476();
+			if (var1 != null) {
+				var1.requestModels();
+			}
+			return;
+		}
+		if (this.field1429 == null) {
+			return;
+		}
+		for (int var2 = 0; var2 < this.field1429.length; var2++) {
+			Model.method360(this.field1429[var2]);
+		}
 	}
 
 	@ObfuscatedName("SLDUQHOR.b(Z)LSLDUQHOR;")

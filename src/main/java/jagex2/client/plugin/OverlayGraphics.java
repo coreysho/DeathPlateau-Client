@@ -13,17 +13,23 @@ import jagex2.graphics.PixFont;
  * change and every plugin keeps working.
  *
  * COORDINATES ARE VIEWPORT-LOCAL. Overlays render with the viewport bound, so 0,0 is its top-left
- * corner and the drawable area is {@link #WIDTH} x {@link #HEIGHT}. Drawing outside that is
+ * corner and the drawable area is {@link #width()} x {@link #height()}. Drawing outside that is
  * clipped, not an error.
+ *
+ * THE AREA IS NOT A CONSTANT. It was 512x334 in the fixed window and still is, but the resizable
+ * display modes give the game the whole window - so an overlay anchored to a corner has to ask
+ * each frame rather than assume. These are the same numbers the client's own xp drops anchor to
+ * (Layout.openW/openH), which keeps a plugin clear of the chatbox and the side panels the way
+ * they are.
  *
  * TEXT IS DRAWN FROM ITS BASELINE, which is how the client's own fonts work: y is the bottom of
  * the line, not the top. {@link #lineHeight()} is there to step between rows.
  */
 public final class OverlayGraphics {
 
-	/** The game viewport, in pixels. */
-	public static final int WIDTH = 512;
-	public static final int HEIGHT = 334;
+	/** The fixed window's viewport, and the smallest the drawable area is ever reported as. */
+	public static final int FIXED_WIDTH = 512;
+	public static final int FIXED_HEIGHT = 334;
 
 	public static final int FONT_SMALL = 0;   // plain 11
 	public static final int FONT_NORMAL = 1;  // plain 12
@@ -35,6 +41,9 @@ public final class OverlayGraphics {
 
 	private PixFont font;
 
+	private int width = FIXED_WIDTH;
+	private int height = FIXED_HEIGHT;
+
 	OverlayGraphics(PixFont small, PixFont normal, PixFont bold) {
 		this.small = small;
 		this.normal = normal;
@@ -42,9 +51,24 @@ public final class OverlayGraphics {
 		this.font = normal;
 	}
 
-	/** Called before each overlay renders, so one overlay's font choice cannot leak into the next. */
-	void reset() {
+	/**
+	 * Called before each overlay renders, so one overlay's font choice cannot leak into the next,
+	 * and so every overlay in a frame is told the same drawable area.
+	 */
+	void reset(int width, int height) {
 		this.font = this.normal;
+		this.width = width;
+		this.height = height;
+	}
+
+	/** Width of the area an overlay may draw in, this frame. */
+	public int width() {
+		return this.width;
+	}
+
+	/** Height of the area an overlay may draw in, this frame. */
+	public int height() {
+		return this.height;
 	}
 
 	public OverlayGraphics setFont(int which) {

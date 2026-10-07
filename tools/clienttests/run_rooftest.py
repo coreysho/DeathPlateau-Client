@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless test for the Hide roofs toggle and the settings panel it lives in.
+"""Headless test for the Hide roofs toggle, the settings panel it lives in, and the swaps panel.
 
 Same method as the other two harnesses: compile the whole client, slice getTopLevel() and the
 panel's geometry out of Client.java, and drive them with the REAL QolSettings against the settings
@@ -10,6 +10,12 @@ getTopLevel() is the whole feature: it answers "what is the highest level to dra
 whatever is above the player. The interesting cases are the ones the toggle has to survive - the
 camera tilted steeply down, which skips the tile tests entirely, and the anticheat packet the method
 sends on its own schedule, which must keep being sent.
+
+The two panels are held to different rules, on purpose. The F9 settings panel has no paging, so it
+MUST FIT the viewport and the checks fail the build the moment a twenty-first setting stops it
+fitting. The F10 swaps panel scrolls, so its rule is that it must fit OR scroll - and then that it
+is on screen at every list length in every display mode, and that everything it cannot show is
+reachable with the bar. Neither rule lets a panel exist that a player cannot read the bottom of.
 
     python3 tools/clienttests/run_rooftest.py
 """
@@ -24,11 +30,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CLIENT = os.path.join(ROOT, 'src/main/java/jagex2/client/Client.java')
 SETTINGS = os.path.join(ROOT, 'src/main/java/jagex2/client/QolSettings.java')
+SWAPS = os.path.join(ROOT, 'src/main/java/jagex2/client/MenuSwaps.java')
 SHELL = os.path.join(HERE, 'RoofTest.shell.java')
 
-DECLS = ['QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
+DECLS = ['layout', 'QOL_PANEL_ROWS', 'QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
+         'SWAP_PANEL_ROW_H', 'SWAP_PANEL_HEADER_H', 'SWAP_PANEL_FOOTER_H', 'SWAP_PANEL_ACTIONS',
+         'SWAP_PANEL_SCROLL_W', 'SWAP_PANEL_MARGIN', 'swapScrollPx',
          'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ']
-METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY']
+METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY',
+           'swapPanelRows', 'swapPanelHeight', 'swapPanelY', 'swapScrollMax', 'swapScroll', 'swapFirstRow']
 
 
 def read(p):
@@ -60,8 +70,30 @@ def method(src, name):
     raise SystemExit('run_rooftest: unbalanced braces in %s' % name)
 
 
-def source_checks(src, settings):
+def source_checks(src, settings, swaps):
     out = []
+    # The swaps panel's rule is "fits OR scrolls", so the scrolling itself is what has to be there.
+    draw = method(src, 'drawSwapPanel')
+    out.append(('the swaps panel scrolls with the scrollbar the client already has - drawScrollbar(), the one '
+                'the bank and the chatbox draw - and not a second bar that looks nearly like it',
+                'this.drawScrollbar(' in draw))
+    out.append(('...drawn only when something is off screen, because drawScrollbar divides by '
+                '(content - view) and a bar with nowhere to go says the list is longer than it is',
+                'if (scrollMax > 0) {' in draw))
+    click = method(src, 'handleSwapPanelInput')
+    out.append(('...and a click on a row is turned into a swap through the scroll position, so row 3 '
+                'of a scrolled panel cycles the swap being shown there and not the third one stored',
+                'this.swapFirstRow(swaps) + row' in click))
+    out.append(('the wheel is handed to the panel in updateOrbitCamera, ahead of the camera zoom '
+                'that would otherwise consume the delta before the draw phase ever ran',
+                'this.handleSwapPanelScroll();' in method(src, 'updateOrbitCamera')))
+    # The file the swaps live in did not change shape, which is the whole reason the cap could move.
+    out.append(('MenuSwaps still stores the swaps in fixed arrays, so the cap bounds what a corrupt '
+                'qol_swaps.dat can make the client allocate',
+                'new String[MAX]' in swaps and 'count < MAX' in swaps))
+    out.append(('...and the file format is untouched: FILE_VERSION stays 1, so the swaps a player already '
+                'has load exactly as they did',
+                'private static final int FILE_VERSION = 1;' in swaps))
     top = method(src, 'getTopLevel')
     # The toggle has to sit at the single return, after the anticheat block and outside the pitch
     # test. Both of those are why, and both are invisible to a test that only reads return values.
@@ -105,9 +137,11 @@ def main():
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         sources = []
-        for root, _dirs, files in os.walk(os.path.join(ROOT, 'src/main/java')):
+        # launcher/src too: the client jar compiles it in (Client.relaunchForUpdate uses it)
+        for root, _dirs, files in [w for d in ('src/main/java', 'launcher/src')
+                                   for w in os.walk(os.path.join(ROOT, d))]:
             sources += [os.path.join(root, f) for f in files if f.endswith('.java')]
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-d', classes] + sources,
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-d', classes] + sources,
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-4000:])
@@ -121,7 +155,7 @@ def main():
         out = os.path.join(work, 'RoofTest.java')
         with open(out, 'w', encoding='utf-8') as f:
             f.write(shell)
-        r = subprocess.run([shutil.which('javac'), '-nowarn', '-cp', classes, '-d', work, out],
+        r = subprocess.run([shutil.which('javac'), '-nowarn', '-encoding', 'UTF-8', '-cp', classes, '-d', work, out],
                            capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr[-6000:])
@@ -134,8 +168,8 @@ def main():
         if r.returncode != 0 and not lines:
             print(r.stderr[-4000:])
         fails = sum(1 for l in lines if l.startswith('FAIL'))
-        print('4. where the toggle sits, and what it defaults to')
-        for why, ok in source_checks(src, settings):
+        print('4. where the toggle sits, what it defaults to, and how the swaps panel scrolls')
+        for why, ok in source_checks(src, settings, read(SWAPS)):
             print(('  ok   ' if ok else 'FAIL   ') + why)
             if not ok:
                 fails += 1
