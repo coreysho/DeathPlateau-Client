@@ -29,6 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java')
 PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
+PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('empty', [])]
 
@@ -119,7 +120,7 @@ def main():
                     full = os.path.join(base, name)
                     z.write(full, os.path.relpath(full, plugin_classes).replace(os.sep, '/'))
 
-        r = run(javac, '-nowarn', '-cp', classes, '-d', work, PREVIEW)
+        r = run(javac, '-nowarn', '-cp', classes, '-d', work, PREVIEW, PAINT_TEST)
         if r.returncode != 0:
             print(r.stderr[-6000:])
             raise SystemExit('run_sidebarpreview: the preview does not compile')
@@ -128,6 +129,17 @@ def main():
             os.makedirs(out_dir)
 
         fails = 0
+
+        # Does the WINDOW paint the sidebar? Separate from the pages below, which paint the
+        # sidebar directly and so would pass even while the window never painted it at all.
+        r = run(*(launcher + [java, '-cp', classes + os.pathsep + work,
+                              'jagex2.client.SidebarPaintTest']))
+        for line in r.stdout.strip().split('\n'):
+            if line.strip():
+                print(line)
+        if r.returncode != 0:
+            fails += 1
+
         for name, args in PAGES:
             png = os.path.join(out_dir, name + '.png')
             where = os.path.join(work, 'empty-home') if name == 'empty' else home

@@ -138,10 +138,28 @@ public class ViewBox extends JFrame {
 	}
 
 	public void update(Graphics g) {
-		this.shell.update(g);
+		this.paint(g);
 	}
 
+	/**
+	 * WHY super.paint IS HERE. This override is from when the frame WAS the game: hand the frame's
+	 * paint straight to the shell and there is nothing else in the window to draw. But the method
+	 * it overrides is Container.paint, which is the thing that walks the child list - so with the
+	 * override in place and no super call, a lightweight Swing child is never painted by the
+	 * window at all.
+	 *
+	 * The plugin sidebar is exactly that child, and it showed: the window opened with a black bar
+	 * down the side, which filled in the moment the mouse went near it. A mouse-over repaints that
+	 * component through its nearest heavyweight ancestor and never goes through the frame's paint,
+	 * so hovering drew what the expose should have.
+	 *
+	 * The game shell is heavyweight and paints through its own peer, so it is unaffected by this
+	 * and still gets its call below. Only an expose comes through here - a fresh window, an
+	 * alt-tab, a resize - never the game's own frame loop, which blits through a Graphics it keeps.
+	 * See tools/clienttests/SidebarPaintTest.java.
+	 */
 	public void paint(Graphics g) {
+		super.paint(g);
 		this.shell.paint(g);
 	}
 }
