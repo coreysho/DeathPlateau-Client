@@ -39,7 +39,7 @@ public final class QolSettings {
 	// is matched by name.
 	//
 	// SETTINGS LEAVE HERE WHEN THEY BECOME PLUGINS. "Escape closes interfaces", "Hide roofs", "XP
-	// drops" and "Barrows doors" have gone (jagex2.client.plugin.builtin); their keys live on as the legacySetting
+	// drops", "Barrows doors" and "Left-click swaps" have gone (jagex2.client.plugin.builtin); their keys live on as the legacySetting
 	// on those plugins, which read this file once to carry across a choice the player had made.
 	// Removing one from here does not disturb the rest: the saved file is key=value, so nothing
 	// shifts.
@@ -55,14 +55,13 @@ public final class QolSettings {
 	public static final int WHEEL_CHAT = 9;
 	public static final int WHEEL_INTERFACE = 10;
 	public static final int GROUND_ITEMS = 11;
-	public static final int MENU_SWAPPER = 12;
-	public static final int ANTI_DRAG = 13;
+	public static final int ANTI_DRAG = 12;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
 		"bankpin_keys", "tab_reply", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "ground_items", "menu_swapper", "anti_drag"
+		"wheel_interface", "ground_items", "anti_drag"
 	};
 
 	private static final String[] LABELS = {
@@ -70,7 +69,7 @@ public final class QolSettings {
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
 		"Tab replies to last PM", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"Ground item names", "Left-click swaps (F10)", "Anti-drag (items drag after 0.2s)"
+		"Ground item names", "Anti-drag (items drag after 0.2s)"
 	};
 
 	// Every default is ON. For the twelve that predate this class that was the point - introducing
@@ -82,7 +81,7 @@ public final class QolSettings {
 	// looks like rather than adding a convenience. It is a plugin now and that reasoning went with
 	// it, which is why this array is all true again.
 	private static final boolean[] DEFAULTS = {
-		true, true, true, true, true, true, true, true, true, true, true, true, true, true
+		true, true, true, true, true, true, true, true, true, true, true, true, true
 	};
 
 	public static final int COUNT = KEYS.length;

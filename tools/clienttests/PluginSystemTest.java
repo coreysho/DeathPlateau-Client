@@ -10,6 +10,7 @@ import java.util.List;
 import jagex2.client.plugin.event.ChatMessage;
 import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.MenuOptionClicked;
+import jagex2.client.plugin.event.SettingsMenuOpening;
 import jagex2.client.plugin.event.StatChanged;
 
 public class PluginSystemTest {
@@ -44,6 +45,9 @@ public class PluginSystemTest {
 		System.out.println();
 		System.out.println("6. config lists");
 		configListTests();
+		System.out.println();
+		System.out.println("7. the settings menu");
+		settingsMenuTests();
 		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
@@ -211,14 +215,15 @@ public class PluginSystemTest {
 			return;
 		}
 		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null
-			&& entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null,
-			"all four built-in plugins are found");
+			&& entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null
+			&& entry(manager, "menu-swapper") != null, "all five built-in plugins are found");
 		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "escape-closes").source),
 			"...and say they came with the client");
 		check(enabled(manager, "escape-closes"), "Escape closes interfaces is on by default, as it was");
 		check(!enabled(manager, "hide-roofs"), "Hide roofs is off by default, as it was");
 		check(enabled(manager, "xp-drops"), "XP drops is on by default, as it was");
 		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
+		check(enabled(manager, "menu-swapper"), "Left-click swaps is on by default, as it was");
 
 		// A player who turned Escape off back when it was a setting.
 		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");
@@ -294,6 +299,71 @@ public class PluginSystemTest {
 		} catch (Exception error) {
 			check(false, "could not write " + file + ": " + error);
 		}
+	}
+
+	// ---------------------------------------------------------------- 7
+
+	/** A plugin that offers a row per target and records which one was chosen. */
+	public static final class Rower extends Plugin {
+
+		String chosen = "";
+		boolean sawWorldMenu;
+		int offered;
+
+		@Subscribe
+		public void onSettingsMenuOpening(SettingsMenuOpening event) {
+			this.sawWorldMenu = event.isWorldMenu();
+			for (int i = 0; i < event.getTargets().size(); i++) {
+				final SettingsMenuOpening.Target target = event.getTargets().get(i);
+				if (event.addRow("Do something to " + target.name, new Runnable() {
+
+					public void run() {
+						Rower.this.chosen = target.name;
+					}
+				})) {
+					this.offered++;
+				}
+			}
+		}
+	}
+
+	static void settingsMenuTests() {
+		List<SettingsMenuOpening.Target> targets = new java.util.ArrayList<SettingsMenuOpening.Target>();
+		targets.add(new SettingsMenuOpening.Target("yel", "Guard", "Attack"));
+		targets.add(new SettingsMenuOpening.Target("lre", "Bones", "Take"));
+
+		SettingsMenuOpening event = new SettingsMenuOpening(targets, true, 10);
+		Rower plugin = new Rower();
+		plugin.onSettingsMenuOpening(event);
+		check(event.getRows().size() == 2, "a plugin adds a row per target (" + event.getRows().size() + ")");
+		check(plugin.sawWorldMenu, "...and is told this was a right-click in the world");
+		check(event.getRows().get(0).label.equals("Do something to Guard"), "rows keep the order they were added");
+
+		event.getRows().get(1).action.run();
+		check(plugin.chosen.equals("Bones"), "choosing a row runs that row's own action");
+
+		// The menu is a fixed array, so a plugin that adds a row per target on a crowded tile has
+		// to be told to stop rather than running off the end of it.
+		SettingsMenuOpening tight = new SettingsMenuOpening(targets, true, 1);
+		Rower greedy = new Rower();
+		greedy.onSettingsMenuOpening(tight);
+		check(tight.getRows().size() == 1 && greedy.offered == 1,
+			"a full menu refuses the next row and says so (" + tight.getRows().size() + " of 1)");
+
+		// An inventory right-click: a plugin about things on the floor needs to know the
+		// difference, because a ground item and an inventory item carry the same tag.
+		SettingsMenuOpening inventory = new SettingsMenuOpening(targets, false, 10);
+		Rower indoors = new Rower();
+		indoors.onSettingsMenuOpening(inventory);
+		check(!indoors.sawWorldMenu, "an inventory right-click is not a world menu");
+
+		boolean immutable = false;
+		try {
+			event.getTargets().add(new SettingsMenuOpening.Target("yel", "Cow", "Attack"));
+		} catch (UnsupportedOperationException expected) {
+			immutable = true;
+		}
+		check(immutable, "a plugin cannot add targets to the event, only rows");
 	}
 
 	// ---------------------------------------------------------------- 6

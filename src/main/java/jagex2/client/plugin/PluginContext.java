@@ -229,6 +229,16 @@ public final class PluginContext {
 		return index < 0 || index >= this.client.menuSize ? 0 : this.client.menuParamC[index];
 	}
 
+	/**
+	 * Whether an entry is the "Walk here" the client offers on any ground you can reach.
+	 *
+	 * It has no target tag, so it cannot be found by reading the text - and a plugin reordering
+	 * the menu needs to know where it is, because "always walk here" is a thing people set.
+	 */
+	public boolean isWalkHere(int index) {
+		return this.getMenuAction(index) == Client.WALK_HERE_ACTION;
+	}
+
 	/** Index of the entry a left click would perform, or -1 when there is nothing but Cancel. */
 	public int getLeftClickIndex() {
 		return this.client.menuSize < 2 ? -1 : this.client.menuSize - 1;

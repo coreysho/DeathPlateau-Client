@@ -34,12 +34,9 @@ SWAPS = os.path.join(ROOT, 'src/main/java/jagex2/client/MenuSwaps.java')
 SHELL = os.path.join(HERE, 'RoofTest.shell.java')
 
 DECLS = ['layout', 'QOL_PANEL_ROWS', 'QOL_PANEL_W', 'QOL_PANEL_ROW_H', 'QOL_PANEL_HEADER_H', 'QOL_PANEL_FOOTER_H',
-         'SWAP_PANEL_ROW_H', 'SWAP_PANEL_HEADER_H', 'SWAP_PANEL_FOOTER_H', 'SWAP_PANEL_ACTIONS',
-         'SWAP_PANEL_SCROLL_W', 'SWAP_PANEL_MARGIN', 'swapScrollPx',
          'currentLevel', 'levelTileFlags', 'cameraPitch', 'cameraX', 'cameraZ',
          'pluginRoofsHidden']
-METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY',
-           'swapPanelRows', 'swapPanelHeight', 'swapPanelY', 'swapScrollMax', 'swapScroll', 'swapFirstRow']
+METHODS = ['getTopLevel', 'qolPanelHeight', 'qolPanelY']
 
 
 def read(p):
@@ -73,21 +70,23 @@ def method(src, name):
 
 def source_checks(src, settings, swaps):
     out = []
-    # The swaps panel's rule is "fits OR scrolls", so the scrolling itself is what has to be there.
-    draw = method(src, 'drawSwapPanel')
-    out.append(('the swaps panel scrolls with the scrollbar the client already has - drawScrollbar(), the one '
-                'the bank and the chatbox draw - and not a second bar that looks nearly like it',
-                'this.drawScrollbar(' in draw))
-    out.append(('...drawn only when something is off screen, because drawScrollbar divides by '
-                '(content - view) and a bar with nowhere to go says the list is longer than it is',
-                'if (scrollMax > 0) {' in draw))
-    click = method(src, 'handleSwapPanelInput')
-    out.append(('...and a click on a row is turned into a swap through the scroll position, so row 3 '
-                'of a scrolled panel cycles the swap being shown there and not the third one stored',
-                'this.swapFirstRow(swaps) + row' in click))
-    out.append(('the wheel is handed to the panel in updateOrbitCamera, ahead of the camera zoom '
-                'that would otherwise consume the delta before the draw phase ever ran',
-                'this.handleSwapPanelScroll();' in method(src, 'updateOrbitCamera')))
+    # The swaps are a plugin now - the F10 panel is a page in the sidebar and the menu rows come
+    # from SettingsMenuOpening - so what is checked here is that the client kept its half of that
+    # bargain, and that the file underneath did not move.
+    swapper = read(os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/MenuSwapperPlugin.java'))
+    out.append(('the swaps panel and the every-frame swap pass are gone from Client.java: both are '
+                'the plugin\'s now',
+                'drawSwapPanel' not in src and 'applyMenuSwap' not in src))
+    out.append(('...and the plugin does both, through MenuBuilt and a ConfigList',
+                'onMenuBuilt' in swapper and 'addConfigList' in swapper))
+    build = method(src, 'buildSwapMenu')
+    out.append(('the settings menu asks the plugins for their rows, and is no longer gated on any '
+                'one feature being on',
+                'onSettingsMenuOpening' in build
+                and 'QolSettings.MENU_SWAPPER' not in method(src, 'showContextMenu')))
+    out.append(('...and does not open at all when nothing offered a row, rather than showing a '
+                'Choose Option with only Cancel in it',
+                'if (size <= 1) {' in build))
     # The file the swaps live in did not change shape, which is the whole reason the cap could move.
     out.append(('MenuSwaps still stores the swaps in fixed arrays, so the cap bounds what a corrupt '
                 'qol_swaps.dat can make the client allocate',

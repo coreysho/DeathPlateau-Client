@@ -16,6 +16,7 @@ import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.KeyPressed;
 import jagex2.client.plugin.event.MenuBuilt;
 import jagex2.client.plugin.event.MenuOptionClicked;
+import jagex2.client.plugin.event.SettingsMenuOpening;
 import jagex2.client.plugin.event.StatChanged;
 import jagex2.graphics.PixFont;
 
@@ -57,7 +58,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.EscapeClosesPlugin",
 		"jagex2.client.plugin.builtin.HideRoofsPlugin",
 		"jagex2.client.plugin.builtin.XpDropsPlugin",
-		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin"
+		"jagex2.client.plugin.builtin.BarrowsDoorsPlugin",
+		"jagex2.client.plugin.builtin.MenuSwapperPlugin"
 	};
 
 	/** What the panel shows as the source of a plugin that came with the client. */
@@ -574,6 +576,20 @@ public final class PluginManager {
 			return;
 		}
 		this.bus.post(new StatChanged(skill, level, experience, gained));
+	}
+
+	/**
+	 * Offers the settings menu to every plugin and returns the rows they added, in order.
+	 * Returns an empty list when nothing is running, so the client's own rows are all there is.
+	 */
+	public java.util.List<SettingsMenuOpening.Row> onSettingsMenuOpening(
+		java.util.List<SettingsMenuOpening.Target> targets, boolean worldMenu, int room) {
+		if (this.idle()) {
+			return new ArrayList<SettingsMenuOpening.Row>();
+		}
+		SettingsMenuOpening event = new SettingsMenuOpening(targets, worldMenu, room);
+		this.bus.post(event);
+		return event.getRows();
 	}
 
 	public void onMenuBuilt(int size) {
