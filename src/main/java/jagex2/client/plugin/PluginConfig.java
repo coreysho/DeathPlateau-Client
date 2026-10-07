@@ -45,6 +45,14 @@ public final class PluginConfig {
 			return this.field.getType() == boolean.class;
 		}
 
+		public boolean isInt() {
+			return this.field.getType() == int.class;
+		}
+
+		public boolean isString() {
+			return this.field.getType() == String.class;
+		}
+
 		/** The value as the panel should show it: "on"/"off" for a boolean, otherwise toString. */
 		public String displayValue() {
 			Object value = this.read();
@@ -60,6 +68,16 @@ public final class PluginConfig {
 		public boolean booleanValue() {
 			Object value = this.read();
 			return value instanceof Boolean && ((Boolean) value).booleanValue();
+		}
+
+		public int intValue() {
+			Object value = this.read();
+			return value instanceof Integer ? ((Integer) value).intValue() : 0;
+		}
+
+		public String stringValue() {
+			Object value = this.read();
+			return value == null ? "" : String.valueOf(value);
 		}
 
 		private Object read() {
@@ -122,18 +140,40 @@ public final class PluginConfig {
 
 	/** Flips a boolean setting and saves it. Does nothing for the other types. */
 	public void toggle(Item item) {
-		if (item == null || !item.isBoolean()) {
-			return;
+		if (item != null && item.isBoolean()) {
+			this.set(item, item.booleanValue() ? "0" : "1");
 		}
-		boolean value = !item.booleanValue();
+	}
+
+	/**
+	 * Writes a setting from its saved form - "1"/"0" for a boolean, digits for an int, the text
+	 * itself for a String - and saves it. Returns false, changing nothing, when the text does not
+	 * fit the field: that is how the config page tells the player their "12x" is not a number
+	 * rather than quietly storing a zero.
+	 *
+	 * Call it on the game thread (PluginManager.invokeOnClientThread), not from the UI: it writes
+	 * a field a running plugin may be reading.
+	 */
+	public boolean set(Item item, String text) {
+		if (item == null || text == null) {
+			return false;
+		}
 		try {
-			item.field.setBoolean(item.target, value);
+			Class<?> type = item.field.getType();
+			if (type == boolean.class) {
+				item.field.setBoolean(item.target, text.equals("1") || text.equalsIgnoreCase("true"));
+			} else if (type == int.class) {
+				item.field.setInt(item.target, Integer.parseInt(text.trim()));
+			} else {
+				item.field.set(item.target, text);
+			}
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", "could not set " + this.pluginKey + "." + item.key + ": " + error);
-			return;
+			DevLog.log("PLUGIN", "could not set " + this.pluginKey + "." + item.key + " to \"" + text + "\": " + error);
+			return false;
 		}
-		this.store.put(this.pluginKey + "." + item.key, value ? "1" : "0");
+		this.store.put(this.pluginKey + "." + item.key, item.isBoolean() ? (item.booleanValue() ? "1" : "0") : text);
 		this.store.save();
+		return true;
 	}
 
 	private void load(Item item) {

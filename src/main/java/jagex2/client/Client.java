@@ -416,6 +416,8 @@ public class Client extends GameShell {
 	private static final int PLUGIN_PANEL_MAX_ROWS = 16;
 	private boolean pluginPanelOpen;
 	private int pluginPanelScroll;
+	/** The Swing sidebar, once it exists. Null in the applet, where F8 opens the panel instead. */
+	private volatile jagex2.client.plugin.ui.Sidebar pluginSidebar;
 	/** Rebuilt by drawPluginPanel() each frame and read by the click handler on the next one. */
 	private java.util.List<PluginManager.PanelRow> pluginPanelRows;
 	// True while the open right-click menu is a swap menu rather than a real one. Set only inside
@@ -1434,6 +1436,49 @@ public class Client extends GameShell {
 		}
 	}
 
+	/**
+	 * Builds the Swing plugin sidebar and puts it beside the game, when there is a window to put
+	 * it in. In the applet there is not, and F8's in-canvas panel is the whole interface instead.
+	 *
+	 * Swing components may only be touched on the event dispatch thread and this runs on the game
+	 * thread during load(), hence the invokeLater. Failure is not fatal: no sidebar, and the
+	 * in-canvas panel takes over, which is why pluginSidebar is only set once one exists.
+	 */
+	private void attachPluginSidebar() {
+		final ViewBox window = super.frame;
+		if (window == null) {
+			return;
+		}
+		final PluginManager manager = this.plugins;
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				try {
+					jagex2.client.plugin.ui.Sidebar sidebar = new jagex2.client.plugin.ui.Sidebar(manager);
+					window.setSidebar(sidebar);
+					Client.this.pluginSidebar = sidebar;
+					DevLog.log("PLUGIN", "sidebar attached");
+				} catch (Throwable error) {
+					DevLog.log("PLUGIN", "could not build the sidebar, using the in-game panel: " + error);
+				}
+			}
+		});
+	}
+
+	/** Shows or hides the sidebar from the game thread. */
+	private void togglePluginSidebar() {
+		final ViewBox window = super.frame;
+		if (window == null) {
+			return;
+		}
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				window.setSidebarVisible(!window.isSidebarVisible());
+			}
+		});
+	}
+
 	private int pluginPanelRowCount() {
 		int rows = this.pluginPanelRows == null ? 1 : this.pluginPanelRows.size();
 		return rows > PLUGIN_PANEL_MAX_ROWS ? PLUGIN_PANEL_MAX_ROWS : rows;
@@ -1483,8 +1528,8 @@ public class Client extends GameShell {
 		int mouseX = super.mouseX - QOL_PANEL_ORIGIN;
 		int mouseY = super.mouseY - QOL_PANEL_ORIGIN;
 		String hint = total > shown
-			? "Scroll for more. Jars go in the plugins folder of your cache."
-			: "Click a row to toggle. Jars go in the plugins folder of your cache.";
+			? "Scroll for more. Jars go in .deathplateau/plugins in your home folder."
+			: "Click a row to toggle. Jars go in .deathplateau/plugins in your home folder.";
 
 		for (int i = 0; i < shown; i++) {
 			PluginManager.PanelRow row = this.pluginPanelRows.get(i + this.pluginPanelScroll);
@@ -3431,6 +3476,7 @@ public class Client extends GameShell {
 			try {
 				this.plugins = new PluginManager(this, this.fontPlain11, this.fontPlain12, this.fontBold12);
 				this.plugins.reload();
+				this.attachPluginSidebar();
 			} catch (Throwable error) {
 				this.plugins = null;
 				DevLog.log("PLUGIN", "plugin system disabled for this session: " + error);
@@ -6964,6 +7010,13 @@ public class Client extends GameShell {
 
 					// The plugin list, on the same terms as the three panels below it.
 					if (key == PLUGIN_PANEL_KEY && this.ingame && this.plugins != null) {
+						// One key, two interfaces: where there is a window there is a sidebar, and
+						// F8 shows and hides it. The in-canvas panel is for the applet, which has
+						// no window to put a sidebar in.
+						if (this.pluginSidebar != null) {
+							this.togglePluginSidebar();
+							continue;
+						}
 						this.pluginPanelOpen = !this.pluginPanelOpen;
 						if (this.pluginPanelOpen) {
 							this.closeInterfaces();

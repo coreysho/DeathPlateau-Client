@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import jagex2.client.Client;
 import jagex2.client.DevLog;
@@ -139,11 +140,21 @@ public final class PluginManager {
 	/** Guards against a plugin's reply to a chat message posting another chat message, forever. */
 	private boolean postingChat;
 
+	// WHY THERE IS A QUEUE HERE. The sidebar is Swing and runs on the event dispatch thread; the
+	// plugins, the event bus and the overlay list belong to the game thread. A click on a toggle
+	// that called startUp() directly would be constructing overlays on one thread while the game
+	// loop walked the overlay list on another. Everything the UI wants done is queued instead and
+	// run at the top of the next frame, which is the same bargain RuneLite's clientThread makes.
+	private final ConcurrentLinkedQueue<Runnable> clientThreadTasks = new ConcurrentLinkedQueue<Runnable>();
+
+	/** Told after anything changes, so the sidebar can redraw itself. Set by the UI, may be null. */
+	private volatile Runnable changeListener;
+
 	public PluginManager(Client client, PixFont small, PixFont normal, PixFont bold) {
 		this.client = client;
 		this.ctx = new PluginContext(client);
 		this.graphics = new OverlayGraphics(small, normal, bold);
-		this.pluginDirectory = new File(sign.signlink.findcachedir() + PLUGIN_FOLDER);
+		this.pluginDirectory = findPluginDirectory();
 		this.store = new PluginStore(new File(sign.signlink.findcachedir() + STORE_FILE));
 		this.bus = new EventBus(new EventBus.ErrorListener() {
 
@@ -153,13 +164,70 @@ public final class PluginManager {
 		});
 	}
 
+	/**
+	 * Where jars are read from: ~/.deathplateau/plugins, beside the client.jar the launcher keeps
+	 * there.
+	 *
+	 * NOT the client's cache directory, which is where every other preference lives. A player has
+	 * to put plugin jars in this folder by hand, so it has to be somewhere they can find: the
+	 * cache directory is signlink.findcachedir(), which is a 2004 search through c:/windows,
+	 * c:/winnt, d:/windows and eventually /tmp for a folder called .file_store_32. Settings stay
+	 * there with the rest; jars go where the player already keeps the client.
+	 *
+	 * Falls back to the cache directory if there is no usable home directory, which is better
+	 * than no plugins at all. Either way the panel shows the path it settled on.
+	 */
+	private static File findPluginDirectory() {
+		try {
+			String home = System.getProperty("user.home");
+			if (home != null && home.length() > 0) {
+				File dir = new File(home, ".deathplateau");
+				if (dir.isDirectory() || dir.mkdirs()) {
+					return new File(dir, PLUGIN_FOLDER);
+				}
+			}
+		} catch (Throwable ignored) {
+			// A security manager, a read-only home. The fallback below still gives us somewhere.
+		}
+		return new File(sign.signlink.findcachedir() + PLUGIN_FOLDER);
+	}
+
 	/** Where jars are read from. Shown in the panel so a player can find the folder. */
 	public File getPluginDirectory() {
 		return this.pluginDirectory;
 	}
 
+	/**
+	 * The plugins, running or not. Read from the game thread, or from the UI thread for display
+	 * only - anything that CHANGES one goes through {@link #invokeOnClientThread(Runnable)}.
+	 */
 	public List<Entry> getPlugins() {
 		return this.entries;
+	}
+
+	/** Runs the task at the top of the next frame. Safe to call from any thread. */
+	public void invokeOnClientThread(Runnable task) {
+		if (task != null) {
+			this.clientThreadTasks.add(task);
+		}
+	}
+
+	/** Set by the sidebar so it can refresh when a plugin starts, stops, or is reloaded. */
+	public void setChangeListener(Runnable listener) {
+		this.changeListener = listener;
+	}
+
+	/** Called after anything the UI shows has changed. Never throws into the game loop. */
+	void fireChanged() {
+		Runnable listener = this.changeListener;
+		if (listener == null) {
+			return;
+		}
+		try {
+			listener.run();
+		} catch (Throwable error) {
+			DevLog.log("PLUGIN", "the plugin sidebar threw while refreshing: " + error);
+		}
 	}
 
 	// ------------------------------------------------------------------ discovery and lifecycle
@@ -205,6 +273,7 @@ public final class PluginManager {
 			}
 		}
 		DevLog.log("PLUGIN", this.entries.size() + " found, " + this.running + " running");
+		this.fireChanged();
 	}
 
 	private void discover() {
@@ -259,6 +328,7 @@ public final class PluginManager {
 		}
 		this.store.put(entry.key + ".enabled", entry.enabled ? "1" : "0");
 		this.store.save();
+		this.fireChanged();
 	}
 
 	public void toggle(Entry entry) {
@@ -352,6 +422,9 @@ public final class PluginManager {
 	}
 
 	public void onClientTick(int cycle) {
+		// Drained before the idle check: the queue is how the sidebar turns the FIRST plugin on,
+		// and at that point nothing is running yet.
+		this.drainTasks();
 		if (this.idle()) {
 			return;
 		}
@@ -364,6 +437,18 @@ public final class PluginManager {
 			this.bus.post(new GameStateChanged(loggedIn ? GameStateChanged.LOGGED_IN : GameStateChanged.LOGIN_SCREEN));
 		}
 		this.bus.post(new ClientTick(cycle));
+	}
+
+	/** Runs whatever the UI asked for, on the game thread, one frame's worth at a time. */
+	private void drainTasks() {
+		Runnable task;
+		while ((task = this.clientThreadTasks.poll()) != null) {
+			try {
+				task.run();
+			} catch (Throwable error) {
+				DevLog.log("PLUGIN", "a queued plugin task threw: " + error);
+			}
+		}
 	}
 
 	public void onGameTick() {

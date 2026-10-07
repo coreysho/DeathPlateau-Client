@@ -12,18 +12,30 @@ widget lookups.
 
 ## Installing one
 
-1. Put the jar in the `plugins` folder of your client cache - `~/.deathplateau/plugins` on Linux
-   and macOS, `%USERPROFILE%\.deathplateau\plugins` on Windows. Create the folder if it is not
-   there.
-2. Start the client and press **F8**.
-3. Tick the plugin. It stays ticked next time.
+1. Put the jar in `~/.deathplateau/plugins` (`%USERPROFILE%\.deathplateau\plugins` on Windows),
+   beside the `client.jar` the launcher keeps there. The client creates the folder on first run.
+2. Start the client. The plugin sidebar is down the right-hand side of the window.
+3. Flip the switch on the plugin's row. It stays on next time.
+
+**F8** shows and hides the sidebar.
 
 **A new plugin starts switched off, and that is deliberate.** A plugin is ordinary Java running
 inside your client, with your client's access to your filesystem and your connection. There is no
 sandbox. Only install plugins whose source you can see and whose author you trust.
 
-`Reload plugins` at the bottom of the panel re-reads the folder, so a plugin can be rebuilt and
+The reload button next to the search box re-reads the folder, so a plugin can be rebuilt and
 picked up without restarting the client.
+
+### The sidebar
+
+A Swing panel beside the game, like RuneLite's, added to the window rather than drawn over the
+game - the canvas keeps its exact 765x503 and the window gets wider. It has the plugin list with
+a search box and a switch per plugin, and a cog on any plugin with settings that opens its config
+page.
+
+The applet has no window to put a panel in, so there F8 opens a simpler list drawn inside the
+game viewport instead. It can toggle plugins and their on/off settings, but it has no text boxes,
+so numbers and names there are edited in `plugins.dat` by hand.
 
 ## The examples
 
@@ -39,7 +51,7 @@ Build them:
 cp build/plugins/example-plugins.jar ~/.deathplateau/plugins/
 ```
 
-Then F8 in game and tick them.
+They appear in the sidebar; flip their switches on.
 
 ## Writing one
 
@@ -97,8 +109,8 @@ Without it every class in the jar is checked instead, which also works and is ju
   the same handler or overlay and the client turns your plugin off and says so in chat.
 - **Settings are fields.** Tag a `boolean`, `int` or `String` field with `@ConfigItem` and it is
   loaded on startup and saved when changed. Booleans are clickable in the panel; ints and Strings
-  are shown there and edited in `plugins.dat` in the cache folder. Never rename a `keyName` after
-  release - it resets that setting for everyone.
+  are text boxes in the sidebar. Never rename a `keyName` after release - it resets that setting
+  for everyone.
 
 ## The API
 
@@ -131,11 +143,24 @@ Events, in `jagex2.client.plugin.event`:
 it is free to change. If what you need is not there, add a method that answers the question you
 are really asking rather than reaching past it into `Client`.
 
+## Where things are saved
+
+| What | Where |
+| --- | --- |
+| Plugin jars | `~/.deathplateau/plugins` |
+| Which plugins are on, and their settings | `plugins.dat` in the client's cache folder, beside `qol_settings.dat` |
+
+Jars live in the home folder because a player has to put them there by hand and has to be able to
+find it. Settings live with the client's other settings.
+
 ## Testing
 
 ```sh
-python3 tools/clienttests/run_plugintest.py
+python3 tools/clienttests/run_plugintest.py        # the system
+python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to build/preview/*.png
 ```
 
-Covers event delivery and consumption, a handler that throws, settings surviving a restart, and
-loading plugins out of real jars (manifest and scanned, including a corrupt one).
+The first covers event delivery and consumption, a handler that throws, settings surviving a
+restart, and loading plugins out of real jars (manifest and scanned, including a corrupt one).
+The second builds the real sidebar over a real plugin jar and paints it into png files you can
+look at, failing if a page comes out blank.
