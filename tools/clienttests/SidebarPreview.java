@@ -57,7 +57,9 @@ public class SidebarPreview {
 		// index over localhost and lets the hub fetch it for real - which also means this picture
 		// is proof the fetch and the row layout work, not just that the panel draws.
 		boolean hub = args.length > 1 && args[1].equals("hub");
-		if (hub) {
+		if (hub && System.getProperty("lostcity.pluginindex") == null) {
+			// No index given, so serve a sample one locally. Passing -Dlostcity.pluginindex
+			// points the preview at a real index instead, which is how the live one is checked.
 			System.setProperty("lostcity.pluginindex", startIndexServer());
 		}
 
