@@ -63,9 +63,23 @@ MUTS = [
      'var9 > var12 - 13 && var9 < var12 + 3) {\n\t\t\t\t\tvar10 = this.menuRowIndex(p);',
      '\t\t\t\tint var12 = (this.menuSize - 1 - p) * 15 + var6 + 31;\n\t\t\t\tif (var8 > var5 && '
      'var8 < var5 + var7 && var9 > var12 - 13 && var9 < var12 + 3) {\n\t\t\t\t\tvar10 = p;'),
-    ('the menu offered the wheel after the camera has had it',
-     '\t\t\tthis.handleMenuScroll();\n\t\t\tthis.handleGroundItemScroll();',
-     '\t\t\tthis.handleGroundItemScroll();'),
+    # The order the wheel is offered in. An overlay getting it first is the one that shows:
+    # scrolling an open menu that happens to be over a tall ground-item pile would move the pile.
+    ('an overlay offered the wheel before the open menu',
+     '\t\t\tthis.handleMenuScroll();\n'
+     '\t\t\t// An overlay that claimed this spot for the wheel takes the turn, before the camera\n'
+     '\t\t\t// gets a look.\n'
+     '\t\t\tif (super.mouseScrollDelta != 0 && this.plugins != null\n'
+     '\t\t\t\t&& this.plugins.onViewportScroll(super.mouseX - this.layout.vpX,\n'
+     '\t\t\t\t\tsuper.mouseY - this.layout.vpY, super.mouseScrollDelta)) {\n'
+     '\t\t\t\tsuper.mouseScrollDelta = 0;\n'
+     '\t\t\t}',
+     '\t\t\tif (super.mouseScrollDelta != 0 && this.plugins != null\n'
+     '\t\t\t\t&& this.plugins.onViewportScroll(super.mouseX - this.layout.vpX,\n'
+     '\t\t\t\t\tsuper.mouseY - this.layout.vpY, super.mouseScrollDelta)) {\n'
+     '\t\t\t\tsuper.mouseScrollDelta = 0;\n'
+     '\t\t\t}\n'
+     '\t\t\tthis.handleMenuScroll();'),
 ]
 
 

@@ -35,6 +35,16 @@ public class PixFont extends Pix2D {
 	@ObfuscatedName("JDPYRDAS.G")
 	public int height;
 
+	/**
+	 * A font whose glyphs do not come out of a jagfile.
+	 *
+	 * Everything a font IS is in the public fields above - the advances, the masks and a height -
+	 * and a subclass that fills them in itself, or answers the measuring and drawing calls its own
+	 * way, is a font. Only the constructor below needs an archive, and a headless test has none.
+	 */
+	protected PixFont() {
+	}
+
 	public PixFont(boolean quill, Jagfile jag, String name) {
 		Packet data = new Packet(jag.read(name + ".dat", null));
 		Packet index = new Packet(jag.read("index.dat", null));

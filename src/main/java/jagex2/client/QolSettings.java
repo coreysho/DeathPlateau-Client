@@ -35,7 +35,20 @@ public final class QolSettings {
 	private static final String FILE_NAME = "qol_settings.dat";
 
 	// Indices into the parallel arrays below. Order here is display order in the panel; it is NOT
-	// persisted, so these can be reordered freely.
+	// persisted, so these can be reordered freely - and entries can be removed, because the file
+	// is matched by name.
+	//
+	// SETTINGS LEAVE HERE WHEN THEY BECOME PLUGINS. "XP drops", "Barrows doors", "Left-click
+	// swaps", "Ground items" and "Anti-drag" have gone (jagex2.client.plugin.builtin); their
+	// keys live on as the legacySetting on those plugins, which read this file once to carry
+	// across a choice the player had made. Removing one from here does not disturb the rest: the
+	// saved file is key=value, so nothing shifts.
+	//
+	// AND TWO CAME BACK. "Escape closes interfaces" and "Hide roofs" were ported first and have
+	// returned, under the keys they always had. Neither was ever plugin-shaped: a plugin is worth
+	// having when a feature brings something of its own - a panel, an overlay, settings, a reason
+	// to be shipped separately - and these two are a keypress and a boolean the renderer reads.
+	// As plugins they were a file each to say one line. They are what this panel is for.
 	public static final int CHAT_HISTORY = 0;
 	public static final int COMPASS_NORTH = 1;
 	public static final int SHIFT_DROP = 2;
@@ -48,18 +61,13 @@ public final class QolSettings {
 	public static final int WHEEL_ZOOM = 9;
 	public static final int WHEEL_CHAT = 10;
 	public static final int WHEEL_INTERFACE = 11;
-	public static final int XP_DROPS = 12;
-	public static final int GROUND_ITEMS = 13;
-	public static final int MENU_SWAPPER = 14;
-	public static final int ROOFS_OFF = 15;
-	public static final int BARROWS_DOORS = 16;
-	public static final int ANTI_DRAG = 17;
+	public static final int ROOFS_OFF = 12;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
 		"bankpin_keys", "tab_reply", "esc_close", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "xp_drops", "ground_items", "menu_swapper", "roofs_off", "barrows_doors", "anti_drag"
+		"wheel_interface", "roofs_off"
 	};
 
 	private static final String[] LABELS = {
@@ -67,8 +75,7 @@ public final class QolSettings {
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
 		"Tab replies to last PM", "Escape closes interfaces", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"XP drops", "Ground item names", "Left-click swaps (F10)", "Hide roofs",
-		"Barrows doors that open glow green", "Anti-drag (items drag after 0.2s)"
+		"Hide roofs"
 	};
 
 	// Every default is ON, with ONE exception. For the twelve that predate this class that was the
@@ -79,9 +86,10 @@ public final class QolSettings {
 	// "Hide roofs" defaults OFF, and the streak breaking is deliberate: every other setting adds a
 	// convenience and leaves the world alone, and this one changes what the world looks like. Old
 	// School ships its own Roofs toggle off as well, so on is the surprising answer in both places.
+	// It is last in the list for the same reason.
 	private static final boolean[] DEFAULTS = {
-		true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-		false, true, true
+		true, true, true, true, true, true, true, true, true, true, true, true,
+		false
 	};
 
 	public static final int COUNT = KEYS.length;
@@ -118,6 +126,44 @@ public final class QolSettings {
 		}
 		enabled[setting] = !enabled[setting];
 		save();
+	}
+
+	/**
+	 * What the saved file says about a key, or null when it does not mention it.
+	 *
+	 * Different from on(), which answers with the default for anything unsaved. The difference is
+	 * the whole point here: this is read when a setting becomes a plugin, to carry across a
+	 * choice the player actually made, and a default is not a choice.
+	 *
+	 * Reads the file rather than the array because a setting that has become a plugin is no
+	 * longer in the array at all.
+	 */
+	public static Boolean saved(String key) {
+		BufferedReader reader = null;
+		try {
+			File file = new File(sign.signlink.findcachedir() + FILE_NAME);
+			if (!file.exists()) {
+				return null;
+			}
+			reader = new BufferedReader(new FileReader(file));
+			String line;
+			while ((line = reader.readLine()) != null) {
+				int split = line.indexOf('=');
+				if (split > 0 && line.substring(0, split).trim().equals(key)) {
+					return Boolean.valueOf(line.substring(split + 1).trim().equals("1"));
+				}
+			}
+		} catch (Exception ignored) {
+			// Unreadable: nothing was chosen as far as we can tell, so the plugin's default wins.
+		} finally {
+			try {
+				if (reader != null) {
+					reader.close();
+				}
+			} catch (Exception ignored) {
+			}
+		}
+		return null;
 	}
 
 	public static void load() {

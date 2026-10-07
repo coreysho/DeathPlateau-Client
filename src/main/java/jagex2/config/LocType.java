@@ -2,7 +2,6 @@ package jagex2.config;
 
 import deob.ObfuscatedName;
 import jagex2.client.Client;
-import jagex2.client.QolSettings;
 import jagex2.dash3d.AnimFrame;
 import jagex2.dash3d.Model;
 import jagex2.datastruct.LruCache;
@@ -170,7 +169,7 @@ public class LocType {
 		// form of each per-player door multiloc carries a recolour and a little extra light
 		// (content: scripts/_unpack/377/all.loc). With the F9 toggle off they are drawn as the
 		// cache always drew them, which is those two locs with no recolour and no ambient at all.
-		if ((arg0 == BARROWS_DOOR_UNLOCKED_R || arg0 == BARROWS_DOOR_UNLOCKED_L) && !QolSettings.on(QolSettings.BARROWS_DOORS)) {
+		if ((arg0 == BARROWS_DOOR_UNLOCKED_R || arg0 == BARROWS_DOOR_UNLOCKED_L) && !barrowsDoorsHighlighted) {
 			var2.field1653 = null;
 			var2.field1646 = null;
 			var2.field1638 = 0;
@@ -181,6 +180,24 @@ public class LocType {
 	// pack/loc.pack: 6714=barrows_door_unlocked_r, 6733=barrows_door_unlocked_l
 	private static final int BARROWS_DOOR_UNLOCKED_R = 6714;
 	private static final int BARROWS_DOOR_UNLOCKED_L = 6733;
+
+	/**
+	 * Whether the opened Barrows doors keep the green the cache ships them in. Set by the
+	 * Barrows doors plugin (jagex2.client.plugin.builtin.BarrowsDoorsPlugin) through
+	 * PluginContext, and static because this decision is made while DECODING a loc type - there
+	 * is no client, no frame and no event anywhere near it.
+	 *
+	 * Starts false so the cache's own look is what a client with no plugins draws.
+	 */
+	private static boolean barrowsDoorsHighlighted;
+
+	/** Sets the flag and forgets what was built with the old one. */
+	public static void setBarrowsDoorsHighlighted(boolean highlighted) {
+		if (barrowsDoorsHighlighted != highlighted) {
+			barrowsDoorsHighlighted = highlighted;
+			resetBarrowsDoors();
+		}
+	}
 
 	// After the Barrows door toggle changes: forget the decoded types and the built models, so the
 	// next frame builds the doors again the new way.
