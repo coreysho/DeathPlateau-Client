@@ -39,10 +39,10 @@ public final class QolSettings {
 	// is matched by name.
 	//
 	// SETTINGS LEAVE HERE WHEN THEY BECOME PLUGINS. "XP drops", "Barrows doors", "Left-click
-	// swaps" and "Ground items" have gone (jagex2.client.plugin.builtin); their keys live on as
-	// the legacySetting on those plugins, which read this file once to carry across a choice the
-	// player had made. Removing one from here does not disturb the rest: the saved file is
-	// key=value, so nothing shifts.
+	// swaps", "Ground items" and "Anti-drag" have gone (jagex2.client.plugin.builtin); their
+	// keys live on as the legacySetting on those plugins, which read this file once to carry
+	// across a choice the player had made. Removing one from here does not disturb the rest: the
+	// saved file is key=value, so nothing shifts.
 	//
 	// AND TWO CAME BACK. "Escape closes interfaces" and "Hide roofs" were ported first and have
 	// returned, under the keys they always had. Neither was ever plugin-shaped: a plugin is worth
@@ -61,14 +61,13 @@ public final class QolSettings {
 	public static final int WHEEL_ZOOM = 9;
 	public static final int WHEEL_CHAT = 10;
 	public static final int WHEEL_INTERFACE = 11;
-	public static final int ANTI_DRAG = 12;
-	public static final int ROOFS_OFF = 13;
+	public static final int ROOFS_OFF = 12;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
 		"bankpin_keys", "tab_reply", "esc_close", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "anti_drag", "roofs_off"
+		"wheel_interface", "roofs_off"
 	};
 
 	private static final String[] LABELS = {
@@ -76,7 +75,7 @@ public final class QolSettings {
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
 		"Tab replies to last PM", "Escape closes interfaces", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"Anti-drag (items drag after 0.2s)", "Hide roofs"
+		"Hide roofs"
 	};
 
 	// Every default is ON, with ONE exception. For the twelve that predate this class that was the
@@ -89,7 +88,7 @@ public final class QolSettings {
 	// School ships its own Roofs toggle off as well, so on is the surprising answer in both places.
 	// It is last in the list for the same reason.
 	private static final boolean[] DEFAULTS = {
-		true, true, true, true, true, true, true, true, true, true, true, true, true,
+		true, true, true, true, true, true, true, true, true, true, true, true,
 		false
 	};
 

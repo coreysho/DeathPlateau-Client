@@ -168,6 +168,25 @@ public final class PluginContext {
 	}
 
 	/**
+	 * How long a click must be held on an item before it starts dragging, in client cycles of
+	 * 20ms. Five is what the client does on its own.
+	 *
+	 * A SETTING, NOT A CALL. The client turns a held click into a drag deep inside its input
+	 * loop, in a method no event could usefully fire from, so a plugin says what it wants and
+	 * the loop reads it - which also means a plugin that is turned off must put it back, as
+	 * AntiDragPlugin does in shutDown(). Values outside 1..100 cycles are clamped: nothing a
+	 * plugin passes here may make dragging impossible.
+	 */
+	public void setDragDelay(int cycles) {
+		this.client.pluginDragCycles = cycles < 1 ? 1 : cycles > 100 ? 100 : cycles;
+	}
+
+	/** The hold a drag currently needs, in client cycles. */
+	public int getDragDelay() {
+		return this.client.pluginDragCycles;
+	}
+
+	/**
 	 * Keeps the green the cache ships the opened Barrows doors in, so the one that will open for
 	 * you stands out from the five that will not.
 	 *

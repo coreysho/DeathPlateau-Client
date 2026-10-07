@@ -41,12 +41,14 @@ MUTS = [
      '\tpublic int getTopLevelCutscene() {',
      '\tpublic int getTopLevelCutscene() {\n\t\tif (QolSettings.on(QolSettings.ROOFS_OFF)) {\n'
      '\t\t\treturn this.currentLevel;\n\t\t}'),
+    # Anchored on the TAIL of each array rather than on the whole of it. Settings come and go -
+    # five have left this file and two have come back - and a pattern that spells out every
+    # entry goes stale on each of those, which is how four of these mutations ended up silently
+    # skipping for a fortnight. Hide roofs is last and the comment above DEFAULTS says why.
     (SETTINGS, 'Hide roofs defaulting ON, which changes the world for everyone who updates',
-     'true, true, true, true, true, true, true, true, true, true, true, true, true,\n\t\tfalse',
-     'true, true, true, true, true, true, true, true, true, true, true, true, true,\n\t\ttrue'),
+     '\n\t\tfalse\n\t};', '\n\t\ttrue\n\t};'),
     (SETTINGS, 'a label added without a key, so the three parallel arrays disagree',
-     '"Anti-drag (items drag after 0.2s)", "Hide roofs"',
-     '"Anti-drag (items drag after 0.2s)", "Hide roofs", "Something else"'),
+     '"Hide roofs"\n\t};', '"Hide roofs", "Something else"\n\t};'),
     # The panel outgrowing its viewport. NOT by adding settings: COUNT comes from three parallel
     # arrays that have to be edited together, and a single-edit version of that breaks the parity
     # check instead and gets attributed to it. Taller rows is the same arithmetic in one edit.

@@ -74,6 +74,18 @@ public class SidebarPreview {
 				}
 			});
 		}
+		// The Anti-drag page: one @ConfigItem int and nothing else, which is the third shape a
+		// config page comes in - a number the player types rather than a switch or a list.
+		if (args.length > 1 && args[1].equals("antidrag")) {
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (entry.key.equals("anti-drag")) {
+					manager.setEnabled(entry, true);
+					sidebar.showConfig(entry);
+					manager.onClientTick(0);
+					Thread.sleep(300);
+				}
+			}
+		}
 		// The Ground items page: two config lists and no @ConfigItem at all, which is the other
 		// shape a config page comes in - settings that cycle rather than switch, and a list of
 		// the player's own rules with a remove button on each.

@@ -52,6 +52,9 @@ public class PluginSystemTest {
 		System.out.println("8. overlays you can click");
 		regionTests();
 		System.out.println();
+		System.out.println("9. the anti-drag plugin, which is a number rather than a switch");
+		antiDragTests();
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -224,13 +227,14 @@ public class PluginSystemTest {
 			return;
 		}
 		check(entry(manager, "xp-drops") != null && entry(manager, "barrows-doors") != null
-			&& entry(manager, "menu-swapper") != null && entry(manager, "ground-items") != null,
-			"all four built-in plugins are found");
+			&& entry(manager, "menu-swapper") != null && entry(manager, "ground-items") != null
+			&& entry(manager, "anti-drag") != null, "all five built-in plugins are found");
 		check(entry(manager, "escape-closes") == null && entry(manager, "hide-roofs") == null,
 			"...and the two that went back to the F9 panel are not among them");
 		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "xp-drops").source),
 			"...and they say they came with the client");
 		check(enabled(manager, "ground-items"), "Ground items is on by default, as it was");
+		check(enabled(manager, "anti-drag"), "Anti-drag is on by default, as it was");
 		check(enabled(manager, "xp-drops"), "XP drops is on by default, as it was");
 		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
 		check(enabled(manager, "menu-swapper"), "Left-click swaps is on by default, as it was");
@@ -274,6 +278,65 @@ public class PluginSystemTest {
 
 		qol.delete();
 		plugins.delete();
+	}
+
+	// ---------------------------------------------------------------- 9
+
+	/**
+	 * Anti-drag was a QolSettings switch that chose between two hardcoded numbers. As a plugin
+	 * it is one number the player sets, so what has to hold is the conversion, the clamp, and
+	 * that the client is left exactly as it was when the plugin is off.
+	 */
+	static void antiDragTests() {
+		// The arithmetic needs no client at all.
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(200) == 10, "200ms is ten cycles, the hold the switch used");
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(100) == 5, "100ms is five, which is what the client does alone");
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(600) == 30, "600ms is thirty, RuneLite's figure");
+		// Rounding, not truncation: 190 is nearer ten cycles than nine.
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(190) == 10, "190ms rounds to ten rather than down to nine");
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(0) == 1 && jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(-500) == 1,
+			"zero and nonsense clamp to one cycle, so dragging never becomes impossible");
+		check(jagex2.client.plugin.builtin.AntiDragPlugin.cyclesFor(1000000) == 100,
+			"...and an hour of holding clamps to a hundred");
+
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			skipped = true;
+			return;
+		}
+		jagex2.client.Client client;
+		jagex2.client.plugin.builtin.AntiDragPlugin plugin =
+			new jagex2.client.plugin.builtin.AntiDragPlugin();
+		Plugin base = plugin;
+		try {
+			client = new jagex2.client.Client();
+			base.attach(new PluginContext(client), new PluginConfig("anti-drag", new PluginStore(null)));
+		} catch (Throwable error) {
+			check(false, "the plugin attaches to a client (" + error + ")");
+			return;
+		}
+		check(client.pluginDragCycles == 5,
+			"a client nobody has touched holds for five cycles (" + client.pluginDragCycles + ")");
+
+		base.startUp();
+		check(client.pluginDragCycles == 10, "starting the plugin raises it to the 200ms default ("
+			+ client.pluginDragCycles + ")");
+
+		// A value typed into the config page has to take effect without toggling the plugin,
+		// which is the whole reason it is re-applied on a tick rather than only at startup.
+		plugin.holdMillis = 600;
+		check(client.pluginDragCycles == 10, "...and changing the setting alone changes nothing yet");
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(0));
+		check(client.pluginDragCycles == 30, "...until the next frame, which picks it up ("
+			+ client.pluginDragCycles + ")");
+
+		plugin.holdMillis = 0;
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(1));
+		check(client.pluginDragCycles == 1, "a zero typed in is clamped on the way through too");
+
+		base.shutDown();
+		check(client.pluginDragCycles == 5,
+			"turning it off leaves the client holding for five again, exactly as an unmodified one does");
 	}
 
 	/**

@@ -69,6 +69,32 @@ def run(*cmd, **kwargs):
     return subprocess.run(list(cmd), capture_output=True, text=True, **kwargs)
 
 
+def source_checks():
+    """The seams a plugin reaches the client through, which only the source can show.
+
+    The Java below proves the plugin writes PluginContext.setDragDelay and that the value lands
+    on the client. What it cannot prove is that the drag handler READS it - a client still
+    carrying the old `QolSettings.on(ANTI_DRAG) ? 10 : 5` would pass every one of those checks
+    and ignore the plugin entirely.
+    """
+    with open(os.path.join(SRC, 'jagex2/client/Client.java'), encoding='utf-8') as f:
+        client = f.read()
+    out = []
+    out.append(('the drag handler reads the field the plugin sets (%d sites)'
+                % client.count('this.objDragCycles >= this.pluginDragCycles'),
+                client.count('this.objDragCycles >= this.pluginDragCycles') == 1))
+    out.append(('...and no copy of the old "on(ANTI_DRAG) ? 10 : 5" is left anywhere',
+                'ANTI_DRAG' not in client))
+    # Written in exactly two places: its declaration, and PluginContext. A third would be the
+    # client arguing with the plugin about a value the plugin is supposed to own.
+    with open(os.path.join(SRC, 'jagex2/client/plugin/PluginContext.java'), encoding='utf-8') as f:
+        context = f.read()
+    out.append(('...and only the plugin seam writes it: %d assignment in Client.java, %d in '
+                'PluginContext' % (client.count('pluginDragCycles ='), context.count('pluginDragCycles =')),
+                client.count('pluginDragCycles =') == 1 and context.count('pluginDragCycles =') == 1))
+    return out
+
+
 def write(path, text):
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
@@ -145,6 +171,14 @@ def main():
             print(r.stderr[-6000:])
             raise SystemExit('run_plugintest: the test does not compile')
 
+        print()
+        print('0. the seams, read out of the source')
+        bad = 0
+        for what, ok in source_checks():
+            print(('  ok   ' if ok else 'FAIL   ') + what)
+            if not ok:
+                bad += 1
+
         settings = os.path.join(work, 'settings')
         os.makedirs(settings)
         # signlink.findcachedir() walks a list of candidate paths and takes the first that
@@ -167,7 +201,7 @@ def main():
         if not lines:
             print(r.stderr[-4000:])
             return 1
-        return 0 if r.returncode == 0 else 1
+        return 0 if r.returncode == 0 and not bad else 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

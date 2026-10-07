@@ -1912,6 +1912,16 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.bj")
 	public int objDragCycles;
+	/**
+	 * Cycles a click must be held before it becomes a drag. The client's own figure, unless the
+	 * Anti-drag plugin (jagex2.client.plugin.builtin.AntiDragPlugin) has raised it.
+	 *
+	 * A FIELD RATHER THAN AN EVENT, for the same reason the roofs toggle used to be one: the
+	 * decision is made in the middle of the input loop, where no event could usefully fire. The
+	 * plugin sets this while it runs and puts it back in shutDown, so a client with the plugin
+	 * off behaves exactly as an unmodified one does - see PluginContext.setDragDelay.
+	 */
+	public int pluginDragCycles = 5;
 
 	@ObfuscatedName("client.cj")
 	public int midiSong;
@@ -4225,13 +4235,10 @@ public class Client extends GameShell implements PixMap.Target {
 
 					this.objDragArea = 0;
 
-					// A click that moves a few pixels while held is a drag after 5 client cycles (100ms) -
-					// Old School's own default - or, with Anti-drag on, after 10 (200ms): long enough that a
-					// fast switch whose mouse is still moving as the button comes up stays a click on the
-					// item, short enough to lay out an inventory. (30, RuneLite's default, made rearranging
-					// switches a chore.) Client settings (F9) turns it off.
-					int dragCycles = QolSettings.on(QolSettings.ANTI_DRAG) ? 10 : 5;
-					if (this.objGrabThreshold && this.objDragCycles >= dragCycles) {
+					// A click that moves a few pixels while held is a drag after this many client
+					// cycles. Five - Old School's own figure, 100ms - unless the Anti-drag plugin
+					// has asked for longer.
+					if (this.objGrabThreshold && this.objDragCycles >= this.pluginDragCycles) {
 						this.hoveredSlotInterfaceId = -1;
 						this.bankTabHovered = -1;
 						this.hoveredSlotPad = false;
