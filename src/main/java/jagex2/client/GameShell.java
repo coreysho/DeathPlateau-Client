@@ -130,6 +130,9 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	private int middleMouseLastY;
 	public int cameraDragDeltaX;
 	public int cameraDragDeltaY;
+	// What this side has already taken off BrowserInput's running totals - see pollBrowserCameraDrag().
+	private int browserCameraLastX;
+	private int browserCameraLastY;
 	public int mouseScrollDelta;
 
 	// Resizable mode. The canvas position of the mouse and of the last press, exactly as AWT gave
@@ -423,6 +426,26 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 		this.redrawScreen = true;
 		this.refresh();
+	}
+
+	/**
+	 * The middle-button drag a browser cannot give AWT, taken off {@link BrowserInput} and folded
+	 * into the same deltas a real one produces. Called once a tick by Client.updateOrbitCamera,
+	 * beside the code that consumes them, so there is one place that turns a drag into rotation.
+	 *
+	 * The page only adds to those totals, so the difference since the last look is exactly what has
+	 * been dragged since - nothing is lost if the page writes while this runs. In a desktop client
+	 * both totals stay 0 and this does nothing at all.
+	 */
+	public void pollBrowserCameraDrag() {
+		int x = BrowserInput.cameraDragX;
+		int y = BrowserInput.cameraDragY;
+		if (x != this.browserCameraLastX || y != this.browserCameraLastY) {
+			this.cameraDragDeltaX += x - this.browserCameraLastX;
+			this.cameraDragDeltaY += y - this.browserCameraLastY;
+			this.browserCameraLastX = x;
+			this.browserCameraLastY = y;
+		}
 	}
 
 	public void mousePressed(MouseEvent e) {
