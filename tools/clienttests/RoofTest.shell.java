@@ -218,7 +218,7 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 13, "thirteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 14, "fourteen settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
 		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),

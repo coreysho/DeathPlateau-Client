@@ -61,8 +61,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.MenuSwapperPlugin",
 		"jagex2.client.plugin.builtin.GroundItemsPlugin",
 		"jagex2.client.plugin.builtin.BoostsPlugin",
-		"jagex2.client.plugin.builtin.StatusBarsPlugin",
-		"jagex2.client.plugin.builtin.SkillsPlugin"
+		"jagex2.client.plugin.builtin.SkillsPlugin",
+		"jagex2.client.plugin.builtin.IdleNotifierPlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */

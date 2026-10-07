@@ -149,7 +149,11 @@ def source_checks(src, settings, swaps):
                 'continue' not in body and 'break' not in body))
     # The default, which is the one place this setting breaks the file's own rule.
     m = re.search(r'private static final boolean\[\] DEFAULTS = \{(.*?)\};', settings, re.S)
-    defaults = [x.strip() for x in m.group(1).replace('\n', '').split(',') if x.strip()]
+    # Comments stripped first: this counts entries by splitting on commas, and a comma inside a
+    # // comment in the array literal reads as another entry. That cost a confusing red build
+    # once, reporting 15 defaults against 14 keys when all three arrays were the same length.
+    body = re.sub(r'//[^\n]*', '', m.group(1))
+    defaults = [x.strip() for x in body.replace('\n', '').split(',') if x.strip()]
     keys = re.search(r'private static final String\[\] KEYS = \{(.*?)\};', settings, re.S).group(1)
     keys = re.findall(r'"([^"]+)"', keys)
     labels = re.findall(r'"([^"]+)"',

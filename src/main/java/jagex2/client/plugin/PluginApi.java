@@ -22,14 +22,16 @@ package jagex2.client.plugin;
  *     means "run it and hope" - which is what the client did for all of them anyway. Never
  *     refused; the {@link LinkageError} path in PluginManager is the only net under it.</dd>
  * <dt>1</dt><dd>Overlays, config items, config lists with a value and a progress bar, sidebar
- *     panels ({@code addPanel}), and the context as of this release: skills, position, the menu
+ *     panels ({@code addPanel}), and the context as it was then: skills, position, the menu
  *     with swapping and left-click, chat messages out, ground item piles, modifier keys, drag
  *     delay, tile and world projection.</dd>
+ * <dt>2</dt><dd>{@code ctx.notify}, {@code ctx.playSound} and {@code ctx.hasSound}.
+ *     <p>
+ *     Note what is NOT here. Alt-drag arrived in the same stretch and did not move the level,
+ *     because a plugin calls nothing for it: overlays became movable underneath them. A level
+ *     only goes up when there is something new to CALL - a level is a promise to a compiler,
+ *     not a changelog.</dd>
  * </dl>
- *
- * When the API next grows - notifications and sound are the first candidates - this becomes 2,
- * the new methods are listed under it, and a plugin that needs them declares
- * {@code apiLevel = 2}. A client at level 1 then refuses it by name instead of breaking.
  */
 public final class PluginApi {
 
@@ -37,7 +39,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 1;
+	public static final int LEVEL = 2;
 
 	private PluginApi() {
 	}

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Mutation test for tools/clienttests/run_skilltest.py.
 
-Breaks Boosts, Status bars and Skills one plausible way at a time and checks run_skilltest
+Breaks Boosts and Skills one plausible way at a time and checks run_skilltest
 notices - and notices by NAMING a check, not by crashing. A test that only goes red because
 something threw is not measuring the thing it claims to.
 
-These three plugins are almost entirely arithmetic, which is the kind of code that is wrong
-quietly: a combat level one too low, a bar a few pixels past its box, an experience curve that
-diverges at level 73. Every mutation below leaves the client compiling and the plugin running.
+Both plugins are almost entirely arithmetic, which is the kind of code that is wrong
+quietly: a combat level one too low, an experience curve that diverges at level 73, a panel that
+lists a skill the game does not have. Every mutation below leaves the client compiling and the plugin running.
 
     python3 tools/clienttests/mutate_skilltest.py [filter]
 """
@@ -19,7 +19,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 BOOSTS = os.path.join(BUILTIN, 'BoostsPlugin.java')
-BARS = os.path.join(BUILTIN, 'StatusBarsPlugin.java')
 SKILLS = os.path.join(BUILTIN, 'SkillsPlugin.java')
 RUNNER = os.path.join(HERE, 'run_skilltest.py')
 
@@ -56,31 +55,6 @@ MUTS = [
     (BOOSTS, 'the current and base levels the wrong way round',
      'int delta = now - base;',
      'int delta = base - now;'),
-
-    # --- Status bars ------------------------------------------------------------------------
-    (BARS, 'a boosted level allowed to fill past the end of its bar',
-     '''		if (value >= max) {
-			return tall;
-		}
-''', ''),
-    (BARS, 'a maximum of zero divided by rather than refused',
-     'if (max <= 0 || value <= 0 || tall <= 0) {',
-     'if (value <= 0 || tall <= 0) {'),
-    (BARS, 'the bar filled from the top, so full and empty look alike',
-     'g.fill(x + 1, y + tall - filled, BAR_W - 2, filled, colour);',
-     'g.fill(x + 1, y, BAR_W - 2, filled, colour);'),
-    (BARS, 'a height past the viewport left unbounded',
-     'return tall > available ? available : tall;',
-     'return tall;'),
-    (BARS, 'a negative height left negative',
-     'int tall = wanted < 8 ? 8 : wanted;',
-     'int tall = wanted;'),
-    (BARS, 'the percentage able to exceed 100',
-     'return value >= max ? 100 : value * 100 / max;',
-     'return value * 100 / max;'),
-    (BARS, 'the prayer bar drawn on top of the hitpoints bar',
-     'this.bar(g, left + BAR_W + GAP, Y, tall,',
-     'this.bar(g, left, Y, tall,'),
 
     # --- Skills: the curve ------------------------------------------------------------------
     # The formula itself. Each of these is a transcription slip that looks right.
@@ -190,7 +164,7 @@ MUTS = [
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (BOOSTS, BARS, SKILLS):
+    for path in (BOOSTS, SKILLS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     muts = [m for m in MUTS if not only or only in m[1]]
