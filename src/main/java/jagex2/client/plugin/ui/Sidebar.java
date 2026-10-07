@@ -9,6 +9,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.Dimension;
 import java.awt.Graphics;
+import java.awt.Insets;
 
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
@@ -33,6 +34,15 @@ import jagex2.client.plugin.PluginManager;
  * in CENTER, so the sidebar costs the game nothing: the canvas keeps its exact 765x503 and the
  * window simply gets wider.
  *
+ * THE RAIL down the outer edge is the way in, as it is in RuneLite: an icon per page, always
+ * visible, and the page itself collapses behind it. Clicking a different icon switches page;
+ * clicking the open one folds the page away and leaves the rail, which is how a player gets the
+ * window back to the size of the game without losing the way back in. F8 and the title bar's
+ * chevron still hide the whole thing, rail included.
+ *
+ * It holds two fixed tabs today. It is built as a list so that a plugin contributing its own
+ * page is a matter of adding to that list rather than of rewriting this.
+ *
  * THREADING. Everything in here runs on the event dispatch thread. Nothing in here touches a
  * plugin directly: reads are of fields that only change between frames, and every write is handed
  * to {@link PluginManager#invokeOnClientThread(Runnable)}. The manager calls back when anything
@@ -52,6 +62,12 @@ public final class Sidebar extends JPanel {
 	private final HubPanel hubPanel;
 	private final java.util.List<Tab> tabs = new java.util.ArrayList<Tab>();
 
+	/** Told when the sidebar's own width changes, so the window can re-fit around it. */
+	private Runnable resizeListener;
+
+	/** Which page is showing, or null while the rail is collapsed to icons alone. */
+	private String openCard;
+
 	public Sidebar(PluginManager manager) {
 		this.manager = manager;
 		this.list = new PluginListPanel(manager, this);
@@ -60,16 +76,16 @@ public final class Sidebar extends JPanel {
 
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.BACKGROUND);
-		this.setPreferredSize(new Dimension(Theme.WIDTH, 0));
 		this.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Theme.SEPARATOR));
 
 		this.pages.setBackground(Theme.BACKGROUND);
+		this.pages.setPreferredSize(new Dimension(Theme.WIDTH, 0));
 		this.pages.add(this.list, CARD_LIST);
 		this.pages.add(this.config, CARD_CONFIG);
 		this.pages.add(this.hubPanel, CARD_HUB);
 		this.add(this.pages, BorderLayout.CENTER);
 
-		this.add(this.buildToolbar(), BorderLayout.NORTH);
+		this.add(this.buildRail(), BorderLayout.EAST);
 		this.list.rebuild();
 		this.show(CARD_LIST);
 
@@ -100,7 +116,12 @@ public final class Sidebar extends JPanel {
 			this.addMouseListener(new MouseAdapter() {
 
 				public void mousePressed(MouseEvent event) {
-					Sidebar.this.show(Tab.this.card);
+					// The open one folds the page away; any other one opens itself.
+					if (Tab.this.selected && Sidebar.this.isPanelOpen()) {
+						Sidebar.this.setPanelOpen(false);
+					} else {
+						Sidebar.this.show(Tab.this.card);
+					}
 				}
 			});
 		}
@@ -111,9 +132,11 @@ public final class Sidebar extends JPanel {
 		}
 
 		private void paintBorder(boolean selected) {
+			// A bar down the inner edge, pointing at the page it opens - the underline this had
+			// while the strip was horizontal reads as nothing at all once the icons are stacked.
 			this.setBorder(BorderFactory.createCompoundBorder(
-				BorderFactory.createMatteBorder(0, 0, 2, 0, selected ? Theme.ACCENT : Theme.DARKER),
-				BorderFactory.createEmptyBorder(6, 10, 4, 10)));
+				BorderFactory.createMatteBorder(0, 2, 0, 0, selected ? Theme.ACCENT : Theme.DARKER),
+				BorderFactory.createEmptyBorder(7, 5, 7, 7)));
 		}
 
 		boolean isSelected() {
@@ -129,28 +152,85 @@ public final class Sidebar extends JPanel {
 		}
 	}
 
-	private Component buildToolbar() {
-		JPanel toolbar = new JPanel(new BorderLayout());
-		toolbar.setBackground(Theme.DARKER);
-		toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.SEPARATOR));
-
-		JPanel strip = new JPanel();
-		strip.setLayout(new javax.swing.BoxLayout(strip, javax.swing.BoxLayout.X_AXIS));
-		strip.setOpaque(false);
-		strip.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 2));
+	private Component buildRail() {
+		JPanel rail = new JPanel();
+		rail.setLayout(new javax.swing.BoxLayout(rail, javax.swing.BoxLayout.Y_AXIS));
+		rail.setBackground(Theme.DARKER);
+		rail.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Theme.SEPARATOR));
+		rail.setPreferredSize(new Dimension(Theme.RAIL_WIDTH, 0));
+		rail.setMinimumSize(new Dimension(Theme.RAIL_WIDTH, 0));
+		rail.setMaximumSize(new Dimension(Theme.RAIL_WIDTH, Integer.MAX_VALUE));
 
 		this.tabs.add(new Tab(Icons.wrench(20, Theme.ACCENT), CARD_LIST, "Plugins"));
 		this.tabs.add(new Tab(Icons.download(20, Theme.ACCENT), CARD_HUB, "Plugin hub"));
 		for (int i = 0; i < this.tabs.size(); i++) {
-			strip.add(this.tabs.get(i));
+			Tab tab = this.tabs.get(i);
+			// BoxLayout stretches anything that lets it, and a stretched icon row leaves the
+			// rail as two tabs sharing its whole height.
+			tab.setAlignmentX(LEFT_ALIGNMENT);
+			tab.setMaximumSize(new Dimension(Theme.RAIL_WIDTH, tab.getPreferredSize().height));
+			rail.add(tab);
 		}
+		rail.add(javax.swing.Box.createVerticalGlue());
+		return rail;
+	}
 
-		toolbar.add(strip, BorderLayout.WEST);
-		return toolbar;
+	// ------------------------------------------------------------------ the page, open or folded
+
+	/** Whether a page is showing beside the rail. */
+	public boolean isPanelOpen() {
+		return this.pages.isVisible();
+	}
+
+	/**
+	 * Folds the page away, or brings it back.
+	 *
+	 * The rail stays either way: collapsing is how a player gets the window back to the width of
+	 * the game while keeping the way back in, which is the whole point of a rail rather than a
+	 * strip along the top of a panel that disappears with it.
+	 */
+	public void setPanelOpen(boolean open) {
+		if (this.pages.isVisible() == open) {
+			return;
+		}
+		this.pages.setVisible(open);
+		if (!open) {
+			this.openCard = null;
+			for (int i = 0; i < this.tabs.size(); i++) {
+				this.tabs.get(i).setSelected(false);
+			}
+		}
+		this.revalidate();
+		this.repaint();
+		if (this.resizeListener != null) {
+			this.resizeListener.run();
+		}
+	}
+
+	/**
+	 * Set by the window so it can re-fit when the page folds away.
+	 *
+	 * A callback rather than this reaching up for its own Window and calling pack(): the window
+	 * has to lower its minimum size BEFORE packing or the pack is clamped at the old width, and
+	 * that ordering is the window's business to know, not the sidebar's.
+	 */
+	public void setResizeListener(Runnable listener) {
+		this.resizeListener = listener;
+	}
+
+	/** Width when the page is folded away, which is the rail and the border beside it. */
+	public Dimension getPreferredSize() {
+		if (!this.pages.isVisible()) {
+			Insets in = this.getInsets();
+			return new Dimension(Theme.RAIL_WIDTH + in.left + in.right, 0);
+		}
+		return super.getPreferredSize();
 	}
 
 	/** Switches tab, and tells the page it is being shown. */
 	private void show(String card) {
+		this.openCard = card;
+		this.setPanelOpen(true);
 		this.cards.show(this.pages, card);
 		for (int i = 0; i < this.tabs.size(); i++) {
 			this.tabs.get(i).setSelected(this.tabs.get(i).card().equals(card));
@@ -169,6 +249,8 @@ public final class Sidebar extends JPanel {
 
 	void showConfig(PluginManager.Entry entry) {
 		this.config.show(entry);
+		this.openCard = CARD_CONFIG;
+		this.setPanelOpen(true);
 		this.cards.show(this.pages, CARD_CONFIG);
 		for (int i = 0; i < this.tabs.size(); i++) {
 			// The config page belongs to the plugin list, so its tab stays lit while it is open.

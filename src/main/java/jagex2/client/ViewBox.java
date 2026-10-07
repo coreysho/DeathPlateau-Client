@@ -164,6 +164,17 @@ public class ViewBox extends JFrame implements TitleBar.Actions {
 			// No sidebar, nothing for the chevron to do, so it is not drawn at all.
 			this.titleBar.setSidebarAvailable(sidebar != null);
 		}
+		if (sidebar instanceof jagex2.client.plugin.ui.Sidebar) {
+			// Folding its page away changes how wide it wants to be, and only the window can
+			// act on that - and only in the order below, minimum first.
+			((jagex2.client.plugin.ui.Sidebar) sidebar).setResizeListener(new Runnable() {
+
+				public void run() {
+					ViewBox.this.applyMinimumSize();
+					ViewBox.this.pack();
+				}
+			});
+		}
 		// Minimum BEFORE pack, always: see setSidebarVisible.
 		this.applyMinimumSize();
 		this.pack();

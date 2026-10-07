@@ -62,8 +62,15 @@ public final class Theme {
 	public static final Font FONT_SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 11);
 	public static final Font FONT_TITLE = new Font(Font.SANS_SERIF, Font.BOLD, 12);
 
-	/** Width of the sidebar. Wide enough for a plugin name and its two buttons, no wider. */
+	/** Width of the sidebar's page area. Wide enough for a plugin name and its two buttons. */
 	public static final int WIDTH = 250;
+
+	/**
+	 * Width of the icon rail down the outer edge, which is additional to WIDTH rather than taken
+	 * out of it - the config pages were already laid out tight at 250 and giving the rail a bite
+	 * of that would start wrapping their labels.
+	 */
+	public static final int RAIL_WIDTH = 34;
 
 	// ------------------------------------------------------------------ the in-game panels
 
