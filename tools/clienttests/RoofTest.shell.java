@@ -235,7 +235,7 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 16, "sixteen settings now (" + QolSettings.COUNT + ")");
+		check(QolSettings.COUNT == 15, "fifteen settings now (" + QolSettings.COUNT + ")");
 		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
 			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
 		// Hide roofs is no longer one of them: it is a plugin, listed in the plugin panel.
@@ -264,12 +264,12 @@ public class RoofTest {
 		c.layout = Layout.fixed();
 		check(c.qolPanelY() == (334 - c.qolPanelHeight()) / 2, "...and the fixed screen where it always was");
 		// the toggle round-trips through the real store
-		// Still worth driving the real store once; XP drops stands in for the one that left.
-		boolean was = QolSettings.on(QolSettings.XP_DROPS);
-		QolSettings.toggle(QolSettings.XP_DROPS);
-		check(QolSettings.on(QolSettings.XP_DROPS) != was, "the switch flips");
-		QolSettings.toggle(QolSettings.XP_DROPS);
-		check(QolSettings.on(QolSettings.XP_DROPS) == was, "...and flips back");
+		// Still worth driving the real store once; chat history stands in for the one that left.
+		boolean was = QolSettings.on(QolSettings.CHAT_HISTORY);
+		QolSettings.toggle(QolSettings.CHAT_HISTORY);
+		check(QolSettings.on(QolSettings.CHAT_HISTORY) != was, "the switch flips");
+		QolSettings.toggle(QolSettings.CHAT_HISTORY);
+		check(QolSettings.on(QolSettings.CHAT_HISTORY) == was, "...and flips back");
 	}
 
 	// ---------------------------------------------------------------- 3b

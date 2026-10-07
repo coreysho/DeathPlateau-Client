@@ -123,6 +123,16 @@ public final class OverlayGraphics {
 		return this.font == null ? 12 : this.font.height;
 	}
 
+	/**
+	 * Draws a sprite with its top-left at x,y. A null sprite draws nothing, so a plugin can pass
+	 * the result of a lookup straight in without testing it first.
+	 */
+	public void sprite(int x, int y, Sprite sprite) {
+		if (sprite != null) {
+			sprite.image.plotSprite(y, x);
+		}
+	}
+
 	/** Solid filled rectangle. */
 	public void fill(int x, int y, int width, int height, int colour) {
 		Pix2D.fillRect(height, y, colour, width, x);

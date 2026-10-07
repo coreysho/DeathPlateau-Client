@@ -99,6 +99,44 @@ public final class PluginContext {
 		return skill < 0 || skill >= this.client.skillExperience.length ? 0 : this.client.skillExperience[skill];
 	}
 
+	/**
+	 * The icon the stats tab uses for a skill, or null when there is none (a skill the cache has
+	 * no art for, or an index out of range).
+	 *
+	 * Asked for by skill rather than by sheet and index on purpose. Which sprite sheet holds
+	 * which skill is knowledge about this cache - researched out of stats.if, and different in
+	 * every revision - and it belongs to the client, not to every plugin that wants to draw a
+	 * skill.
+	 */
+	public Sprite getSkillIcon(int skill) {
+		return Sprite.of(this.client.skillIcon(skill));
+	}
+
+	/**
+	 * Total experience needed to BE the given level: 1 is 0, 2 is 83, 99 is 13,034,431. Levels
+	 * outside 1 to 99 clamp to the ends.
+	 *
+	 * The client's own table is offset by two - its entry 0 is the xp for level 2 - which is the
+	 * sort of thing that is correct once and then wrong in every plugin that copies it. This is
+	 * the question plugins actually ask.
+	 */
+	public int getExperienceForLevel(int level) {
+		if (level <= 1) {
+			return 0;
+		}
+		int[] table = Client.levelExperience;
+		int index = level - 2;
+		if (index >= table.length) {
+			index = table.length - 1;
+		}
+		return table[index];
+	}
+
+	/** Whether the client's own fps counter is on, which an overlay in that corner must dodge. */
+	public boolean isFpsShown() {
+		return Client.displayFps;
+	}
+
 	// ------------------------------------------------------------------ chat
 
 	/**

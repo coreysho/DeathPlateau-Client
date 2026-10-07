@@ -768,18 +768,12 @@ public class Client extends GameShell implements PixMap.Target {
 	// skill's current level/xp uniformly on every single gain across all skills, so the client
 	// just diffs the new xp against what it already had stored and turns any increase into a
 	// drop. No server-side changes needed at all.
-	private static final long XPDROP_FADE_MS = 1500L; // how long a single drop stays up before disappearing (tuned: 3000L -> 600L (too slow) -> 1500L (Corey: "now its a bit too fast lol"))
-	private static final int XPDROP_MAX_VISIBLE = 8; // oldest entries beyond this are dropped outright
 	// The RuneLite-style xp tracker panel (Corey, 2026-09-05: "just like runelite on osrs ... where
 	// you can see the total xp you currently have in the skill and the xp flowing up/down"): the
 	// skill of the most recent gain, that skill's new running total, and when the panel hides again.
 	// Deliberately separate state from the drop list - the panel shows one running total that
 	// survives while individual drops come and go, which is what the earlier inline "+550 (12,345)"
 	// version got wrong by welding the total onto every drop row.
-	private static final long XPTRACKER_FADE_MS = 6000L;
-	private int xpTrackerSkill = -1;
-	private int xpTrackerTotal = 0;
-	private long xpTrackerUntil = 0L;
 
 	// Root cause of Corey's "character/compass seem off-center compared to normal runescape" report:
 	// retail Jagex clients randomize macroCameraX/Z/Angle and macroMinimapAngle/Zoom on login (see
@@ -810,7 +804,6 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int CAMERA_DRAG_YAW_NUM = -3;
 	private static final int CAMERA_DRAG_PITCH_NUM = 3;
 	private static final int CAMERA_DRAG_DIV = 2;
-	private final java.util.ArrayList<XpDrop> xpDrops = new java.util.ArrayList<>();
 	// Guards against a spurious "gained thousands of xp!" drop for every skill at login, when the
 	// server sends each skill's real current xp for the first time against a freshly-zeroed
 	// skillExperience[] array (a fresh Client object has no prior xp to diff against). A skill
@@ -823,7 +816,7 @@ public class Client extends GameShell implements PixMap.Target {
 	// that column's script1op1=stat_level,<skill> text). 18 of the 21 skills use the "staticons"
 	// sheet (indices 0-17); the last row (Runecraft/Slayer/Farming) uses a second sheet,
 	// "staticons2" (indices 0-2), confirmed from stats.if directly rather than assumed.
-	private static final String[] XPDROP_ICON_SHEET = {
+	private static final String[] SKILL_ICON_SHEET = {
 		"staticons", "staticons", "staticons", "staticons", "staticons", "staticons", "staticons", // attack, defence, strength, hitpoints, ranged, prayer, magic
 		"staticons", "staticons", "staticons", "staticons", "staticons", "staticons", "staticons", // cooking, woodcutting, fletching, fishing, firemaking, crafting, smithing
 		"staticons", "staticons", "staticons", "staticons", // mining, herblore, agility, thieving
@@ -831,7 +824,7 @@ public class Client extends GameShell implements PixMap.Target {
 		"staticons2", // construction (stat 21, 2026-09-10) - index 5 of staticons2, same cell stats.if uses
 		"staticons2", // hunter (stat 22, 2026-09-22) - index 4, same cell stats.if uses
 	};
-	private static final int[] XPDROP_ICON_INDEX = {
+	private static final int[] SKILL_ICON_INDEX = {
 		0, 2, 1, 6, 3, 4, 5, // attack, defence, strength, hitpoints, ranged, prayer, magic
 		15, 17, 11, 14, 16, 10, 13, // cooking, woodcutting, fletching, fishing, firemaking, crafting, smithing
 		12, 8, 7, 9, // mining, herblore, agility, thieving
@@ -842,38 +835,6 @@ public class Client extends GameShell implements PixMap.Target {
 		// Hunter needs no new art. Index 3 (a spade) is still spare.
 		4, // hunter
 	};
-
-	private static final class XpDrop {
-		final int skillId;
-		int amount;
-		final int total; // the skill's new running total xp when this drop was created (Corey, 2026-09-04: "just like runelite does ... including showing total xp")
-		long lastUpdate;
-		float displayY = -1f; // eased screen-row offset in rowHeight units; -1 = "not yet placed", set to its spawn row the first time it's drawn so it flows down into position instead of snapping
-
-		XpDrop(int skillId, int amount, int total, long lastUpdate) {
-			this.skillId = skillId;
-			this.amount = amount;
-			this.total = total;
-			this.lastUpdate = lastUpdate;
-		}
-	}
-
-	// Corrected 2026-09-03 (Corey: "i don't want the xp to stack - i want it to flow and
-	// disappear after each drop, like runescapes"): every gain is now always its own new entry,
-	// full stop - no more merging into a same-skill running total. Pushing a new entry in at the
-	// top naturally shifts every existing one down a row (the "flow"), and each entry's own fade
-	// timer is set once here and never touched again, so it disappears on its own fixed schedule
-	// regardless of what else gains xp after it - matching real OSRS's drop-per-gain behaviour
-	// instead of the accumulating-counter version this had before.
-	private void addXpDrop(int skillId, int amount, int total) {
-		this.xpTrackerSkill = skillId;
-		this.xpTrackerTotal = total;
-		this.xpTrackerUntil = System.currentTimeMillis() + XPTRACKER_FADE_MS;
-		this.xpDrops.add(0, new XpDrop(skillId, amount, total, System.currentTimeMillis()));
-		while (this.xpDrops.size() > XPDROP_MAX_VISIBLE) {
-			this.xpDrops.remove(this.xpDrops.size() - 1);
-		}
-	}
 
 	// QoL (Corey, 2026-09-05): a plain game message (type 0) can carry a rank crown via an inline
 	// "@cr1@"/"@cr2@" marker - the same markers the messageSender field already uses for public and
@@ -892,12 +853,6 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 
-	// Called every frame from draw3DEntityElements() - expires any entry whose own fixed
-	// XPDROP_FADE_MS lifetime (set once when it was created in addXpDrop(), never refreshed)
-	// has elapsed, then renders whatever's left as a right-aligned stack of icon+number rows
-	// near the top-right of the viewport (same anchor the ::fpson debug counter uses, offset
-	// below it when that's also on). Newest drop is always at index 0/top, since addXpDrop()
-	// inserts there - so as new drops flow in, older ones are pushed down until they expire.
 	// The last two rows of the panel are not QolSettings switches: they are the window and the draw
 	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
 	// are about this machine's screen and what it can push. Neither is a switch: both step through
@@ -2219,135 +2174,26 @@ public class Client extends GameShell implements PixMap.Target {
 		return false;
 	}
 
-	private void drawXpDrops() {
-		long now = System.currentTimeMillis();
-		for (int i = this.xpDrops.size() - 1; i >= 0; i--) {
-			if (now - this.xpDrops.get(i).lastUpdate >= XPDROP_FADE_MS) {
-				this.xpDrops.remove(i);
-			}
-		}
-		boolean showTracker = this.xpTrackerSkill >= 0 && now < this.xpTrackerUntil;
-		if (!showTracker && this.xpDrops.isEmpty()) {
-			return;
-		}
-		int rightX = this.layout.openW - 5;
-		int y = displayFps ? 68 : 22;
-
-		// The tracker panel: skill icon + that skill's total xp + a bar showing progress to the next
-		// level - the box RuneLite shows above its drops. Separate from the drops themselves, which
-		// stay a bare "+amount".
-		if (showTracker) {
-			// The panel is sized to its contents. A fixed width overflowed as soon as the total got
-			// long - Corey's 13,050,939 spilled out past the left edge and collided with the skill
-			// icon, because the total is right-aligned inside the box.
-			Pix32 panelIcon = this.xpIcon(this.xpTrackerSkill);
-			int panelIconW = panelIcon == null ? 0 : panelIcon.wi;
-			String totalText = formatXpNumber(this.xpTrackerTotal);
-			int totalWidth = this.fontBold12.stringWid(totalText);
-			int boxH = 32;
-			int boxW = 10 + panelIconW + 8 + totalWidth;
-			if (boxW < 96) {
-				boxW = 96;
-			}
-			int boxX = rightX - boxW;
-			Pix2D.fillRectTrans(0x000000, y, boxW, boxH, 165, boxX);
-			Pix2D.drawRect(y, boxH, 0x6F6A5A, boxX, boxW);
-			if (panelIcon != null) {
-				// vertically centred in the space above the progress bar, whatever the icon's height
-				int iconY = y + Math.max(1, (boxH - 8 - panelIcon.hi) / 2);
-				panelIcon.plotSprite(iconY, boxX + 5);
-			}
-			// NB: method243() is itself a right-aligned draw - it does drawString(x - stringWid(text)),
-			// so x is the RIGHT edge of the text, not the left. Subtracting the width here as well
-			// (which this and the original drop code both did) shifted the text a full text-width
-			// further left, which is what pushed the total outside the panel entirely.
-			int totalRight = boxX + boxW - 5;
-			int totalY = y + 18;
-			this.fontBold12.method243(totalText, 0x000000, totalRight + 1, totalY + 1);
-			this.fontBold12.method243(totalText, 0xFFFFFF, totalRight, totalY);
-
-			// levelExperience[L-1] is the xp needed for level L+1 (see its static initialiser and the
-			// stats-tab consumer), so the current level's band runs from levelExperience[L-2] up to
-			// levelExperience[L-1]. Level 1 starts at 0, and 99 has no next level so it reads full.
-			int level = this.skillBaseLevel[this.xpTrackerSkill];
-			int barX = boxX + 4;
-			int barY = y + boxH - 8;
-			int barW = boxW - 8;
-			Pix2D.fillRect(5, barY, 0x201C15, barW, barX);
-			if (level >= 99) {
-				Pix2D.fillRect(5, barY, 0xC8641E, barW, barX);
-			} else if (level >= 1) {
-				int floor = level >= 2 ? levelExperience[level - 2] : 0;
-				int span = levelExperience[level - 1] - floor;
-				if (span > 0) {
-					int done = this.xpTrackerTotal - floor;
-					if (done < 0) {
-						done = 0;
-					}
-					if (done > span) {
-						done = span;
-					}
-					int filled = (int) ((long) barW * (long) done / (long) span);
-					if (filled > 0) {
-						Pix2D.fillRect(5, barY, 0xC8641E, filled, barX);
-					}
-				}
-			}
-			Pix2D.drawRect(barY, 5, 0x000000, barX, barW);
-			y += boxH + 4;
-		}
-
-		// The drops: icon + "+amount", newest at the top, each easing down a row as newer ones push
-		// in above it (Corey: "an actual drop, not just static placement").
-		int rowHeight = 27;
-		for (int i = 0; i < this.xpDrops.size(); i++) {
-			XpDrop drop = this.xpDrops.get(i);
-			float targetRow = i;
-			if (drop.displayY < 0f) {
-				drop.displayY = Math.max(0f, targetRow - 1f);
-			}
-			drop.displayY += (targetRow - drop.displayY) * 0.25f;
-			if (Math.abs(targetRow - drop.displayY) < 0.02f) {
-				drop.displayY = targetRow;
-			}
-			int rowY = y + Math.round(drop.displayY * rowHeight);
-			String text = "+" + drop.amount;
-			int textWidth = this.fontPlain12.stringWid(text);
-			Pix32 icon = this.xpIcon(drop.skillId);
-			int iconWidth = icon != null ? icon.wi : 0;
-			int textY = rowY + 18;
-			// right edge, not left - see the method243() note in the panel block above
-			// black drop-shadow, offset by one pixel, so it stays readable over any scene colour
-			this.fontPlain12.method243(text, 0x000000, rightX + 1, textY + 1);
-			this.fontPlain12.method243(text, 0xFFFF00, rightX, textY);
-			if (icon != null) {
-				icon.plotSprite(rowY, rightX - textWidth - iconWidth - 4);
-			}
-		}
-	}
-
-	private Pix32 xpIcon(int skillId) {
-		if (skillId < 0 || skillId >= XPDROP_ICON_SHEET.length) {
+	/**
+	 * The stats tab's icon for a skill, or null if there is none. Public because the XP drops
+	 * plugin asks for it through PluginContext.getSkillIcon - the tables above are knowledge
+	 * about this cache, so they stay here rather than being copied into a plugin.
+	 */
+	public Pix32 skillIcon(int skillId) {
+		if (skillId < 0 || skillId >= SKILL_ICON_SHEET.length) {
 			return null;
 		}
-		return Component.getImage(XPDROP_ICON_INDEX[skillId], XPDROP_ICON_SHEET[skillId]);
+		try {
+			return Component.getImage(SKILL_ICON_INDEX[skillId], SKILL_ICON_SHEET[skillId]);
+		} catch (Throwable error) {
+			// No image cache yet - asked before the interfaces loaded, or they failed to. "No
+			// icon" is the right answer and the callers all draw nothing for null; throwing here
+			// would instead kill whichever overlay asked, every frame, until it was disabled.
+			// Not logged: this is called once per drop per frame and would flood the log.
+			return null;
+		}
 	}
 
-	// 227731 -> "227,731", matching the grouped total RuneLite's tracker shows.
-	private static String formatXpNumber(int value) {
-		String digits = Integer.toString(value);
-		StringBuilder out = new StringBuilder(digits.length() + 4);
-		int lead = digits.length() % 3;
-		if (lead == 0) {
-			lead = 3;
-		}
-		out.append(digits, 0, lead);
-		for (int i = lead; i < digits.length(); i += 3) {
-			out.append(',');
-			out.append(digits, i, i + 3);
-		}
-		return out.toString();
-	}
 
 
 	@ObfuscatedName("client.yi")
@@ -9508,10 +9354,6 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.plugins != null) {
 			this.plugins.renderOverlays(this.layout.openW, this.layout.openH);
 		}
-		// QoL: XP drop counter, see drawXpDrops() above.
-		if (QolSettings.on(QolSettings.XP_DROPS)) {
-			this.drawXpDrops();
-		}
 		// Drawn last of the viewport overlays so the settings panels sit on top of everything else.
 		if (this.pluginPanelOpen && this.plugins != null) {
 			this.drawPluginPanel();
@@ -11044,14 +10886,10 @@ public class Client extends GameShell implements PixMap.Target {
 				int var103 = this.in.g1_alt2();
 				int var104 = this.in.g1();
 				int var105 = this.in.g4();
-				// QoL: XP drop counter - see addXpDrop() above. Skipped on each skill's first ever
-				// update this session so login's initial xp sync doesn't look like a giant gain.
-				if (this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]) {
-					this.addXpDrop(var103, var105 - this.skillExperience[var103], var105);
-				}
-				// Plugins see every stat change, xp drops on or off - the drops are a display
-				// feature and this is the data. Gained is 0 for login's initial sync, so an xp
-				// tracker does not count an account's lifetime xp the moment someone logs in.
+				// Plugins see every stat change; the XP drops plugin is one of them. Gained is 0
+				// for each skill's first update of the session - login's sync of the whole
+				// account - so nothing reads it as a gain. That guard is here rather than in a
+				// plugin because it is about the packet, not about any one display of it.
 				if (this.plugins != null) {
 					this.plugins.onStatChanged(var103, var104, var105,
 						this.xpDropStatSeen[var103] && var105 > this.skillExperience[var103]

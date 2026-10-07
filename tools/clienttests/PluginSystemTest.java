@@ -10,6 +10,7 @@ import java.util.List;
 import jagex2.client.plugin.event.ChatMessage;
 import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.MenuOptionClicked;
+import jagex2.client.plugin.event.StatChanged;
 
 public class PluginSystemTest {
 
@@ -37,6 +38,9 @@ public class PluginSystemTest {
 		System.out.println();
 		System.out.println("4. the built-in plugins, and the settings they used to be");
 		builtInTests();
+		System.out.println();
+		System.out.println("5. the XP drops plugin draws what it used to");
+		xpDropTests();
 		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
@@ -203,12 +207,13 @@ public class PluginSystemTest {
 		if (manager == null) {
 			return;
 		}
-		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null,
-			"both built-in plugins are found");
+		check(entry(manager, "escape-closes") != null && entry(manager, "hide-roofs") != null
+			&& entry(manager, "xp-drops") != null, "all three built-in plugins are found");
 		check(PluginManager.BUILT_IN_SOURCE.equals(entry(manager, "escape-closes").source),
 			"...and say they came with the client");
 		check(enabled(manager, "escape-closes"), "Escape closes interfaces is on by default, as it was");
 		check(!enabled(manager, "hide-roofs"), "Hide roofs is off by default, as it was");
+		check(enabled(manager, "xp-drops"), "XP drops is on by default, as it was");
 
 		// A player who turned Escape off back when it was a setting.
 		write(qol, "version=1\nesc_close=0\nxp_drops=1\n");
@@ -217,6 +222,13 @@ public class PluginSystemTest {
 		check(manager != null && !enabled(manager, "escape-closes"),
 			"a player who turned Escape off keeps it off");
 		check(manager != null && !enabled(manager, "hide-roofs"), "...and Hide roofs is unaffected");
+
+		// And the one that draws: a player who turned XP drops off keeps it off.
+		write(qol, "version=1\nxp_drops=0\n");
+		plugins.delete();
+		manager = freshManager();
+		check(manager != null && !enabled(manager, "xp-drops"),
+			"a player who turned XP drops off keeps it off");
 
 		// A player who turned Hide roofs ON back when it was a setting.
 		write(qol, "version=1\nroofs_off=1\n");
@@ -277,6 +289,110 @@ public class PluginSystemTest {
 		} catch (Exception error) {
 			check(false, "could not write " + file + ": " + error);
 		}
+	}
+
+	// ---------------------------------------------------------------- 5
+
+	/**
+	 * XP drops moved out of Client.java into a plugin. Pixels are the only honest check that a
+	 * drawing feature survived that, so this binds Pix2D to a buffer, feeds the plugin a gain and
+	 * looks at what lands in the corner it draws in.
+	 *
+	 * No fonts: they come out of the cache, which a headless test has none of. OverlayGraphics
+	 * skips text when it has no font, so what is checked is the tracker box and its progress bar
+	 * - which is enough to prove the overlay is wired up, draws in the right place, and stops
+	 * when it should.
+	 */
+	static void xpDropTests() {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			skipped = true;
+			return;
+		}
+		final int w = 512;
+		final int h = 334;
+		int[] pixels = new int[w * h];
+
+		jagex2.client.plugin.builtin.XpDropsPlugin plugin = new jagex2.client.plugin.builtin.XpDropsPlugin();
+		// Also held as a Plugin: startUp, shutDown and getOverlays are the base class's, and a
+		// subclass in another package does not re-export them.
+		Plugin base = plugin;
+		try {
+			jagex2.client.Client client = new jagex2.client.Client();
+			base.attach(new PluginContext(client), new PluginConfig("xp-drops", new PluginStore(null)));
+			base.startUp();
+		} catch (Throwable error) {
+			check(false, "the plugin starts up (" + error + ")");
+			return;
+		}
+		Overlay overlay = base.getOverlays().isEmpty() ? null : base.getOverlays().get(0);
+		check(overlay != null, "starting up adds an overlay");
+		if (overlay == null) {
+			return;
+		}
+		OverlayGraphics g = new OverlayGraphics(null, null, null);
+
+		check(drawn(overlay, g, pixels, w, h) == 0, "with no xp gained, nothing is drawn");
+
+		plugin.onStatChanged(new StatChanged(0, 50, 101_333, 0));
+		check(drawn(overlay, g, pixels, w, h) == 0,
+			"a stat change that gained nothing - login's sync - draws nothing");
+
+		plugin.onStatChanged(new StatChanged(0, 50, 101_433, 100));
+		int painted = drawn(overlay, g, pixels, w, h);
+		check(painted > 0, "a real gain draws the tracker (" + painted + " pixels)");
+		check(rightmostPainted(pixels, w, h) > w / 2, "...in the right-hand half of the viewport");
+		check(topmostPainted(pixels, w, h) < h / 2, "...and the top half: the corner it has always used");
+
+		// Every row's fade is set once when it is created and never refreshed, so waiting is the
+		// only way to see it expire - and the whole feature is that they go away on their own.
+		try {
+			Thread.sleep(1700);
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+		}
+		plugin.showTracker = false;         // the tracker box outlives a drop; this is about drops
+		check(drawn(overlay, g, pixels, w, h) == 0, "a drop is gone 1.7s later, without being touched");
+
+		base.shutDown();
+		check(base.getOverlays().size() == 1, "shutting down leaves the manager to clear overlays");
+	}
+
+	/** Renders into a cleared buffer and returns how many pixels were painted. */
+	static int drawn(Overlay overlay, OverlayGraphics g, int[] pixels, int w, int h) {
+		java.util.Arrays.fill(pixels, 0);
+		jagex2.graphics.Pix2D.bind(w, h, pixels);
+		g.reset(w, h);
+		overlay.render(g);
+		int count = 0;
+		for (int i = 0; i < pixels.length; i++) {
+			if (pixels[i] != 0) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	static int rightmostPainted(int[] pixels, int w, int h) {
+		for (int x = w - 1; x >= 0; x--) {
+			for (int y = 0; y < h; y++) {
+				if (pixels[y * w + x] != 0) {
+					return x;
+				}
+			}
+		}
+		return -1;
+	}
+
+	static int topmostPainted(int[] pixels, int w, int h) {
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				if (pixels[y * w + x] != 0) {
+					return y;
+				}
+			}
+		}
+		return h;
 	}
 
 	// ---------------------------------------------------------------- 3
