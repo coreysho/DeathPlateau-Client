@@ -119,6 +119,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.Vb")
 	public boolean field196 = false;
+	/**
+	 * WHERE THE LAST CACHE FETCH WAS DIALLED, set by openUrl in whichever branch it took. The
+	 * branch is the thing a failure report needs and the thing it cannot see: field196 flips on
+	 * every failure, so two attempts in a row go to two different places. Set before the connect,
+	 * so a fetch that never completes still names its address.
+	 */
+	public String lastFetchFrom = "(nothing fetched yet)";
 
 	@ObfuscatedName("client.mc")
 	public int macroMinimapAngleModifier = 2;
@@ -1385,33 +1392,209 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
 	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
 	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
-	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "death-plateau.playit.plus");
-	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "80"));
+	// A RAW TCP TUNNEL, NOT THE SHARED HTTP EDGE. death-plateau.playit.plus is a playit HTTP(S)
+	// tunnel: its edge terminates and inspects HTTP, and it answered this client's own cache fetch
+	// with 403 while serving browsers the same bytes - a player sat on "connection problem" for a
+	// day over it, and the owner never saw it because a LAN launch passes lostcity.host and never
+	// goes near playit. A .tun.ply.gg tunnel forwards bytes and has no opinion about them, which
+	// is what a 377 client needs: getJagCrc does a fixed 40-byte readFully and cannot report an
+	// interstitial, a redirect or a refusal as anything but four fixed words. The webclient keeps
+	// the HTTP edge - see WEB_URL - so BOTH tunnels have to be up.
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
+	/**
+	 * The port JAGGRAB is served on, or 0 for "this client cannot use JAGGRAB".
+	 *
+	 * JAGGRAB is the 2004 protocol for fetching cache files: a plain socket, "JAGGRAB /name", and
+	 * the bytes come back. The client alternates between it and HTTP on every retry, flipping
+	 * field196 - see openUrl, getJagCrc and getJagFile.
+	 *
+	 * IT USED TO BE HARDCODED TO 43595 ON SERVER_HOST, and that was wrong in two ways at once.
+	 * 43595 is the port the server listens on at home, which is not a port any tunnel forwards,
+	 * and SERVER_HOST is the GAME host - JAGGRAB is a web-server protocol and belongs with the
+	 * web host. On the LAN both mistakes cancel out, because there SERVER_HOST is the server and
+	 * 43595 is real, which is why this went unnoticed: every player coming in over the tunnels
+	 * had half of every cache retry fail before it started, doubling the backoff twice as fast
+	 * and printing "connection problem" on attempts where HTTP would have worked.
+	 *
+	 * So it is off unless there is somewhere real to send it: the server's own port when the
+	 * client is pointed straight at the server, or whatever lostcity.jaggrabport says. Off, every
+	 * retry is HTTP, which is the one transport a tunnel actually carries.
+	 *
+	 * AND "POINTED AT THE SERVER" IS NOT THE SAME AS "TOLD A HOST". lostcity.host given used to
+	 * be enough on its own, which turned JAGGRAB on for anyone who pointed it at a tunnel
+	 * address - a reasonable thing to do, and the exact configuration the bug above describes.
+	 * It was found by testing the public path from the server's own desk: that launch logged
+	 * "jaggrab carolyn-fever.tun.ply.gg:43595", a port nothing forwards. It cost nothing there
+	 * only because field196 starts false, so the HTTP attempt goes first and succeeded; one
+	 * hiccup would have flipped it into the same alternation. directHost below is the difference.
+	 */
+	public static final int JAGGRAB_PORT = jaggrabPort(setting("lostcity.jaggrabport", "LOSTCITY_JAGGRABPORT"),
+		HOST_GIVEN && directHost(SERVER_HOST));
+
+	/**
+	 * Which port JAGGRAB should use. Pure, so the rule can be tested without a network.
+	 *
+	 * An explicit setting always wins, including an explicit 0 to turn it off. Otherwise it is
+	 * the server's own 43595 when the client is talking to the server directly, and nothing at
+	 * all when anything is forwarding - there is no JAGGRAB tunnel, and pretending there is costs
+	 * a failed connection per retry. Anything unparseable is off rather than a crash at class
+	 * load. See directHost for how "directly" is decided.
+	 */
+	static int jaggrabPort(String given, boolean direct) {
+		if (given != null) {
+			try {
+				int port = Integer.parseInt(given.trim());
+				return port > 0 && port <= 65535 ? port : 0;
+			} catch (RuntimeException notANumber) {
+				return 0;
+			}
+		}
+		return direct ? 43595 : 0;
+	}
+
+	/**
+	 * Whether this host is the server itself, rather than something that forwards to it.
+	 *
+	 * Only the direct case has the server's own 43595 behind it. A tunnel, a reverse proxy or a
+	 * CDN forwards the ports it was told to forward and nothing else, so assuming 43595 is there
+	 * is assuming a tunnel nobody made.
+	 *
+	 * Nothing in a hostname says "I forward", so this answers the question it can answer: is the
+	 * address unambiguously on this machine or this network? A loopback or private address, a
+	 * bare machine name with no dots in it, an mDNS or internal suffix, a tailnet name - those
+	 * reach the server directly and no middlebox can be in the way. Everything else is treated as
+	 * forwarded, which is the safe direction to be wrong in: being wrong here costs the JAGGRAB
+	 * half of a retry alternation that only matters once HTTP has already failed, while being
+	 * wrong the other way is the bug that kept a player off the server. A server genuinely
+	 * reachable at a public name can say so with lostcity.jaggrabport=43595.
+	 *
+	 * Pure, so the rule is tested as one, the way jaggrabPort is.
+	 */
+	static boolean directHost(String host) {
+		if (host == null) {
+			return false;
+		}
+		String name = host.trim().toLowerCase();
+		if (name.length() == 0) {
+			return false;
+		}
+		// An IPv6 literal, with or without the brackets a URL would put round it.
+		if (name.startsWith("[")) {
+			name = name.substring(1, name.endsWith("]") ? name.length() - 1 : name.length());
+		}
+		if (name.indexOf(':') >= 0) {
+			// Loopback, link-local and unique-local only; a routable v6 address is somebody's
+			// public address and may well have something in front of it.
+			return name.equals("::1") || name.equals("0:0:0:0:0:0:0:1")
+				|| name.startsWith("fe80:") || name.startsWith("fc") || name.startsWith("fd");
+		}
+		if (name.equals("localhost")) {
+			return true;
+		}
+		// A name with no dot in it cannot be a public one: it is a machine on this network.
+		if (name.indexOf('.') < 0) {
+			return true;
+		}
+		if (name.endsWith(".local") || name.endsWith(".lan") || name.endsWith(".internal")
+			|| name.endsWith(".home.arpa") || name.endsWith(".ts.net")) {
+			return true;
+		}
+		return privateIp(name);
+	}
+
+	/**
+	 * Whether this is an IPv4 literal that cannot be routed in from outside - so nothing can be
+	 * forwarding it. Returns false for anything that is not four numbers, including every
+	 * hostname, because the question only applies to literals.
+	 */
+	private static boolean privateIp(String name) {
+		String[] parts = name.split("\\.");
+		if (parts.length != 4) {
+			return false;
+		}
+		int[] octet = new int[4];
+		for (int i = 0; i < 4; i++) {
+			try {
+				octet[i] = Integer.parseInt(parts[i]);
+			} catch (RuntimeException notANumber) {
+				return false;
+			}
+			if (octet[i] < 0 || octet[i] > 255) {
+				return false;
+			}
+		}
+		if (octet[0] == 10 || octet[0] == 127) {
+			return true;
+		}
+		if (octet[0] == 192 && octet[1] == 168) {
+			return true;
+		}
+		if (octet[0] == 172 && octet[1] >= 16 && octet[1] <= 31) {
+			return true;
+		}
+		// 100.64.0.0/10, the carrier-grade NAT range, which is where Tailscale puts its addresses.
+		if (octet[0] == 100 && octet[1] >= 64 && octet[1] <= 127) {
+			return true;
+		}
+		// 169.254.0.0/16, link-local.
+		return octet[0] == 169 && octet[1] == 254;
+	}
+
+	/**
+	 * Whether the JAGGRAB half of the retry alternation may be used at all.
+	 *
+	 * Never in a browser: there is no TCP there, and the one WebSocket the page gives us is the
+	 * game stream, which would make "JAGGRAB /title" the first thing the server reads from a
+	 * login connection.
+	 */
+	static boolean jaggrabUsable(int port, String wsUrl) {
+		return port > 0 && wsUrl == null;
+	}
+
 	// IN A BROWSER THERE IS NO TCP. lostcity.ws is set only by the page that runs this client under
 	// CheerpJ (Engine-TS serves it at /rs2.cgi), and it names one WebSocket URL - the server's web
 	// port, which already carries both streams, because the first byte a client sends is what tells
 	// the server whether it is a login or an update connection. Unset anywhere else, so the desktop
 	// client below is the client it has always been.
 	public static final String WS_URL = setting("lostcity.ws", "LOSTCITY_WS");
-	// THE WHOLE URL THE CACHE COMES FROM, scheme and all. WEB_HOST/WEB_PORT below build an http://
-	// one, which is right for a plain tunnel and wrong the moment the server is behind TLS: a page
-	// served over https cannot fetch http, the browser blocks it as mixed content, and the client
-	// sits on "Loading title screen" with nothing to say why. The page passes its own origin here
-	// (Engine-TS serves it), so the browser client follows whatever address it was opened on; a
-	// desktop launch can set -Dlostcity.weburl=https://... for the same reason.
-	// World 1's web address, and the default only when nothing more specific was given. http, not
-	// https: playit does not terminate TLS - the tunnel hands 443 straight to the origin, and the
-	// origin is this server's plain HTTP. Putting a certificate in front of it is a Caddy away and
-	// changes one word here, which is the point of taking a whole URL rather than a host and port.
-	// The rest of it: a dev-world
-	// launch passes lostcity.webhost/webport (the launcher does, for its own tunnel) and a LAN launch
-	// passes lostcity.host, and either of those has to win - a dev client fetching World 1's cache is
-	// the stale-config trap signlink's storeid comment describes.
+	// THE WHOLE URL THE CACHE COMES FROM, scheme and all, for the cases a host and a port cannot
+	// say. A page served over https cannot fetch http - the browser blocks it as mixed content
+	// before the request leaves - so the browser client needs an address with a scheme on it, and
+	// the page it is served from is the only thing that knows which. Engine-TS's rs2.cgi passes
+	// it. A desktop launch can set -Dlostcity.weburl=https://... for the same reason.
+	//
+	// THE TWO CLIENTS WANT DIFFERENT ADDRESSES, which is why this is not one default:
+	//
+	//   - the browser keeps the HTTP edge it is served from. WS_URL is set only by that page, so
+	//     it is what tells the two apart, and the browser's default here is deliberately left
+	//     exactly as it was: an unverified change to it breaks the webclient for everyone, and
+	//     public/rs2.cgi is read off disk at runtime rather than committed, so this source cannot
+	//     see whether the page passes weburl or leans on this.
+	//   - the desktop takes no default at all, so WEB_HOST and WEB_PORT above decide - one place
+	//     for the tunnel, no second copy of the host to drift out of step with it.
+	//
+	// A dev-world launch passes lostcity.webhost/webport (the launcher does, for its own tunnel)
+	// and a LAN launch passes lostcity.host; either has to win, because a dev client fetching
+	// World 1's cache is the stale-config trap signlink's storeid comment describes.
 	private static final boolean WEBHOST_GIVEN = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null
 		|| setting("lostcity.webport", "LOSTCITY_WEBPORT") != null || HOST_GIVEN;
 	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL") != null
 		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
-		: (WEBHOST_GIVEN ? null : "http://death-plateau.playit.plus");
+		: (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);
+
+	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
+	// A diagnostic that names a different host than the one the client actually dials is worse
+	// than no diagnostic at all, so there is one expression here and both callers read it.
+	public static String webAddress() {
+		return WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT;
+	}
+
+	// THE GAME'S ADDRESS, likewise. In a browser there is no host and port at all - one WebSocket
+	// URL carries both streams - so this says whichever of the two this build is using.
+	public static String gameAddress() {
+		return WS_URL != null ? WS_URL : SERVER_HOST + ":" + GAME_PORT;
+	}
 
 	// --- QoL additions (Corey, 2026-09-01): Tab-to-reply, space-to-continue, Escape-to-close,
 	// middle-mouse camera drag, scroll-wheel zoom, shift-click drop. See handleInputKey(),
@@ -1571,6 +1754,28 @@ public class Client extends GameShell implements PixMap.Target {
 	public static int cyclelogic1;
 
 	@ObfuscatedName("client.Gd")
+	/**
+	 * The tile under the cursor, as the last frame's draw resolved it, or -1 for none.
+	 *
+	 * HOW THIS WORKS, because it is not obvious. The scene has exactly one "what is at this
+	 * screen point" slot - World3D.method312 arms it, the next draw answers it into
+	 * World3D.clickTileX/Z - and the client already uses that slot for walk-here. A second
+	 * caller cannot just borrow it: whatever lands in clickTileX is read a frame later by the
+	 * walk code, so a plugin asking what is under the cursor would WALK THE PLAYER THERE.
+	 *
+	 * So the slot is shared with a flag saying whose answer is coming. The plugin's request is
+	 * only armed when nothing else has armed one that frame, the answer is taken before the walk
+	 * code can see it, and the click path clears the flag the moment it arms its own - without
+	 * that last part, clicking the ground while a plugin was hovering would have its walk
+	 * swallowed, which is the failure worth testing for.
+	 */
+	public int hoverTileX = -1;
+
+	public int hoverTileZ = -1;
+
+	/** True while an armed pick belongs to the plugin system rather than to walk-here. */
+	public boolean hoverPickPending;
+
 	public int baseX;
 
 	@ObfuscatedName("client.Hd")
@@ -2346,6 +2551,13 @@ public class Client extends GameShell implements PixMap.Target {
 			// which wasted a round. Any log can now answer it on its own first line.
 			DevLog.log("SESSION", "diagnostics: npcmodel, animframe, offscene");
 
+			// WHERE THIS CLIENT IS DIALLING. getJagCrc() reports a failed cache fetch as
+			// "connection problem" and never says which address it could not reach, so a player's log
+			// could not tell a dead tunnel from a client pointed at the wrong host - and the two want
+			// opposite fixes. Every log now answers it before the first frame.
+			DevLog.log("SESSION", "game " + gameAddress() + "  cache " + webAddress() + "  jaggrab "
+				+ (jaggrabUsable(JAGGRAB_PORT, WS_URL) ? WEB_HOST + ":" + JAGGRAB_PORT : "off"));
+
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
 				portOffset = Integer.parseInt(args[1]);
@@ -2447,7 +2659,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// default to the homelab server so a plain launch just connects; override with
 				// -Dlostcity.host=/-Dlostcity.webport= (or LOSTCITY_HOST/LOSTCITY_WEBPORT env vars)
 				// to point this build at some other server instead (e.g. local same-machine dev).
-				return new URL(WEB_URL != null ? WEB_URL : "http://" + WEB_HOST + ":" + WEB_PORT);
+				return new URL(webAddress());
 			}
 		} catch (Exception var1) {
 		}
@@ -2477,7 +2689,11 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.b(Ljava/lang/String;)Ljava/io/DataInputStream;")
 	public DataInputStream openUrl(String arg0) throws IOException {
-		if (this.field196) {
+		// field196 alternates on every failed retry, so this branch is half of every cache fetch
+		// the client makes - and it is skipped entirely when there is nowhere to send JAGGRAB.
+		// See JAGGRAB_PORT for what that cost before.
+		if (this.field196 && jaggrabUsable(JAGGRAB_PORT, WS_URL)) {
+			this.lastFetchFrom = "jaggrab " + WEB_HOST + ":" + JAGGRAB_PORT + "/" + arg0;
 			if (this.field520 != null) {
 				try {
 					this.field520.close();
@@ -2485,15 +2701,19 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 				this.field520 = null;
 			}
-			this.field520 = this.openSocket(43595);
+			// WEB_HOST, not SERVER_HOST: this is the web server's protocol, and the two are
+			// different machines the moment anything is tunnelled.
+			this.field520 = new Socket(InetAddress.getByName(WEB_HOST), JAGGRAB_PORT);
 			this.field520.setSoTimeout(10000);
 			InputStream var2 = this.field520.getInputStream();
 			OutputStream var3 = this.field520.getOutputStream();
 			var3.write(("JAGGRAB /" + arg0 + "\n\n").getBytes());
 			return new DataInputStream(var2);
 		} else if (signlink.mainapp == null) {
+			this.lastFetchFrom = webAddress() + "/" + arg0;
 			return new DataInputStream((new URL(this.getCodeBase(), arg0)).openStream());
 		} else {
+			this.lastFetchFrom = "applet /" + arg0;
 			return signlink.openurl(arg0);
 		}
 	}
@@ -3130,6 +3350,17 @@ public class Client extends GameShell implements PixMap.Target {
 			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
 				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
 				this.layout.openW, this.layout.openH);
+			// Asked for only while a plugin is actually reading it, and only when nothing else
+			// has armed the scene's single pick slot this frame. The answer arrives in the next
+			// frame's updateGame, which is as fast as this scene can answer the question at all.
+			if (this.ingame && this.plugins.wantsHoverTile() && !World3D.field1044
+				&& this.mouseInViewport()) {
+				this.scene.method312(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY);
+				this.hoverPickPending = true;
+			} else if (!this.mouseInViewport()) {
+				this.hoverTileX = -1;
+				this.hoverTileZ = -1;
+			}
 		}
 	}
 
@@ -4401,6 +4632,9 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
+			// A pick the plugin system asked for, taken before the walk code below can see it.
+			this.takeHoverPick();
+
 			if (World3D.clickTileX != -1) {
 				int x = World3D.clickTileX;
 				int z = World3D.clickTileZ;
@@ -5335,6 +5569,46 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Takes a scene pick that belongs to a plugin, so the walk code never sees it.
+	 *
+	 * THE WHOLE RISK OF SHARING THE PICK SLOT IS IN THIS METHOD. Left in place, a pick a plugin
+	 * asked for is read a few lines later as a click on the ground and the player walks to
+	 * wherever the cursor happened to be. Taken when it was NOT a plugin's, a real click to walk
+	 * is swallowed and the player stands still.
+	 *
+	 * Which it is comes from hoverPickPending, which the click path clears the moment it arms
+	 * its own pick. Returns whether one was taken, which is how the test tells the two cases
+	 * apart without running a game loop.
+	 */
+	public boolean takeHoverPick() {
+		if (!this.hoverPickPending || World3D.clickTileX == -1) {
+			return false;
+		}
+		this.hoverTileX = World3D.clickTileX;
+		this.hoverTileZ = World3D.clickTileZ;
+		World3D.clickTileX = -1;
+		World3D.clickTileZ = -1;
+		this.hoverPickPending = false;
+		return true;
+	}
+
+	/** The cursor's x in viewport coordinates - the space overlays draw in. */
+	public int viewportMouseX() {
+		return super.mouseX - this.layout.vpX;
+	}
+
+	public int viewportMouseY() {
+		return super.mouseY - this.layout.vpY;
+	}
+
+	/** Whether the cursor is over the game view at all, rather than a panel or outside the window. */
+	public boolean mouseInViewport() {
+		int x = this.viewportMouseX();
+		int y = this.viewportMouseY();
+		return x >= 0 && y >= 0 && x < this.layout.openW && y < this.layout.openH;
 	}
 
 	@ObfuscatedName("client.h(B)V")
@@ -12021,6 +12295,9 @@ public class Client extends GameShell implements PixMap.Target {
 			} else {
 				this.scene.method312(super.mouseClickX - this.layout.vpX, super.mouseClickY - this.layout.vpY);
 			}
+			// This pick is the player's, not a plugin's. Saying so is what stops the answer
+			// being taken by the hover consumer above and the walk never happening.
+			this.hoverPickPending = false;
 		}
 		if (var5 == 903) {
 			// OPHELDU
@@ -15796,6 +16073,23 @@ public class Client extends GameShell implements PixMap.Target {
 		Component.unloadCom(arg1);
 	}
 
+	/**
+	 * WHY A CACHE FETCH FAILED, in the log and not only on the loading screen. getJagCrc()'s four
+	 * catches collapse into four fixed words, and "connection problem" is all three of a name that
+	 * does not resolve, a port that refuses and a connect that times out - which want three
+	 * different fixes, none of them the same as each other. The exception's own class and message
+	 * name which one it was, and lastFetchFrom names the address it was dialling.
+	 */
+	private void cacheFetchFailed(Exception why) {
+		DevLog.log("SESSION", fetchFailure(this.lastFetchFrom, why));
+	}
+
+	/** The line itself, as a pure function, because the wording is the part a test can check. */
+	static String fetchFailure(String from, Exception why) {
+		return "cache fetch failed: " + from + " - " + why.getClass().getName()
+			+ (why.getMessage() == null ? "" : ": " + why.getMessage());
+	}
+
 	@ObfuscatedName("client.k(Z)V")
 	public void getJagCrc() {
 		int var2 = 5;
@@ -15804,8 +16098,9 @@ public class Client extends GameShell implements PixMap.Target {
 		while (this.jagChecksum[8] == 0) {
 			String var5 = "Unknown problem";
 			this.drawProgress(20, "Connecting to web server");
+			String path = "crc" + (int) (Math.random() * 9.9999999E7D) + "-" + 377;
 			try {
-				DataInputStream var6 = this.openUrl("crc" + (int) (Math.random() * 9.9999999E7D) + "-" + 377);
+				DataInputStream var6 = this.openUrl(path);
 				Packet var7 = new Packet(new byte[40]);
 				var6.readFully(var7.data, 0, 40);
 				var6.close();
@@ -15824,12 +16119,15 @@ public class Client extends GameShell implements PixMap.Target {
 			} catch (EOFException var14) {
 				var5 = "EOF problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var14);
 			} catch (IOException var15) {
 				var5 = "connection problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var15);
 			} catch (Exception var16) {
 				var5 = "logic problem";
 				this.jagChecksum[8] = 0;
+				this.cacheFetchFailed(var16);
 				if (!signlink.reporterror) {
 					return;
 				}

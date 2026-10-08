@@ -269,6 +269,9 @@ public class MyToolPlugin extends Plugin {
 | 0 | Does not say. The default, and never refused - every plugin written before levels existed. |
 | 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as it was then. |
 | 2 | `ctx.notify`, `ctx.playSound`, `ctx.hasSound`. |
+| 3 | The cursor: `ctx.getMouseX`, `ctx.getMouseY`, `ctx.getHoverTileX`, `ctx.getHoverTileZ`, `ctx.sceneToWorldX`, `ctx.sceneToWorldZ`. |
+| 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
+| 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -285,6 +288,46 @@ shows it greyed out with the reason. A jar that declares nothing still gets caug
 `LinkageError` out of the constructor or `startUp` is reported as "built for a different client"
 rather than as a mystery - but the net only fires once the jar is already on the player's disk.
 The index's `clientApi` is what keeps it from getting there.
+
+## Settings a player can edit
+
+A `@ConfigItem` field gets an editor chosen by its type:
+
+| Field | Editor |
+| --- | --- |
+| `boolean` | a switch |
+| `int` | a numeric box |
+| `String` | a text box |
+| `String` with `colour = true` | a swatch that opens a colour picker |
+| `String` with `choices = {...}` | a drop-down of exactly those values |
+
+```java
+@ConfigItem(keyName = "colour", name = "Marker colour", colour = true)
+public String colour = "00FF00";
+
+@ConfigItem(keyName = "tagPosition", name = "Where the name sits",
+    choices = { "Above", "At feet" })
+public String tagPosition = "Above";
+```
+
+**A colour is still stored as hex**, `"00FF00"` and not a packed int. That is what makes
+`colour = true` safe to add to a setting that already shipped: the file keeps its contents, every
+`PluginConfig.parseColour` call keeps working, and a player who typed a colour by hand keeps what
+they typed. Only the editor changes. Read it with `PluginConfig.parseColour`, which is the one
+place that conversion lives - never write your own, because the swatch and your drawing have to
+agree.
+
+**Nothing in a settings file may make a render throw.** `parseColour` answers yellow for anything
+that is not six hex characters - a typo, a pasted `#`, an empty string from a release where the
+field did not exist. Yellow rather than black, because black on the scene layer reads as "the text
+did not draw" while yellow reads as "something is set wrong", which it is.
+
+**A drop-down keeps a value it does not recognise.** If a later release drops a choice, the panel
+still offers what the player has alongside the real ones. Silently rewriting someone's settings
+because they opened a panel is worse than showing them something odd.
+
+Longer lists - rules per item, things a player adds and removes - are a `ConfigList` instead; see
+*A page of your own*. The panel scrolls, so a list is not capped by the height of anything.
 
 ## Telling the player something
 
@@ -312,6 +355,82 @@ this server ships. `hasSound` is there so a plugin can check rather than guess, 
 Idle notifier's page has a Test row for finding one by ear. An id with no sound behind it is dropped and
 logged: the client's audio loop reports a playback failure **to the server**, so an unchecked id
 would be a plugin causing a packet to be sent, which is the one thing this API does not do.
+
+## The cursor
+
+```java
+int x = this.ctx.getMouseX();        // viewport coordinates, or -1 when off the game view
+int y = this.ctx.getMouseY();
+int tx = this.ctx.getHoverTileX();   // the scene tile under it, or -1
+int tz = this.ctx.getHoverTileZ();
+int worldX = this.ctx.sceneToWorldX(tx);   // for anything that must outlive the loaded area
+```
+
+**The hovered tile is one frame behind, and costs nothing until you read it.** The scene answers
+"what is at this screen point" while it draws, so the question has to be asked before a frame and
+read after it - twenty milliseconds at fifty frames a second. Answering it is a hit test per tile,
+which the client only ever paid on a click, so **reading it is what asks for the next answer**.
+There is nothing to subscribe to: read it every frame you want it, stop reading and the cost goes
+away within about a fifth of a second.
+
+**Save world coordinates, not scene ones.** Scene coordinates are relative to whichever chunk of
+the map is loaded, so the same tile is a different pair of numbers after you walk far enough for
+the client to reload around you. A marker saved in scene coordinates comes back pointing somewhere
+else.
+
+### Why the tile is deferred rather than asked for directly
+
+The scene has exactly **one** "what is at this screen point" slot, and the client already uses it
+for walk-here: whatever lands in it is read a frame later by the walk code. A plugin borrowing it
+naively would walk the player to wherever the cursor happened to be. So the slot is shared with a
+flag saying whose answer is coming - a plugin's request is only armed when nothing else has armed
+one, the answer is taken before the walk code can see it, and the click path disowns the flag the
+moment it arms its own pick. Without that last part, clicking the ground while a plugin was
+hovering would have its walk swallowed.
+
+None of that is a plugin's problem, and none of it is reachable from one. It is written down
+because it is the reason this reads as a value rather than as a method you call with a point.
+
+## Who else is in the scene
+
+`ctx.getNpcs()` and `ctx.getPlayers()` hand back `Actor`s, nearest first. An Actor is a name, a
+combat level, an npc id, a position, a size, and whether it is you:
+
+```java
+for (Actor npc : ctx.getNpcs()) {
+    if (!npc.name.equalsIgnoreCase("Goblin")) {
+        continue;
+    }
+    if (ctx.project(npc.centreX(), npc.centreZ(), 230)) {
+        g.textCentred(ctx.getProjectedX(), ctx.getProjectedY(), npc.name, 0x00FF00);
+    }
+}
+```
+
+**Two positions, and the difference matters.** `sceneX`/`sceneZ` are fine coordinates, 128 to a
+tile, and are where the actor is *mid-step* - `ctx.project` takes these, and a name tag drawn from
+them follows a walking npc smoothly. `sceneTileX`/`sceneTileZ` are the tile it stands on, for
+`ctx.projectTile`; a label drawn from those snaps tile to tile, which is right for an outline and
+wrong for a tag.
+
+**Use `centreX()`/`centreZ()` for anything bigger than one tile.** A large npc is anchored at its
+south-west tile, so drawing at `sceneX` puts the label on that corner rather than over the thing.
+That is the bug every first boss overlay has.
+
+**It is a snapshot, not a handle.** Everything is copied on the game thread, and an Actor holds no
+reference to the entity behind it - so there is nothing on it to click, follow or attack. That is
+the same line everything else here is drawn on: a plugin draws and reads, the client owns input
+and the socket. It is also a correctness matter rather than only a design one: the client's npc
+config is a 20-entry round-robin cache that recycles once more than 20 npc types are on screen, so
+a plugin holding a live reference would eventually be reading a different npc than the one it
+asked about.
+
+`ctx.getPlayers()` includes you, with `self` set, because the client keeps the local player apart
+from the others and a plugin drawing a marker under its own feet would otherwise have to rebuild
+half an Actor by hand. Filter on the flag when you want everyone else.
+
+Both allocate and walk the scene, so call them once a frame and walk the result. Sort a list you
+filtered back into order with `Actor.compareByDistance`.
 
 ## Moving overlays
 
@@ -350,7 +469,7 @@ left press on something a screen overlay drew.
 
 ## What comes with the client
 
-Eight plugins ship built in. All of them were features of the client before they were plugins, or
+Eleven plugins ship built in. All of them were features of the client before they were plugins, or
 are small enough that a jar of their own would be more ceremony than code:
 
 | Plugin | On by default | What it does |
@@ -363,9 +482,12 @@ are small enough that a jar of their own would be more ceremony than code:
 | Boosts | no | Which stats are boosted or drained, and by how much. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
 | Idle notifier | no | Says when you stop gaining experience. |
+| Mouse highlight | no | What a left click would do, next to the cursor. |
+| Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
+| Npc indicators | no | Marks the npcs you name, by tile and by name tag. |
 
 The first five were client features and are on because turning them off would change what
-existing players see. The last three are additions and start off: an addition that turns itself
+existing players see. The other six are additions and start off: an addition that turns itself
 on rewrites everyone's screen on their next launch.
 
 ### What is not here, and why
@@ -406,6 +528,7 @@ find it. Settings live with the client's other settings.
 ```sh
 python3 tools/clienttests/run_plugintest.py        # the system
 python3 tools/clienttests/run_hubtest.py           # the hub, against a real HTTP server
+python3 tools/clienttests/run_mousetest.py         # the cursor, Mouse highlight, Tile indicators
 python3 tools/clienttests/run_notifytest.py        # notifications, sound and Idle notifier
 python3 tools/clienttests/run_dragtest.py          # Alt-drag
 python3 tools/clienttests/run_skilltest.py         # Boosts and Skills
@@ -414,7 +537,7 @@ python3 tools/clienttests/run_sidebarpreview.py    # the sidebar, rendered to bu
 ```
 
 Each has a mutation suite beside it - `mutate_apilevel.py`, `mutate_dragtest.py`,
-`mutate_notifytest.py`, `mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
+`mutate_mousetest.py`, `mutate_notifytest.py`, `mutate_skilltest.py`, `mutate_groundtest.py` - which breaks the code one plausible way at a time and fails unless every
 break is caught **by a named check**. A test that only goes red because something threw is not
 measuring the thing it claims to. Run one before trusting a test you have just written: the first
 run of each of these found holes in its own tests.

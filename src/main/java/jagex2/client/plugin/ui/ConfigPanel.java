@@ -1,18 +1,22 @@
 package jagex2.client.plugin.ui;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JColorChooser;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
@@ -319,6 +323,14 @@ final class ConfigPanel extends JPanel {
 			return wrapper;
 		}
 
+		if (item.isColour()) {
+			return this.buildColourEditor(item);
+		}
+		String[] choices = item.choices();
+		if (choices.length > 0) {
+			return this.buildChoiceEditor(item, choices);
+		}
+
 		final JTextField field = new JTextField(item.isInt() ? String.valueOf(item.intValue()) : item.stringValue());
 		field.setFont(Theme.FONT);
 		field.setBackground(Theme.DARKER);
@@ -342,6 +354,85 @@ final class ConfigPanel extends JPanel {
 			}
 		});
 		return field;
+	}
+
+	/**
+	 * A swatch that opens a colour picker.
+	 *
+	 * A BUTTON SHOWING THE COLOUR, not a box showing its hex. Six characters of hex is a thing a
+	 * player decodes rather than reads, and the whole point of the tier colours this exists for is
+	 * telling them apart at a glance - which you cannot do in a settings panel that shows you
+	 * "3C8A2F".
+	 *
+	 * The hex stays underneath as the stored value and as the tooltip, so a player who knows what
+	 * they want can still see it, and the file is the same file it was before this existed.
+	 */
+	private Component buildColourEditor(final PluginConfig.Item item) {
+		final JButton swatch = new JButton();
+		final int rgb = item.colourValue();
+		swatch.setPreferredSize(new Dimension(44, 22));
+		swatch.setBackground(new Color(rgb));
+		swatch.setToolTipText("#" + PluginConfig.toHex(rgb));
+		swatch.setFocusPainted(false);
+		swatch.setOpaque(true);
+		// A thin light border, because a dark colour against a dark panel is otherwise an
+		// invisible button, and the swatch for black has to still look like something to click.
+		swatch.setBorder(BorderFactory.createLineBorder(Theme.SEPARATOR));
+		swatch.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				Color picked = JColorChooser.showDialog(ConfigPanel.this, item.name, new Color(rgb));
+				// null is the player pressing Cancel, which must leave the setting alone rather
+				// than writing black.
+				if (picked != null) {
+					ConfigPanel.this.write(item, PluginConfig.toHex(picked.getRGB()), null);
+				}
+			}
+		});
+		JPanel wrapper = new JPanel(new BorderLayout());
+		wrapper.setOpaque(false);
+		wrapper.add(swatch, BorderLayout.CENTER);
+		return wrapper;
+	}
+
+	/**
+	 * A drop-down of the values a setting allows.
+	 *
+	 * WHAT IS STORED NOW IS ALWAYS OFFERED, even when it is not one of the choices any more. A
+	 * release that drops a mode would otherwise silently rewrite the player's file the moment they
+	 * opened the panel; this way they see what they have, and change it when they mean to.
+	 */
+	private Component buildChoiceEditor(final PluginConfig.Item item, String[] choices) {
+		final String current = item.stringValue() == null ? "" : item.stringValue();
+		List<String> options = new ArrayList<String>();
+		for (int i = 0; i < choices.length; i++) {
+			options.add(choices[i]);
+		}
+		if (!options.contains(current)) {
+			options.add(0, current);
+		}
+		final JComboBox<String> box = new JComboBox<String>(options.toArray(new String[0]));
+		box.setSelectedItem(current);
+		box.setFont(Theme.FONT);
+		box.setBackground(Theme.DARKER);
+		box.setForeground(Theme.TEXT);
+		box.setBorder(BorderFactory.createEmptyBorder());
+		box.setPreferredSize(new Dimension(110, 22));
+		box.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				Object picked = box.getSelectedItem();
+				// Only on a real change: setSelectedItem above fires this too, and writing on
+				// every rebuild would queue a client-thread task per panel refresh.
+				if (picked != null && !String.valueOf(picked).equals(current)) {
+					ConfigPanel.this.write(item, String.valueOf(picked), null);
+				}
+			}
+		});
+		JPanel wrapper = new JPanel(new BorderLayout());
+		wrapper.setOpaque(false);
+		wrapper.add(box, BorderLayout.CENTER);
+		return wrapper;
 	}
 
 	/**

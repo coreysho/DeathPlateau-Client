@@ -8,6 +8,7 @@ import jagex2.client.DevLog;
 import jagex2.client.GameShell;
 import jagex2.client.Stats;
 import jagex2.config.ObjType;
+import jagex2.dash3d.ClientNpc;
 import jagex2.dash3d.ClientObj;
 import jagex2.dash3d.ClientPlayer;
 import jagex2.datastruct.LinkList;
@@ -35,11 +36,28 @@ public final class PluginContext {
 
 	private final Client client;
 
+	/**
+	 * The manager, for the one thing the client cannot answer: that a plugin is still interested
+	 * in the tile under the cursor. See {@link #getHoverTileX()}.
+	 */
+	private PluginManager manager;
+
 	/** Scene units per tile - the client stores entity positions at 128 to the tile. */
 	private static final int TILE = 128;
 
 	PluginContext(Client client) {
 		this.client = client;
+	}
+
+	/**
+	 * Set once, by the manager that owns this context.
+	 *
+	 * Not a constructor argument because the manager builds its context before it has finished
+	 * building itself, and handing out a half-made this is the kind of thing that works until
+	 * the day something reads a field during construction.
+	 */
+	void attachManager(PluginManager manager) {
+		this.manager = manager;
 	}
 
 	// ------------------------------------------------------------------ player and world state
@@ -384,6 +402,127 @@ public final class PluginContext {
 	// ------------------------------------------------------------------ the scene
 
 	/**
+	 * The npcs in the scene, nearest first.
+	 *
+	 * Reads the client's npcs[] through npcIds[], which is the only correct way round: npcs[] is
+	 * 16384 long and mostly empty, and npcCount says how much of npcIds[] is live this tick. A
+	 * plugin walking the array itself would read stale entries from npcs the server has since
+	 * removed.
+	 *
+	 * An npc whose tile falls outside the 104x104 scene is left out. The client drops those too
+	 * rather than drawing them - see pushPlayers - so a plugin that kept them would be projecting
+	 * a position the scene cannot answer for, and getting a label in the corner of the screen.
+	 *
+	 * Allocates, so call it once a frame and walk the result.
+	 */
+	public List<Actor> getNpcs() {
+		List<Actor> actors = new ArrayList<Actor>();
+		if (Client.localPlayer == null) {
+			return actors;
+		}
+		for (int i = 0; i < this.client.npcCount; i++) {
+			int id = this.client.npcIds[i];
+			if (id < 0 || id >= this.client.npcs.length) {
+				continue;
+			}
+			ClientNpc npc = this.client.npcs[id];
+			// field1370 is the config. It can be absent for a tick when an npc arrives before its
+			// type does, and the client's own name lookup has the same "?" fallback.
+			if (npc == null || !npc.method351() || npc.field1370 == null) {
+				continue;
+			}
+			if (!inScene(npc.field1157, npc.field1158)) {
+				continue;
+			}
+			// COPIED NOW, NOT HELD. NpcType.get hands out references into a 20-entry round-robin
+			// cache and overwrites the oldest slot on a miss, so an npc's field1370 can come to
+			// describe a different npc once more than 20 types are on screen. Reading it here, on
+			// the game thread, is exactly what the client does for its own menu rows, so this is
+			// no less correct than the game - but it is why Actor holds values and not a handle.
+			// field1431 is the config id, a long only because NpcType.get compares it to a cache
+			// key; the ids themselves are small.
+			actors.add(new Actor(npc.field1370.field1455, npc.field1370.field1442,
+				(int) npc.field1370.field1431, npc.field1157, npc.field1158, npc.field1148, false));
+		}
+		sortByDistanceFromPlayer(actors);
+		return actors;
+	}
+
+	/**
+	 * The players in the scene, nearest first, the local player among them.
+	 *
+	 * The local player is NOT in playerIds[] - the client keeps it at LOCAL_PLAYER_INDEX and adds
+	 * it separately - so it is added here, with Actor.self set. A plugin that wants only other
+	 * people filters on that flag; one drawing a marker under its own feet wants it, and would
+	 * otherwise have to reach for getWorldX and build half an Actor by hand.
+	 *
+	 * Allocates, so call it once a frame and walk the result.
+	 */
+	public List<Actor> getPlayers() {
+		List<Actor> actors = new ArrayList<Actor>();
+		ClientPlayer me = Client.localPlayer;
+		if (me == null) {
+			return actors;
+		}
+		if (inScene(me.field1157, me.field1158)) {
+			actors.add(player(me, true));
+		}
+		for (int i = 0; i < this.client.playerCount; i++) {
+			int id = this.client.playerIds[i];
+			if (id < 0 || id >= this.client.players.length) {
+				continue;
+			}
+			ClientPlayer other = this.client.players[id];
+			if (other == null || other == me || !other.method351()) {
+				continue;
+			}
+			if (!inScene(other.field1157, other.field1158)) {
+				continue;
+			}
+			actors.add(player(other, false));
+		}
+		sortByDistanceFromPlayer(actors);
+		return actors;
+	}
+
+	/** field1675 is the combat level; icons is kept out of the name on purpose. See Actor.name. */
+	private static Actor player(ClientPlayer p, boolean self) {
+		return new Actor(p.name, p.field1675, -1, p.field1157, p.field1158, p.field1148, self);
+	}
+
+	/** Whether a fine position lands on a tile the scene actually covers. */
+	private static boolean inScene(int sceneX, int sceneZ) {
+		int tileX = sceneX >> 7;
+		int tileZ = sceneZ >> 7;
+		return tileX >= 0 && tileX < 104 && tileZ >= 0 && tileZ < 104;
+	}
+
+	/**
+	 * Nearest first, by squared distance from the player - no square root, because the ordering is
+	 * the same and this runs over every actor in the scene every frame.
+	 *
+	 * Sorted because a plugin that draws only the closest few, or stops after the first match, has
+	 * no other way to know which those are, and sorting a list it was already handed is wasted
+	 * work done once per plugin instead of once here.
+	 */
+	private void sortByDistanceFromPlayer(List<Actor> actors) {
+		final ClientPlayer me = Client.localPlayer;
+		if (me == null || actors.size() < 2) {
+			return;
+		}
+		final int fromX = me.field1157;
+		final int fromZ = me.field1158;
+		java.util.Collections.sort(actors, new java.util.Comparator<Actor>() {
+			public int compare(Actor a, Actor b) {
+				// Actor's own, so a plugin re-sorting a list it filtered gets the same order.
+				return Actor.compareByDistance(a, b, fromX, fromZ);
+			}
+		});
+	}
+
+
+
+	/**
 	 * What is lying on the ground within so many tiles of the player, a pile per tile.
 	 *
 	 * The scanning, the walk of each tile's stack and the merging of same-id drops are all done
@@ -473,6 +612,72 @@ public final class PluginContext {
 	 */
 	public boolean isAltHeld() {
 		return this.client.actionKey[GameShell.KEY_ALT] == 1;
+	}
+
+	// ------------------------------------------------------------------ the cursor
+
+	/**
+	 * Where the cursor is, in the same viewport coordinates an overlay draws in, or -1 when it
+	 * is not over the game at all.
+	 *
+	 * -1 rather than the last place it was: a plugin drawing something at the cursor should stop
+	 * drawing it when the cursor leaves, and "the last known position" is how a tooltip gets
+	 * stranded in a corner.
+	 */
+	public int getMouseX() {
+		return this.client.mouseInViewport() ? this.client.viewportMouseX() : -1;
+	}
+
+	public int getMouseY() {
+		return this.client.mouseInViewport() ? this.client.viewportMouseY() : -1;
+	}
+
+	/**
+	 * The scene tile the cursor is over, or -1 when it is over none.
+	 *
+	 * ONE FRAME BEHIND, and it cannot be otherwise. The scene answers "what is at this screen
+	 * point" while it draws, so the question has to be asked before a frame and read after it.
+	 * At fifty frames a second that is twenty milliseconds, which nobody has ever seen.
+	 *
+	 * COSTS NOTHING UNTIL IT IS READ. Answering it is a hit test per tile, which the client only
+	 * ever paid on a click; reading this is what asks for the next answer, so a plugin that does
+	 * not care never makes anyone pay for it. Read it every frame you want it.
+	 *
+	 * Scene coordinates, the same ones {@link #projectTile} takes - 0 to 103 across the loaded
+	 * area, not world coordinates. {@link #sceneToWorldX(int)} converts when something has to be
+	 * remembered across a region change.
+	 */
+	public int getHoverTileX() {
+		this.keepHoverAlive();
+		return this.client.hoverTileX;
+	}
+
+	public int getHoverTileZ() {
+		this.keepHoverAlive();
+		return this.client.hoverTileZ;
+	}
+
+	/** Tells the manager the answer is still wanted. Harmless before one is attached. */
+	private void keepHoverAlive() {
+		if (this.manager != null) {
+			this.manager.hoverTileRead();
+		}
+	}
+
+	/**
+	 * A scene tile as a world coordinate, which is what to save when something must outlive the
+	 * loaded area.
+	 *
+	 * Scene coordinates are relative to whatever chunk of the map is loaded, so the same tile is
+	 * a different pair of numbers after walking far enough for the client to reload around you.
+	 * A marker saved in scene coordinates comes back pointing somewhere else entirely.
+	 */
+	public int sceneToWorldX(int sceneTileX) {
+		return sceneTileX + this.client.baseX;
+	}
+
+	public int sceneToWorldZ(int sceneTileZ) {
+		return sceneTileZ + this.client.baseZ;
 	}
 
 	/** Whether Shift is held down right now. */

@@ -31,6 +31,27 @@ package jagex2.client.plugin;
  *     because a plugin calls nothing for it: overlays became movable underneath them. A level
  *     only goes up when there is something new to CALL - a level is a promise to a compiler,
  *     not a changelog.</dd>
+ * <dt>3</dt><dd>The cursor: {@code ctx.getMouseX}, {@code ctx.getMouseY},
+ *     {@code ctx.getHoverTileX}, {@code ctx.getHoverTileZ}, and {@code ctx.sceneToWorldX} /
+ *     {@code sceneToWorldZ} for keeping a tile across a region change.</dd>
+ * <dt>4</dt><dd>Who else is in the scene: {@code ctx.getNpcs} and {@code ctx.getPlayers},
+ *     returning {@link Actor} snapshots - name, combat level, npc id, fine and tile position,
+ *     size, and whether it is you - sorted nearest first.
+ *     <p>
+ *     Reads only. An Actor is a copy taken on the game thread and carries no handle on the
+ *     entity, so there is nothing on it to click, attack or follow: the client still owns input
+ *     and the socket. That is also why it is a snapshot rather than a live object - the client's
+ *     own npc config is a 20-entry round-robin cache that recycles under you, which Actor's
+ *     comment covers.</dd>
+ * <dt>5</dt><dd>Two richer editors for a String setting: {@code @ConfigItem(colour = true)} for a
+ *     swatch and a picker, and {@code @ConfigItem(choices = {...})} for a drop-down. Plus
+ *     {@code PluginConfig.parseColour} and {@code PluginConfig.toHex}, which are the one place a
+ *     hex setting becomes a colour.
+ *     <p>
+ *     Both are annotation elements with defaults, so a plugin built for an older client still
+ *     compiles and still runs here - but a plugin that SETS one needs a client that reads it, and
+ *     on an older client the setting would silently fall back to a plain text box. That is the
+ *     kind of quiet wrong-looking UI a level exists to prevent, so it moves.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -39,7 +60,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 2;
+	public static final int LEVEL = 5;
 
 	private PluginApi() {
 	}
