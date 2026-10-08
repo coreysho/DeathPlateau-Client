@@ -335,15 +335,29 @@ The most configured plugin here, and the one to copy from. Eighteen settings:
 
 | | |
 | --- | --- |
-| Colours | Ordinary, highlighted, and hidden items - three swatches |
+| Colours | Ordinary, highlighted, and hidden items - three swatches, plus one per rule |
 | Value tiers | Four tiers, each a price you type and a colour you pick |
 | Shown | How far away, hide under value, show hidden, only highlighted, outline tiles |
 | Rows | Name only / Name and value / Name, value and each |
 | Notify | On a highlighted drop, and from a tier up |
-| Beams | Over highlighted items, and from a tier up |
+| Beams | Over highlighted items, from a tier up, and the shape of them |
+| Reading | Outlined text instead of a drop shadow |
+| Input | A key that hides and shows the labels, and double-tap Alt to do the same |
 
 Plus the hide/highlight rules themselves, added by right-clicking an item rather than typed, up
-to 128 of them.
+to 128 of them - each of which can have **a colour of its own**, cycled through ten named ones in
+the *Item colours* list. A rule's own colour wins over the plugin's, which is the point: three
+highlighted clue steps in the same magenta tell you nothing.
+
+That is a cycle rather than a picker because a config list row has one action button and no room
+for a swatch, and giving rows two would change the `ConfigList` contract every plugin is written
+against. The rule file stays readable by older clients: rule lines are untouched and a colour goes
+on a line of its own, keyed by the rule's name, which such a client skips as a key it does not
+know.
+
+One trap worth knowing if you work on this: `colourFor` answers **0** for a row it is not drawing,
+so a colour of `000000` would be an item that silently vanishes. A stored black is read as "no
+colour of its own" for that reason, and the cycle never produces one.
 
 **"Top tier" means the highest price, not the top box.** Tier thresholds are sorted before use,
 because the tier walk takes the first threshold an item's worth clears - prices typed out of order

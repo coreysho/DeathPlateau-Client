@@ -261,6 +261,32 @@ public final class OverlayGraphics {
 		}
 	}
 
+	/**
+	 * Centred, with a black outline instead of the drop shadow.
+	 *
+	 * A shadow is one offset copy, so text over a light wall or a sandy floor loses its left and
+	 * top edges into the background - which is most of Al Kharid. An outline is the same trick in
+	 * four directions and stays legible over anything.
+	 *
+	 * FOUR OFFSETS, NOT EIGHT. Five draws per label rather than nine, and the diagonals add almost
+	 * nothing at this font size; a ground pile can be a dozen rows and this runs per row per
+	 * frame. The outline passes are flat, not shadowed, or each of them would cast its own.
+	 */
+	public void textCentredOutlined(int x, int y, String text, int colour) {
+		if (text == null || this.font == null) {
+			return;
+		}
+		int centred = x - this.font.stringWidTag(text) / 2;
+		this.markText(centred, y, text);
+		int left = this.tx(centred);
+		int top = this.ty(y);
+		this.font.drawString(left - 1, 0, top, text);
+		this.font.drawString(left + 1, 0, top, text);
+		this.font.drawString(left, 0, top - 1, text);
+		this.font.drawString(left, 0, top + 1, text);
+		this.font.drawStringTag(colour, left, top, false, text);
+	}
+
 	/** Shadowed text ending at x, for right-aligned columns. */
 	public void textRight(int x, int y, String text, int colour) {
 		if (text != null && this.font != null) {

@@ -16,6 +16,7 @@ import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Overlay;
+import jagex2.client.plugin.event.KeyPressed;
 import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
@@ -93,6 +94,8 @@ public class GroundItemsTest {
 		arrivalTests();
 		notifyTests();
 		paletteTests();
+		readingTests();
+		perItemColourTests();
 
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
@@ -349,6 +352,337 @@ public class GroundItemsTest {
 			"an unparseable colour falls back rather than throwing");
 		check(!junkThrew && junk.forWorth(0L) == 0xFFFF00,
 			"...and so does the palette built from it");
+	}
+
+	/**
+	 * A colour per rule: that it is honoured, that it travels with its rule, and that it survives
+	 * the file.
+	 *
+	 * EVERY ONE OF THESE CLOSES A MUTATION THAT SURVIVED. The feature shipped with its colours
+	 * working and nothing asserting it - I wrote the mutations and never the checks, so all seven
+	 * could be broken with the suite still green.
+	 *
+	 * The nastiest of them was self-inflicted. "A new rule left at the zero-filled colour" is a
+	 * real production bug - colours[] is an int[], 0 is what colourFor answers for a row it is not
+	 * drawing, and a player with five rules in their file has colours[5] at zero until something
+	 * sets it - but reset() calls clear(), and clear() now writes DEFAULT_COLOUR across all 128
+	 * entries, so the test harness was blind to exactly the bug it had caught an hour earlier. The
+	 * checks below build their state WITHOUT clear() in between for that reason.
+	 */
+	static void perItemColourTests() {
+		GroundItemPrefs.clear();
+
+		// A rule's own colour wins over the plugin's. Without this the whole feature is a
+		// drop-down that does nothing.
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+		int at = GroundItemPrefs.find("Clue scroll");
+		check(at >= 0, "the rule is there to colour");
+		check(GroundItemPrefs.colour(at) == GroundItemPrefs.DEFAULT_COLOUR,
+			"a new rule starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Clue scroll", 1, 1), false, 0)
+				== GroundItemPalette.DEFAULTS.highlighted,
+			"...so it draws in the plugin's highlighted colour");
+
+		GroundItemPrefs.cycleColour(at);
+		int own = GroundItemPrefs.colour(at);
+		check(own != GroundItemPrefs.DEFAULT_COLOUR, "cycling gives it one");
+		check(GroundItemsPlugin.colourFor(item("Clue scroll", 1, 1), false, 0) == own,
+			"and the row is drawn in it, not the plugin's");
+
+		// The same for a hidden rule, which uses the other of the two colours.
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIDE);
+		int bones = GroundItemPrefs.find("Bones");
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), true, 0)
+				== GroundItemPalette.DEFAULTS.hidden,
+			"a hidden rule with no colour draws in the plugin's hidden colour");
+		GroundItemPrefs.cycleColour(bones);
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), true, 0)
+				== GroundItemPrefs.colour(bones),
+			"...and in its own once it has one");
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), false, 0) == 0,
+			"...but is still not drawn at all unless something reveals it");
+
+		// A NEW RULE ADDED AFTER OTHERS, with no clear() in between: this is the shape the
+		// production bug takes, and the shape clear() was hiding.
+		GroundItemPrefs.toggle("Shark", GroundItemPrefs.HIGHLIGHT);
+		int shark = GroundItemPrefs.find("Shark");
+		check(GroundItemPrefs.colour(shark) == GroundItemPrefs.DEFAULT_COLOUR,
+			"a rule added after others still starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Shark", 1, 1), false, 0) != 0,
+			"...and is drawn, rather than vanishing into the 0 that means 'no row'");
+
+		// THE COLOUR TRAVELS WITH ITS RULE. Left behind, removing one rule silently recolours
+		// every rule after it - which a player reports as "my colours moved" long afterwards.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.toggle("First", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Second", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Third", GroundItemPrefs.HIGHLIGHT);
+		// Give the second and third different colours, so a shift shows up as the wrong one
+		// rather than as no change.
+		int second = GroundItemPrefs.find("Second");
+		GroundItemPrefs.cycleColour(second);
+		int third = GroundItemPrefs.find("Third");
+		GroundItemPrefs.cycleColour(third);
+		GroundItemPrefs.cycleColour(third);
+		int secondColour = GroundItemPrefs.colourOf("Second");
+		int thirdColour = GroundItemPrefs.colourOf("Third");
+		check(secondColour != thirdColour, "the two rules have different colours to tell apart");
+
+		GroundItemPrefs.removeName("First");
+		check(GroundItemPrefs.colourOf("Second") == secondColour,
+			"removing a rule leaves the others' colours alone");
+		check(GroundItemPrefs.colourOf("Third") == thirdColour, "...all of them");
+
+		// A hand-edited black is read as "no colour of its own", because 0 is the answer
+		// colourFor gives for a row it is not drawing: a rule coloured 000000 would be an item
+		// that silently disappears.
+		check(GroundItemsPlugin.colourFor(item("Second", 1, 1), false, 0) != 0,
+			"no rule can end up drawn in the colour that means 'not drawn'");
+
+		// A NEW RULE MUST NOT INHERIT THE COLOUR OF A RULE THAT USED TO SIT IN ITS SLOT.
+		//
+		// This is the only shape in which the missing initialiser shows, and getting here took
+		// two tries: a test that calls clear() first cannot see it, because clear() writes
+		// DEFAULT_COLOUR across every slot. The slot has to hold a STALE colour, which is what
+		// removing an earlier rule leaves behind - the shift copies colours down and the last
+		// slot keeps its old value.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.toggle("Gone", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Coloured", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.cycleColour(GroundItemPrefs.find("Coloured"));
+		int staleSlot = GroundItemPrefs.colour(GroundItemPrefs.find("Coloured"));
+		check(staleSlot != GroundItemPrefs.DEFAULT_COLOUR, "a rule in the second slot has a colour");
+		GroundItemPrefs.removeName("Gone");
+		// "Coloured" is in slot 0 now and slot 1 still holds its colour, so a rule added next
+		// lands on a dirty slot.
+		GroundItemPrefs.toggle("Fresh", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemPrefs.colourOf("Fresh") == GroundItemPrefs.DEFAULT_COLOUR,
+			"a rule added into a vacated slot starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Fresh", 1, 1), false, 0)
+				== GroundItemPalette.DEFAULTS.highlighted,
+			"...and draws in the plugin's colour, not the one left behind");
+
+		// The same through set(), which is the other place a rule is added.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.set("Vanish", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.set("Tinted", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.cycleColour(GroundItemPrefs.find("Tinted"));
+		GroundItemPrefs.removeName("Vanish");
+		GroundItemPrefs.set("New", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemPrefs.colourOf("New") == GroundItemPrefs.DEFAULT_COLOUR,
+			"and so does one added by set");
+
+		// A COLOUR LINE IS MATCHED BY NAME, NOT BY POSITION. Written deliberately out of order,
+		// so a position match would give each rule the other's colour - which is only reachable
+		// through a real load, because applyPendingColours runs nowhere else.
+		GroundItemPrefs.clear();
+		// findcachedir(), not the raw property: it appends the separator when the property has
+		// none, so reading the property and concatenating wrote the file as a SIBLING of the
+		// directory the client reads from. Using the same call the production code uses is the
+		// only version of this that cannot drift.
+		String cache = sign.signlink.findcachedir();
+		boolean wrote = false;
+		try {
+			java.io.PrintWriter out = new java.io.PrintWriter(
+				new java.io.FileWriter(cache + "qol_grounditems.dat"));
+			out.println("version=1");
+			out.println("show=Alpha");
+			out.println("show=Beta");
+			out.println("colour=Beta=00FF00");
+			out.println("colour=Alpha=FF0000");
+			out.close();
+			wrote = true;
+		} catch (Throwable cannot) {
+			check(false, "could not write a settings file to " + cache + " (" + cannot + ")");
+		}
+		if (wrote) {
+			GroundItemPrefs.load();
+			check(GroundItemPrefs.colourOf("Alpha") == 0xFF0000,
+				"a colour line finds its own rule by name, whatever order the lines are in");
+			check(GroundItemPrefs.colourOf("Beta") == 0x00FF00, "...and so does the other");
+			// And a colour for a rule that is not there is dropped rather than landing on one
+			// that is.
+			try {
+				java.io.PrintWriter out = new java.io.PrintWriter(
+					new java.io.FileWriter(cache + "qol_grounditems.dat"));
+				out.println("version=1");
+				out.println("show=Only");
+				out.println("colour=Deleted=FF0000");
+				out.close();
+				GroundItemPrefs.load();
+				check(GroundItemPrefs.colourOf("Only") == GroundItemPrefs.DEFAULT_COLOUR,
+					"a colour for a rule that is gone is dropped, not given to whoever is there");
+
+				// A HAND-EDITED BLACK, which is the one colour a rule may not have: 0 is what
+				// colourFor answers for a row it is not drawing, so a rule coloured 000000 would
+				// be an item that silently disappears. The cycle never produces black, so only a
+				// file can get here - which is why the earlier check on a cycled colour could not
+				// see this and the mutation survived.
+				java.io.PrintWriter black = new java.io.PrintWriter(
+					new java.io.FileWriter(cache + "qol_grounditems.dat"));
+				black.println("version=1");
+				black.println("show=Inky");
+				black.println("colour=Inky=000000");
+				black.close();
+				GroundItemPrefs.load();
+				check(GroundItemPrefs.colourOf("Inky") == GroundItemPrefs.DEFAULT_COLOUR,
+					"a colour of 000000 reads as no colour of its own");
+				check(GroundItemsPlugin.colourFor(item("Inky", 1, 1), false, 0)
+						== GroundItemPalette.DEFAULTS.highlighted,
+					"...so the item is still drawn, in the plugin's colour");
+			} catch (Throwable cannot) {
+				check(false, "could not rewrite the settings file (" + cannot + ")");
+			}
+		}
+
+		GroundItemPrefs.clear();
+	}
+
+	/** The hotkey, the double-tap, and the beam's shape. */
+	static void readingTests() {
+		// ONE CHARACTER, EITHER CASE EITHER WAY ROUND. The client delivers a lowercase g when
+		// nobody is holding shift, so a setting of "G" has to answer to it or a hotkey typed in
+		// capitals would simply never fire.
+		check(GroundItemsPlugin.hotkeyCode("g") == 'g', "a lowercase key is itself");
+		check(GroundItemsPlugin.hotkeyCode("G") == 'g', "and an uppercase one is the same key");
+		check(GroundItemsPlugin.hotkeyCode(" g ") == 'g', "whitespace round it is forgiven");
+		check(GroundItemsPlugin.hotkeyCode("4") == '4', "a digit is a key too");
+
+		// F-keys are the client's own range, 1008 for F1, as KeyPressed documents.
+		check(GroundItemsPlugin.hotkeyCode("F1") == 1008, "F1 is the client's 1008");
+		check(GroundItemsPlugin.hotkeyCode("f12") == 1019, "and F12 its 1019, in either case");
+		check(GroundItemsPlugin.hotkeyCode("F13") == -1, "there is no F13");
+		check(GroundItemsPlugin.hotkeyCode("F0") == -1, "nor an F0");
+
+		// No hotkey is the default, and anything unreadable is no hotkey rather than a throw.
+		// "F" ON ITS OWN IS THE LETTER F, not a malformed function key - a player typing one
+		// character means that character, and only F1 to F12 are the function keys. Asserted
+		// because it is the ambiguous case, and because my first version of this list had it
+		// down as unreadable.
+		check(GroundItemsPlugin.hotkeyCode("F") == 'f', "F on its own is the letter F");
+		String[] none = { null, "", "   ", "Ctrl", "shift", "Fx", "F-1", "gg", "++" };
+		for (int i = 0; i < none.length; i++) {
+			boolean threw = false;
+			int got = 0;
+			try {
+				got = GroundItemsPlugin.hotkeyCode(none[i]);
+			} catch (Throwable broke) {
+				threw = true;
+			}
+			check(!threw, "\"" + none[i] + "\" does not throw out of a key press");
+			check(!threw && got == -1, "...and is no hotkey");
+		}
+
+		// THE DOUBLE-TAP IS OFF BY DEFAULT, and that matters more than it looks: Alt is already
+		// held for the [-] and [+] controls, so a player who never asked for this must not be
+		// able to blank their own labels by reaching for Alt twice while looting.
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 900L, 0),
+			"with a window of 0, two taps are not a double-tap");
+		check(GroundItemsPlugin.isDoubleTap(1000L, 900L, 250),
+			"inside the window they are");
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 700L, 250),
+			"outside it they are not");
+		check(GroundItemsPlugin.isDoubleTap(1000L, 750L, 250),
+			"and exactly on the window still counts");
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 0L, 250),
+			"a first tap since the client started is not a second one");
+
+		// THE CASES THAT ACTUALLY DISCRIMINATE. The three above pass whether the guards are there
+		// or not, because 1000-900 is already outside a window of 0 and 1000-0 is already outside
+		// one of 250 - the audit found all three guards deletable with every check still green.
+		// These are the pairs where the arithmetic alone would say yes.
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 1000L, 0),
+			"two taps in the same millisecond are not a double-tap when the window is 0");
+		check(!GroundItemsPlugin.isDoubleTap(100L, 0L, 250),
+			"...and a first tap 100ms after startup is not one either, inside any window");
+
+		// The beam's shapes have to differ, or the drop-down is decoration.
+		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0);
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8) < base,
+			"a tapered beam narrows as it rises");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0),
+			"a straight one does not");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0) < base,
+			"and a narrow one is thinner from the floor up");
+		check(GroundItemsPlugin.beamWidth("Enormous", 0) == base,
+			"a shape from a release that offered something else draws the default");
+
+		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
+		// negative one is whatever fillAlpha makes of it.
+		boolean tooThin = false;
+		String[] styles = { GroundItemsPlugin.BEAM_TAPERED, GroundItemsPlugin.BEAM_STRAIGHT,
+			GroundItemsPlugin.BEAM_NARROW, null, "" };
+		for (int st = 0; st < styles.length && !tooThin; st++) {
+			for (int segment = 0; segment < 200; segment++) {
+				if (GroundItemsPlugin.beamWidth(styles[st], segment) < 1) {
+					tooThin = true;
+					break;
+				}
+			}
+		}
+		check(!tooThin, "every shape stays at least a pixel wide, at any height");
+
+		// THE KEY PRESS ITSELF. onKeyPressed touches no client state, so it can be driven on a
+		// bare plugin: the audit found that dropping event.consume() changed nothing any check
+		// could see, and an unconsumed hotkey also lands in the chat box.
+		GroundItemsPlugin keyed = new GroundItemsPlugin();
+		keyed.hotkey = "G";
+		KeyPressed pressed = new KeyPressed('g');
+		keyed.onKeyPressed(pressed);
+		check(pressed.isConsumed(), "the hotkey is swallowed, so it does not reach the chat box");
+		check(keyed.isSuppressed(), "...and hides the labels");
+		KeyPressed again = new KeyPressed('g');
+		keyed.onKeyPressed(again);
+		check(!keyed.isSuppressed(), "pressing it again brings them back");
+
+		// A key that is not the hotkey is left alone entirely.
+		KeyPressed other = new KeyPressed('x');
+		keyed.onKeyPressed(other);
+		check(!other.isConsumed(), "another key is not swallowed");
+		check(!keyed.isSuppressed(), "...and changes nothing");
+
+		// And with no hotkey set, nothing is a hotkey - including the 0 that an unset code is not.
+		GroundItemsPlugin unkeyed = new GroundItemsPlugin();
+		KeyPressed any = new KeyPressed('g');
+		unkeyed.onKeyPressed(any);
+		check(!any.isConsumed() && !unkeyed.isSuppressed(),
+			"with no hotkey set, no key hides the labels");
+
+		// And the outlined text the labels can use exists where the plugin reaches for it.
+		String overlay = read("src/main/java/jagex2/client/plugin/OverlayGraphics.java");
+		check(overlay.indexOf("public void textCentredOutlined(") >= 0,
+			"the outlined text primitive is there to be used");
+		String plugin = read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java");
+		check(plugin.indexOf("g.textCentredOutlined(") >= 0,
+			"...and the rows use it when the player asks for an outline");
+		check(plugin.indexOf("if (this.textOutline) {") >= 0, "...only when they ask");
+
+		// THE OUTLINE'S SHAPE. Four offsets, flat, with the coloured pass unshadowed on top -
+		// none of which any check here could see, because nothing renders it. The audit found all
+		// four deletable. Pixels would be the strong version of this; the source is the honest
+		// cheap one, and it states each property exactly.
+		int outlined = overlay.indexOf("public void textCentredOutlined(");
+		int outlinedEnd = outlined < 0 ? -1 : overlay.indexOf("\n\t}", outlined);
+		String body = outlined < 0 || outlinedEnd < 0 ? "" : overlay.substring(outlined, outlinedEnd);
+		check(body.length() > 0, "the outline is readable");
+		check(countOf(body, "this.font.drawString(") == 4,
+			"an outline is four offset passes, not one - a shadow is the thing it replaces ("
+				+ countOf(body, "this.font.drawString(") + ")");
+		check(body.indexOf("left - 1") >= 0 && body.indexOf("left + 1") >= 0
+				&& body.indexOf("top - 1") >= 0 && body.indexOf("top + 1") >= 0,
+			"...one each way, so no side is left bare");
+		check(countOf(body, "drawStringTag(") == 1,
+			"the outline passes are flat, or each would cast a shadow of its own");
+		check(body.indexOf("drawStringTag(colour, left, top, false, text)") >= 0,
+			"...and the coloured pass on top is unshadowed too");
+		check(body.indexOf("stringWidTag(text) / 2") >= 0,
+			"outlined text is centred, so a row still sits on its tile");
+
+		// The double-tap is watched on the press edge. Alt is held for the controls, so "is it
+		// down" is true throughout - this is in render, which no check here reaches.
+		check(plugin.indexOf("if (alt && !this.altWasDown) {") >= 0,
+			"the double-tap is watched on the press edge, not while Alt is held");
 	}
 
 	/**
@@ -721,9 +1055,35 @@ public class GroundItemsTest {
 		GroundItemPrefs.clear();
 
 		List<PluginManager.ListSnapshot> lists = manager.snapshotConfigLists(entry);
-		check(lists.size() == 1, "the plugin has one config list (" + lists.size() + ")");
-		check(lists.size() == 1 && lists.get(0).title.equals("Items"),
-			"and it is the rules: the three cycling rows are settings now");
+		check(lists.size() == 2, "the plugin has two config lists (" + lists.size() + ")");
+		check(lists.size() == 2 && lists.get(0).title.equals("Items")
+				&& lists.get(1).title.equals("Item colours"),
+			"the rules, then a colour for each: the three cycling rows are settings now");
+
+		// THE COLOUR LIST, which is a second list rather than a second button on each rule's row,
+		// because a ConfigList row has one action and it is already spent on the mode.
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+		lists = manager.snapshotConfigLists(entry);
+		check(lists.get(1).rows.size() == 1, "a rule gets a row in the colour list");
+		check(lists.get(1).rows.get(0).label.equals("Clue scroll"), "...labelled with its name");
+		check(lists.get(1).rows.get(0).action.equals("Default"),
+			"...starting with no colour of its own");
+		check(!lists.get(1).rows.get(0).removable,
+			"...and not removable there: removing a rule belongs to the Items list");
+
+		lists.get(1).act(0);
+		check(GroundItemPrefs.colourOf("Clue scroll") != GroundItemPrefs.DEFAULT_COLOUR,
+			"pressing it gives the rule a colour");
+		check(!manager.snapshotConfigLists(entry).get(1).rows.get(0).action.equals("Default"),
+			"...and the row says which");
+
+		// All the way round and back to no colour of its own, so nothing is a one-way door.
+		for (int i = 1; i < GroundItemPrefs.PALETTE.length; i++) {
+			lists.get(1).act(0);
+		}
+		check(GroundItemPrefs.colourOf("Clue scroll") == GroundItemPrefs.DEFAULT_COLOUR,
+			"cycling all the way round comes back to Default");
+		GroundItemPrefs.clear();
 
 		// The three that moved, with the types their editors depend on.
 		check(setting("radius") != null && setting("radius").isInt(),

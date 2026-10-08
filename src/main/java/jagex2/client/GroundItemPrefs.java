@@ -49,6 +49,9 @@ public final class GroundItemPrefs {
 	public static final int HIDE = 0;
 	public static final int HIGHLIGHT = 1;
 
+	/** A rule with no colour of its own: the plugin's highlighted or hidden colour is used. */
+	public static final int DEFAULT_COLOUR = -1;
+
 	/**
 	 * Values the old in-game panel cycled through, because it had no text entry.
 	 *
@@ -66,6 +69,14 @@ public final class GroundItemPrefs {
 
 	private static final String[] names = new String[MAX];
 	private static final int[] modes = new int[MAX];
+
+	/**
+	 * A colour per rule, or {@link #DEFAULT_COLOUR} for "whatever the plugin's own setting says".
+	 *
+	 * Packed RGB rather than a hex string, because this is read per item per frame and the parse
+	 * belongs at the edge where the file is read, not in the draw.
+	 */
+	private static final int[] colours = new int[MAX];
 	private static int count;
 	private static int radius = DEFAULT_RADIUS;
 	private static int minValue = DEFAULT_MIN_VALUE;
@@ -200,6 +211,11 @@ public final class GroundItemPrefs {
 		}
 		names[count] = item;
 		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
 		count++;
 		save();
 		return true;
@@ -222,6 +238,11 @@ public final class GroundItemPrefs {
 		}
 		names[count] = item;
 		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
 		count++;
 		save();
 		return true;
@@ -254,6 +275,10 @@ public final class GroundItemPrefs {
 	public static void clear() {
 		ensure();
 		count = 0;
+		// Reset too, so a later rule cannot inherit a colour from one that used to be here.
+		for (int i = 0; i < MAX; i++) {
+			colours[i] = DEFAULT_COLOUR;
+		}
 		save();
 	}
 
@@ -261,9 +286,135 @@ public final class GroundItemPrefs {
 		for (int j = i; j < count - 1; j++) {
 			names[j] = names[j + 1];
 			modes[j] = modes[j + 1];
+			// The colour travels with its rule. Left behind, removing one rule would silently
+			// recolour every rule after it.
+			colours[j] = colours[j + 1];
 		}
 		count--;
 		save();
+	}
+
+	/** This rule's own colour, or {@link #DEFAULT_COLOUR}. */
+	public static int colour(int i) {
+		ensure();
+		return i >= 0 && i < count ? colours[i] : DEFAULT_COLOUR;
+	}
+
+	/** The colour for a named rule, or {@link #DEFAULT_COLOUR} if it has none or is not a rule. */
+	public static int colourOf(String item) {
+		ensure();
+		int at = find(item);
+		return at >= 0 ? colours[at] : DEFAULT_COLOUR;
+	}
+
+	/** Steps this rule to the next colour in {@link #PALETTE}, wrapping back to the default. */
+	public static void cycleColour(int i) {
+		ensure();
+		if (i < 0 || i >= count) {
+			return;
+		}
+		int at = 0;
+		for (int p = 0; p < PALETTE.length; p++) {
+			if (PALETTE[p] == colours[i]) {
+				at = p + 1;
+				break;
+			}
+		}
+		colours[i] = PALETTE[at % PALETTE.length];
+		save();
+	}
+
+	/**
+	 * The colours a rule can cycle through, the first being "no colour of its own".
+	 *
+	 * A CYCLE RATHER THAN A PICKER because a config list row has one button and no room for a
+	 * swatch. Ten steps is enough to tell a clue step from a key from a drop you are watching for,
+	 * which is what this is for; somebody who wants an exact shade has the plugin's own
+	 * highlighted colour, which is a real picker.
+	 */
+	public static final int[] PALETTE = {
+		DEFAULT_COLOUR, 0xFFFFFF, 0xFF4040, 0xFF9040, 0xFFFF40,
+		0x40FF40, 0x40FFFF, 0x4080FF, 0xFF40FF, 0x909090
+	};
+
+	/** What a cycled colour is called, matched to {@link #PALETTE} by position. */
+	public static final String[] PALETTE_NAMES = {
+		"Default", "White", "Red", "Orange", "Yellow",
+		"Green", "Cyan", "Blue", "Magenta", "Grey"
+	};
+
+	/** The name for a colour, or its hex if it is not one of the cycled ones. */
+	public static String colourName(int rgb) {
+		for (int i = 0; i < PALETTE.length; i++) {
+			if (PALETTE[i] == rgb) {
+				return PALETTE_NAMES[i];
+			}
+		}
+		return hex(rgb);
+	}
+
+	/**
+	 * Applies the colour lines read by load(), now that every rule is known.
+	 *
+	 * Nothing here may throw: a hand-edited line, a colour for a rule that was deleted, or six
+	 * characters that are not hex all have to leave a working client.
+	 */
+	private static void applyPendingColours() {
+		int seen = pendingCount < MAX ? pendingCount : MAX;
+		for (int i = 0; i < seen; i++) {
+			String line = pendingColours[i];
+			if (line == null) {
+				continue;
+			}
+			int split = line.lastIndexOf('=');
+			if (split <= 0 || split + 1 >= line.length()) {
+				continue;
+			}
+			int at = find(line.substring(0, split));
+			if (at < 0) {
+				continue;                                // a colour for a rule that is not here
+			}
+			int rgb = parseHex(line.substring(split + 1));
+			// A STORED BLACK READS AS "NO COLOUR OF ITS OWN". 0 is what colourFor answers for a
+			// row it is not drawing at all, so a rule coloured 000000 by hand would be a rule
+			// whose item vanishes with nothing to say why. The cycle never produces black, so
+			// this only catches a hand-edited file - and the plugin's own colour is a better
+			// answer than an invisible label.
+			if (rgb != DEFAULT_COLOUR && rgb != 0) {
+				colours[at] = rgb;
+			}
+		}
+		pendingCount = 0;
+	}
+
+	/** Six hex characters as a packed RGB, or DEFAULT_COLOUR for anything else. */
+	private static int parseHex(String text) {
+		if (text == null) {
+			return DEFAULT_COLOUR;
+		}
+		String cleaned = text.trim();
+		if (cleaned.length() != 6) {
+			return DEFAULT_COLOUR;
+		}
+		for (int i = 0; i < 6; i++) {
+			if (Character.digit(cleaned.charAt(i), 16) < 0) {
+				return DEFAULT_COLOUR;
+			}
+		}
+		try {
+			return Integer.parseInt(cleaned, 16);
+		} catch (RuntimeException notHex) {
+			return DEFAULT_COLOUR;
+		}
+	}
+
+	/** A packed RGB as the six characters the file holds. */
+	private static String hex(int rgb) {
+		String text = Integer.toHexString(rgb & 0xFFFFFF).toUpperCase();
+		while (text.length() < 6) {
+			text = "0" + text;
+		}
+		return text;
 	}
 
 	private static void ensure() {
@@ -272,10 +423,15 @@ public final class GroundItemPrefs {
 		}
 	}
 
+	/** Colour lines seen while reading, applied once every rule is known. See load(). */
+	private static final String[] pendingColours = new String[MAX];
+	private static int pendingCount;
+
 	public static void load() {
 		// Defaults first and loaded set immediately, as in QolSettings: a throw mid-read leaves a
 		// working client rather than half-applied settings and a re-entrant load on every call.
 		count = 0;
+		pendingCount = 0;
 		radius = DEFAULT_RADIUS;
 		minValue = DEFAULT_MIN_VALUE;
 		loaded = true;
@@ -305,9 +461,18 @@ public final class GroundItemPrefs {
 				} else if ((key.equals("hide") || key.equals("show")) && count < MAX) {
 					names[count] = value;
 					modes[count] = key.equals("hide") ? HIDE : HIGHLIGHT;
+					colours[count] = DEFAULT_COLOUR;
 					count++;
+				} else if (key.equals("colour")) {
+					// "colour=Name=RRGGBB". KEYED ON THE NAME, not on a position, so the line
+					// survives the rules being reordered or hand-edited - and a colour for a rule
+					// that is not there is simply dropped. Collected and applied after the loop,
+					// because nothing guarantees a colour line comes after its own rule.
+					pendingColours[pendingCount % MAX] = value;
+					pendingCount++;
 				}
 			}
+			applyPendingColours();
 		} catch (Exception ex) {
 			// Unreadable or corrupt: keep whatever parsed cleanly, defaults for the rest.
 		} finally {
@@ -338,6 +503,15 @@ public final class GroundItemPrefs {
 			writer.println("minvalue=" + minValue);
 			for (int i = 0; i < count; i++) {
 				writer.println((modes[i] == HIDE ? "hide=" : "show=") + names[i]);
+			}
+			// SEPARATE LINES, AND THE RULE LINES ABOVE ARE UNCHANGED. A client that predates
+			// per-item colours skips a key it does not know, so it reads every rule and simply
+			// draws them in its own colours - which is what makes rolling back and forward safe.
+			// Folding the colour into the rule line would have made the name unreadable to it.
+			for (int i = 0; i < count; i++) {
+				if (colours[i] != DEFAULT_COLOUR) {
+					writer.println("colour=" + names[i] + "=" + hex(colours[i]));
+				}
 			}
 		} catch (Exception ex) {
 			// Read-only cache dir or a full disk: the settings still apply this session, they just

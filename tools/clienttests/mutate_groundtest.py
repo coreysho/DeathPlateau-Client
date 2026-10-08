@@ -22,8 +22,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 PLUGIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java')
 PALETTE = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemPalette.java')
+OVERLAY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/OverlayGraphics.java')
 ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemArrivals.java')
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
+PREFS = os.path.join(ROOT, 'src/main/java/jagex2/client/GroundItemPrefs.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
 MUTS = [
@@ -38,12 +40,128 @@ MUTS = [
 
     # The three rules.
     (PLUGIN, 'hidden items drawn whether or not anything is revealing them',
-     'return reveal ? palette.hidden : 0;',
-     'return palette.hidden;'),
+     '''			if (!reveal) {
+				return 0;
+			}''',
+     ''),
     (PLUGIN, 'highlighted items made to obey the value floor after all',
-     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn palette.highlighted;',
-     'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {\n'
-     '\t\t\treturn palette.highlighted;'),
+     'if (GroundItemPrefs.isHighlighted(item.name)) {',
+     'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {'),
+    # ---- PER-ITEM COLOURS. A rule's own colour has to win, and the arrays have to stay paired.
+    (PLUGIN, "a rule's own colour ignored, so setting one does nothing",
+     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;',
+     'return palette.highlighted;'),
+    (PLUGIN, "a hidden rule's own colour ignored",
+     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;',
+     'return palette.hidden;'),
+    (PREFS, '''a new rule added by toggle left at the zero-filled colour, so its item silently disappears''',
+     '''public static boolean toggle(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			if (modes[at] == mode) {
+				removeAt(at);
+			} else {
+				modes[at] = mode;       // hidden <-> highlighted, rather than a second contradictory rule
+				save();
+			}
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
+		count++;''',
+     '''public static boolean toggle(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			if (modes[at] == mode) {
+				removeAt(at);
+			} else {
+				modes[at] = mode;       // hidden <-> highlighted, rather than a second contradictory rule
+				save();
+			}
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		count++;'''),
+    (PREFS, '''a new rule added by set left at the zero-filled colour, so its item silently disappears''',
+     '''public static boolean set(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			modes[at] = mode;
+			save();
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
+		count++;''',
+     '''public static boolean set(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			modes[at] = mode;
+			save();
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		count++;'''),
+    (PREFS, 'the colour left behind when a rule is removed, recolouring every rule after it',
+     '			colours[j] = colours[j + 1];\n',
+     ''),
+    (PREFS, 'a hand-edited black kept, so the row it belongs to draws nothing at all',
+     'if (rgb != DEFAULT_COLOUR && rgb != 0) {',
+     'if (rgb != DEFAULT_COLOUR) {'),
+    (PREFS, 'a colour line matched to the wrong rule, by position instead of by name',
+     '			int at = find(line.substring(0, split));',
+     '			int at = i < count ? i : -1;'),
+    (PREFS, 'the colour cycle never coming back round to Default',
+     '		colours[i] = PALETTE[at % PALETTE.length];',
+     '		colours[i] = PALETTE[at < PALETTE.length ? at : PALETTE.length - 1];'),
     (PLUGIN, 'an item the cache has no name for drawn as an empty row',
      'if (item.name.length() == 0) {\n\t\t\treturn 0;\n\t\t}\n',
      ''),
@@ -171,6 +289,80 @@ MUTS = [
 		}
 		boolean wantNotify'''),
 
+    (PLUGIN, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
+     '''		return Character.toLowerCase(text.charAt(0));''',
+     '''		return text.charAt(0);'''),
+    (PLUGIN, '''F1 off by one, so every function key is the wrong one''',
+     '''					return 1007 + n;''',
+     '''					return 1008 + n;'''),
+    (PLUGIN, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
+     '''				if (n >= 1 && n <= 12) {''',
+     '''				if (n >= 1) {'''),
+    # The 'blank hotkey setting' mutation is gone with the guard it deleted: a length-0
+    # check was redundant - a blank setting already fails the "exactly one character"
+    # test - and the audit finding it deletable with nothing noticing is how a redundant
+    # check announces itself. The guard went rather than the mutation gaining a test.
+    (PLUGIN, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
+     '''		if (text.length() != 1) {
+			return -1;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the hotkey not consumed, so it also lands in the chat box''',
+     '''		event.consume();''',
+     ''''''),
+    (PLUGIN, '''the double-tap live even when the player set its window to 0''',
+     '''return windowMs > 0 && lastDownAt > 0L && now - lastDownAt <= (long) windowMs;''',
+     '''return lastDownAt > 0L && now - lastDownAt <= (long) windowMs;'''),
+    (PLUGIN, '''the first Alt press since startup counting as the second of a pair''',
+     '''return windowMs > 0 && lastDownAt > 0L && now - lastDownAt <= (long) windowMs;''',
+     '''return windowMs > 0 && now - lastDownAt <= (long) windowMs;'''),
+    (PLUGIN, '''the double-tap window made exclusive, so a tap exactly on it does not count''',
+     '''now - lastDownAt <= (long) windowMs;''',
+     '''now - lastDownAt < (long) windowMs;'''),
+    (PLUGIN, '''the tap watched while Alt is held rather than on the press edge''',
+     '''		if (alt && !this.altWasDown) {''',
+     '''		if (alt) {'''),
+    (PLUGIN, '''every beam shape drawing the same width, so the choice does nothing''',
+     '''		if (BEAM_STRAIGHT.equals(style)) {
+			width = BEAM_W;
+		} else if (BEAM_NARROW.equals(style)) {
+			width = BEAM_W / 4;
+		} else {''',
+     '''		if (false) {
+			width = BEAM_W;
+		} else if (false) {
+			width = BEAM_W / 4;
+		} else {'''),
+    (PLUGIN, '''a tall beam allowed to reach zero width and draw nothing''',
+     '''		return width < 1 ? 1 : width;''',
+     '''		return width;'''),
+    (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
+     '''		} else {
+			width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+		}''',
+     '''		} else {
+			width = 0;
+		}'''),
+    (OVERLAY, '''the outline drawn on one side only, which is the shadow it replaces''',
+     '''		this.font.drawString(left + 1, 0, top, text);
+''',
+     ''''''),
+    (OVERLAY, '''the outline passes shadowed, so each casts a shadow of its own''',
+     '''		this.font.drawString(left - 1, 0, top, text);''',
+     '''		this.font.drawStringTag(0, left - 1, top, true, text);'''),
+    (OVERLAY, '''the coloured pass shadowed as well, so an outline is also a shadow''',
+     '''		this.font.drawStringTag(colour, left, top, false, text);''',
+     '''		this.font.drawStringTag(colour, left, top, true, text);'''),
+    (OVERLAY, '''outlined text not centred, so a row sits off its tile''',
+     '''		int centred = x - this.font.stringWidTag(text) / 2;
+		this.markText(centred, y, text);''',
+     '''		int centred = x;
+		this.markText(centred, y, text);'''),
+    (PLUGIN, '''the outline drawn whether the player asked for it or not''',
+     '''				if (this.textOutline) {''',
+     '''				if (true) {'''),
+
 ]
 
 
@@ -180,7 +372,7 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)
