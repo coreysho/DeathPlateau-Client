@@ -375,6 +375,43 @@ is deliberately not part of that key: taking one coin off a stack is not a drop,
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
 
+### XP drops, in detail
+
+Fifteen settings, and the thing to know before changing any of them is the rule the feature was
+tuned around:
+
+**A row's fade is set when the row is created and never refreshed.** Every row leaves on its own
+schedule no matter what gains experience after it, which is what makes the column read as drops
+rather than as a list. The numbers came out of that tuning - 3000ms was too slow, 600ms too fast,
+1500ms right - and they are the defaults the boxes start at.
+
+| | |
+| --- | --- |
+| Looks | Drop colour, text size, outline instead of a shadow, the skill icon, the skill's name on the row |
+| Motion | Which way the column runs, how fast rows settle, how long one stays, how many at once |
+| Grouping | Add up gains in the same skill instead of a row per gain |
+| The panel | Show it, how long it stays, the progress bar's colour, experience per hour |
+| Notify | On a level up |
+
+**Grouping had to be built inside that fade rule rather than around it.** Adding a gain into the
+row that is already there does not extend it: a running total that refreshed its own fade would be
+a row that never leaves while you train, which is a different feature and one the drops were
+explicitly tuned away from. It also only ever grows the *newest* row - a row further down has
+already eased into place and had others arrive after it, and growing it would make a number change
+in the middle of the column with nothing arriving to explain it.
+
+**Experience per hour stays at 0 for the first second.** Dividing a gain by a few milliseconds
+gives a figure in the hundreds of millions, which measures the denominator rather than the player.
+The figure is a `long` the whole way through for the same reason: a short session of a maxed
+account leaves `int` behind long before it stops being a number worth printing.
+
+**A 99 never announces a level up.** `getExperienceForLevel` has nothing past level 100 and answers
+level 99's own figure for it, so a maxed skill's "next level" threshold is experience the player
+already has. Without the guard, every single drop at 99 would announce a level up for the rest of
+that account's life. The level-up check also reads the level from *before* the change, because the
+packet handler posts `StatChanged` before it recomputes `skillBaseLevel` - which is what lets the
+plugin compare without keeping a copy of the experience curve.
+
 ## Restyling the right-click menu
 
 Level 6. From a `MenuBuilt` handler, a plugin can draw one row in another colour and move one row
@@ -570,7 +607,7 @@ are small enough that a jar of their own would be more ceremony than code:
 | Anti-drag | yes | How long a click is held before an item starts dragging. |
 | Ground items | yes | Names and values over what is on the floor, with rules per item, value tiers you colour, notifications and beams. |
 | Left-click swaps | yes | Which option a left click performs. |
-| XP drops | yes | Experience gained, in the top-right corner. |
+| XP drops | yes | Experience gained, in the top-right corner, with the colour, the motion, grouping, experience per hour and a level-up notification. |
 | Barrows doors | yes | Highlights the door that opens. |
 | Boosts | no | Which stats are boosted or drained, and by how much. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |

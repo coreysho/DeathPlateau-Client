@@ -1767,7 +1767,10 @@ public class GroundItemsTest {
 		java.util.Arrays.fill(pixels, 0);
 		Pix2D.bind(W, H, pixels);
 		manager.renderOverlays(W, H, Overlay.LAYER_SCENE);
-		return font.rows;
+		// A COPY. No check here holds two frames at once, but returning the font's own list means
+		// the next frame clears and refills the same object - so the day one does, "it changed"
+		// could never be false. XpDropsTest lost a check to exactly that.
+		return new ArrayList<Drawn>(font.rows);
 	}
 
 	static GroundItem item(String name, int count, int price) {
