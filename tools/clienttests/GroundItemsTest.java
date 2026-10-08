@@ -512,6 +512,24 @@ public class GroundItemsTest {
 				GroundItemPrefs.load();
 				check(GroundItemPrefs.colourOf("Only") == GroundItemPrefs.DEFAULT_COLOUR,
 					"a colour for a rule that is gone is dropped, not given to whoever is there");
+
+				// A HAND-EDITED BLACK, which is the one colour a rule may not have: 0 is what
+				// colourFor answers for a row it is not drawing, so a rule coloured 000000 would
+				// be an item that silently disappears. The cycle never produces black, so only a
+				// file can get here - which is why the earlier check on a cycled colour could not
+				// see this and the mutation survived.
+				java.io.PrintWriter black = new java.io.PrintWriter(
+					new java.io.FileWriter(cache + "qol_grounditems.dat"));
+				black.println("version=1");
+				black.println("show=Inky");
+				black.println("colour=Inky=000000");
+				black.close();
+				GroundItemPrefs.load();
+				check(GroundItemPrefs.colourOf("Inky") == GroundItemPrefs.DEFAULT_COLOUR,
+					"a colour of 000000 reads as no colour of its own");
+				check(GroundItemsPlugin.colourFor(item("Inky", 1, 1), false, 0)
+						== GroundItemPalette.DEFAULTS.highlighted,
+					"...so the item is still drawn, in the plugin's colour");
 			} catch (Throwable cannot) {
 				check(false, "could not rewrite the settings file (" + cannot + ")");
 			}
