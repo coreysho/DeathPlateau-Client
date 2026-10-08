@@ -135,6 +135,20 @@ public class NpcIndicatorsTest {
 				&& hasChoice("tagPosition", NpcIndicatorsPlugin.AT_FEET),
 			"and both tag positions");
 
+		// THE EARLY RETURN, which nothing here can run. With both marks off the draw produces
+		// exactly the same nothing either way - the difference is that without the guard it still
+		// calls getNpcs(), which walks the scene and allocates, on every frame of every session
+		// where a player has turned both off. The audit found it deletable with every check green,
+		// and a cost is not a pixel, so it is read out of the source the way menutest reads the
+		// menu's per-frame clear.
+		String plugin = read("src/main/java/jagex2/client/plugin/builtin/NpcIndicatorsPlugin.java");
+		check(plugin.indexOf("if (!this.ctx.isLoggedIn() || (!this.tile && !this.tag)) {") >= 0,
+			"the draw returns before walking the scene when there is nothing to mark");
+		check(plugin.indexOf("List<Actor> npcs = this.ctx.getNpcs();") >= 0
+				&& plugin.indexOf("if (!this.ctx.isLoggedIn() || (!this.tile && !this.tag)) {")
+					< plugin.indexOf("List<Actor> npcs = this.ctx.getNpcs();"),
+			"...and the guard comes before the walk, which is the only order that saves anything");
+
 		int count = entry.getConfig().getItems().size();
 		check(read("plugins/README.md").indexOf("### Npc indicators, in detail") >= 0,
 			"the README has a section for this plugin");
