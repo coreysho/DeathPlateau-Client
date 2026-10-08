@@ -273,6 +273,7 @@ public class MyToolPlugin extends Plugin {
 | 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
 | 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
+| 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -374,6 +375,46 @@ on a tile now. `GroundItemArrivals` remembers the last scan and answers the diff
 is deliberately not part of that key: taking one coin off a stack is not a drop, and neither is a
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
+
+### Tile indicators, in detail
+
+Eight settings: the two tiles, a colour each, outline thickness, a fill for each, and how solid a
+fill is.
+
+**A tile is not a rectangle.** It is a quadrilateral whose four edges run at four different angles,
+which is why two things here are built the way they are. The outline is drawn from four projected
+corners rather than as a rect — the version that draws a rect looks fine under the player and wrong
+everywhere else. And **thickness is concentric rings** pulled toward the tile's own centre, because
+"thicken that edge" is a polygon-offset problem rather than a drawing one; rings cannot leave the
+tile the way an outward offset could, and each ring's corners clamp at the centre so a distant tile
+a few pixels across cannot grow a ring *bigger* than the one it was meant to sit inside.
+
+**A fill is scanlines.** `OverlayGraphics` fills rectangles, so the honest version of a filled
+quadrilateral is one one-pixel-high rect per screen row between the quad's edges — which is what a
+polygon fill is, and is cheap at the size of a tile. It goes through `fillAlpha` so it can be seen
+through, which is the only way a fill on the tile you are standing on does not hide you, and the
+outline is drawn *after* it so it sits on top of its own fill.
+
+The span arithmetic is pure and carries the most valuable checks in the plugin, because a wrong
+span is not a slightly wrong tile — it is a bar of colour across the screen. Three cases matter: a
+horizontal edge lying exactly on a row has to contribute **both** its ends, or the top and bottom
+row of every tile is one pixel wide; a row the quad does not reach has to read as "draw nothing"
+rather than as a span; and a tile seen exactly edge-on has every edge horizontal, which is a divide
+by zero in the obvious implementation, inside a render loop.
+
+### Mouse highlight, in detail
+
+Eight settings: the text's colour and size, an outline instead of a box, the box and its colour,
+opacity and border, and whether to show `Walk here`.
+
+**`Walk here` was a rule and is now a setting, with the same default.** Everything that is not
+something is walk-here, so showing it means a label following the cursor across every empty tile —
+noise with a 100% duty cycle. It is offered because someone learning the interface may want it.
+
+**While a right-click menu is open, the label stands aside.** That is not a setting. The label says
+what a *left* click would do, and with a menu open in front of the player that is a click they are
+not about to make — so it would be describing the wrong thing while sitting next to the list of
+right ones. `ctx.isMenuOpen()` is what makes it askable, and is level 7.
 
 ### Npc indicators, in detail
 
@@ -670,8 +711,8 @@ are small enough that a jar of their own would be more ceremony than code:
 | Boosts | no | Which stats are boosted or drained, and by how much. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
 | Idle notifier | no | Says when you stop gaining experience. |
-| Mouse highlight | no | What a left click would do, next to the cursor. |
-| Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
+| Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
+| Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |
 | Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |
 
 The first five were client features and are on because turning them off would change what

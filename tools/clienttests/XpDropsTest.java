@@ -227,10 +227,11 @@ public class XpDropsTest {
 	// ---------------------------------------------------------------- 2
 
 	static void settingTests() {
-		check(PluginApi.LEVEL >= 5, "colours and choices are API level 5");
+		check(PluginApi.LEVEL >= 7,
+			"this plugin reads a font size through OverlayGraphics, which is API level 7");
 		check(read("src/main/java/jagex2/client/plugin/builtin/XpDropsPlugin.java")
-				.indexOf("apiLevel = 5") >= 0,
-			"...and the plugin declares it, so an older client refuses it rather than breaking");
+				.indexOf("apiLevel = 7") >= 0,
+			"...and declares it, so an older client refuses it rather than breaking on a draw");
 
 		// READ BEFORE ANYTHING WRITES THEM. The defaults are the behaviour this plugin shipped
 		// with: a player who upgrades and changes nothing has to see exactly what they saw.

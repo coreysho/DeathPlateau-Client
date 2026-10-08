@@ -163,7 +163,7 @@ MUTS = [
 
     # ---- THE LEVEL ITSELF.
     (API, 'the API level left behind, so a plugin built for this client is refused by it',
-     'public static final int LEVEL = 6;',
+     'public static final int LEVEL = 7;',
      'public static final int LEVEL = 4;'),
     (API, 'the level check made exact, so every older plugin stops loading',
      'return apiLevel <= LEVEL;',

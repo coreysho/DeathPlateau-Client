@@ -144,18 +144,12 @@ MUTS = [
      ''),
 
     # ---- ONE IMPLEMENTATION. The swatch and the drawing have to agree.
-    (MOUSE, 'the built-in keeping its own colour parse again, free to drift from the swatch',
-     'return PluginConfig.parseColour(text);',
-     '''if (text == null || text.trim().length() != 6) {
-			return 0xFFFF00;
-		}
-		try {
-			return Integer.parseInt(text.trim(), 16);
-		} catch (RuntimeException notHex) {
-			return 0xFFFF00;
-		}'''),
-
-    # ---- WHAT THE DROP-DOWN DRIVES.
+    # "the built-in keeping its own colour parse again" lived here and is gone with the
+    # delegate it mutated: MouseHighlightPlugin.parseColour was a one-line call through to
+    # PluginConfig's, and an uncalled indirection is a place for a second implementation to
+    # appear. Both callers say PluginConfig.parseColour themselves now. The promise - that no
+    # built-in grows its own parse - is kept by the source check in ConfigTest, which can state
+    # it for EVERY built-in rather than for the one that happened to have a delegate.
     (PLUGIN, 'an unknown tag position putting the tag on the ground rather than defaulting',
      '''		if (AT_FEET.equals(position)) {
 			return 0;

@@ -168,13 +168,29 @@ public class ConfigTest {
 		check(bbody.indexOf("buildColourEditor") < bbody.indexOf("buildChoiceEditor"),
 			"...and asks about the colour first, so a colour with choices is still a swatch");
 
-		// ONE IMPLEMENTATION OF THE COLOUR PARSE. The swatch and the drawing have to agree, and
-		// two copies of "is this six characters of hex" eventually would not.
-		String mouse = read("src/main/java/jagex2/client/plugin/builtin/MouseHighlightPlugin.java");
-		check(mouse.indexOf("PluginConfig.parseColour(text)") >= 0,
-			"the built-ins parse a colour through PluginConfig, not a second copy of it");
-		check(mouse.indexOf("Integer.parseInt(cleaned, 16)") < 0,
-			"...and no longer carry their own");
+		// ONE IMPLEMENTATION OF THE COLOUR PARSE, FOR EVERY BUILT-IN. The swatch and the drawing
+		// have to agree, and two copies of "is this six characters of hex" eventually would not.
+		//
+		// Stated across all of them rather than on the one that used to hold a delegate. There
+		// was a MouseHighlightPlugin.parseColour that called straight through to PluginConfig's,
+		// and one mutation guarding it; the delegate is gone, because an uncalled indirection is
+		// a place for a second implementation to appear. This says the thing the delegate was
+		// standing in for, for every plugin at once.
+		String[] builtins = {
+			"AntiDragPlugin", "BarrowsDoorsPlugin", "BoostsPlugin", "GroundItemsPlugin",
+			"IdleNotifierPlugin", "MenuSwapperPlugin", "MouseHighlightPlugin",
+			"NpcIndicatorsPlugin", "SkillsPlugin", "TileIndicatorsPlugin", "XpDropsPlugin"
+		};
+		for (int i = 0; i < builtins.length; i++) {
+			String builtin = read("src/main/java/jagex2/client/plugin/builtin/"
+				+ builtins[i] + ".java");
+			check(builtin.length() > 0 && builtin.indexOf("Integer.parseInt(cleaned, 16)") < 0
+					&& builtin.indexOf("static int parseColour(") < 0,
+				builtins[i] + " has no colour parse of its own");
+		}
+		check(read("src/main/java/jagex2/client/plugin/PluginConfig.java")
+				.indexOf("static int parseColour(") >= 0,
+			"...because PluginConfig is the one that does, and the swatch reads the same one");
 	}
 
 	// ---------------------------------------------------------------- 4

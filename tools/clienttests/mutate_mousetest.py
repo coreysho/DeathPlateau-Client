@@ -31,6 +31,8 @@ MANAGER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginManager.j
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 HIGHLIGHT = os.path.join(BUILTIN, 'MouseHighlightPlugin.java')
 TILES = os.path.join(BUILTIN, 'TileIndicatorsPlugin.java')
+MOUSE = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/MouseHighlightPlugin.java')
+OVERLAY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/OverlayGraphics.java')
 RUNNER = os.path.join(HERE, 'run_mousetest.py')
 
 MUTS = [
@@ -88,9 +90,9 @@ MUTS = [
      'return this.hoverWantedAt >= 0'),
 
     # --- Mouse highlight ----------------------------------------------------------------------
-    (HIGHLIGHT, 'the label drawn for Walk here, so it follows the cursor over every empty tile',
-     'if (index < 0 || this.ctx.isWalkHere(index)) {',
-     'if (index < 0) {'),
+    # The old "label drawn for Walk here" mutation is gone: Walk here is a setting now, and
+    # the two mutations below it - shown whether asked or not, and never shown - cover both
+    # directions of what used to be one rule.
     (HIGHLIGHT, 'colour tags left in, so the label reads "Chop down <col=00ffff>Tree"',
      '		return strip(this.ctx.getMenuOption(index));',
      '		return this.ctx.getMenuOption(index);'),
@@ -147,13 +149,172 @@ MUTS = [
     (TILES, 'the line left unbounded, so a bad projection grinds inside the render loop',
      'for (int i = 0; i < MAX_STEPS; i++) {',
      'for (int i = 0; i < Integer.MAX_VALUE; i++) {'),
+    # ---- TRANCHE THREE: the eight settings each on Tile indicators and Mouse highlight, the
+    # shared font parse, and the span arithmetic a fill's shape comes out of.
+    (MOUSE, '''the text colour left hardcoded, so the swatch does nothing''',
+     '''		int colour = PluginConfig.parseColour(this.colour);''',
+     '''		int colour = 0xFFFF00;'''),
+    (MOUSE, '''the box colour left hardcoded''',
+     '''PluginConfig.parseColour(this.backdropColour), alphaFor(this.backdropOpacity));''',
+     '''PluginConfig.parseColour(DEFAULT_BACKDROP), alphaFor(this.backdropOpacity));'''),
+    (MOUSE, '''the box opacity left hardcoded''',
+     '''PluginConfig.parseColour(this.backdropColour), alphaFor(this.backdropOpacity));''',
+     '''PluginConfig.parseColour(this.backdropColour), DEFAULT_BACKDROP_ALPHA);'''),
+    (MOUSE, '''the border colour left hardcoded''',
+     '''			g.box(left - 2, baseline - tall, wide + 4, tall + 3,
+				PluginConfig.parseColour(this.borderColour));''',
+     '''			g.box(left - 2, baseline - tall, wide + 4, tall + 3,
+				PluginConfig.parseColour(DEFAULT_BORDER));'''),
+    (MOUSE, '''the box drawn whether the player asked for it or not''',
+     '''		if (this.boxed) {''',
+     '''		if (true) {'''),
+    (MOUSE, '''the box never drawn, so the switch does nothing''',
+     '''		if (this.boxed) {''',
+     '''		if (false) {'''),
+    (MOUSE, '''the opacity floor removed, so a negative wraps to something opaque''',
+     '''		if (alpha < MIN_ALPHA) {
+			return MIN_ALPHA;
+		}
+''',
+     ''''''),
+    (MOUSE, '''the opacity ceiling removed''',
+     '''		return alpha > MAX_ALPHA ? MAX_ALPHA : alpha;''',
+     '''		return alpha;'''),
+    (MOUSE, '''the text outline drawn whether the player asked for it or not''',
+     '''		if (this.textOutline) {''',
+     '''		if (true) {'''),
+    (MOUSE, '''the text outline never drawn''',
+     '''		if (this.textOutline) {''',
+     '''		if (false) {'''),
+    (MOUSE, '''the size ignored, so the drop-down does nothing''',
+     '''		g.setFont(OverlayGraphics.fontFor(this.font));''',
+     '''		g.setFont(OverlayGraphics.FONT_NORMAL);'''),
+    (MOUSE, '''Walk here shown whether the player asked for it or not, on every empty tile''',
+     '''if (index < 0 || (!this.showWalkHere && this.ctx.isWalkHere(index))) {''',
+     '''if (index < 0) {'''),
+    (MOUSE, '''Walk here never shown, so the setting does nothing''',
+     '''if (index < 0 || (!this.showWalkHere && this.ctx.isWalkHere(index))) {''',
+     '''if (index < 0 || this.ctx.isWalkHere(index)) {'''),
+    (MOUSE, '''the label drawn over an open menu, describing a click nobody is about to make''',
+     '''		if (this.ctx.isMenuOpen()) {
+			return;
+		}
+''',
+     ''''''),
+    (MOUSE, '''the label hidden whether a menu is open or not''',
+     '''		if (this.ctx.isMenuOpen()) {''',
+     '''		if (true) {'''),
+    (CONTEXT, '''isMenuOpen always false, so an overlay never stands aside''',
+     '''		return this.client.menuVisible;''',
+     '''		return false;'''),
+    (OVERLAY, '''the bold choice falling through to the fallback''',
+     '''		if (FONT_CHOICE_BOLD.equals(choice)) {
+			return FONT_BOLD;
+		}
+''',
+     ''''''),
+    (OVERLAY, '''the small choice falling through to the fallback''',
+     '''return FONT_CHOICE_SMALL.equals(choice) ? FONT_SMALL : FONT_NORMAL;''',
+     '''return FONT_NORMAL;'''),
+    (OVERLAY, '''an unreadable size throwing instead of falling back, out of a render loop''',
+     '''		if (FONT_CHOICE_BOLD.equals(choice)) {''',
+     '''		if (choice.equals(FONT_CHOICE_BOLD)) {'''),
+    (OVERLAY, '''a choice offered that no branch matches, so one size silently does nothing''',
+     '''FONT_CHOICE_NORMAL, FONT_CHOICE_BOLD, FONT_CHOICE_SMALL''',
+     '''FONT_CHOICE_NORMAL, "Huge", FONT_CHOICE_SMALL'''),
+    (TILES, '''the border width ignored, so the setting does nothing''',
+     '''		int width = borderFor(this.borderWidth);''',
+     '''		int width = 1;'''),
+    (TILES, '''the fill opacity ignored''',
+     '''		int alpha = fillFor(this.fillOpacity);''',
+     '''		int alpha = DEFAULT_FILL;'''),
+    (TILES, '''your own tile filled whether the player asked for it or not''',
+     '''			if (this.currentFill) {''',
+     '''			if (true) {'''),
+    (TILES, '''your own tile never filled, so the switch does nothing''',
+     '''			if (this.currentFill) {''',
+     '''			if (false) {'''),
+    (TILES, '''the outline drawn under its own fill rather than on top of it''',
+     '''			if (this.currentFill) {
+				fillTile(this.ctx, g, tx, tz, colour, alpha);
+			}
+			outlineTile(this.ctx, g, tx, tz, colour, width);''',
+     '''			outlineTile(this.ctx, g, tx, tz, colour, width);
+			if (this.currentFill) {
+				fillTile(this.ctx, g, tx, tz, colour, alpha);
+			}'''),
+    (TILES, '''a zero opacity drawing a fill anyway''',
+     '''		if (alpha <= MIN_FILL || !ctx.isInScene(sceneTileX, sceneTileZ)) {''',
+     '''		if (!ctx.isInScene(sceneTileX, sceneTileZ)) {'''),
+    (TILES, '''the opacity floor removed, so a negative wraps to something solid''',
+     '''		if (alpha < MIN_FILL) {
+			return MIN_FILL;
+		}
+''',
+     ''''''),
+    (TILES, '''the opacity ceiling removed''',
+     '''		return alpha > MAX_FILL ? MAX_FILL : alpha;''',
+     '''		return alpha;'''),
+    (TILES, '''the border floor removed, so a zero is no outline at all''',
+     '''		if (width < MIN_BORDER) {
+			return MIN_BORDER;
+		}
+''',
+     ''''''),
+    (TILES, '''the border ceiling removed''',
+     '''		return width > MAX_BORDER ? MAX_BORDER : width;''',
+     '''		return width;'''),
+    (TILES, '''a horizontal edge on the row ignored, so every tile's top row is one pixel wide''',
+     '''			if (y0 == y1) {
+				if (y0 != y) {
+					continue;
+				}''',
+     '''			if (y0 == y1) {
+				continue;
+			}
+			if (false) {'''),
+    (TILES, '''a horizontal edge contributing one end, so the top row is half a tile''',
+     '''best = wantLeft ? Math.min(best, Math.min(x0, x1)) : Math.max(best, Math.max(x0, x1));''',
+     '''best = wantLeft ? Math.min(best, x0) : Math.max(best, x0);'''),
+    (TILES, '''the divide-by-zero guard removed, so a tile seen edge-on throws from a render''',
+     '''			if (y0 == y1) {''',
+     '''			if (false) {'''),
+    (TILES, '''the row-range test dropped, so every edge crosses every row''',
+     '''			if (y < Math.min(y0, y1) || y > Math.max(y0, y1)) {
+				continue;
+			}
+''',
+     ''''''),
+    (TILES, '''the interpolation along an edge inverted, so a fill is drawn mirrored''',
+     '''			int at = x0 + (y - y0) * (x1 - x0) / (y1 - y0);''',
+     '''			int at = x1 - (y - y0) * (x1 - x0) / (y1 - y0);'''),
+    (TILES, '''left and right the same, so a fill is one pixel wide''',
+     '''			best = wantLeft ? Math.min(best, at) : Math.max(best, at);''',
+     '''			best = Math.min(best, at);'''),
+    (TILES, '''an empty row given a span, so a fill bleeds past the tile''',
+     '''			if (left <= right) {''',
+     '''			if (true) {'''),
+    (TILES, '''the scanline height unbounded, so an absurd projection fills the whole frame''',
+     '''		if (bottom - top > MAX_STEPS) {
+			return;
+		}
+''',
+     ''''''),
+    (TILES, '''the corners not shared, so the outline and the fill disagree about the tile''',
+     '''		if (!corners(ctx, sceneTileX, sceneTileZ, xs, ys)) {
+			return;
+		}
+		int top = ys[0];''',
+     '''		corners(ctx, sceneTileX, sceneTileZ, xs, ys);
+		int top = ys[0];'''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (CLIENT, CONTEXT, MANAGER, HIGHLIGHT, TILES):
+    for path in (CLIENT, CONTEXT, MANAGER, HIGHLIGHT, TILES, MOUSE, OVERLAY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     # Written into a copy, never into the working tree - see mutate_guard.workspace.

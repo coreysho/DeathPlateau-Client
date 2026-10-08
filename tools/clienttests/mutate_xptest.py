@@ -131,26 +131,12 @@ MUTS = [
      '\t\t\tif (this.textOutline) {',
      '\t\t\tif (false) {'),
 
-    # ---- THE FONT. A drop-down whose values no branch matches is a control that silently does
-    # nothing, and the compiler cannot see it: both sides are strings.
+    # ---- THE FONT. Four mutations lived here and have moved to mutate_mousetest, with the
+    # parse itself: OverlayGraphics owns the three sizes and the one reading of them now, because
+    # two plugins had their own copy of both. What is left here is this plugin's own wiring to it.
     (PLUGIN, 'the font left at plain 12, so the size drop-down does nothing',
      '\t\tg.setFont(fontFor(this.font));',
      '\t\tg.setFont(OverlayGraphics.FONT_NORMAL);'),
-    (PLUGIN, 'the bold choice falling through to the fallback',
-     '''		if (FONT_BIG.equals(choice)) {
-			return OverlayGraphics.FONT_BOLD;
-		}
-''',
-     ''),
-    (PLUGIN, 'the small choice falling through to the fallback',
-     'return FONT_TINY.equals(choice) ? OverlayGraphics.FONT_SMALL : OverlayGraphics.FONT_NORMAL;',
-     'return OverlayGraphics.FONT_NORMAL;'),
-    (PLUGIN, 'an unknown font throwing instead of falling back, out of a render loop',
-     '\t\tif (FONT_BIG.equals(choice)) {',
-     '\t\tif (choice.equals(FONT_BIG)) {'),
-    (PLUGIN, 'the font drop-down offering a value no branch matches',
-     '\t\tchoices = { FONT_PLAIN, FONT_BIG, FONT_TINY })',
-     '\t\tchoices = { FONT_PLAIN, "Huge", FONT_TINY })'),
     (PLUGIN, 'the direction drop-down offering a value no branch matches',
      '\t\tchoices = { DOWN, UP, STILL })',
      '\t\tchoices = { DOWN, "Sideways", STILL })'),
@@ -278,7 +264,7 @@ MUTS = [
 
     # ---- THE DECLARED LEVEL.
     (PLUGIN, 'the declared API level left behind, so an older client loads this and breaks',
-     '\tapiLevel = 5\n)',
+     '\tapiLevel = 7\n)',
      '\tapiLevel = 0\n)'),
 ]
 

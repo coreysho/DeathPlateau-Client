@@ -40,7 +40,7 @@ import jagex2.client.plugin.event.StatChanged;
 	key = "xp-drops",
 	enabledByDefault = true,
 	legacySetting = "xp_drops",
-	apiLevel = 5
+	apiLevel = 7
 )
 public final class XpDropsPlugin extends Plugin {
 
@@ -69,9 +69,17 @@ public final class XpDropsPlugin extends Plugin {
 	static final String UP = "Up";
 	static final String STILL = "Still";
 
-	static final String FONT_PLAIN = "Normal";
-	static final String FONT_BIG = "Bold";
-	static final String FONT_TINY = "Small";
+	/**
+	 * The three text sizes, which are OverlayGraphics' now.
+	 *
+	 * Kept as names here so the settings and the tests read the same, but they are aliases rather
+	 * than a second list: two plugins had their own copy of these words and their own parse of
+	 * them, and a drop-down whose entries no branch matches is a control that silently does
+	 * nothing with nothing to catch it - both sides are strings.
+	 */
+	static final String FONT_PLAIN = OverlayGraphics.FONT_CHOICE_NORMAL;
+	static final String FONT_BIG = OverlayGraphics.FONT_CHOICE_BOLD;
+	static final String FONT_TINY = OverlayGraphics.FONT_CHOICE_SMALL;
 
 	// ---- what a drop looks like
 
@@ -79,8 +87,12 @@ public final class XpDropsPlugin extends Plugin {
 		description = "The \"+amount\" rows")
 	public String dropColour = "FFFF00";
 
-	@ConfigItem(keyName = "font", name = "Drop text size",
-		choices = { FONT_PLAIN, FONT_BIG, FONT_TINY })
+	// Inline, because an annotation's array value cannot be a reference to a constant array.
+	@ConfigItem(keyName = "font", name = "Drop text size", choices = {
+		OverlayGraphics.FONT_CHOICE_NORMAL,
+		OverlayGraphics.FONT_CHOICE_BOLD,
+		OverlayGraphics.FONT_CHOICE_SMALL
+	})
 	public String font = FONT_PLAIN;
 
 	@ConfigItem(keyName = "textOutline", name = "Outline the text",
@@ -461,12 +473,15 @@ public final class XpDropsPlugin extends Plugin {
 			&& experience >= nextLevelExperience;
 	}
 
-	/** The overlay font a drop is drawn in. */
+	/**
+	 * The overlay font a drop is drawn in.
+	 *
+	 * OverlayGraphics' parse, not a second one: the fallback for an unreadable value has to be
+	 * the same wherever a size is chosen, or the same stored setting means different things in
+	 * two plugins.
+	 */
 	static int fontFor(String choice) {
-		if (FONT_BIG.equals(choice)) {
-			return OverlayGraphics.FONT_BOLD;
-		}
-		return FONT_TINY.equals(choice) ? OverlayGraphics.FONT_SMALL : OverlayGraphics.FONT_NORMAL;
+		return OverlayGraphics.fontFor(choice);
 	}
 
 	/**

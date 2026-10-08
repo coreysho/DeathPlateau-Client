@@ -1315,7 +1315,12 @@ public class GroundItemsTest {
 		check(setting("menuDeprioritiseHidden") != null
 				&& setting("menuDeprioritiseHidden").isBoolean(),
 			"...and so is moving them to the bottom");
-		check(PluginApi.LEVEL == 6, "this client is API level 6 (" + PluginApi.LEVEL + ")");
+		// The level menu restyling needs, not the level the client is at: that pin moves with
+		// each addition and belongs to the newest suite, which is MouseTest now. What this one
+		// has to keep true is that a plugin written against 6 still runs here.
+		check(PluginApi.LEVEL >= 6,
+			"this client is at least API level 6 (" + PluginApi.LEVEL + ")");
+		check(PluginApi.supports(6), "a plugin asking for 6 runs here");
 		check(read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java")
 				.indexOf("apiLevel = 6") >= 0,
 			"...and the plugin declares the level it needs, so an older client refuses it rather "
