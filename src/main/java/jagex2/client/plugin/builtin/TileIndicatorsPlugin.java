@@ -100,6 +100,21 @@ public final class TileIndicatorsPlugin extends Plugin {
 	 */
 	static void outlineTile(PluginContext ctx, OverlayGraphics g, int sceneTileX, int sceneTileZ,
 			int colour) {
+		outlineTile(ctx, g, sceneTileX, sceneTileZ, colour, 1);
+	}
+
+	/**
+	 * The same outline, drawn thicker.
+	 *
+	 * WIDTH IS CONCENTRIC RINGS, not a thick line routine. A tile seen in perspective is a
+	 * quadrilateral whose edges run at four different angles, and "thicken that edge" means a
+	 * different offset for each - which is a polygon-offset problem, not a drawing one. Rings
+	 * pulled in toward the tile's own centre are the honest cheap version: at the sizes anyone
+	 * would ask for, two or three pixels, it reads as a thicker border, and it cannot leave the
+	 * tile the way an outward offset could.
+	 */
+	static void outlineTile(PluginContext ctx, OverlayGraphics g, int sceneTileX, int sceneTileZ,
+			int colour, int width) {
 		if (!ctx.isInScene(sceneTileX, sceneTileZ)) {
 			return;
 		}
@@ -119,9 +134,32 @@ public final class TileIndicatorsPlugin extends Plugin {
 				corner++;
 			}
 		}
-		for (int i = 0; i < 4; i++) {
-			line(g, xs[i], ys[i], xs[(i + 1) % 4], ys[(i + 1) % 4], colour);
+		// The tile's centre in screen pixels, which each ring is pulled toward.
+		int midX = (xs[0] + xs[1] + xs[2] + xs[3]) / 4;
+		int midY = (ys[0] + ys[1] + ys[2] + ys[3]) / 4;
+		for (int ring = 0; ring < (width < 1 ? 1 : width); ring++) {
+			for (int i = 0; i < 4; i++) {
+				int next = (i + 1) % 4;
+				line(g, toward(xs[i], midX, ring), toward(ys[i], midY, ring),
+					toward(xs[next], midX, ring), toward(ys[next], midY, ring), colour);
+			}
 		}
+	}
+
+	/**
+	 * A corner pulled `by` pixels toward the centre, stopping at it.
+	 *
+	 * Clamped, because a distant tile is a few pixels across and a three-pixel inset would
+	 * otherwise send its corners out the far side - which draws a bigger ring than the one it was
+	 * meant to sit inside.
+	 */
+	static int toward(int from, int centre, int by) {
+		if (from == centre || by <= 0) {
+			return from;
+		}
+		int step = from < centre ? by : -by;
+		int moved = from + step;
+		return (step > 0) == (moved > centre) ? centre : moved;
 	}
 
 	/**

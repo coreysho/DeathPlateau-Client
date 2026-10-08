@@ -37,6 +37,10 @@ public class ActorTest {
 		System.out.println("2. which npcs the player asked for");
 		matchTests();
 		System.out.println();
+		System.out.println();
+		System.out.println("2b. a colour per term, and the exact terms tagging works on");
+		termTests();
+		System.out.println();
 		System.out.println("3. what the tag says");
 		labelTests();
 		System.out.println();
@@ -130,6 +134,194 @@ public class ActorTest {
 		check(!threw, "a null name or list does not throw out of a render");
 		check(!NpcIndicatorsPlugin.matches(null, "cow") && !NpcIndicatorsPlugin.matches("Cow", null),
 			"...and answers no");
+	}
+
+	// ---------------------------------------------------------------- 2b
+
+	/**
+	 * A term's own colour, and the exact-term arithmetic the Tag row is built on.
+	 *
+	 * TWO KINDS OF MATCHING LIVE SIDE BY SIDE HERE and the difference is the whole point.
+	 * Marking is by SUBSTRING, so "goblin" finds a Goblin Guard. Tagging is by EXACT TERM, so
+	 * untagging "Goblin" cannot take "Goblin Guard" with it. Mixing them up gives a Tag row that
+	 * offers to untag something it never added, and an Untag that quietly removes a second rule.
+	 */
+	static void termTests() {
+		int fallback = 0x00FF00;
+
+		// ---- a colour per term
+		check(NpcIndicatorsPlugin.termColour("Goblin", "goblin", fallback) == fallback,
+			"a term with no colour of its own uses the plugin's");
+		check(NpcIndicatorsPlugin.termColour("Goblin", "goblin=FF0000", fallback) == 0xFF0000,
+			"a term with one uses that instead");
+		check(NpcIndicatorsPlugin.termColour("Goblin Guard", "goblin=FF0000", fallback) == 0xFF0000,
+			"...and it still matches by substring");
+		check(NpcIndicatorsPlugin.termColour("Cow", "goblin=FF0000, cow=0000FF", fallback)
+				== 0x0000FF,
+			"each term carries its own");
+		check(NpcIndicatorsPlugin.termColour("Cow", "goblin=FF0000, cow", fallback) == fallback,
+			"...and a term without one in the same list still falls back");
+		check(NpcIndicatorsPlugin.termColour("Shark", "goblin=FF0000", fallback) == 0,
+			"a name no term matches gets 0, which is how matches() reads 'no'");
+
+		// THE FIRST MATCHING TERM WINS, which is the order they are written in. Worth stating
+		// because the alternative - longest match, or last wins - is just as defensible, and a
+		// player ordering their list has to know which it is.
+		check(NpcIndicatorsPlugin.termColour("Goblin Guard", "goblin=FF0000, goblin guard=0000FF",
+				fallback) == 0xFF0000,
+			"the first matching term wins, so a narrower rule goes above a broader one");
+		check(NpcIndicatorsPlugin.termColour("Goblin Guard", "goblin guard=0000FF, goblin=FF0000",
+				fallback) == 0x0000FF,
+			"...and written that way round, it gets its own colour");
+
+		// A colour that is not six hex characters is no colour rather than a thrown exception or
+		// a plausible wrong answer: this runs per npc, per frame.
+		check(NpcIndicatorsPlugin.termColour("Cow", "cow=ZZZZZZ", fallback) == fallback,
+			"a term with nonsense where its colour goes falls back");
+		check(NpcIndicatorsPlugin.termColour("Cow", "cow=FFF", fallback) == fallback,
+			"...and so does a short one");
+		check(NpcIndicatorsPlugin.termColour("Cow", "cow=-00FF0", fallback) == fallback,
+			"...and one with a sign in it, which parseInt would otherwise accept");
+		check(NpcIndicatorsPlugin.termColour("Cow", "cow=", fallback) == fallback,
+			"...and an empty one");
+		// BLACK IS READ AS NO COLOUR, because 0 is already the answer for "no match": a term
+		// written =000000 would be an npc that silently stops being marked.
+		check(NpcIndicatorsPlugin.termColour("Cow", "cow=000000", fallback) == fallback,
+			"a term coloured black falls back, rather than being drawn in 'not drawn'");
+		check(NpcIndicatorsPlugin.matches("Cow", "cow=000000"),
+			"...and still matches, so the npc is marked rather than vanishing");
+
+		check(NpcIndicatorsPlugin.termName("Goblin=FF0000").equals("Goblin"),
+			"a term's name is what comes before its colour");
+		check(NpcIndicatorsPlugin.termName(" Goblin ").equals("Goblin"), "...trimmed");
+		check(NpcIndicatorsPlugin.termName("Goblin = FF0000 ").equals("Goblin"),
+			"...with spaces round the equals forgiven");
+		check(NpcIndicatorsPlugin.termName(null).length() == 0, "...and a null term has no name");
+
+		// ---- exact terms, which is what tagging works on
+		check(NpcIndicatorsPlugin.hasTerm("goblin, cow", "Goblin"),
+			"a term is found whatever its case");
+		check(NpcIndicatorsPlugin.hasTerm("goblin=FF0000", "Goblin"),
+			"...and a coloured term is still that term");
+		check(!NpcIndicatorsPlugin.hasTerm("goblin", "Goblin Guard"),
+			"BUT NOT BY SUBSTRING: Goblin being tagged does not make Goblin Guard tagged, or the "
+				+ "Tag row would offer to untag something it never added");
+		check(!NpcIndicatorsPlugin.hasTerm("", "Goblin") && !NpcIndicatorsPlugin.hasTerm(null, "Goblin"),
+			"an empty or missing list holds nothing");
+		check(!NpcIndicatorsPlugin.hasTerm("goblin", ""), "and no name is not a term");
+
+		// ---- adding
+		check(NpcIndicatorsPlugin.addTerm("", "Goblin").equals("Goblin"),
+			"the first tag is the whole list");
+		check(NpcIndicatorsPlugin.addTerm("Goblin", "Cow").equals("Goblin, Cow"),
+			"the next goes on the end, comma and space, the way a player would type it");
+		check(NpcIndicatorsPlugin.addTerm("Goblin", "goblin").equals("Goblin"),
+			"tagging something already tagged changes nothing, rather than listing it twice");
+		check(NpcIndicatorsPlugin.addTerm(null, "Goblin").equals("Goblin"),
+			"a missing list is an empty one");
+		check(NpcIndicatorsPlugin.addTerm("Goblin=FF0000", "Cow").equals("Goblin=FF0000, Cow"),
+			"and an existing term keeps its colour");
+		// A NAME THAT CANNOT BE STORED IS DECLINED. A comma would be read back as two terms and
+		// an equals as a colour; mangling the list silently is worse than not adding.
+		check(NpcIndicatorsPlugin.addTerm("Goblin", "Cow, Sheep").equals("Goblin"),
+			"a name with a comma in it is declined rather than mangled into two terms");
+		check(NpcIndicatorsPlugin.addTerm("Goblin", "Cow=FF0000").equals("Goblin"),
+			"...and one with an equals, which would be read as a colour");
+		check(NpcIndicatorsPlugin.addTerm("Goblin", "  ").equals("Goblin"), "...and a blank name");
+		check(NpcIndicatorsPlugin.addTerm("Goblin", null).equals("Goblin"), "...and none");
+
+		// ---- removing
+		check(NpcIndicatorsPlugin.removeTerm("Goblin, Cow", "Goblin").equals("Cow"),
+			"untagging the first leaves the rest with no leading comma");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin, Cow", "Cow").equals("Goblin"),
+			"...and the last with no trailing one");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin, Cow, Sheep", "Cow").equals("Goblin, Sheep"),
+			"...and one in the middle joins the two either side");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin", "Goblin").length() == 0,
+			"untagging the only term leaves an empty list, not a stray comma");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin", "Cow").equals("Goblin"),
+			"untagging something not there changes nothing");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin=FF0000, Cow=0000FF", "Goblin")
+				.equals("Cow=0000FF"),
+			"THE COLOURS TRAVEL WITH THEIR TERMS: left behind, untagging one rule would silently "
+				+ "recolour another");
+		check(NpcIndicatorsPlugin.removeTerm("goblin, cow", "GOBLIN").equals("cow"),
+			"case does not matter when untagging");
+		check(!NpcIndicatorsPlugin.hasTerm(
+				NpcIndicatorsPlugin.removeTerm("Goblin, Goblin Guard", "Goblin"), "Goblin"),
+			"untagging Goblin removes Goblin");
+		check(NpcIndicatorsPlugin.hasTerm(
+				NpcIndicatorsPlugin.removeTerm("Goblin, Goblin Guard", "Goblin"), "Goblin Guard"),
+			"...and leaves Goblin Guard, which a substring rule would have taken too");
+		check(NpcIndicatorsPlugin.removeTerm("Goblin,,  , Cow", "Cow").equals("Goblin"),
+			"and the blank terms a hand-edited list may hold are tidied away with it");
+
+		// ---- the round trip, which is what a player actually does: tag, untag, tag again.
+		String list = NpcIndicatorsPlugin.addTerm("", "Goblin");
+		list = NpcIndicatorsPlugin.addTerm(list, "Cow");
+		check(NpcIndicatorsPlugin.matches("Goblin", list)
+				&& NpcIndicatorsPlugin.matches("Cow", list),
+			"two tags both mark");
+		list = NpcIndicatorsPlugin.removeTerm(list, "Goblin");
+		check(!NpcIndicatorsPlugin.matches("Goblin", list)
+				&& NpcIndicatorsPlugin.matches("Cow", list),
+			"untagging one leaves the other marking");
+		list = NpcIndicatorsPlugin.addTerm(list, "Goblin");
+		check(NpcIndicatorsPlugin.matches("Goblin", list)
+				&& NpcIndicatorsPlugin.matches("Cow", list),
+			"and tagging it again brings it back");
+
+		// ---- the npc name out of a menu row
+		check(NpcIndicatorsPlugin.menuNpcName("Attack @yel@Goblin").equals("Goblin"),
+			"an npc row gives up its name");
+		check(NpcIndicatorsPlugin.menuNpcName("Attack @yel@Guard@gr2@ (level-21)").equals("Guard"),
+			"...without the combat level, so a term matches it the way it matches a tag");
+		check(NpcIndicatorsPlugin.menuNpcName("Take @lre@Bones").length() == 0,
+			"AN ITEM ROW IS NOT AN NPC ROW. The kind tag is the only thing that tells them apart, "
+				+ "and without the check a term like 'bones' would colour ground item rows");
+		check(NpcIndicatorsPlugin.menuNpcName("Chop down @cya@Tree").length() == 0,
+			"...nor is scenery");
+		check(NpcIndicatorsPlugin.menuNpcName("Trade with @whi@Zezima").length() == 0,
+			"...nor a player");
+		check(NpcIndicatorsPlugin.menuNpcName("Walk here").length() == 0,
+			"...and a row with no target has no name");
+
+		// ---- the clamps
+		check(NpcIndicatorsPlugin.everyTile(NpcIndicatorsPlugin.EVERY_TILE),
+			"every tile means every tile");
+		check(!NpcIndicatorsPlugin.everyTile(NpcIndicatorsPlugin.ANCHOR_TILE),
+			"and the anchor means just the one");
+		check(NpcIndicatorsPlugin.everyTile("something else")
+				&& NpcIndicatorsPlugin.everyTile(null),
+			"an unknown value falls back to the default rather than marking nothing");
+
+		check(NpcIndicatorsPlugin.borderFor(1) == 1 && NpcIndicatorsPlugin.borderFor(3) == 3,
+			"a thickness in range is kept");
+		check(NpcIndicatorsPlugin.borderFor(0) == 1 && NpcIndicatorsPlugin.borderFor(-4) == 1,
+			"a zero-pixel border is no outline at all, so one is the floor");
+		check(NpcIndicatorsPlugin.borderFor(500) == NpcIndicatorsPlugin.MAX_BORDER,
+			"and a very thick one would swallow a distant tile whole");
+		check(NpcIndicatorsPlugin.MIN_BORDER == 1 && NpcIndicatorsPlugin.MAX_BORDER == 5,
+			"between one pixel and five, as numbers rather than as their own names");
+
+		check(NpcIndicatorsPlugin.maxDrawnFor(32) == 32, "a cap in range is kept");
+		check(NpcIndicatorsPlugin.maxDrawnFor(0) == 1,
+			"a cap of zero is the feature off by typo, so one is the floor");
+		check(NpcIndicatorsPlugin.maxDrawnFor(9999) == NpcIndicatorsPlugin.MAX_MAX_DRAWN,
+			"and a crowd is bounded whatever is typed");
+		check(NpcIndicatorsPlugin.DEFAULT_MAX_DRAWN == 32 && NpcIndicatorsPlugin.MAX_MAX_DRAWN == 64,
+			"thirty-two by default, sixty-four at most");
+
+		// ---- the inset a thick border is drawn as
+		check(TileIndicatorsPlugin.toward(10, 20, 3) == 13, "a corner moves toward the centre");
+		check(TileIndicatorsPlugin.toward(30, 20, 3) == 27, "...from either side");
+		check(TileIndicatorsPlugin.toward(10, 20, 0) == 10, "the first ring does not move at all");
+		check(TileIndicatorsPlugin.toward(20, 20, 3) == 20, "a corner already at the centre stays");
+		// CLAMPED AT THE CENTRE. A distant tile is a few pixels across, and a three-pixel inset
+		// that overshot would draw a ring BIGGER than the one it was meant to sit inside.
+		check(TileIndicatorsPlugin.toward(19, 20, 5) == 20,
+			"an inset longer than the tile stops at the centre rather than crossing it");
+		check(TileIndicatorsPlugin.toward(21, 20, 5) == 20, "...from the other side too");
 	}
 
 	// ---------------------------------------------------------------- 3
@@ -279,9 +471,11 @@ public class ActorTest {
 
 		// The cap, which is what stops a one-letter name costing a frame.
 		String plugin = read("src/main/java/jagex2/client/plugin/builtin/NpcIndicatorsPlugin.java");
-		check(plugin.indexOf("MAX_DRAWN") >= 0 && plugin.indexOf("drawn < MAX_DRAWN") >= 0,
-			"Npc indicators caps how many it draws in a frame");
-		check(plugin.indexOf("apiLevel = 5") >= 0, "...and declares the level it needs");
+		check(plugin.indexOf("drawn < cap") >= 0
+				&& plugin.indexOf("int cap = maxDrawnFor(this.maxDrawn)") >= 0,
+			"Npc indicators caps how many it draws in a frame, at the number a player set");
+		check(plugin.indexOf("apiLevel = 6") >= 0,
+			"...and declares the level it needs, which is 6 now that it colours menu rows");
 		// One copy of the tile-corner walk, shared, not two.
 		check(plugin.indexOf("TileIndicatorsPlugin.outlineTile") >= 0,
 			"...and reuses the tile outline rather than keeping a second copy of it");

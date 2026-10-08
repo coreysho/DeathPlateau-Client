@@ -228,9 +228,12 @@ public final class XpDropsPlugin extends Plugin {
 			return;
 		}
 		this.drops.add(0, new Drop(event.skill, event.gained, now));
-		while (this.drops.size() > visibleFor(this.maxVisible)) {
-			this.drops.remove(this.drops.size() - 1);
-		}
+		// NO TRIM HERE. There used to be one, and the audit showed it could be left pointing at
+		// the old constant with every check still green - because the trim in render() runs
+		// every frame and had already done the same work before anything could see the
+		// difference. A second guard that nothing can distinguish from the first is not a
+		// safety net, it is a place for the two to disagree, so this one went rather than
+		// gaining a test it could not have.
 	}
 
 	@Subscribe

@@ -86,19 +86,10 @@ MUTS = [
 			this.drops.remove(0);
 		}
 		boolean tracker'''),
-    (PLUGIN, 'the cap left at the old constant, so the setting is decoration',
-     '''		while (this.drops.size() > visibleFor(this.maxVisible)) {
-			this.drops.remove(this.drops.size() - 1);
-		}
-	}
-''',
-     '''		while (this.drops.size() > DEFAULT_VISIBLE) {
-			this.drops.remove(this.drops.size() - 1);
-		}
-	}
-'''),
-
-    # ---- THE FADE, read from the setting rather than from the constant it used to be.
+    # "the cap left at the old constant" lived here and is gone with the guard it broke: the
+    # trim on the way in was redundant against the one in render(), which runs every frame and
+    # had already done the same work before any check could see the difference. The audit finding
+    # it deletable with nothing noticing is how a redundant guard announces itself.
     (PLUGIN, 'the drop fade left at the old constant, so the setting is decoration',
      '\t\tlong fade = fadeFor(this.fadeMs);',
      '\t\tlong fade = DEFAULT_FADE_MS;'),

@@ -375,6 +375,64 @@ is deliberately not part of that key: taking one coin off a stack is not a drop,
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
 
+### Npc indicators, in detail
+
+Twelve settings, plus the two ways of filling the list.
+
+| | |
+| --- | --- |
+| Which | A comma-separated list of names, part of a name being enough |
+| Marks | Outline their tiles, name them, include the combat level, where the name sits, outline the text |
+| Outline | Which tiles of a big npc, and how thick the border is |
+| Menu | Colour their right-click options |
+| Bounds | Most marked at once |
+| Notify | When one you named appears |
+
+**Two ways to add one, and they are the same store.** Typing the list is the escape hatch;
+shift-right-click is the path. A `Tag` row appears on the settings menu over any npc, and choosing
+it writes the same comma-separated setting the config box holds — through the plugin's own
+`PluginConfig`, so a tag survives a restart rather than living in a field. A second store keyed
+differently would be two things to keep in step.
+
+**Matching is substring; tagging is exact.** `goblin` finds a Goblin and a Goblin Guard, because
+the alternative reads as "nothing happened" the first time someone guesses a name slightly wrong.
+But `Untag Goblin` must not take `Goblin Guard` with it, and a Goblin Guard merely *matched* by
+`Goblin` must still offer to **Tag** rather than to Untag — or the menu would offer to remove
+something it never added. Those are two different questions about the same list and the plugin
+answers them with two different methods on purpose.
+
+**A term may carry its own colour**, written `Goblin=FF0000`. Three monsters marked in the same
+green tell you which three are interesting and nothing else — the same argument the per-item
+colours in Ground items are built on. The first matching term wins, which is the order they are
+written in, so a narrower rule goes above a broader one. A term coloured `000000` is read as having
+no colour of its own, because 0 is already what the match walk answers for "no match": a marker
+drawn in the colour that means "not drawn" is an npc that silently stops being marked.
+
+**One walk answers both questions.** "Does this npc match" and "in what colour" are the same
+search, so `matches` is `termColour` with a non-zero fallback and 0 means no. Two methods walking
+the list separately could disagree about which term won.
+
+**Border thickness is concentric rings, not a thick line.** A tile seen in perspective is a
+quadrilateral whose four edges run at four angles, so "thicken that edge" is a polygon-offset
+problem rather than a drawing one. Rings pulled in toward the tile's own centre are the honest
+cheap version, and they cannot leave the tile the way an outward offset could. Each ring's corners
+clamp at the centre, because a distant tile is a few pixels across and an inset that overshot would
+draw a ring *bigger* than the one it was meant to sit inside.
+
+**Appearances are by name, not by npc.** `Actor` carries the config id, which every Goblin shares,
+so there is nothing here that could tell one Goblin from another — and a notice fired every time
+one of six wandered in and out of the scene would be noise. A *name* going from absent to present
+is the question a player actually has: the boss has spawned. The first tick after turning it on
+reports nothing, and "nothing was here last tick" is tracked separately from "there was no last
+tick" — conflating them made the first arrival after a scene emptied go unreported, which is the
+exact case the feature exists for.
+
+**Menu colouring uses only the colour.** Level 6 offers a row's order too, and this takes none of
+it: moving an npc's `Attack` row is a change to what a click does, which is the client's business.
+A row is identified by its kind tag (`@yel@` is an npc), because that is the only thing separating
+`Attack @yel@Goblin` from `Take @lre@Bones` — without the check, a term like `bones` would colour
+rows about items.
+
 ### XP drops, in detail
 
 Fifteen settings, and the thing to know before changing any of them is the rule the feature was
@@ -614,7 +672,7 @@ are small enough that a jar of their own would be more ceremony than code:
 | Idle notifier | no | Says when you stop gaining experience. |
 | Mouse highlight | no | What a left click would do, next to the cursor. |
 | Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
-| Npc indicators | no | Marks the npcs you name, by tile and by name tag. |
+| Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |
 
 The first five were client features and are on because turning them off would change what
 existing players see. The other six are additions and start off: an addition that turns itself
