@@ -15,6 +15,13 @@ import os
 import subprocess
 import sys
 
+# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
+# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
+# the tree where the next commit would have shipped it. mutate_guard also has the standalone
+# check that every pattern still matches its source exactly once.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin')
@@ -177,6 +184,7 @@ def main():
     for path in (API, MANAGER, ENTRY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
+    guard(orig)
     muts = [m for m in MUTS if not only or only in m[2]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
