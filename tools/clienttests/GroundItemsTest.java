@@ -90,6 +90,10 @@ public class GroundItemsTest {
 		GroundItemPrefs.clear();
 		ruleTests();
 
+		arrivalTests();
+		notifyTests();
+		paletteTests();
+
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
 			System.out.println(fails == 0 ? "ALL PASS (the drawing sections were skipped)"
@@ -113,6 +117,201 @@ public class GroundItemsTest {
 	}
 
 	// ---------------------------------------------------------------- 1: the rules
+
+	/**
+	 * Which ground items count as NEW, which is what a notification and a beam both rest on.
+	 *
+	 * The two ways to get this wrong are opposite and both bad: report things that were already
+	 * lying there and the player gets a notification storm for walking into a loot pile; miss real
+	 * drops and the feature silently does nothing.
+	 */
+	static void arrivalTests() {
+		GroundItemArrivals seen = new GroundItemArrivals();
+		long coins = GroundItemArrivals.key(3200, 3200, 0, 995);
+		long bones = GroundItemArrivals.key(3200, 3200, 0, 526);
+
+		// THE FIRST SCAN REPORTS NOTHING. Everything already on the floor was not dropped while
+		// the player was watching, and a player walking up to a pile wants silence.
+		seen.begin();
+		check(!seen.add(coins), "the first scan reports nothing new, however much is lying there");
+		check(!seen.add(bones), "...for any of it");
+		seen.finish();
+		check(seen.remembered() == 2, "but it remembers what it saw (" + seen.remembered() + ")");
+
+		// The same items again are not new.
+		seen.begin();
+		check(!seen.add(coins), "an item still lying there is not a new drop");
+		check(!seen.add(bones), "...nor the one beside it");
+		seen.finish();
+
+		// Something else landing is.
+		long sword = GroundItemArrivals.key(3200, 3200, 0, 1277);
+		seen.begin();
+		seen.add(coins);
+		seen.add(bones);
+		check(seen.add(sword), "something that was not there is a new drop");
+		seen.finish();
+
+		// And it is only new once.
+		seen.begin();
+		seen.add(coins);
+		seen.add(bones);
+		check(!seen.add(sword), "...and only the once");
+		seen.finish();
+
+		// AN ITEM THAT WENT AWAY AND CAME BACK is new again, which is right: a respawn or a fresh
+		// drop on a tile someone cleared is a thing that just landed.
+		seen.begin();
+		seen.add(coins);
+		seen.finish();
+		seen.begin();
+		seen.add(coins);
+		check(seen.add(bones), "an item dropped again after being taken is new again");
+		seen.finish();
+
+		// COUNT IS NOT IDENTITY. Taking one coin off a stack changes the count and is not a drop,
+		// and a kill adding to a stack already there is not one either. The key has no count in
+		// it at all, which is what makes that true rather than nearly true.
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				== GroundItemArrivals.key(3200, 3200, 0, 995),
+			"the same item on the same tile is the same key whatever the stack does");
+
+		// Place and plane are part of it.
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3201, 3200, 0, 995), "a tile east is a different key");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3201, 0, 995), "and a tile north");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3200, 1, 995), "and an upstairs");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3200, 0, 526), "and a different item");
+
+		// A reset is what a log out does, so logging in somewhere else is not a storm.
+        seen.reset();
+		check(!seen.seenAnything(), "a reset forgets everything");
+		seen.begin();
+		check(!seen.add(coins), "...so the next scan reports nothing new again");
+		seen.finish();
+
+		// Bounded, because the scan is per tick and a crowded floor must cost a fixed amount.
+		seen.reset();
+		seen.begin();
+		for (int i = 0; i < GroundItemArrivals.MAX + 500; i++) {
+			seen.add(GroundItemArrivals.key(3000 + i % 64, 3000 + i / 64, 0, i));
+		}
+		seen.finish();
+		check(seen.remembered() == GroundItemArrivals.MAX,
+			"a floor past the cap remembers the cap and no more (" + seen.remembered() + ")");
+
+		// Nothing here may throw on nonsense: worldX is whatever sceneToWorldX returned.
+		boolean threw = false;
+		try {
+			GroundItemArrivals.key(-1, -1, -1, -1);
+			GroundItemArrivals.key(Integer.MAX_VALUE, Integer.MIN_VALUE, 99, 99999);
+		} catch (Throwable broke) {
+			threw = true;
+		}
+		check(!threw, "a nonsense coordinate does not throw out of a tick");
+	}
+
+	/** Which drops are worth telling the player about, and which tier a name means. */
+	static void notifyTests() {
+		GroundItemPrefs.clear();
+		GroundItemPalette palette = GroundItemPalette.DEFAULTS;
+
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_OFF, palette) == 0L,
+			"Off is no threshold at all");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, palette) == 1000000L,
+			"Top tier reads the top threshold");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_LOW, palette) == 1000L,
+			"and Low tier the lowest");
+		check(GroundItemsPlugin.thresholdFor(null, palette) == 0L, "an absent choice is Off");
+		check(GroundItemsPlugin.thresholdFor("Enormous", palette) == 0L,
+			"and so is one from a release that offered something else");
+
+		// IT READS THE PALETTE, so moving a tier's price moves what gets notified about. After
+		// sorting, so a player who typed the prices out of order gets the tier they picked.
+		GroundItemPalette shuffled = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 1000, 1000000, 10000, 100000 },
+			new int[] { 0xFFFF80, 0xFF9040, 0x40FF40, 0x40C0FF });
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, shuffled) == 1000000L,
+			"Top tier is the biggest price, not the first one typed");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_LOW, shuffled) == 1000L,
+			"and Low tier the smallest");
+
+		// A tier threshold of 0 is one the player turned off, so nothing is notified from it.
+		GroundItemPalette noTop = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 0, 100000, 10000, 1000 },
+			new int[] { 0xFF9040, 0x40C0FF, 0x40FF40, 0xFFFF80 });
+		check(!GroundItemsPlugin.worthTelling(item("Gold", 1, 5000000),
+				GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_OFF, noTop), false),
+			"nothing is notified when the tier is Off, however valuable");
+		// "TOP TIER" MEANS THE HIGHEST PRICE, NOT THE TOP BOX. Thresholds are sorted, so setting
+		// "Top tier from" to 0 does not leave a hole at the top - the 0 sorts to the bottom and
+		// Top tier becomes the largest price still set, here 100k. A player who zeroes a box to
+		// turn a notification off has to pick Off in the drop-down instead; zeroing the price
+		// turns off that COLOUR tier, which is a different question. Asserted because it is
+		// surprising, not because it is wrong.
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, noTop) == 100000L,
+			"zeroing the top price makes Top tier the next price down, not nothing");
+		check(GroundItemsPlugin.worthTelling(item("Gold", 1, 5000000),
+				GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, noTop), false),
+			"...so a valuable drop is still notified from it");
+		check(noTop.forWorth(5000000L) == 0x40C0FF,
+			"and the colour tier it zeroed really is gone: a million now draws in the next one");
+
+		// The value rule.
+		check(GroundItemsPlugin.worthTelling(item("Gold", 1, 1000000), 1000000L, false),
+			"something worth exactly the threshold is worth telling");
+		check(!GroundItemsPlugin.worthTelling(item("Gold", 1, 999999), 1000000L, false),
+			"and something under it is not");
+		check(!GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 0L, false),
+			"with no threshold and no highlight, nothing is");
+
+		// HIGHLIGHTED WINS OUTRIGHT, the same way it ignores the value floor when drawing: a
+		// player who named an item wants to know it landed whatever it is worth.
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 1000000L, true),
+			"a highlighted item is worth telling whatever it is worth");
+		check(!GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 1000000L, false),
+			"...but only when the player asked for highlighted drops");
+		GroundItemPrefs.clear();
+	}
+
+	/** The palette's own arithmetic: the tiers, the sort, and a tier turned off. */
+	static void paletteTests() {
+		GroundItemPalette defaults = GroundItemPalette.DEFAULTS;
+		check(defaults.forWorth(1000000L) == 0xFF9040, "a million is the top tier");
+		check(defaults.forWorth(999999L) == 0x40C0FF, "just under it is the next one down");
+		check(defaults.forWorth(1000L) == 0xFFFF80, "a thousand is the lowest tier");
+		check(defaults.forWorth(999L) == defaults.plain, "under every tier is the plain colour");
+		check(defaults.forWorth(0L) == defaults.plain, "and so is nothing at all");
+
+		// THE SORT, which is the part that matters: the tier walk takes the first threshold an
+		// item clears, so prices typed out of order would otherwise give the wrong colour.
+		GroundItemPalette shuffled = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 1000, 1000000, 10000, 100000 },
+			new int[] { 0xFFFF80, 0xFF9040, 0x40FF40, 0x40C0FF });
+		check(shuffled.threshold(0) == 1000000 && shuffled.threshold(3) == 1000,
+			"thresholds come out biggest first however they were typed");
+		check(shuffled.colour(0) == 0xFF9040 && shuffled.colour(3) == 0xFFFF80,
+			"...and each colour travels with its own threshold, not with its slot");
+		check(shuffled.forWorth(10000L) == 0x40FF40,
+			"so a 10k item gets the 10k colour, not the one typed first");
+
+		// A tier turned off must not swallow the floor: everything is worth at least nothing.
+		GroundItemPalette off = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 0, 0, 0, 0 },
+			new int[] { 0xFF0000, 0xFF0000, 0xFF0000, 0xFF0000 });
+		check(off.forWorth(0L) == off.plain, "a tier set to 0 is off, not a tier matching anything");
+		check(off.forWorth(5000000L) == off.plain, "...for any value");
+
+		// Junk from a settings file: nothing may throw, and a bad colour reads as the fallback.
+		GroundItemPalette junk = GroundItemPalette.from("zzzzzz", null, "#12", null,
+			new String[] { "", "nonsense", null, "00FF00" });
+		check(junk.plain == 0xFFFF00, "an unparseable colour falls back rather than throwing");
+		check(junk.forWorth(0L) == 0xFFFF00, "...and so does the palette built from it");
+	}
 
 	/**
 	 * Which rows a pile has, and in what colour, with no client at all.

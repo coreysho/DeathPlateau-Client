@@ -12,6 +12,7 @@ import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 
 /**
@@ -142,6 +143,49 @@ public final class GroundItemsPlugin extends Plugin {
 		choices = { PRICE_NONE, PRICE_VALUE, PRICE_EACH })
 	public String priceDisplay = PRICE_NONE;
 
+	// ---- telling you something landed
+
+	/**
+	 * The tiers a notification or a beam can be asked for, by name rather than by price.
+	 *
+	 * Named after the tiers above rather than repeating their numbers, because a player who moves
+	 * "High tier from" expects what they asked to be notified about to move with it. A number here
+	 * would be a second threshold to keep in step by hand.
+	 */
+	static final String TIER_OFF = "Off";
+	static final String TIER_TOP = "Top tier";
+	static final String TIER_HIGH = "High tier";
+	static final String TIER_MEDIUM = "Medium tier";
+	static final String TIER_LOW = "Low tier";
+
+	@ConfigItem(keyName = "notifyHighlighted", name = "Notify when a highlighted item drops")
+	public boolean notifyHighlighted = false;
+
+	@ConfigItem(keyName = "notifyTier", name = "Notify from this tier up",
+		choices = { TIER_OFF, TIER_TOP, TIER_HIGH, TIER_MEDIUM, TIER_LOW })
+	public String notifyTier = TIER_OFF;
+
+	@ConfigItem(keyName = "beamHighlighted", name = "Beam over highlighted items")
+	public boolean beamHighlighted = false;
+
+	@ConfigItem(keyName = "beamTier", name = "Beam from this tier up",
+		choices = { TIER_OFF, TIER_TOP, TIER_HIGH, TIER_MEDIUM, TIER_LOW })
+	public String beamTier = TIER_OFF;
+
+	/**
+	 * What was on the floor last tick, so a drop landing can be told from loot lying there.
+	 *
+	 * Scanned on GameTick rather than in render: a notification is about something happening in
+	 * the game, which happens 1.6 times a second, and doing it per frame would be doing it fifty.
+	 */
+	private final GroundItemArrivals arrivals = new GroundItemArrivals();
+
+	/** The beam: how many boxes, how tall each is, how wide at the base, and how solid. */
+	private static final int BEAM_SEGMENTS = 14;
+	private static final int BEAM_SEGMENT_H = 14;
+	private static final int BEAM_W = 22;
+	private static final int BEAM_ALPHA = 96;
+
 	/** The [-] and [+] under Alt, and the scroll bar beside a pile too tall to show. */
 	private static final int CONTROL_W = 10;
 	private static final int MINUS_COLOUR = 0xFF6060;
@@ -209,6 +253,81 @@ public final class GroundItemsPlugin extends Plugin {
 		}
 	}
 
+	@Subscribe
+	public void onGameTick(GameTick event) {
+		if (!this.ctx.isLoggedIn()) {
+			// Logged out, so the next scan starts fresh rather than reporting the floor of
+			// wherever the player logs in next as a pile of new drops.
+			this.arrivals.reset();
+			return;
+		}
+		boolean wantNotify = this.notifyHighlighted || !TIER_OFF.equals(this.notifyTier);
+		if (!wantNotify && TIER_OFF.equals(this.beamTier) && !this.beamHighlighted) {
+			// Nothing is asking, so do not even scan - but forget what was there, or turning a
+			// notification on later would report the whole floor at once.
+			this.arrivals.reset();
+			return;
+		}
+
+		GroundItemPalette palette = this.palette();
+		long notifyFrom = thresholdFor(this.notifyTier, palette);
+		int radius = this.radius < 1 ? 1 : this.radius > 104 ? 104 : this.radius;
+		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(radius);
+
+		this.arrivals.begin();
+		for (int p = 0; p < piles.size(); p++) {
+			GroundItemPile pile = piles.get(p);
+			int worldX = this.ctx.sceneToWorldX(pile.sceneTileX);
+			int worldZ = this.ctx.sceneToWorldZ(pile.sceneTileZ);
+			for (int i = 0; i < pile.items.size(); i++) {
+				GroundItem item = pile.items.get(i);
+				boolean fresh = this.arrivals.add(
+					GroundItemArrivals.key(worldX, worldZ, this.ctx.getPlane(), item.id));
+				if (fresh && wantNotify && worthTelling(item, notifyFrom, this.notifyHighlighted)) {
+					this.ctx.notify("Death Plateau", item.name + " dropped.");
+				}
+			}
+		}
+		this.arrivals.finish();
+	}
+
+	/**
+	 * Whether a drop is one the player asked to hear about.
+	 *
+	 * Highlighted wins outright and ignores the tier, the same way it ignores the value floor when
+	 * drawing: a player who named an item wants to know it landed whatever it is worth.
+	 */
+	static boolean worthTelling(GroundItem item, long notifyFrom, boolean notifyHighlighted) {
+		if (notifyHighlighted && GroundItemPrefs.isHighlighted(item.name)) {
+			return true;
+		}
+		return notifyFrom > 0L && item.worth() >= notifyFrom;
+	}
+
+	/**
+	 * The price a named tier starts at, or 0 for "off".
+	 *
+	 * Reads the palette rather than its own number, so moving "High tier from" moves what gets
+	 * notified about too. Reads it AFTER sorting, which is why it goes through threshold(i): a
+	 * player who typed the prices out of order still gets the tier they picked rather than the
+	 * slot they typed it into.
+	 */
+	static long thresholdFor(String tier, GroundItemPalette palette) {
+		if (TIER_TOP.equals(tier)) {
+			return palette.threshold(0);
+		}
+		if (TIER_HIGH.equals(tier)) {
+			return palette.threshold(1);
+		}
+		if (TIER_MEDIUM.equals(tier)) {
+			return palette.threshold(2);
+		}
+		if (TIER_LOW.equals(tier)) {
+			return palette.threshold(3);
+		}
+		return 0L;
+	}
+
 	/** The player's ten colours and thresholds, as one value. */
 	GroundItemPalette palette() {
 		return GroundItemPalette.from(this.plainColour, this.highlightColour, this.hiddenColour,
@@ -244,6 +363,7 @@ public final class GroundItemsPlugin extends Plugin {
 			TileIndicatorsPlugin.outlineTile(this.ctx, g, pile.sceneTileX, pile.sceneTileZ,
 				rows.get(0).colour);
 		}
+		this.drawBeam(g, pile, rows, palette);
 
 		// The window into those rows. A pile taller than ROWS_SHOWN shows a slice of itself and
 		// the wheel moves the slice; every other pile shows all of itself and ignores the offset.
@@ -382,6 +502,57 @@ public final class GroundItemsPlugin extends Plugin {
 			return 0;
 		}
 		return palette.forWorth(worth);
+	}
+
+	/**
+	 * A column of light over a pile worth noticing.
+	 *
+	 * NOT A MODEL, a line of boxes that narrow as they rise. A real lootbeam is a textured model
+	 * the 377 renderer has no notion of, and the honest version of it here is a stack of projected
+	 * quads - which reads as a beam at a distance, which is the only range it matters at. Drawn
+	 * from the item's own colour so a top-tier drop and a low-tier one are not the same pillar.
+	 *
+	 * Projected per segment rather than drawn as a trapezoid between two projected ends, because
+	 * perspective is not linear: a beam drawn between its base and tip leans the wrong way when
+	 * the camera is low, which is exactly when a player is looking for it.
+	 */
+	private void drawBeam(OverlayGraphics g, GroundItemPile pile, List<Row> rows,
+			GroundItemPalette palette) {
+		long from = thresholdFor(this.beamTier, palette);
+		GroundItem best = null;
+		for (int i = 0; i < rows.size(); i++) {
+			GroundItem item = rows.get(i).item;
+			boolean named = this.beamHighlighted && GroundItemPrefs.isHighlighted(item.name);
+			if (!named && (from <= 0L || item.worth() < from)) {
+				continue;
+			}
+			// The most valuable thing on the tile gets the beam: one pile, one beam, whatever is
+			// stacked under it.
+			if (best == null || item.worth() > best.worth()) {
+				best = item;
+			}
+		}
+		if (best == null) {
+			return;
+		}
+		int colour = colourFor(best, true, 0L, palette, false);
+		if (colour == 0) {
+			return;
+		}
+		for (int segment = 0; segment < BEAM_SEGMENTS; segment++) {
+			int height = segment * BEAM_SEGMENT_H;
+			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, height)) {
+				return;                                  // left the screen: the rest would too
+			}
+			// Narrowing with height, so the thing reads as going away from you rather than as a
+			// rectangle standing on a tile.
+			int width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+			if (width < 1) {
+				width = 1;
+			}
+			g.fillAlpha(this.ctx.getProjectedX() - width / 2, this.ctx.getProjectedY(),
+				width, BEAM_SEGMENT_H, colour, BEAM_ALPHA);
+		}
 	}
 
 	/**
