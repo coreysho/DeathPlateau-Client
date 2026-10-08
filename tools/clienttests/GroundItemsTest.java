@@ -16,6 +16,7 @@ import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Overlay;
+import jagex2.client.plugin.event.KeyPressed;
 import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
@@ -401,6 +402,15 @@ public class GroundItemsTest {
 		check(!GroundItemsPlugin.isDoubleTap(1000L, 0L, 250),
 			"a first tap since the client started is not a second one");
 
+		// THE CASES THAT ACTUALLY DISCRIMINATE. The three above pass whether the guards are there
+		// or not, because 1000-900 is already outside a window of 0 and 1000-0 is already outside
+		// one of 250 - the audit found all three guards deletable with every check still green.
+		// These are the pairs where the arithmetic alone would say yes.
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 1000L, 0),
+			"two taps in the same millisecond are not a double-tap when the window is 0");
+		check(!GroundItemsPlugin.isDoubleTap(100L, 0L, 250),
+			"...and a first tap 100ms after startup is not one either, inside any window");
+
 		// The beam's shapes have to differ, or the drop-down is decoration.
 		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0);
 		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8) < base,
@@ -428,6 +438,32 @@ public class GroundItemsTest {
 		}
 		check(!tooThin, "every shape stays at least a pixel wide, at any height");
 
+		// THE KEY PRESS ITSELF. onKeyPressed touches no client state, so it can be driven on a
+		// bare plugin: the audit found that dropping event.consume() changed nothing any check
+		// could see, and an unconsumed hotkey also lands in the chat box.
+		GroundItemsPlugin keyed = new GroundItemsPlugin();
+		keyed.hotkey = "G";
+		KeyPressed pressed = new KeyPressed('g');
+		keyed.onKeyPressed(pressed);
+		check(pressed.isConsumed(), "the hotkey is swallowed, so it does not reach the chat box");
+		check(keyed.isSuppressed(), "...and hides the labels");
+		KeyPressed again = new KeyPressed('g');
+		keyed.onKeyPressed(again);
+		check(!keyed.isSuppressed(), "pressing it again brings them back");
+
+		// A key that is not the hotkey is left alone entirely.
+		KeyPressed other = new KeyPressed('x');
+		keyed.onKeyPressed(other);
+		check(!other.isConsumed(), "another key is not swallowed");
+		check(!keyed.isSuppressed(), "...and changes nothing");
+
+		// And with no hotkey set, nothing is a hotkey - including the 0 that an unset code is not.
+		GroundItemsPlugin unkeyed = new GroundItemsPlugin();
+		KeyPressed any = new KeyPressed('g');
+		unkeyed.onKeyPressed(any);
+		check(!any.isConsumed() && !unkeyed.isSuppressed(),
+			"with no hotkey set, no key hides the labels");
+
 		// And the outlined text the labels can use exists where the plugin reaches for it.
 		String overlay = read("src/main/java/jagex2/client/plugin/OverlayGraphics.java");
 		check(overlay.indexOf("public void textCentredOutlined(") >= 0,
@@ -436,6 +472,32 @@ public class GroundItemsTest {
 		check(plugin.indexOf("g.textCentredOutlined(") >= 0,
 			"...and the rows use it when the player asks for an outline");
 		check(plugin.indexOf("if (this.textOutline) {") >= 0, "...only when they ask");
+
+		// THE OUTLINE'S SHAPE. Four offsets, flat, with the coloured pass unshadowed on top -
+		// none of which any check here could see, because nothing renders it. The audit found all
+		// four deletable. Pixels would be the strong version of this; the source is the honest
+		// cheap one, and it states each property exactly.
+		int outlined = overlay.indexOf("public void textCentredOutlined(");
+		int outlinedEnd = outlined < 0 ? -1 : overlay.indexOf("\n\t}", outlined);
+		String body = outlined < 0 || outlinedEnd < 0 ? "" : overlay.substring(outlined, outlinedEnd);
+		check(body.length() > 0, "the outline is readable");
+		check(countOf(body, "this.font.drawString(") == 4,
+			"an outline is four offset passes, not one - a shadow is the thing it replaces ("
+				+ countOf(body, "this.font.drawString(") + ")");
+		check(body.indexOf("left - 1") >= 0 && body.indexOf("left + 1") >= 0
+				&& body.indexOf("top - 1") >= 0 && body.indexOf("top + 1") >= 0,
+			"...one each way, so no side is left bare");
+		check(countOf(body, "drawStringTag(") == 1,
+			"the outline passes are flat, or each would cast a shadow of its own");
+		check(body.indexOf("drawStringTag(colour, left, top, false, text)") >= 0,
+			"...and the coloured pass on top is unshadowed too");
+		check(body.indexOf("stringWidTag(text) / 2") >= 0,
+			"outlined text is centred, so a row still sits on its tile");
+
+		// The double-tap is watched on the press edge. Alt is held for the controls, so "is it
+		// down" is true throughout - this is in render, which no check here reaches.
+		check(plugin.indexOf("if (alt && !this.altWasDown) {") >= 0,
+			"the double-tap is watched on the press edge, not while Alt is held");
 	}
 
 	/**
@@ -808,9 +870,35 @@ public class GroundItemsTest {
 		GroundItemPrefs.clear();
 
 		List<PluginManager.ListSnapshot> lists = manager.snapshotConfigLists(entry);
-		check(lists.size() == 1, "the plugin has one config list (" + lists.size() + ")");
-		check(lists.size() == 1 && lists.get(0).title.equals("Items"),
-			"and it is the rules: the three cycling rows are settings now");
+		check(lists.size() == 2, "the plugin has two config lists (" + lists.size() + ")");
+		check(lists.size() == 2 && lists.get(0).title.equals("Items")
+				&& lists.get(1).title.equals("Item colours"),
+			"the rules, then a colour for each: the three cycling rows are settings now");
+
+		// THE COLOUR LIST, which is a second list rather than a second button on each rule's row,
+		// because a ConfigList row has one action and it is already spent on the mode.
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+		lists = manager.snapshotConfigLists(entry);
+		check(lists.get(1).rows.size() == 1, "a rule gets a row in the colour list");
+		check(lists.get(1).rows.get(0).label.equals("Clue scroll"), "...labelled with its name");
+		check(lists.get(1).rows.get(0).action.equals("Default"),
+			"...starting with no colour of its own");
+		check(!lists.get(1).rows.get(0).removable,
+			"...and not removable there: removing a rule belongs to the Items list");
+
+		lists.get(1).act(0);
+		check(GroundItemPrefs.colourOf("Clue scroll") != GroundItemPrefs.DEFAULT_COLOUR,
+			"pressing it gives the rule a colour");
+		check(!manager.snapshotConfigLists(entry).get(1).rows.get(0).action.equals("Default"),
+			"...and the row says which");
+
+		// All the way round and back to no colour of its own, so nothing is a one-way door.
+		for (int i = 1; i < GroundItemPrefs.PALETTE.length; i++) {
+			lists.get(1).act(0);
+		}
+		check(GroundItemPrefs.colourOf("Clue scroll") == GroundItemPrefs.DEFAULT_COLOUR,
+			"cycling all the way round comes back to Default");
+		GroundItemPrefs.clear();
 
 		// The three that moved, with the types their editors depend on.
 		check(setting("radius") != null && setting("radius").isInt(),

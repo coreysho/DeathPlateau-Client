@@ -25,6 +25,7 @@ PALETTE = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundI
 OVERLAY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/OverlayGraphics.java')
 ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemArrivals.java')
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
+PREFS = os.path.join(ROOT, 'src/main/java/jagex2/client/GroundItemPrefs.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
 MUTS = [
@@ -39,12 +40,128 @@ MUTS = [
 
     # The three rules.
     (PLUGIN, 'hidden items drawn whether or not anything is revealing them',
-     'return reveal ? palette.hidden : 0;',
-     'return palette.hidden;'),
+     '''			if (!reveal) {
+				return 0;
+			}''',
+     ''),
     (PLUGIN, 'highlighted items made to obey the value floor after all',
-     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn palette.highlighted;',
-     'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {\n'
-     '\t\t\treturn palette.highlighted;'),
+     'if (GroundItemPrefs.isHighlighted(item.name)) {',
+     'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {'),
+    # ---- PER-ITEM COLOURS. A rule's own colour has to win, and the arrays have to stay paired.
+    (PLUGIN, "a rule's own colour ignored, so setting one does nothing",
+     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;',
+     'return palette.highlighted;'),
+    (PLUGIN, "a hidden rule's own colour ignored",
+     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;',
+     'return palette.hidden;'),
+    (PREFS, '''a new rule added by toggle left at the zero-filled colour, so its item silently disappears''',
+     '''public static boolean toggle(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			if (modes[at] == mode) {
+				removeAt(at);
+			} else {
+				modes[at] = mode;       // hidden <-> highlighted, rather than a second contradictory rule
+				save();
+			}
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
+		count++;''',
+     '''public static boolean toggle(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			if (modes[at] == mode) {
+				removeAt(at);
+			} else {
+				modes[at] = mode;       // hidden <-> highlighted, rather than a second contradictory rule
+				save();
+			}
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		count++;'''),
+    (PREFS, '''a new rule added by set left at the zero-filled colour, so its item silently disappears''',
+     '''public static boolean set(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			modes[at] = mode;
+			save();
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		colours[count] = DEFAULT_COLOUR;
+		count++;''',
+     '''public static boolean set(String item, int mode) {
+		ensure();
+		if (item == null || item.length() == 0) {
+			return false;
+		}
+		int at = find(item);
+		if (at >= 0) {
+			modes[at] = mode;
+			save();
+			return true;
+		}
+		if (count >= MAX) {
+			return false;
+		}
+		names[count] = item;
+		modes[count] = mode;
+		// EXPLICITLY, because an int[] is zero-filled and 0 is the "do not draw this row" answer
+		// colourFor gives - so a new rule left at 0 is a rule whose item silently disappears.
+		// That is what happened the first time this change ran against the tests, in both of the
+		// two places a rule is added.
+		count++;'''),
+    (PREFS, 'the colour left behind when a rule is removed, recolouring every rule after it',
+     '			colours[j] = colours[j + 1];\n',
+     ''),
+    (PREFS, 'a hand-edited black kept, so the row it belongs to draws nothing at all',
+     'if (rgb != DEFAULT_COLOUR && rgb != 0) {',
+     'if (rgb != DEFAULT_COLOUR) {'),
+    (PREFS, 'a colour line matched to the wrong rule, by position instead of by name',
+     '			int at = find(line.substring(0, split));',
+     '			int at = i < count ? i : -1;'),
+    (PREFS, 'the colour cycle never coming back round to Default',
+     '		colours[i] = PALETTE[at % PALETTE.length];',
+     '		colours[i] = PALETTE[at < PALETTE.length ? at : PALETTE.length - 1];'),
     (PLUGIN, 'an item the cache has no name for drawn as an empty row',
      'if (item.name.length() == 0) {\n\t\t\treturn 0;\n\t\t}\n',
      ''),
@@ -181,12 +298,10 @@ MUTS = [
     (PLUGIN, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
      '''				if (n >= 1 && n <= 12) {''',
      '''				if (n >= 1) {'''),
-    (PLUGIN, '''a blank hotkey setting reading as a real key, so nothing can turn it off''',
-     '''		if (text.length() == 0) {
-			return -1;
-		}
-''',
-     ''''''),
+    # The 'blank hotkey setting' mutation is gone with the guard it deleted: a length-0
+    # check was redundant - a blank setting already fails the "exactly one character"
+    # test - and the audit finding it deletable with nothing noticing is how a redundant
+    # check announces itself. The guard went rather than the mutation gaining a test.
     (PLUGIN, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
      '''		if (text.length() != 1) {
 			return -1;
@@ -257,7 +372,7 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)

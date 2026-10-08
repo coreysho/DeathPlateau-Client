@@ -205,6 +205,11 @@ public final class GroundItemsPlugin extends Plugin {
 	 */
 	private boolean suppressed;
 
+	/** Whether the labels are hidden by the hotkey or a double-tap. Package-visible for the test. */
+	boolean isSuppressed() {
+		return this.suppressed;
+	}
+
 	/** When Alt last went down, for the double-tap. 0 for "not since this client started". */
 	private long altDownAt;
 	private boolean altWasDown;
@@ -261,6 +266,7 @@ public final class GroundItemsPlugin extends Plugin {
 		// The three cycling rows that used to be here are settings now - a typed radius rather
 		// than one of seven presets, and a value anyone can set to the number they mean.
 		this.addConfigList("Items", this.itemList());
+		this.addConfigList("Item colours", this.colourList());
 		this.addPanel("Loot nearby", "list", this.lootList());
 	}
 
@@ -335,9 +341,9 @@ public final class GroundItemsPlugin extends Plugin {
 			return -1;
 		}
 		String text = setting.trim();
-		if (text.length() == 0) {
-			return -1;
-		}
+		// No length-0 check: a blank setting falls through to the "exactly one character" test
+		// below and comes back as no hotkey. The audit found the guard could be deleted with
+		// nothing noticing, which is how a redundant check announces itself.
 		if (text.length() >= 2 && (text.charAt(0) == 'F' || text.charAt(0) == 'f')) {
 			try {
 				int n = Integer.parseInt(text.substring(1));
@@ -623,7 +629,10 @@ public final class GroundItemsPlugin extends Plugin {
 			return 0;
 		}
 		if (GroundItemPrefs.isHighlighted(item.name)) {
-			return palette.highlighted;                     // always shown, floor ignored
+			// A rule's own colour wins over the plugin's, which is the whole point of setting one:
+			// three highlighted clue steps in the same magenta tell you nothing.
+			int own = GroundItemPrefs.colourOf(item.name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;
 		}
 		// "Only items you highlighted" is checked AFTER the highlight test and before everything
 		// else, so it hides the rest of the floor without hiding what it is for.
@@ -631,7 +640,11 @@ public final class GroundItemsPlugin extends Plugin {
 			return 0;
 		}
 		if (GroundItemPrefs.isHidden(item.name)) {
-			return reveal ? palette.hidden : 0;
+			if (!reveal) {
+				return 0;
+			}
+			int own = GroundItemPrefs.colourOf(item.name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;
 		}
 		long worth = item.worth();
 		if (worth < floor) {
@@ -849,6 +862,49 @@ public final class GroundItemsPlugin extends Plugin {
 	}
 
 	// ------------------------------------------------------------------ the config page
+
+	/**
+	 * A colour per rule, cycled.
+	 *
+	 * A SECOND LIST RATHER THAN A SECOND BUTTON. A config list row has one action, already spent
+	 * on the mode, and giving rows two would change the ConfigList contract every plugin is
+	 * written against. This costs a section in the panel and nothing else.
+	 */
+	private ConfigList colourList() {
+		return new ConfigList() {
+
+			public int size() {
+				return GroundItemPrefs.count();
+			}
+
+			public String label(int index) {
+				return GroundItemPrefs.name(index);
+			}
+
+			/** The mode, so a row says which of the two colours it is overriding. */
+			public String detail(int index) {
+				return GroundItemPrefs.mode(index) == GroundItemPrefs.HIDE
+					? "Hidden items" : "Highlighted items";
+			}
+
+			public String action(int index) {
+				return GroundItemPrefs.colourName(GroundItemPrefs.colour(index));
+			}
+
+			public void onAction(int index) {
+				GroundItemPrefs.cycleColour(index);
+			}
+
+			/** Removing a rule belongs to the Items list; this one only colours them. */
+			public boolean removable(int index) {
+				return false;
+			}
+
+			public String emptyMessage() {
+				return "Rules you add in Items can be given a colour of their own here.";
+			}
+		};
+	}
 
 	/** The named rules: what is hidden, what is highlighted. */
 	private ConfigList itemList() {
