@@ -596,6 +596,20 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.uh")
 	public String[] menuOption = new String[500];
 
+	/**
+	 * A colour a plugin asked one menu row to be drawn in, or 0 for "the usual white".
+	 *
+	 * ONLY A COLOUR. A plugin cannot change a row's text or its action through this - which is the
+	 * point: relabelling a row would let a plugin put "Bank" where "Attack" is, and the whole API
+	 * is drawn on the line that a plugin draws and reads while the client owns input. A colour can
+	 * only ever change how a row looks.
+	 *
+	 * Cleared every frame where the menu is rebuilt, next to the Cancel row, because the indices
+	 * mean nothing once the list is rebuilt and a stale override would colour whatever moved into
+	 * that slot.
+	 */
+	public int[] menuColour = new int[500];
+
 	@ObfuscatedName("client.yh")
 	// alloc(2) is 30000 bytes, not alloc(1)'s 5000. A variable-length server packet is read whole
 	// into this buffer - "this.stream.read(this.in.data, 0, this.psize)" - so the largest packet
@@ -5343,6 +5357,11 @@ public class Client extends GameShell implements PixMap.Target {
 		this.menuOption[0] = "Cancel";
 		this.menuAction[0] = 1016;
 		this.menuSize = 1;
+		// The overrides go with the rows they belonged to. Kept, they would colour whatever ends
+		// up at the same index in the next menu - which is a different thing entirely.
+		for (int row = 0; row < this.menuColour.length; row++) {
+			this.menuColour[row] = 0;
+		}
 		// The settings panel swallows input while it is open - after the menu reset above, so the
 		// game is left with a clean "Cancel"-only menu rather than a stale one from last frame.
 		if (this.qolPanelOpen) {
@@ -8898,6 +8917,13 @@ public class Client extends GameShell implements PixMap.Target {
 		for (int p = 0; p < this.menuRowsShown; p++) {
 			int var10 = this.menuRowY(p);
 			int var11 = 16777215;
+			int override = this.menuColour[this.menuRowIndex(p)];
+			if (override != 0) {
+				var11 = override;
+			}
+			// HOVER STILL WINS. A recoloured row that stopped responding to the cursor would have
+			// traded a colour for the one piece of feedback telling a player which row they are
+			// about to click.
 			if (var7 > var2 && var7 < var2 + var4 && var8 > var10 - 13 && var8 < var10 + 3) {
 				var11 = 16776960;
 			}

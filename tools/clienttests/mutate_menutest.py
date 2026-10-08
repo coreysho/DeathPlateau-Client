@@ -87,6 +87,37 @@ MUTS = [
      '\t\t\t\tsuper.mouseScrollDelta = 0;\n'
      '\t\t\t}\n'
      '\t\t\tthis.handleMenuScroll();'),
+    # ---- A PLUGIN'S PER-ROW COLOUR. The client half of menu restyling: an override is stored by
+    # index, drawn in place of the white, beaten by the hover, and wiped by the next rebuild.
+    ('''a plugin's colour override read but never used, so the whole feature does nothing''',
+     '''			int override = this.menuColour[this.menuRowIndex(p)];
+			if (override != 0) {
+				var11 = override;
+			}''',
+     '''			int override = this.menuColour[this.menuRowIndex(p)];'''),
+    ('''the override indexed by the visual row rather than the array index, which is upside down''',
+     '''int override = this.menuColour[this.menuRowIndex(p)];''',
+     '''int override = this.menuColour[p];'''),
+    ('''a 0 override applied, so every ordinary row is drawn black''',
+     '''			if (override != 0) {
+				var11 = override;
+			}''',
+     '''			if (true) {
+				var11 = override;
+			}'''),
+    ('''the override winning over the hover, so a coloured row stops answering the cursor''',
+     '''if (var7 > var2 && var7 < var2 + var4 && var8 > var10 - 13 && var8 < var10 + 3) {''',
+     '''if (override == 0 && var7 > var2 && var7 < var2 + var4 && var8 > var10 - 13 && var8 < var10 + 3) {'''),
+    ('''the overrides never cleared, so a colour set for one menu lands on the next menu's rows''',
+     '''		for (int row = 0; row < this.menuColour.length; row++) {
+			this.menuColour[row] = 0;
+		}
+''',
+     ''''''),
+    ('''the clear scoped to the menu being rebuilt, which at that point is one row long''',
+     '''for (int row = 0; row < this.menuColour.length; row++) {''',
+     '''for (int row = 0; row < this.menuSize; row++) {'''),
+
 ]
 
 

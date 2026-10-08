@@ -30,7 +30,7 @@ DECLS = [
     'MENU_BAR_TRACK', 'MENU_BAR_THUMB',
     'menuOption', 'menuSize', 'menuVisible', 'menuArea', 'menuX', 'menuY', 'menuWidth',
     'menuHeight', 'menuSwapMode', 'layout', 'CHAT_X', 'CHAT_Y', 'CHAT_W', 'CHAT_H', 'SIDE_X',
-    'imageModIcons',
+    'imageModIcons', 'menuColour',
 ]
 METHODS = ['menuRowsFor', 'menuRowIndex', 'menuRowY', 'handleMenuScroll', 'drawMenu',
            'showContextMenu', 'fitMenuText']
@@ -84,6 +84,32 @@ def source_checks(src):
              src.find('QolSettings.on(QolSettings.WHEEL_ZOOM)')]
     out.append(('an open menu is offered the wheel before an overlay that claimed the spot, and '
                 'both before the camera zoom', all(x > 0 for x in order) and order == sorted(order)))
+    # THE PER-FRAME CLEAR, which lives in the same unliftable method. A plugin's colour overrides
+    # are stored by index, so one left behind colours whatever row lands at that index in the NEXT
+    # menu - a "Hidden item" grey on an Attack. The clear has to sit in the rebuild itself, which
+    # is the block that writes Cancel into index 0, rather than anywhere that could be skipped.
+    # Anchored on the "menuSize = 1" that only the per-frame rebuild has: buildSwapMenu() also
+    # writes Cancel into index 0, and it runs AFTER this clear in the same method, so matching it
+    # would be checking the wrong block.
+    rebuild = src.index('this.menuAction[0] = 1016;\n\t\tthis.menuSize = 1;')
+    nearby = src[rebuild:rebuild + 700]
+    out.append(('a plugin\'s colour overrides are cleared by the same rebuild that writes Cancel '
+                'into index 0, so none can survive into the next menu',
+                'this.menuColour[row] = 0;' in nearby))
+    # ...over the WHOLE array. menuSize is 1 at that point - the rebuild has just written Cancel
+    # and nothing else - so a clear bounded by it would wipe one row and leave the rest of last
+    # frame's colours sitting in the array for the next menu to wear. Neither harness can run the
+    # clear, because it is in handleMouseInput with the click, so the bound is read here.
+    loop = re.search(r'for \(int row = 0; row < ([^;]+); row\+\+\) \{\s*'
+                     r'this\.menuColour\[row\] = 0;', nearby)
+    out.append(('...and the clear covers the whole array, not the one row the menu has at that '
+                'point: bound is %s' % (loop.group(1) if loop else 'not found'),
+                bool(loop) and loop.group(1) == 'this.menuColour.length'))
+    # And nothing else in the file writes the array, or there would be a second owner of it: the
+    # draw reads it, the rebuild clears it, and PluginContext.setMenuColour is the only writer.
+    writes = re.findall(r'this\.menuColour\[[^\]]+\] = ', src)
+    out.append(('and the rebuild is the only thing in Client.java that writes an override: '
+                '%d write(s)' % len(writes), len(writes) == 1))
     return out
 
 
