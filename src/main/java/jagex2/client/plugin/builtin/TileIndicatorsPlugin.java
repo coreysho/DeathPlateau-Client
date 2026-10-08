@@ -198,18 +198,15 @@ public final class TileIndicatorsPlugin extends Plugin {
 		if (!corners(ctx, sceneTileX, sceneTileZ, xs, ys)) {
 			return;
 		}
-		int top = ys[0];
-		int bottom = ys[0];
-		for (int i = 1; i < 4; i++) {
-			top = Math.min(top, ys[i]);
-			bottom = Math.max(bottom, ys[i]);
-		}
-		// Bounded, so a projection that came back absurd cannot turn into a million rows. A tile
-		// never covers more than the viewport, and MAX_STEPS is already past its diagonal.
-		if (bottom - top > MAX_STEPS) {
+		int rows = rowSpan(ys);
+		if (rows == 0) {
 			return;
 		}
-		for (int y = top; y <= bottom; y++) {
+		int top = ys[0];
+		for (int i = 1; i < 4; i++) {
+			top = Math.min(top, ys[i]);
+		}
+		for (int y = top; y < top + rows; y++) {
 			int left = spanLeft(xs, ys, y);
 			int right = spanRight(xs, ys, y);
 			if (left <= right) {
@@ -290,6 +287,28 @@ public final class TileIndicatorsPlugin extends Plugin {
 		// Nothing crossed: left stays at MAX and right at MIN, so left > right and the caller
 		// draws nothing. Returning them untouched says that without a second return value.
 		return best;
+	}
+
+	/**
+	 * How many screen rows a quad covers, or 0 for one that is absurd.
+	 *
+	 * PURE, AND SEPARATE, so the cap is testable at all. The bound used to be a line inside
+	 * fillTile and the audit found it deletable with every check green: a projection that comes
+	 * back absurd is the only thing it guards against, and no test can hand fillTile one without
+	 * a fake scene. Pulled out, it takes four numbers and can be given the absurd case directly -
+	 * which is exactly how line()'s own cap is checked a few lines below.
+	 *
+	 * A tile never covers more than a viewport, and MAX_STEPS is already past its diagonal.
+	 */
+	static int rowSpan(int[] ys) {
+		int top = ys[0];
+		int bottom = ys[0];
+		for (int i = 1; i < 4; i++) {
+			top = Math.min(top, ys[i]);
+			bottom = Math.max(bottom, ys[i]);
+		}
+		int rows = bottom - top + 1;
+		return rows > MAX_STEPS || rows < 1 ? 0 : rows;
 	}
 
 	/** The outline thickness a player asked for, within what a tile can carry. */

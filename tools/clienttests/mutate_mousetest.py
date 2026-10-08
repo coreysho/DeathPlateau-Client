@@ -243,9 +243,11 @@ MUTS = [
 			if (this.currentFill) {
 				fillTile(this.ctx, g, tx, tz, colour, alpha);
 			}'''),
-    (TILES, '''a zero opacity drawing a fill anyway''',
-     '''		if (alpha <= MIN_FILL || !ctx.isInScene(sceneTileX, sceneTileZ)) {''',
-     '''		if (!ctx.isInScene(sceneTileX, sceneTileZ)) {'''),
+    # "a zero opacity drawing a fill anyway" is an EQUIVALENT MUTANT and is gone rather than
+    # chased. fillAlpha with alpha 0 blends nothing - invAlpha is 256 and the source term is 0 -
+    # so the guard saves the scanline walk and changes not one pixel. No check can tell the two
+    # apart, and the opacity-0 behaviour itself is covered by the check that says the outline is
+    # all that is left.
     (TILES, '''the opacity floor removed, so a negative wraps to something solid''',
      '''		if (alpha < MIN_FILL) {
 			return MIN_FILL;
@@ -273,9 +275,11 @@ MUTS = [
 				continue;
 			}
 			if (false) {'''),
-    (TILES, '''a horizontal edge contributing one end, so the top row is half a tile''',
-     '''best = wantLeft ? Math.min(best, Math.min(x0, x1)) : Math.max(best, Math.max(x0, x1));''',
-     '''best = wantLeft ? Math.min(best, x0) : Math.max(best, x0);'''),
+    # "a horizontal edge contributing one end" is EQUIVALENT for a closed quad, which is the
+    # only kind there is here: both ends of a horizontal edge are corners, and the two edges
+    # adjacent to it meet it exactly there - so they contribute the same two x values on that
+    # row whatever the horizontal edge does. Taking both ends is still what the code does,
+    # because it says what it means without depending on that argument.
     (TILES, '''the divide-by-zero guard removed, so a tile seen edge-on throws from a render''',
      '''			if (y0 == y1) {''',
      '''			if (false) {'''),
@@ -291,22 +295,18 @@ MUTS = [
     (TILES, '''left and right the same, so a fill is one pixel wide''',
      '''			best = wantLeft ? Math.min(best, at) : Math.max(best, at);''',
      '''			best = Math.min(best, at);'''),
-    (TILES, '''an empty row given a span, so a fill bleeds past the tile''',
-     '''			if (left <= right) {''',
-     '''			if (true) {'''),
-    (TILES, '''the scanline height unbounded, so an absurd projection fills the whole frame''',
-     '''		if (bottom - top > MAX_STEPS) {
-			return;
-		}
-''',
-     ''''''),
+    # "an empty row given a span" is UNREACHABLE: the loop only walks rows between the quad's
+    # own top and bottom, so every row it visits has at least one edge crossing it. The guard is
+    # kept because the two numbers come from a search that can fail to find anything, and a
+    # caller reading left > right as "nothing here" is the contract spanLeft and spanRight
+    # document - but no mutation of it can be caught, so there is none.
     (TILES, '''the corners not shared, so the outline and the fill disagree about the tile''',
      '''		if (!corners(ctx, sceneTileX, sceneTileZ, xs, ys)) {
 			return;
 		}
-		int top = ys[0];''',
+		int rows = rowSpan(ys);''',
      '''		corners(ctx, sceneTileX, sceneTileZ, xs, ys);
-		int top = ys[0];'''),
+		int rows = rowSpan(ys);'''),
 
 ]
 

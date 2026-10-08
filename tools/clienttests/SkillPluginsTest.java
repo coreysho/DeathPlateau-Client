@@ -22,6 +22,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import jagex2.client.Client;
+import jagex2.client.plugin.OverlayGraphics;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.dash3d.ClientPlayer;
 import jagex2.graphics.PixFont;
@@ -65,6 +67,9 @@ public class SkillPluginsTest {
 		boostTests();
 		System.out.println();
 		System.out.println("2. Skills: the experience curve, past where the client's table ends");
+		System.out.println("1b. only these skills");
+		filterTests();
+		System.out.println();
 		curveTests();
 		System.out.println();
 		System.out.println("3. Skills: the combat level, and the page");
@@ -172,8 +177,151 @@ public class SkillPluginsTest {
 		check(drawnText().isEmpty(), "logged out, the panel is gone rather than frozen");
 		client.ingame = true;
 
+		// ---- WHAT THIS PANEL ALREADY REPORTS, established rather than assumed.
+		//
+		// In 377 the server sends a skill's CURRENT level in UPDATE_STAT, and for hitpoints that
+		// is current health - so a damaged player's hitpoints read below their base the same way
+		// a drained stat does. This check exists to record what the panel does today, because
+		// plugins/README.md says this server reports no health, prayer or special attack and
+		// "the tests check for their absence". Whether a drained-looking Hitpoints row is within
+		// that rule or outside it is a decision, not a bug to quietly fix, so the behaviour is
+		// pinned here and named for what it is.
+		levelAll(50);
+		client.skillLevel[3] = 35;        // hitpoints: damaged, in the client's own terms
+		rows = drawnText();
+		boolean healthShown = find(rows, "Hitpoints 35/50") != null;
+		check(healthShown,
+			"TODAY the panel lists a damaged Hitpoints like any other drained stat ("
+				+ texts(rows) + ")");
+		levelAll(50);
+
+		// ...and the one thing that is NOT a decision: the new notice never speaks about them.
+		check(BoostsPlugin.isVital("hitpoints") && BoostsPlugin.isVital("prayer"),
+			"hitpoints and prayer are the two the expiry notice never mentions");
+		check(BoostsPlugin.isVital("HITPOINTS"), "...whatever case the cache names them in");
+		check(!BoostsPlugin.isVital("attack") && !BoostsPlugin.isVital("strength")
+				&& !BoostsPlugin.isVital("magic"),
+			"...and nothing else is excluded, because everything else is a potion wearing off");
+		check(!BoostsPlugin.isVital(null), "...and a missing name is not a vital");
+
+        // ---- THE SIX NEW SETTINGS. Defaults first, before anything writes them: they are the
+		// values that were hardcoded, so a player who upgrades sees what they saw.
+		check(text(boosts, "boostedColour").equals(BoostsPlugin.DEFAULT_BOOSTED)
+				&& text(boosts, "drainedColour").equals(BoostsPlugin.DEFAULT_DRAINED),
+			"both colours start as the ones that were hardcoded");
+		check(text(boosts, "font").equals(OverlayGraphics.FONT_CHOICE_SMALL),
+			"the panel starts at the small font it always used");
+		check(bool(boosts, "showTitle"), "the heading is on");
+		check(text(boosts, "skills").length() == 0, "no skill filter");
+		check(!bool(boosts, "notifyExpired"), "and the expiry notice off");
+		check(setting(boosts, "boostedColour").isColour()
+				&& setting(boosts, "drainedColour").isColour(),
+			"both colours are edited as colours");
+
+		// ---- THE COLOURS, which were hardcoded and had only "the two differ" on them.
+		client.skillLevel[0] = 54;
+		client.skillLevel[1] = 46;
+		setText(boosts, "boostedColour", "00FF00");
+		setText(boosts, "drainedColour", "FF0000");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50").colour == 0x00FF00,
+			"a boost is drawn in the colour a player picked");
+		check(find(rows, "Defence 46/50").colour == 0xFF0000, "...and a drain in theirs");
+		setText(boosts, "boostedColour", BoostsPlugin.DEFAULT_BOOSTED);
+		setText(boosts, "drainedColour", BoostsPlugin.DEFAULT_DRAINED);
+
+		// ---- THE HEADING, which costs a row.
+		rows = drawnText();
+		check(find(rows, "Boosts") != null, "the heading is drawn");
+		setBoolean(boosts, "showTitle", false);
+		rows = drawnText();
+		check(find(rows, "Boosts") == null, "turning it off removes it");
+		check(find(rows, "Attack 54/50") != null, "...and leaves the rows");
+		setBoolean(boosts, "showTitle", true);
+
+		// ---- THE FILTER. One list, shared with the Idle notifier.
+		setText(boosts, "skills", "attack");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") == null,
+			"a filter of \"attack\" shows attack and not defence: " + texts(rows));
+		setText(boosts, "skills", "att, def");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") != null,
+			"...and part of a name is enough, for each of several");
+		setText(boosts, "skills", "mining");
+		check(drawnText().isEmpty(),
+			"a filter naming nothing boosted draws nothing, not an empty box");
+		setText(boosts, "skills", "");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") != null,
+			"AN EMPTY FILTER IS EVERY SKILL, not no skills: the filter narrows something already "
+				+ "useful, so no filter has to mean do not narrow it");
+
+		levelAll(50);
 		manager.setEnabled(boosts, false);
 		levelAll(50);
+	}
+
+	// ---------------------------------------------------------------- 1b
+
+	/**
+	 * "Only these skills", which Boosts and the Idle notifier both ask.
+	 *
+	 * ONE IMPLEMENTATION, because two walks of the same list would eventually disagree about
+	 * whether "wood" matches Woodcutting - and a filter that silently excludes what a player
+	 * meant to include is read as the plugin being broken rather than as a filter being strict.
+	 */
+	static void filterTests() {
+		check(SkillFilter.allows("attack", "attack"), "a whole name matches");
+		check(SkillFilter.allows("attack", "att"), "a prefix matches, which is what people type");
+		check(SkillFilter.allows("woodcutting", "wood"), "...including the obvious short ones");
+		check(SkillFilter.allows("runecraft", "runecraft"), "and a long name is its own prefix");
+		check(SkillFilter.allows("ATTACK", "attack") && SkillFilter.allows("attack", "ATTACK"),
+			"case does not matter either way round");
+		check(SkillFilter.allows("attack", " att , def "), "spaces round the terms are forgiven");
+		check(SkillFilter.allows("defence", "att, def"), "any term in the list matches");
+
+		// PREFIX, NOT SUBSTRING. "tack" is inside "attack" and matches nothing anyone means by
+		// it; a substring rule also makes a one-letter term match half the list.
+		check(!SkillFilter.allows("attack", "tack"),
+			"a term that is only INSIDE a name does not match: prefix, not substring");
+		check(!SkillFilter.allows("attack", "defence"), "a different skill does not match");
+		check(!SkillFilter.allows("attack", "attacking"),
+			"and a term longer than the name does not");
+
+		// AN EMPTY LIST IS EVERY SKILL. The opposite of the rule in Npc indicators, and right in
+		// both: there an empty list is a plugin not set up yet, here it is a filter not applied.
+		check(SkillFilter.allows("attack", ""), "an empty list allows everything");
+		check(SkillFilter.allows("attack", "   "), "...and a blank one");
+		check(SkillFilter.allows("attack", null), "...and none at all");
+		check(SkillFilter.allows("attack", ",,,"),
+			"...and one that is nothing but commas, which is not a filter either");
+		check(!SkillFilter.isFiltering("") && !SkillFilter.isFiltering(null)
+				&& !SkillFilter.isFiltering(",, ,"),
+			"none of those counts as filtering");
+		check(SkillFilter.isFiltering("attack") && SkillFilter.isFiltering(" , attack"),
+			"and a list with a term in it does");
+
+		// The two answers cannot disagree: the first version of this had allows() reject every
+		// skill for ",,," while isFiltering() said there was no filter.
+		String[] odd = { "", "   ", null, ",,,", ", ,", "attack", " , attack, " };
+		for (int i = 0; i < odd.length; i++) {
+			if (!SkillFilter.isFiltering(odd[i])) {
+				check(SkillFilter.allows("attack", odd[i]) && SkillFilter.allows("mining", odd[i]),
+					"\"" + odd[i] + "\" is not filtering, so it allows every skill");
+			}
+		}
+
+		check(!SkillFilter.allows(null, "attack"), "a missing skill name matches no filter");
+		check(!SkillFilter.allows("", "attack"), "...nor an empty one");
+		boolean threw = false;
+		try {
+			SkillFilter.allows(null, null);
+			SkillFilter.allows("attack", "a,,b,");
+		} catch (Throwable error) {
+			threw = true;
+		}
+		check(!threw, "and nothing here throws, because both callers ask it per skill per tick");
 	}
 
 	// ---------------------------------------------------------------- 2
@@ -484,6 +632,50 @@ public class SkillPluginsTest {
 	/** The same, named for the tests that are about base levels rather than boosted ones. */
 	static void baseAll(int level) {
 		levelAll(level);
+	}
+
+	/**
+	 * A String setting, written through the real config path.
+	 *
+	 * Through PluginConfig rather than the reflected field the older helpers here use, because
+	 * the config path is what the sidebar does and it is what persists - a field written directly
+	 * would be a setting that works in the test and not in the game.
+	 */
+	static void setText(PluginManager.Entry entry, String key, String value) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				check(entry.getConfig().set(items.get(i), value),
+					"setting " + entry.key + "." + key + " to \"" + value + "\" is accepted");
+				return;
+			}
+		}
+		check(false, entry.key + " has a setting called " + key);
+	}
+
+	static PluginConfig.Item setting(PluginManager.Entry entry, String key) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				return items.get(i);
+			}
+		}
+		return null;
+	}
+
+	static String text(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item == null ? "" : item.stringValue();
+	}
+
+	static boolean bool(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item != null && item.booleanValue();
+	}
+
+	static int number(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item == null ? -1 : item.intValue();
 	}
 
 	static PluginManager.Entry entry(String key) {

@@ -376,6 +376,50 @@ is deliberately not part of that key: taking one coin off a stack is not a drop,
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
 
+### Boosts and the Idle notifier, in detail
+
+Boosts has eight settings, the Idle notifier five, and they share one piece of code: **"only these
+skills"**, a comma-separated list where part of a name is enough.
+
+| Boosts | |
+| --- | --- |
+| Shown | When nothing is boosted, the difference instead of the levels, the heading |
+| Looks | A colour for boosted and for drained, text size |
+| Which | Only these skills |
+| Notify | When a boost wears off |
+
+| Idle notifier | |
+| --- | --- |
+| When | Seconds without experience, only counting these skills |
+| Again | Repeat every so many seconds, or say it once |
+| Anyway | Warn before you have trained at all |
+| Sound | An alert sound id, with a Test row to find one |
+
+**Matching is by prefix, and an empty list means every skill.** Prefix because `wood` for
+Woodcutting and `att` for Attack are what people type — a substring rule would make `tack` match
+Attack and a one-letter term match half the list. And an empty list meaning *everything* is the
+opposite of the rule in Npc indicators, which is right in both places: there, an empty list is a
+plugin nobody has set up yet and "everything" would outline the whole scene; here, the filter
+*narrows* something already useful, so "no filter" has to mean "do not narrow it". A list of nothing
+but commas is not a filter either — honouring it literally would show an empty panel with nothing
+to explain it.
+
+**The Idle notifier's repeat is a wind-back of its one counter**, not a second timer: after a
+warning the tick count is set to the repeat interval short of the threshold, so the next warning is
+due exactly then and nothing else is tracked. With no repeat the counter is left *at* the threshold,
+so disarming is what stops it rather than the arithmetic.
+
+**Hitpoints and prayer are never named by the boost-expiry notice.** Everything else wearing off is
+a potion to drink again, which is about what you are doing; those two are how close to death you
+are, and a notification is only a quieter way of reporting a vital. They are excluded by name
+rather than by index, because a `3` in a condition tells nobody why.
+
+**One thing worth knowing about the Boosts panel as it stands.** In 377 the server sends a skill's
+*current* level in `UPDATE_STAT`, and for hitpoints that is current health — so a damaged player's
+Hitpoints row appears in the panel like any other drained stat, e.g. `Hitpoints 35/50`. That
+predates this round and has not been changed; it is pinned by a test that says what it is, so the
+behaviour is a decision somebody can make rather than something that drifts.
+
 ### Tile indicators, in detail
 
 Eight settings: the two tiles, a colour each, outline thickness, a fill for each, and how solid a
@@ -708,9 +752,9 @@ are small enough that a jar of their own would be more ceremony than code:
 | Left-click swaps | yes | Which option a left click performs. |
 | XP drops | yes | Experience gained, in the top-right corner, with the colour, the motion, grouping, experience per hour and a level-up notification. |
 | Barrows doors | yes | Highlights the door that opens. |
-| Boosts | no | Which stats are boosted or drained, and by how much. |
+| Boosts | no | Which stats are boosted or drained, by how much, in your colours, with a notice when one wears off. |
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
-| Idle notifier | no | Says when you stop gaining experience. |
+| Idle notifier | no | Says when you stop gaining experience, optionally in one skill only, once or repeating. |
 | Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
 | Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |
 | Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |

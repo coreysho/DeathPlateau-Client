@@ -583,6 +583,11 @@ public class MouseTest {
 		// The most valuable pure checks in this plugin: a wrong span is not a slightly wrong
 		// tile, it is a bar of colour across the screen. A quadrilateral is walked one screen
 		// row at a time, and each of its four edges is asked where it crosses that row.
+		// WRAPPED AS A GROUP. A divide by zero in here used to escape from the very first check
+		// below and kill the suite before it printed anything, which the mutation runner reports
+		// as "a non-zero exit with no check named" and correctly refuses to count as a catch.
+		// Every throw from the span arithmetic is a named failure now.
+		try {
 		int[] xs = { 0, 10, 10, 0 };
 		int[] ys = { 0, 0, 10, 10 };
 		check(TileIndicatorsPlugin.spanLeft(xs, ys, 5) == 0
@@ -638,6 +643,23 @@ public class MouseTest {
 			"...and spans the width it has (" + flatLeft + " to " + flatRight + ")");
 		check(TileIndicatorsPlugin.spanLeft(fx, fy, 6)
 				> TileIndicatorsPlugin.spanRight(fx, fy, 6), "...on that row and no other");
+		} catch (Throwable error) {
+			check(false, "the span arithmetic does not throw, because it runs per row per frame "
+				+ "inside a render (" + error + ")");
+		}
+
+		// ---- THE ROW COUNT, which is the cap a projection that came back absurd runs into.
+		check(TileIndicatorsPlugin.rowSpan(new int[] { 10, 10, 20, 20 }) == 11,
+			"a tile ten rows tall covers eleven rows, both ends included ("
+				+ TileIndicatorsPlugin.rowSpan(new int[] { 10, 10, 20, 20 }) + ")");
+		check(TileIndicatorsPlugin.rowSpan(new int[] { 7, 7, 7, 7 }) == 1,
+			"a tile seen edge-on covers one");
+		check(TileIndicatorsPlugin.rowSpan(new int[] { 0, 0, 9000000, 9000000 }) == 0,
+			"AN ABSURD PROJECTION COVERS NONE, rather than nine million rows of alpha fill in a "
+				+ "render loop - the same cap line() has, and for the same reason");
+		check(TileIndicatorsPlugin.rowSpan(
+				new int[] { 0, 0, TileIndicatorsPlugin.MAX_STEPS, 0 }) == 0,
+			"...and the bound is where it says it is");
 
 		// ---- ON SCREEN. The fill and the thickness, as pixels, through the real overlay.
 		//
@@ -698,8 +720,14 @@ public class MouseTest {
 		check(filled > unfilled,
 			"filling the tile covers more of it than the outline alone ("
 				+ unfilled + " -> " + filled + ")");
-		check(countPixels(0x00FFFF) > 0,
-			"...and the outline is still drawn ON TOP of its own fill rather than under it");
+		// EXACTLY AS MANY OUTLINE PIXELS AS WITH NO FILL AT ALL. "Some pixel is still the
+		// outline colour" is not enough - the outline's corners fall outside the fill's spans
+		// and survive either way, which is why the audit found the draw order swappable with
+		// that check green. Drawn on top, the outline is untouched; drawn under, the translucent
+		// fill tints most of it and the exact count collapses.
+		check(countPixels(0x00FFFF) == thinOutline,
+			"...and the outline is drawn ON TOP of its own fill rather than under it ("
+				+ countPixels(0x00FFFF) + " outline pixels, " + thinOutline + " with no fill)");
 
 		// AN OPACITY OF 0 IS NO FILL, which is how a player turns one off without the switch.
 		set(entry, "fillOpacity", "0");
@@ -718,6 +746,21 @@ public class MouseTest {
 		clearPixels();
 		sceneFrame();
 		check(countPixels(0x00FFFF) == 0, "and turning the tile off leaves nothing");
+
+		// ---- A TILE THAT CANNOT BE PLACED. projectFromGround refuses anything under 128 scene
+		// units, so tile 0 is inside the scene by isInScene and still unprojectable - which is
+		// the one case where sharing corners() with the outline matters. Without the check on
+		// its result the corner arrays keep whatever they held, and a fill is drawn from zeros
+		// in the top-left of the screen.
+		clearPixels();
+		TileIndicatorsPlugin.fillTile(context(), graphics(), 0, 0, 0xFF00FF, 255);
+		check(countPainted() == 0,
+			"a tile the scene cannot place is not filled from stale corners ("
+				+ countPainted() + " pixels)");
+		clearPixels();
+		TileIndicatorsPlugin.fillTile(context(), graphics(), 200, 200, 0xFF00FF, 255);
+		check(countPainted() == 0, "...and nor is one outside the scene at all");
+
 		manager.setEnabled(entry, false);
 	}
 

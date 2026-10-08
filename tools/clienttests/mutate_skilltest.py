@@ -28,6 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 BOOSTS = os.path.join(BUILTIN, 'BoostsPlugin.java')
 SKILLS = os.path.join(BUILTIN, 'SkillsPlugin.java')
+FILTER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/SkillFilter.java')
 RUNNER = os.path.join(HERE, 'run_skilltest.py')
 
 MUTS = [
@@ -45,10 +46,11 @@ MUTS = [
 			}
 ''', ''),
     (BOOSTS, 'a drain drawn in the boost colour, so the two read alike',
-     'lines.add(new Line(text, delta > 0 ? BOOSTED : DRAINED));',
-     'lines.add(new Line(text, BOOSTED));'),
+     'lines.add(new Line(text, delta > 0 ? boosted : drained));',
+     'lines.add(new Line(text, boosted));'),
     (BOOSTS, 'the cache\'s unused skill slots offered as skills',
-     '''			if (!this.isRealSkill(skill)) {
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {
 				continue;
 			}
 ''', ''),
@@ -166,13 +168,113 @@ MUTS = [
 		}
 		StringBuilder out = new StringBuilder();
 		int lead = digits.length() % 3;'''),
+    # ---- TRANCHE FOUR: the six new Boosts settings, the expiry notice and the two skills it may
+    # never name, and the skill filter both this plugin and the Idle notifier ask.
+    (FILTER, '''an empty filter excluding every skill, so an unset box empties the panel''',
+     '''		if (!isFiltering(terms)) {
+			return true;
+		}
+''',
+     ''''''),
+    (FILTER, '''a list of nothing but commas treated as a real filter''',
+     '''		for (int i = 0; i < trimmed.length(); i++) {
+			if (trimmed.charAt(i) != ',' && trimmed.charAt(i) != ' ') {
+				return true;
+			}
+		}
+		return false;''',
+     '''		return trimmed.length() > 0;'''),
+    (FILTER, '''matching by substring, so "tack" matches Attack and one letter matches half the list''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (term.length() > 0 && lower.indexOf(term.toLowerCase()) >= 0) {'''),
+    (FILTER, '''matching made exact, so "wood" no longer finds Woodcutting''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (term.length() > 0 && lower.equals(term.toLowerCase())) {'''),
+    (FILTER, '''matching made case-sensitive, so a typed lower-case term finds nothing''',
+     '''		String lower = skillName.toLowerCase();''',
+     '''		String lower = skillName;'''),
+    (FILTER, '''terms not trimmed, so a space after a comma breaks one''',
+     '''			String term = (comma < 0 ? trimmed.substring(from)
+				: trimmed.substring(from, comma)).trim();''',
+     '''			String term = comma < 0 ? trimmed.substring(from)
+				: trimmed.substring(from, comma);'''),
+    (FILTER, '''an empty term matching everything, so a trailing comma opens the filter up''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (lower.startsWith(term.toLowerCase())) {'''),
+    (FILTER, '''a missing skill name passing every filter''',
+     '''		if (skillName == null || skillName.length() == 0) {
+			return false;
+		}
+''',
+     ''''''),
+    (BOOSTS, '''the boost colour left hardcoded, so the swatch does nothing''',
+     '''		int boosted = PluginConfig.parseColour(this.boostedColour);''',
+     '''		int boosted = 0x44DD44;'''),
+    (BOOSTS, '''the drain colour left hardcoded''',
+     '''		int drained = PluginConfig.parseColour(this.drainedColour);''',
+     '''		int drained = 0xFF4444;'''),
+    (BOOSTS, '''the filter not applied, so the skills box does nothing''',
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {''',
+     '''			if (!this.isRealSkill(skill)) {'''),
+    (BOOSTS, '''the heading drawn whether the player asked for it or not''',
+     '''		if (this.showTitle) {
+			g.textFlat(''',
+     '''		if (true) {
+			g.textFlat('''),
+    (BOOSTS, '''the heading never drawn, so the panel does not say what it is''',
+     '''		if (this.showTitle) {
+			g.textFlat(''',
+     '''		if (false) {
+			g.textFlat('''),
+    (BOOSTS, '''the box not shrunk when the heading goes, leaving an empty row''',
+     '''		int rows = lines.size() + (this.showTitle ? 1 : 0);''',
+     '''		int rows = lines.size() + 1;'''),
+    (BOOSTS, '''the size ignored, so the drop-down does nothing''',
+     '''		g.setFont(OverlayGraphics.fontFor(this.font));''',
+     '''		g.setFont(OverlayGraphics.FONT_SMALL);'''),
+    (BOOSTS, '''the notice given whether the player asked for it or not''',
+     '''		if (!this.notifyExpired || !this.ctx.isLoggedIn()) {''',
+     '''		if (!this.ctx.isLoggedIn()) {'''),
+    (BOOSTS, '''the notice never given, so the switch does nothing''',
+     '''		if (!this.notifyExpired || !this.ctx.isLoggedIn()) {''',
+     '''		if (true) {'''),
+    (BOOSTS, '''HITPOINTS AND PRAYER NAMED BY THE NOTICE, which is a vital reported out loud''',
+     '''			if (!this.isRealSkill(skill) || isVital(name)
+					|| !SkillFilter.allows(name, this.skills)) {''',
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(name, this.skills)) {'''),
+    (BOOSTS, '''the vital list emptied, so hitpoints and prayer are notified like any stat''',
+     '''return lower.equals("hitpoints") || lower.equals("prayer");''',
+     '''return false;'''),
+    (BOOSTS, '''only hitpoints excluded, leaving prayer notified''',
+     '''return lower.equals("hitpoints") || lower.equals("prayer");''',
+     '''return lower.equals("hitpoints");'''),
+    (BOOSTS, '''the vital check made case-sensitive, so a differently-cased cache slips through''',
+     '''		String lower = skillName.toLowerCase();
+		return lower.equals("hitpoints")''',
+     '''		String lower = skillName;
+		return lower.equals("hitpoints")'''),
+    (BOOSTS, '''a drain notified as a boost wearing off, which is a stat coming back''',
+     '''			if (this.ctx.getSkillLevel(skill) > this.ctx.getBaseLevel(skill)) {''',
+     '''			if (this.ctx.getSkillLevel(skill) != this.ctx.getBaseLevel(skill)) {'''),
+    (BOOSTS, '''the first tick announcing every boost already running''',
+     '''			} else if (this.scanned && this.wasBoosted.indexOf(key) >= 0) {''',
+     '''			} else if (this.wasBoosted.indexOf(key) >= 0) {'''),
+    (BOOSTS, '''nothing ever counting as a first tick, so no expiry is ever reported''',
+     '''		this.scanned = true;''',
+     ''''''),
+    (BOOSTS, '''what was boosted not remembered, so an expiry is announced every tick''',
+     '''		this.wasBoosted = now.toString();''',
+     ''''''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (BOOSTS, SKILLS):
+    for path in (BOOSTS, SKILLS, FILTER):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     # Written into a copy, never into the working tree - see mutate_guard.workspace.
