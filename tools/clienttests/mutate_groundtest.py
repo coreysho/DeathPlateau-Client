@@ -177,7 +177,10 @@ MUTS = [
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (PLUGIN, ITEM):
+    # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
+    # mutation, it is a KeyError that kills the run partway through - which is how the first
+    # eighteen mutations added here never ran at all.
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)
