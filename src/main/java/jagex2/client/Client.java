@@ -7792,8 +7792,13 @@ public class Client extends GameShell implements PixMap.Target {
 			if (var5 < 0) {
 				var5 = 0;
 			}
-			if (var5 > this.chatScrollHeight - 77) {
-				var5 = this.chatScrollHeight - 77;
+			// CHAT_LOG_H, NOT 77. 77 is CHAT_H - 19 for the original 96-pixel chatbox, written out
+			// as a literal; this client's chatbox is 129 tall, so CHAT_LOG_H is 110 and the clamp
+			// was letting the history scroll 33 pixels - a bit over two lines - past its own end,
+			// into blank parchment. The branch below for the name-select list already uses
+			// CHAT_LOG_H, which is what gave it away.
+			if (var5 > this.chatScrollHeight - CHAT_LOG_H) {
+				var5 = this.chatScrollHeight - CHAT_LOG_H;
 			}
 			// QoL: mouse wheel scrolls the chat history when hovering over it (Corey, 2026-09-04:
 			// widened from the narrow scrollbar-column rect to the full chatbox rect - same bounds
@@ -7804,8 +7809,8 @@ public class Client extends GameShell implements PixMap.Target {
 				if (var5 < 0) {
 					var5 = 0;
 				}
-				if (var5 > this.chatScrollHeight - 77) {
-					var5 = this.chatScrollHeight - 77;
+				if (var5 > this.chatScrollHeight - CHAT_LOG_H) {
+					var5 = this.chatScrollHeight - CHAT_LOG_H;
 				}
 				super.mouseScrollDelta = 0;
 			}
