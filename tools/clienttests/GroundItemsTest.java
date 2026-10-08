@@ -95,6 +95,7 @@ public class GroundItemsTest {
 		notifyTests();
 		paletteTests();
 		readingTests();
+		perItemColourTests();
 
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
@@ -351,6 +352,172 @@ public class GroundItemsTest {
 			"an unparseable colour falls back rather than throwing");
 		check(!junkThrew && junk.forWorth(0L) == 0xFFFF00,
 			"...and so does the palette built from it");
+	}
+
+	/**
+	 * A colour per rule: that it is honoured, that it travels with its rule, and that it survives
+	 * the file.
+	 *
+	 * EVERY ONE OF THESE CLOSES A MUTATION THAT SURVIVED. The feature shipped with its colours
+	 * working and nothing asserting it - I wrote the mutations and never the checks, so all seven
+	 * could be broken with the suite still green.
+	 *
+	 * The nastiest of them was self-inflicted. "A new rule left at the zero-filled colour" is a
+	 * real production bug - colours[] is an int[], 0 is what colourFor answers for a row it is not
+	 * drawing, and a player with five rules in their file has colours[5] at zero until something
+	 * sets it - but reset() calls clear(), and clear() now writes DEFAULT_COLOUR across all 128
+	 * entries, so the test harness was blind to exactly the bug it had caught an hour earlier. The
+	 * checks below build their state WITHOUT clear() in between for that reason.
+	 */
+	static void perItemColourTests() {
+		GroundItemPrefs.clear();
+
+		// A rule's own colour wins over the plugin's. Without this the whole feature is a
+		// drop-down that does nothing.
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+		int at = GroundItemPrefs.find("Clue scroll");
+		check(at >= 0, "the rule is there to colour");
+		check(GroundItemPrefs.colour(at) == GroundItemPrefs.DEFAULT_COLOUR,
+			"a new rule starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Clue scroll", 1, 1), false, 0)
+				== GroundItemPalette.DEFAULTS.highlighted,
+			"...so it draws in the plugin's highlighted colour");
+
+		GroundItemPrefs.cycleColour(at);
+		int own = GroundItemPrefs.colour(at);
+		check(own != GroundItemPrefs.DEFAULT_COLOUR, "cycling gives it one");
+		check(GroundItemsPlugin.colourFor(item("Clue scroll", 1, 1), false, 0) == own,
+			"and the row is drawn in it, not the plugin's");
+
+		// The same for a hidden rule, which uses the other of the two colours.
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIDE);
+		int bones = GroundItemPrefs.find("Bones");
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), true, 0)
+				== GroundItemPalette.DEFAULTS.hidden,
+			"a hidden rule with no colour draws in the plugin's hidden colour");
+		GroundItemPrefs.cycleColour(bones);
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), true, 0)
+				== GroundItemPrefs.colour(bones),
+			"...and in its own once it has one");
+		check(GroundItemsPlugin.colourFor(item("Bones", 1, 1), false, 0) == 0,
+			"...but is still not drawn at all unless something reveals it");
+
+		// A NEW RULE ADDED AFTER OTHERS, with no clear() in between: this is the shape the
+		// production bug takes, and the shape clear() was hiding.
+		GroundItemPrefs.toggle("Shark", GroundItemPrefs.HIGHLIGHT);
+		int shark = GroundItemPrefs.find("Shark");
+		check(GroundItemPrefs.colour(shark) == GroundItemPrefs.DEFAULT_COLOUR,
+			"a rule added after others still starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Shark", 1, 1), false, 0) != 0,
+			"...and is drawn, rather than vanishing into the 0 that means 'no row'");
+
+		// THE COLOUR TRAVELS WITH ITS RULE. Left behind, removing one rule silently recolours
+		// every rule after it - which a player reports as "my colours moved" long afterwards.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.toggle("First", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Second", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Third", GroundItemPrefs.HIGHLIGHT);
+		// Give the second and third different colours, so a shift shows up as the wrong one
+		// rather than as no change.
+		int second = GroundItemPrefs.find("Second");
+		GroundItemPrefs.cycleColour(second);
+		int third = GroundItemPrefs.find("Third");
+		GroundItemPrefs.cycleColour(third);
+		GroundItemPrefs.cycleColour(third);
+		int secondColour = GroundItemPrefs.colourOf("Second");
+		int thirdColour = GroundItemPrefs.colourOf("Third");
+		check(secondColour != thirdColour, "the two rules have different colours to tell apart");
+
+		GroundItemPrefs.removeName("First");
+		check(GroundItemPrefs.colourOf("Second") == secondColour,
+			"removing a rule leaves the others' colours alone");
+		check(GroundItemPrefs.colourOf("Third") == thirdColour, "...all of them");
+
+		// A hand-edited black is read as "no colour of its own", because 0 is the answer
+		// colourFor gives for a row it is not drawing: a rule coloured 000000 would be an item
+		// that silently disappears.
+		check(GroundItemsPlugin.colourFor(item("Second", 1, 1), false, 0) != 0,
+			"no rule can end up drawn in the colour that means 'not drawn'");
+
+		// A NEW RULE MUST NOT INHERIT THE COLOUR OF A RULE THAT USED TO SIT IN ITS SLOT.
+		//
+		// This is the only shape in which the missing initialiser shows, and getting here took
+		// two tries: a test that calls clear() first cannot see it, because clear() writes
+		// DEFAULT_COLOUR across every slot. The slot has to hold a STALE colour, which is what
+		// removing an earlier rule leaves behind - the shift copies colours down and the last
+		// slot keeps its old value.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.toggle("Gone", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.toggle("Coloured", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.cycleColour(GroundItemPrefs.find("Coloured"));
+		int staleSlot = GroundItemPrefs.colour(GroundItemPrefs.find("Coloured"));
+		check(staleSlot != GroundItemPrefs.DEFAULT_COLOUR, "a rule in the second slot has a colour");
+		GroundItemPrefs.removeName("Gone");
+		// "Coloured" is in slot 0 now and slot 1 still holds its colour, so a rule added next
+		// lands on a dirty slot.
+		GroundItemPrefs.toggle("Fresh", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemPrefs.colourOf("Fresh") == GroundItemPrefs.DEFAULT_COLOUR,
+			"a rule added into a vacated slot starts with no colour of its own");
+		check(GroundItemsPlugin.colourFor(item("Fresh", 1, 1), false, 0)
+				== GroundItemPalette.DEFAULTS.highlighted,
+			"...and draws in the plugin's colour, not the one left behind");
+
+		// The same through set(), which is the other place a rule is added.
+		GroundItemPrefs.clear();
+		GroundItemPrefs.set("Vanish", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.set("Tinted", GroundItemPrefs.HIGHLIGHT);
+		GroundItemPrefs.cycleColour(GroundItemPrefs.find("Tinted"));
+		GroundItemPrefs.removeName("Vanish");
+		GroundItemPrefs.set("New", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemPrefs.colourOf("New") == GroundItemPrefs.DEFAULT_COLOUR,
+			"and so does one added by set");
+
+		// A COLOUR LINE IS MATCHED BY NAME, NOT BY POSITION. Written deliberately out of order,
+		// so a position match would give each rule the other's colour - which is only reachable
+		// through a real load, because applyPendingColours runs nowhere else.
+		GroundItemPrefs.clear();
+		// findcachedir(), not the raw property: it appends the separator when the property has
+		// none, so reading the property and concatenating wrote the file as a SIBLING of the
+		// directory the client reads from. Using the same call the production code uses is the
+		// only version of this that cannot drift.
+		String cache = sign.signlink.findcachedir();
+		boolean wrote = false;
+		try {
+			java.io.PrintWriter out = new java.io.PrintWriter(
+				new java.io.FileWriter(cache + "qol_grounditems.dat"));
+			out.println("version=1");
+			out.println("show=Alpha");
+			out.println("show=Beta");
+			out.println("colour=Beta=00FF00");
+			out.println("colour=Alpha=FF0000");
+			out.close();
+			wrote = true;
+		} catch (Throwable cannot) {
+			check(false, "could not write a settings file to " + cache + " (" + cannot + ")");
+		}
+		if (wrote) {
+			GroundItemPrefs.load();
+			check(GroundItemPrefs.colourOf("Alpha") == 0xFF0000,
+				"a colour line finds its own rule by name, whatever order the lines are in");
+			check(GroundItemPrefs.colourOf("Beta") == 0x00FF00, "...and so does the other");
+			// And a colour for a rule that is not there is dropped rather than landing on one
+			// that is.
+			try {
+				java.io.PrintWriter out = new java.io.PrintWriter(
+					new java.io.FileWriter(cache + "qol_grounditems.dat"));
+				out.println("version=1");
+				out.println("show=Only");
+				out.println("colour=Deleted=FF0000");
+				out.close();
+				GroundItemPrefs.load();
+				check(GroundItemPrefs.colourOf("Only") == GroundItemPrefs.DEFAULT_COLOUR,
+					"a colour for a rule that is gone is dropped, not given to whoever is there");
+			} catch (Throwable cannot) {
+				check(false, "could not rewrite the settings file (" + cannot + ")");
+			}
+		}
+
+		GroundItemPrefs.clear();
 	}
 
 	/** The hotkey, the double-tap, and the beam's shape. */
