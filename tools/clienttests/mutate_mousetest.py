@@ -110,13 +110,10 @@ MUTS = [
      '''				out.append(option, open, option.length());
 				break;''',
      '''				break;'''),
-    (HIGHLIGHT, 'a colour box that is not hex refusing to draw rather than falling back',
-     '''		if (cleaned.length() != 6) {
-			return 0xFFFF00;
-		}''',
-     '''		if (cleaned.length() != 6) {
-			return 0;
-		}'''),
+    # The colour parse moved to PluginConfig, so the mutation that broke it lives with it:
+    # see mutate_configtest's "the length check dropped". Two suites mutating one file is
+    # how a pattern goes stale unnoticed - and this one did, until mutate_guard's check
+    # caught that it matched nothing and so tested nothing.
     (HIGHLIGHT, 'the label allowed off the right edge of the viewport',
      '''		if (left + wide + 4 > g.width()) {
 			left = x - OFFSET_X - wide;

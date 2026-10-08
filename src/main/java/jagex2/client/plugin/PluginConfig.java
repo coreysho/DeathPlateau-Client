@@ -23,6 +23,55 @@ import jagex2.client.DevLog;
  */
 public final class PluginConfig {
 
+	/**
+	 * A hex colour setting as a packed RGB int, or yellow when it is not one.
+	 *
+	 * THE ONE PLACE THIS CONVERSION LIVES. Settings are stored as text so the file survives a
+	 * field being added or dropped, which means every colour setting is six characters that might
+	 * be anything - a player's typo, a "#" they pasted along with it, or an empty string from a
+	 * release where the field did not exist yet. None of those may throw: this is called from
+	 * render, per frame, and an exception out of a draw turns the plugin off.
+	 *
+	 * Yellow rather than black for the fallback, because black on the scene layer reads as "the
+	 * text did not draw" while yellow reads as "something is set wrong" - which it is.
+	 */
+	public static int parseColour(String text) {
+		if (text == null) {
+			return 0xFFFF00;
+		}
+		String cleaned = text.trim();
+		if (cleaned.startsWith("#")) {
+			cleaned = cleaned.substring(1);
+		}
+		if (cleaned.length() != 6) {
+			return 0xFFFF00;
+		}
+		// EVERY CHARACTER, because a length check is not enough: Integer.parseInt takes a leading
+		// sign, so "-00FF0" is six characters that parse happily to -4080 and come out as the
+		// packed colour 0xFFFFF010. That shipped - this parse came over from Mouse highlight with
+		// the hole in it, and the swatch added here is what finally made it visible. Masking the
+		// result would be worse than failing: it turns nonsense into a plausible colour.
+		for (int i = 0; i < 6; i++) {
+			if (Character.digit(cleaned.charAt(i), 16) < 0) {
+				return 0xFFFF00;
+			}
+		}
+		try {
+			return Integer.parseInt(cleaned, 16);
+		} catch (RuntimeException notHex) {
+			return 0xFFFF00;
+		}
+	}
+
+	/** The six-character form of a packed RGB int, as a colour setting is stored. */
+	public static String toHex(int rgb) {
+		String hex = Integer.toHexString(rgb & 0xFFFFFF).toUpperCase();
+		while (hex.length() < 6) {
+			hex = "0" + hex;
+		}
+		return hex;
+	}
+
 	/** One annotated field, remembered so the panel can list and toggle it. */
 	public static final class Item {
 
@@ -33,12 +82,35 @@ public final class PluginConfig {
 		public final String name;
 		public final String description;
 
+		private final boolean colour;
+		private final String[] choices;
+
 		Item(Field field, Object target, ConfigItem annotation) {
 			this.field = field;
 			this.target = target;
 			this.key = annotation.keyName();
 			this.name = annotation.name();
 			this.description = annotation.description();
+			this.colour = annotation.colour();
+			// Copied, because an annotation's array is freshly cloned on every read and a caller
+			// that mutated what it was handed would be mutating nothing, confusingly.
+			String[] given = annotation.choices();
+			this.choices = given == null ? new String[0] : given.clone();
+		}
+
+		/** A String setting the player edits with a swatch and a picker. */
+		public boolean isColour() {
+			return this.colour && this.isString();
+		}
+
+		/** A String setting the player picks from a list. Empty when it is a free text box. */
+		public String[] choices() {
+			return this.isString() ? this.choices.clone() : new String[0];
+		}
+
+		/** This setting's colour, or yellow if whatever is stored is not one. */
+		public int colourValue() {
+			return parseColour(this.stringValue());
 		}
 
 		public boolean isBoolean() {

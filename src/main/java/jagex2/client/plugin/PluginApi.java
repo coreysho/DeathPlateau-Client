@@ -43,6 +43,15 @@ package jagex2.client.plugin;
  *     and the socket. That is also why it is a snapshot rather than a live object - the client's
  *     own npc config is a 20-entry round-robin cache that recycles under you, which Actor's
  *     comment covers.</dd>
+ * <dt>5</dt><dd>Two richer editors for a String setting: {@code @ConfigItem(colour = true)} for a
+ *     swatch and a picker, and {@code @ConfigItem(choices = {...})} for a drop-down. Plus
+ *     {@code PluginConfig.parseColour} and {@code PluginConfig.toHex}, which are the one place a
+ *     hex setting becomes a colour.
+ *     <p>
+ *     Both are annotation elements with defaults, so a plugin built for an older client still
+ *     compiles and still runs here - but a plugin that SETS one needs a client that reads it, and
+ *     on an older client the setting would silently fall back to a plain text box. That is the
+ *     kind of quiet wrong-looking UI a level exists to prevent, so it moves.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -51,7 +60,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 4;
+	public static final int LEVEL = 5;
 
 	private PluginApi() {
 	}

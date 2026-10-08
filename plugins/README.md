@@ -271,6 +271,7 @@ public class MyToolPlugin extends Plugin {
 | 2 | `ctx.notify`, `ctx.playSound`, `ctx.hasSound`. |
 | 3 | The cursor: `ctx.getMouseX`, `ctx.getMouseY`, `ctx.getHoverTileX`, `ctx.getHoverTileZ`, `ctx.sceneToWorldX`, `ctx.sceneToWorldZ`. |
 | 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
+| 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -287,6 +288,46 @@ shows it greyed out with the reason. A jar that declares nothing still gets caug
 `LinkageError` out of the constructor or `startUp` is reported as "built for a different client"
 rather than as a mystery - but the net only fires once the jar is already on the player's disk.
 The index's `clientApi` is what keeps it from getting there.
+
+## Settings a player can edit
+
+A `@ConfigItem` field gets an editor chosen by its type:
+
+| Field | Editor |
+| --- | --- |
+| `boolean` | a switch |
+| `int` | a numeric box |
+| `String` | a text box |
+| `String` with `colour = true` | a swatch that opens a colour picker |
+| `String` with `choices = {...}` | a drop-down of exactly those values |
+
+```java
+@ConfigItem(keyName = "colour", name = "Marker colour", colour = true)
+public String colour = "00FF00";
+
+@ConfigItem(keyName = "tagPosition", name = "Where the name sits",
+    choices = { "Above", "At feet" })
+public String tagPosition = "Above";
+```
+
+**A colour is still stored as hex**, `"00FF00"` and not a packed int. That is what makes
+`colour = true` safe to add to a setting that already shipped: the file keeps its contents, every
+`PluginConfig.parseColour` call keeps working, and a player who typed a colour by hand keeps what
+they typed. Only the editor changes. Read it with `PluginConfig.parseColour`, which is the one
+place that conversion lives - never write your own, because the swatch and your drawing have to
+agree.
+
+**Nothing in a settings file may make a render throw.** `parseColour` answers yellow for anything
+that is not six hex characters - a typo, a pasted `#`, an empty string from a release where the
+field did not exist. Yellow rather than black, because black on the scene layer reads as "the text
+did not draw" while yellow reads as "something is set wrong", which it is.
+
+**A drop-down keeps a value it does not recognise.** If a later release drops a choice, the panel
+still offers what the player has alongside the real ones. Silently rewriting someone's settings
+because they opened a panel is worse than showing them something odd.
+
+Longer lists - rules per item, things a player adds and removes - are a `ConfigList` instead; see
+*A page of your own*. The panel scrolls, so a list is not capped by the height of anything.
 
 ## Telling the player something
 

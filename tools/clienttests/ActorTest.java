@@ -207,10 +207,10 @@ public class ActorTest {
 	// ---------------------------------------------------------------- 5
 
 	static void sourceTests() {
-		check(PluginApi.LEVEL == 4, "this client is API level 4 (" + PluginApi.LEVEL + ")");
-		check(PluginApi.supports(4), "a plugin asking for 4 runs here");
-		check(!PluginApi.supports(5), "one asking for 5 does not");
-		check(PluginApi.supports(0) && PluginApi.supports(3), "and everything older still does");
+		check(PluginApi.LEVEL == 5, "this client is API level 5 (" + PluginApi.LEVEL + ")");
+		check(PluginApi.supports(5), "a plugin asking for 5 runs here");
+		check(!PluginApi.supports(6), "one asking for 6 does not");
+		check(PluginApi.supports(0) && PluginApi.supports(4), "and everything older still does");
 
 		// AN ACTOR CARRIES NO HANDLE. This is the design rule, and no pure function can state it:
 		// the moment Actor holds a ClientNpc, a plugin can reach the entity, and everything the
@@ -277,7 +277,7 @@ public class ActorTest {
 		String plugin = read("src/main/java/jagex2/client/plugin/builtin/NpcIndicatorsPlugin.java");
 		check(plugin.indexOf("MAX_DRAWN") >= 0 && plugin.indexOf("drawn < MAX_DRAWN") >= 0,
 			"Npc indicators caps how many it draws in a frame");
-		check(plugin.indexOf("apiLevel = 4") >= 0, "...and declares the level it needs");
+		check(plugin.indexOf("apiLevel = 5") >= 0, "...and declares the level it needs");
 		// One copy of the tile-corner walk, shared, not two.
 		check(plugin.indexOf("TileIndicatorsPlugin.outlineTile") >= 0,
 			"...and reuses the tile outline rather than keeping a second copy of it");

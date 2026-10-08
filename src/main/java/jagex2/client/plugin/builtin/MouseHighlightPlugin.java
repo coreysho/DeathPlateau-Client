@@ -4,6 +4,7 @@ import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginDescriptor;
 
 /**
@@ -35,7 +36,7 @@ public final class MouseHighlightPlugin extends Plugin {
 	private static final int BORDER = 0x5A5A5A;
 
 	@ConfigItem(keyName = "colour", name = "Text colour",
-		description = "A hex colour, like FFFF00 for yellow")
+		description = "Click the swatch to pick one", colour = true)
 	public String colour = "FFFF00";
 
 	@ConfigItem(keyName = "boxed", name = "Draw a box behind it",
@@ -138,20 +139,8 @@ public final class MouseHighlightPlugin extends Plugin {
 	 * as it sees six hex digits. A default beats refusing to draw.
 	 */
 	static int parseColour(String text) {
-		if (text == null) {
-			return 0xFFFF00;
-		}
-		String cleaned = text.trim();
-		if (cleaned.startsWith("#")) {
-			cleaned = cleaned.substring(1);
-		}
-		if (cleaned.length() != 6) {
-			return 0xFFFF00;
-		}
-		try {
-			return Integer.parseInt(cleaned, 16);
-		} catch (RuntimeException notHex) {
-			return 0xFFFF00;
-		}
+		// PluginConfig's, not a second copy: the panel's swatch has to agree with what gets drawn,
+		// and two implementations of "is this six characters of hex" would eventually not.
+		return PluginConfig.parseColour(text);
 	}
 }

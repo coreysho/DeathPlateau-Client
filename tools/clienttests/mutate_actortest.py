@@ -118,8 +118,8 @@ MUTS = [
     # so every version of it fails to compile and measures javac instead of the tests. The
     # promise is kept by ActorTest's source check that the shared call is still there.
     (PLUGIN, 'the declared API level lowered, so an older client would load it and throw',
-     'apiLevel = 4',
-     'apiLevel = 3'),
+     'apiLevel = 5',
+     'apiLevel = 4'),
 
     # ---- THE READS. npcs[] is 16384 long and mostly stale; npcCount says how much of npcIds[]
     # is live this tick.
@@ -160,9 +160,9 @@ MUTS = [
 	 * The players in the scene'''),
 
     # ---- THE LEVEL ITSELF.
-    (API, 'the API level left at 3, so a level-4 plugin is refused by the client that has it',
-     'public static final int LEVEL = 4;',
-     'public static final int LEVEL = 3;'),
+    (API, 'the API level left behind, so a plugin built for this client is refused by it',
+     'public static final int LEVEL = 5;',
+     'public static final int LEVEL = 4;'),
     (API, 'the level check made exact, so every older plugin stops loading',
      'return apiLevel <= LEVEL;',
      'return apiLevel == LEVEL;'),

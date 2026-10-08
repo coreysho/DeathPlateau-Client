@@ -43,10 +43,10 @@ public final class TileIndicatorsPlugin extends Plugin {
 	public boolean current = false;
 
 	@ConfigItem(keyName = "hoverColour", name = "Cursor tile colour",
-		description = "A hex colour, like 00FFFF for cyan")
+		description = "Click the swatch to pick one", colour = true)
 	public String hoverColour = "FFFFFF";
 
-	@ConfigItem(keyName = "currentColour", name = "Your tile colour")
+	@ConfigItem(keyName = "currentColour", name = "Your tile colour", colour = true)
 	public String currentColour = "00FFFF";
 
 	protected void startUp() {
