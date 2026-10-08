@@ -145,6 +145,28 @@ public class ConfigTest {
 		int choicesEnd = choices < 0 ? -1 : config.indexOf("\n\t\t}", choices);
 		String chbody = choices < 0 || choicesEnd < 0 ? "" : config.substring(choices, choicesEnd);
 		check(chbody.indexOf("isString()") >= 0, "and so is a drop-down");
+		// HANDED OUT AS A COPY. An annotation's array is cloned on every read, so a caller that
+		// sorted or rewrote what it got would be rewriting nothing - confusingly, and only
+		// sometimes. Checking the copy itself needs an Item, which needs a plugin and a store, so
+		// the promise is read out of the source the way the others here are.
+		check(chbody.indexOf(".clone()") >= 0,
+			"a plugin is handed a copy of the choices, not the array behind them");
+
+		// AND buildEditor HAS TO REACH BOTH. The two editors above can be perfectly correct and
+		// never called: without the dispatch, a colour setting is a text box again and nothing in
+		// their own bodies would say so.
+		int build = source.indexOf("private Component buildEditor(");
+		int buildEnd = build < 0 ? -1 : source.indexOf("\n\t}", build);
+		String bbody = build < 0 || buildEnd < 0 ? "" : source.substring(build, buildEnd);
+		check(bbody.length() > 0, "buildEditor is readable");
+		check(bbody.indexOf("item.isColour()") >= 0 && bbody.indexOf("buildColourEditor") >= 0,
+			"buildEditor sends a colour setting to the swatch");
+		check(bbody.indexOf("choices.length > 0") >= 0 && bbody.indexOf("buildChoiceEditor") >= 0,
+			"...and a choice setting to the drop-down");
+		// Order matters: a colour setting with choices is a colour setting, and the swatch check
+		// has to come first or the drop-down would swallow it.
+		check(bbody.indexOf("buildColourEditor") < bbody.indexOf("buildChoiceEditor"),
+			"...and asks about the colour first, so a colour with choices is still a swatch");
 
 		// ONE IMPLEMENTATION OF THE COLOUR PARSE. The swatch and the drawing have to agree, and
 		// two copies of "is this six characters of hex" eventually would not.
