@@ -36,12 +36,12 @@ MUTS = [
 
     # The three rules.
     (PLUGIN, 'hidden items drawn whether or not anything is revealing them',
-     'return reveal ? HIDDEN_COLOUR : 0;',
-     'return HIDDEN_COLOUR;'),
+     'return reveal ? palette.hidden : 0;',
+     'return palette.hidden;'),
     (PLUGIN, 'highlighted items made to obey the value floor after all',
-     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn HIGHLIGHT_COLOUR;',
+     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn palette.highlighted;',
      'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {\n'
-     '\t\t\treturn HIGHLIGHT_COLOUR;'),
+     '\t\t\treturn palette.highlighted;'),
     (PLUGIN, 'an item the cache has no name for drawn as an empty row',
      'if (item.name.length() == 0) {\n\t\t\treturn 0;\n\t\t}\n',
      ''),
@@ -93,12 +93,10 @@ MUTS = [
     # Anchored on the line above it. There are two lists with a removable() of false now - the
     # display settings and the loot page - and the bare method body matches both, which makes
     # the mutation ambiguous rather than wrong.
-    (PLUGIN, 'the three display settings made removable, like the item rules',
-     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
-     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn false;\n\t\t\t}',
-     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
-     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn true;\n\t\t\t}'),
-    # And the new page, whose rows are a readout rather than a list of the player's rules.
+    # The 'display settings made removable' mutation is gone with the list it broke: radius,
+    # minimum value and show-hidden are @ConfigItem settings now, not ConfigList rows, so
+    # there is no removable() for them to answer wrongly. GroundItemsTest asserts their
+    # types instead, which is the promise that replaced it.
     (PLUGIN, 'the loot page totalling one of a non-stackable rather than all of them',
      'near.worth += (long) item.count * (long) item.price;',
      'near.worth += item.worth();'),

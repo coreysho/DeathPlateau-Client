@@ -16,6 +16,7 @@ import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Overlay;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 import jagex2.config.ObjType;
@@ -122,7 +123,10 @@ public class GroundItemsTest {
 	 */
 	static void ruleTests() {
 		GroundItemPrefs.clear();
-		setShowHidden(false);
+		// No setShowHidden reset here any more: it was global state in GroundItemPrefs that could
+		// leak between sections, and it is a plugin setting now. Every assertion below passes
+		// reveal explicitly, which is what made the reset vestigial rather than load-bearing -
+		// and this section runs before there is a plugin to ask.
 
 		check(GroundItemsPlugin.visibleRows(pileOf(item("Bones", 1, 100)), false, 0).size() == 1,
 			"an ordinary item above the floor is a row");
@@ -467,68 +471,54 @@ public class GroundItemsTest {
 
 	// ---------------------------------------------------------------- 8: the config page
 
-	/** What the F11 panel used to be: two lists on the plugin's own page. */
+	/**
+	 * The rules list, and the settings that used to be cycling rows beside it.
+	 *
+	 * THERE IS ONE CONFIG LIST NOW, not two. Radius, minimum value and show-hidden were three
+	 * rows a player clicked to step through presets, because the in-game panel they lived in had
+	 * no text entry. They are ordinary settings now - typed, and alongside ten colours and
+	 * thresholds that used to be compiled in.
+	 */
 	static void configTests() {
 		reset();
 		GroundItemPrefs.clear();
 
 		List<PluginManager.ListSnapshot> lists = manager.snapshotConfigLists(entry);
-		check(lists.size() == 2, "the plugin has two config lists (" + lists.size() + ")");
-		if (lists.size() != 2) {
-			return;
+		check(lists.size() == 1, "the plugin has one config list (" + lists.size() + ")");
+		check(lists.size() == 1 && lists.get(0).title.equals("Items"),
+			"and it is the rules: the three cycling rows are settings now");
+
+		// The three that moved, with the types their editors depend on.
+		check(setting("radius") != null && setting("radius").isInt(),
+			"radius is a number a player types");
+		check(setting("minValue") != null && setting("minValue").isInt(),
+			"and so is the value floor");
+		check(setting("showHidden") != null && setting("showHidden").isBoolean(),
+			"and show hidden is a switch");
+
+		// The ten that were constants. Colours have to report as colours or they get a text box.
+		String[] colours = { "plainColour", "highlightColour", "hiddenColour",
+			"tier1Colour", "tier2Colour", "tier3Colour", "tier4Colour" };
+		for (int i = 0; i < colours.length; i++) {
+			PluginConfig.Item item = setting(colours[i]);
+			check(item != null && item.isColour(), colours[i] + " is edited as a colour");
 		}
-		check(lists.get(0).title.equals("Display") && lists.get(1).title.equals("Items"),
-			"the settings, then the rules");
-
-		List<ConfigList.Row> display = lists.get(0).rows;
-		check(display.size() == 3, "three settings (" + display.size() + ")");
-		check(!display.get(0).removable && !display.get(1).removable && !display.get(2).removable,
-			"none of which can be removed: they are settings, not entries");
-		check(display.get(0).action.equals(GroundItemPrefs.radius() + " tiles"),
-			"the radius row shows the radius");
-
-		int was = GroundItemPrefs.radius();
-		lists.get(0).act(0);
-		check(GroundItemPrefs.radius() != was, "pressing it cycles to the next one ("
-			+ was + " -> " + GroundItemPrefs.radius() + ")");
-		check(manager.snapshotConfigLists(entry).get(0).rows.get(0).action
-			.equals(GroundItemPrefs.radius() + " tiles"), "...and the row says so next time it is read");
-
-		int value = GroundItemPrefs.minValue();
-		lists.get(0).act(1);
-		check(GroundItemPrefs.minValue() != value, "the value floor cycles too");
-
-		boolean hidden = GroundItemPrefs.showHidden();
-		lists.get(0).act(2);
-		check(GroundItemPrefs.showHidden() != hidden, "and Show hidden is a toggle");
-		lists.get(0).act(2);
-
-		// Back to the defaults the rest of a run assumes, by going the rest of the way round.
-		while (GroundItemPrefs.radius() != was) {
-			GroundItemPrefs.cycleRadius();
+		String[] prices = { "tier1Price", "tier2Price", "tier3Price", "tier4Price" };
+		for (int i = 0; i < prices.length; i++) {
+			PluginConfig.Item item = setting(prices[i]);
+			check(item != null && item.isInt(), prices[i] + " is a number");
 		}
-		while (GroundItemPrefs.minValue() != value) {
-			GroundItemPrefs.cycleMinValue();
-		}
-		check(GroundItemPrefs.radius() == was && GroundItemPrefs.minValue() == value,
-			"both cycle all the way round rather than stopping at the end");
 
-		check(lists.get(1).rows.isEmpty() && lists.get(1).emptyMessage != null
-			&& lists.get(1).emptyMessage.length() > 0,
-			"with no rules set, the Items list says what to do instead of showing nothing");
+		// And the drop-down, whose values have to be the ones the code compares against.
+		PluginConfig.Item price = setting("priceDisplay");
+		check(price != null && price.choices().length == 3,
+			"what a row says is a drop-down of three forms");
 
-		GroundItemPrefs.set("Bones", GroundItemPrefs.HIDE);
-		lists = manager.snapshotConfigLists(entry);
-		check(lists.get(1).rows.size() == 1 && lists.get(1).rows.get(0).label.equals("Bones"),
-			"a rule appears as a row");
-		check(lists.get(1).rows.get(0).action.equals("Hidden"), "...saying what the rule is");
-		check(lists.get(1).rows.get(0).removable, "...and it can be removed, unlike a setting");
-		lists.get(1).act(0);
-		check(GroundItemPrefs.isHighlighted("Bones"), "pressing it cycles hidden to highlighted");
-		lists = manager.snapshotConfigLists(entry);
-		lists.get(1).remove(0);
-		check(GroundItemPrefs.count() == 0, "and removing it drops the rule");
-		GroundItemPrefs.clear();
+		// Writing one through the real config path takes effect and is read back.
+		setSetting("radius", "7");
+		check(setting("radius").intValue() == 7, "a typed radius is kept (7)");
+		setSetting("radius", "12");
+		check(setting("radius").intValue() == 12, "...and can be set back");
 	}
 
 	// ---------------------------------------------------------------- 9: the Loot nearby page
@@ -797,10 +787,36 @@ public class GroundItemsTest {
 		client.actionKey[GameShell.KEY_ALT] = held ? 1 : 0;
 	}
 
+	/**
+	 * Show hidden is a plugin setting now, not a cycling row in GroundItemPrefs, so this drives
+	 * it through the real config - the same path the panel's switch takes.
+	 */
 	static void setShowHidden(boolean on) {
-		if (GroundItemPrefs.showHidden() != on) {
-			GroundItemPrefs.toggleShowHidden();
+		setSetting("showHidden", on ? "1" : "0");
+	}
+
+	/** Writes one of the plugin's settings by key, failing loudly if there is no such setting. */
+	static void setSetting(String key, String value) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				check(entry.getConfig().set(items.get(i), value),
+					"setting " + key + " to " + value + " is accepted");
+				return;
+			}
 		}
+		check(false, "there is a setting called " + key);
+	}
+
+	/** One of the plugin's settings by key, or null. */
+	static PluginConfig.Item setting(String key) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				return items.get(i);
+			}
+		}
+		return null;
 	}
 
 	static SettingsMenuOpening.Target target(String kind, String name) {
