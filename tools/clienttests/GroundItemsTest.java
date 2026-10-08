@@ -194,14 +194,39 @@ public class GroundItemsTest {
 		seen.finish();
 
 		// Bounded, because the scan is per tick and a crowded floor must cost a fixed amount.
+		// WRAPPED for the same reason: without the cap this runs off the end of the array, and an
+		// ArrayIndexOutOfBoundsException out of the suite does not name the rule that broke.
 		seen.reset();
-		seen.begin();
-		for (int i = 0; i < GroundItemArrivals.MAX + 500; i++) {
-			seen.add(GroundItemArrivals.key(3000 + i % 64, 3000 + i / 64, 0, i));
+		boolean overflowed = false;
+		try {
+			seen.begin();
+			for (int i = 0; i < GroundItemArrivals.MAX + 500; i++) {
+				seen.add(GroundItemArrivals.key(3000 + i % 64, 3000 + i / 64, 0, i));
+			}
+			seen.finish();
+		} catch (Throwable broke) {
+			overflowed = true;
 		}
-		seen.finish();
-		check(seen.remembered() == GroundItemArrivals.MAX,
+		check(!overflowed, "a floor past the cap does not run off the end of anything");
+		check(!overflowed && seen.remembered() == GroundItemArrivals.MAX,
 			"a floor past the cap remembers the cap and no more (" + seen.remembered() + ")");
+
+		// A LOG OUT HAS TO FORGET. onGameTick needs a client and a login state, so no test here
+		// can call it - and the audit found that the reset could be deleted with every check
+		// above still green. Read out of the source, the way the other wiring promises are.
+		String plugin = read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java");
+		int tick = plugin.indexOf("public void onGameTick(");
+		int tickEnd = tick < 0 ? -1 : plugin.indexOf("\n\t}", tick);
+		String tickBody = tick < 0 || tickEnd < 0 ? "" : plugin.substring(tick, tickEnd);
+		check(tickBody.length() > 0, "onGameTick is readable");
+		int loggedOut = tickBody.indexOf("!this.ctx.isLoggedIn()");
+		int firstReset = tickBody.indexOf("this.arrivals.reset()");
+		check(loggedOut >= 0 && firstReset > loggedOut,
+			"a logged-out client forgets the floor, so logging in elsewhere is not a storm");
+		// And when nothing is asking for notifications or beams either, so turning one on later
+		// does not report everything in sight at once.
+		check(countOf(tickBody, "this.arrivals.reset()") == 2,
+			"...and so does a tick where nothing is asking (" + countOf(tickBody, "this.arrivals.reset()") + ")");
 
 		// Nothing here may throw on nonsense: worldX is whatever sceneToWorldX returned.
 		boolean threw = false;
@@ -307,10 +332,23 @@ public class GroundItemsTest {
 		check(off.forWorth(5000000L) == off.plain, "...for any value");
 
 		// Junk from a settings file: nothing may throw, and a bad colour reads as the fallback.
-		GroundItemPalette junk = GroundItemPalette.from("zzzzzz", null, "#12", null,
-			new String[] { "", "nonsense", null, "00FF00" });
-		check(junk.plain == 0xFFFF00, "an unparseable colour falls back rather than throwing");
-		check(junk.forWorth(0L) == 0xFFFF00, "...and so does the palette built from it");
+		// WRAPPED, because without the fallback this throws out of the build - and an exception
+		// out of the suite is a crash rather than a check, which says nothing about which rule
+		// broke. The audit called that out, and it is the same reason the nonsense loops above
+		// catch Throwable.
+		GroundItemPalette junk = null;
+		boolean junkThrew = false;
+		try {
+			junk = GroundItemPalette.from("zzzzzz", null, "#12", null,
+				new String[] { "", "nonsense", null, "00FF00" });
+		} catch (Throwable broke) {
+			junkThrew = true;
+		}
+		check(!junkThrew, "a palette built from junk does not throw out of a render");
+		check(!junkThrew && junk.plain == 0xFFFF00,
+			"an unparseable colour falls back rather than throwing");
+		check(!junkThrew && junk.forWorth(0L) == 0xFFFF00,
+			"...and so does the palette built from it");
 	}
 
 	/**
@@ -1016,6 +1054,24 @@ public class GroundItemsTest {
 			}
 		}
 		return null;
+	}
+
+	static int countOf(String haystack, String needle) {
+		int n = 0;
+		for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+			n++;
+		}
+		return n;
+	}
+
+	static String read(String path) {
+		try {
+			return new String(java.nio.file.Files.readAllBytes(
+				new java.io.File(System.getProperty("dp.root", "."), path).toPath()), "UTF-8");
+		} catch (Throwable missing) {
+			check(false, "cannot read " + path + " (" + missing + ")");
+			return "";
+		}
 	}
 
 	static SettingsMenuOpening.Target target(String kind, String name) {

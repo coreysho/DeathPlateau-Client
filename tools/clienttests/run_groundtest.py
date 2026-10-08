@@ -87,6 +87,9 @@ def main():
         r = subprocess.run(launcher + [java,
                                        '-Dlostcity.cachedir=' + cache,
                                        '-Duser.home=' + home,
+                                       # cwd is the temp work dir, so the source checks need to be
+                                       # told where the repository is.
+                                       '-Ddp.root=' + ROOT,
                                        '-cp', classes + os.pathsep + work,
                                        'jagex2.client.plugin.builtin.GroundItemsTest'],
                            capture_output=True, text=True, cwd=work)
