@@ -1420,18 +1420,28 @@ public class Client extends GameShell implements PixMap.Target {
 	 * So it is off unless there is somewhere real to send it: the server's own port when the
 	 * client is pointed straight at the server, or whatever lostcity.jaggrabport says. Off, every
 	 * retry is HTTP, which is the one transport a tunnel actually carries.
+	 *
+	 * AND "POINTED AT THE SERVER" IS NOT THE SAME AS "TOLD A HOST". lostcity.host given used to
+	 * be enough on its own, which turned JAGGRAB on for anyone who pointed it at a tunnel
+	 * address - a reasonable thing to do, and the exact configuration the bug above describes.
+	 * It was found by testing the public path from the server's own desk: that launch logged
+	 * "jaggrab carolyn-fever.tun.ply.gg:43595", a port nothing forwards. It cost nothing there
+	 * only because field196 starts false, so the HTTP attempt goes first and succeeded; one
+	 * hiccup would have flipped it into the same alternation. directHost below is the difference.
 	 */
-	public static final int JAGGRAB_PORT = jaggrabPort(setting("lostcity.jaggrabport", "LOSTCITY_JAGGRABPORT"), HOST_GIVEN);
+	public static final int JAGGRAB_PORT = jaggrabPort(setting("lostcity.jaggrabport", "LOSTCITY_JAGGRABPORT"),
+		HOST_GIVEN && directHost(SERVER_HOST));
 
 	/**
 	 * Which port JAGGRAB should use. Pure, so the rule can be tested without a network.
 	 *
 	 * An explicit setting always wins, including an explicit 0 to turn it off. Otherwise it is
-	 * the server's own 43595 when pointed at the server directly, and nothing at all when going
-	 * through the default tunnels - there is no JAGGRAB tunnel, and pretending there is costs a
-	 * failed connection per retry. Anything unparseable is off rather than a crash at class load.
+	 * the server's own 43595 when the client is talking to the server directly, and nothing at
+	 * all when anything is forwarding - there is no JAGGRAB tunnel, and pretending there is costs
+	 * a failed connection per retry. Anything unparseable is off rather than a crash at class
+	 * load. See directHost for how "directly" is decided.
 	 */
-	static int jaggrabPort(String given, boolean hostGiven) {
+	static int jaggrabPort(String given, boolean direct) {
 		if (given != null) {
 			try {
 				int port = Integer.parseInt(given.trim());
@@ -1440,7 +1450,95 @@ public class Client extends GameShell implements PixMap.Target {
 				return 0;
 			}
 		}
-		return hostGiven ? 43595 : 0;
+		return direct ? 43595 : 0;
+	}
+
+	/**
+	 * Whether this host is the server itself, rather than something that forwards to it.
+	 *
+	 * Only the direct case has the server's own 43595 behind it. A tunnel, a reverse proxy or a
+	 * CDN forwards the ports it was told to forward and nothing else, so assuming 43595 is there
+	 * is assuming a tunnel nobody made.
+	 *
+	 * Nothing in a hostname says "I forward", so this answers the question it can answer: is the
+	 * address unambiguously on this machine or this network? A loopback or private address, a
+	 * bare machine name with no dots in it, an mDNS or internal suffix, a tailnet name - those
+	 * reach the server directly and no middlebox can be in the way. Everything else is treated as
+	 * forwarded, which is the safe direction to be wrong in: being wrong here costs the JAGGRAB
+	 * half of a retry alternation that only matters once HTTP has already failed, while being
+	 * wrong the other way is the bug that kept a player off the server. A server genuinely
+	 * reachable at a public name can say so with lostcity.jaggrabport=43595.
+	 *
+	 * Pure, so the rule is tested as one, the way jaggrabPort is.
+	 */
+	static boolean directHost(String host) {
+		if (host == null) {
+			return false;
+		}
+		String name = host.trim().toLowerCase();
+		if (name.length() == 0) {
+			return false;
+		}
+		// An IPv6 literal, with or without the brackets a URL would put round it.
+		if (name.startsWith("[")) {
+			name = name.substring(1, name.endsWith("]") ? name.length() - 1 : name.length());
+		}
+		if (name.indexOf(':') >= 0) {
+			// Loopback, link-local and unique-local only; a routable v6 address is somebody's
+			// public address and may well have something in front of it.
+			return name.equals("::1") || name.equals("0:0:0:0:0:0:0:1")
+				|| name.startsWith("fe80:") || name.startsWith("fc") || name.startsWith("fd");
+		}
+		if (name.equals("localhost")) {
+			return true;
+		}
+		// A name with no dot in it cannot be a public one: it is a machine on this network.
+		if (name.indexOf('.') < 0) {
+			return true;
+		}
+		if (name.endsWith(".local") || name.endsWith(".lan") || name.endsWith(".internal")
+			|| name.endsWith(".home.arpa") || name.endsWith(".ts.net")) {
+			return true;
+		}
+		return privateIp(name);
+	}
+
+	/**
+	 * Whether this is an IPv4 literal that cannot be routed in from outside - so nothing can be
+	 * forwarding it. Returns false for anything that is not four numbers, including every
+	 * hostname, because the question only applies to literals.
+	 */
+	private static boolean privateIp(String name) {
+		String[] parts = name.split("\\.");
+		if (parts.length != 4) {
+			return false;
+		}
+		int[] octet = new int[4];
+		for (int i = 0; i < 4; i++) {
+			try {
+				octet[i] = Integer.parseInt(parts[i]);
+			} catch (RuntimeException notANumber) {
+				return false;
+			}
+			if (octet[i] < 0 || octet[i] > 255) {
+				return false;
+			}
+		}
+		if (octet[0] == 10 || octet[0] == 127) {
+			return true;
+		}
+		if (octet[0] == 192 && octet[1] == 168) {
+			return true;
+		}
+		if (octet[0] == 172 && octet[1] >= 16 && octet[1] <= 31) {
+			return true;
+		}
+		// 100.64.0.0/10, the carrier-grade NAT range, which is where Tailscale puts its addresses.
+		if (octet[0] == 100 && octet[1] >= 64 && octet[1] <= 127) {
+			return true;
+		}
+		// 169.254.0.0/16, link-local.
+		return octet[0] == 169 && octet[1] == 254;
 	}
 
 	/**
