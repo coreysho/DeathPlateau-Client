@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 PLUGIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java')
 PALETTE = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemPalette.java')
+OVERLAY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/OverlayGraphics.java')
 ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemArrivals.java')
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
@@ -171,6 +172,82 @@ MUTS = [
 		}
 		boolean wantNotify'''),
 
+    (PLUGIN, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
+     '''		return Character.toLowerCase(text.charAt(0));''',
+     '''		return text.charAt(0);'''),
+    (PLUGIN, '''F1 off by one, so every function key is the wrong one''',
+     '''					return 1007 + n;''',
+     '''					return 1008 + n;'''),
+    (PLUGIN, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
+     '''				if (n >= 1 && n <= 12) {''',
+     '''				if (n >= 1) {'''),
+    (PLUGIN, '''a blank hotkey setting reading as a real key, so nothing can turn it off''',
+     '''		if (text.length() == 0) {
+			return -1;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
+     '''		if (text.length() != 1) {
+			return -1;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the hotkey not consumed, so it also lands in the chat box''',
+     '''		event.consume();''',
+     ''''''),
+    (PLUGIN, '''the double-tap live even when the player set its window to 0''',
+     '''return windowMs > 0 && lastDownAt > 0L && now - lastDownAt <= (long) windowMs;''',
+     '''return lastDownAt > 0L && now - lastDownAt <= (long) windowMs;'''),
+    (PLUGIN, '''the first Alt press since startup counting as the second of a pair''',
+     '''return windowMs > 0 && lastDownAt > 0L && now - lastDownAt <= (long) windowMs;''',
+     '''return windowMs > 0 && now - lastDownAt <= (long) windowMs;'''),
+    (PLUGIN, '''the double-tap window made exclusive, so a tap exactly on it does not count''',
+     '''now - lastDownAt <= (long) windowMs;''',
+     '''now - lastDownAt < (long) windowMs;'''),
+    (PLUGIN, '''the tap watched while Alt is held rather than on the press edge''',
+     '''		if (alt && !this.altWasDown) {''',
+     '''		if (alt) {'''),
+    (PLUGIN, '''every beam shape drawing the same width, so the choice does nothing''',
+     '''		if (BEAM_STRAIGHT.equals(style)) {
+			width = BEAM_W;
+		} else if (BEAM_NARROW.equals(style)) {
+			width = BEAM_W / 4;
+		} else {''',
+     '''		if (false) {
+			width = BEAM_W;
+		} else if (false) {
+			width = BEAM_W / 4;
+		} else {'''),
+    (PLUGIN, '''a tall beam allowed to reach zero width and draw nothing''',
+     '''		return width < 1 ? 1 : width;''',
+     '''		return width;'''),
+    (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
+     '''		} else {
+			width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+		}''',
+     '''		} else {
+			width = 0;
+		}'''),
+    (OVERLAY, '''the outline drawn on one side only, which is the shadow it replaces''',
+     '''		this.font.drawString(left + 1, 0, top, text);
+''',
+     ''''''),
+    (OVERLAY, '''the outline passes shadowed, so each casts a shadow of its own''',
+     '''		this.font.drawString(left - 1, 0, top, text);''',
+     '''		this.font.drawStringTag(0, left - 1, top, true, text);'''),
+    (OVERLAY, '''the coloured pass shadowed as well, so an outline is also a shadow''',
+     '''		this.font.drawStringTag(colour, left, top, false, text);''',
+     '''		this.font.drawStringTag(colour, left, top, true, text);'''),
+    (OVERLAY, '''outlined text not centred, so a row sits off its tile''',
+     '''		int centred = x - this.font.stringWidTag(text) / 2;
+		this.markText(centred, y, text);''',
+     '''		int centred = x;
+		this.markText(centred, y, text);'''),
+    (PLUGIN, '''the outline drawn whether the player asked for it or not''',
+     '''				if (this.textOutline) {''',
+     '''				if (true) {'''),
+
 ]
 
 
@@ -180,7 +257,7 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)
