@@ -3,6 +3,7 @@ package jagex2.client.plugin.builtin;
 import java.util.List;
 
 import jagex2.client.GroundItemPrefs;
+import jagex2.client.MenuSwaps;
 import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
@@ -14,6 +15,7 @@ import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
 import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.KeyPressed;
+import jagex2.client.plugin.event.MenuBuilt;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 
 /**
@@ -44,7 +46,8 @@ import jagex2.client.plugin.event.SettingsMenuOpening;
 	description = "Names the items lying near you. Hold Alt for the controls.",
 	key = "ground-items",
 	enabledByDefault = true,
-	legacySetting = "ground_items"
+	legacySetting = "ground_items",
+	apiLevel = 6
 )
 public final class GroundItemsPlugin extends Plugin {
 
@@ -195,6 +198,32 @@ public final class GroundItemsPlugin extends Plugin {
 	@ConfigItem(keyName = "altDoubleTapMs", name = "Double-tap Alt to hide, within this many ms",
 		description = "0 turns double-tapping off")
 	public int altDoubleTapMs = 0;
+
+	// ---- the right-click menu
+	//
+	// All three are off by default. The menu is the one piece of the client a player's hands know
+	// without looking, and a plugin that rearranged it on first run would have moved something
+	// they were already mid-click on.
+
+	@ConfigItem(keyName = "menuColourHighlighted", name = "Colour highlighted items in the menu",
+		description = "Take rows for items you highlighted, in their own colour")
+	public boolean menuColourHighlighted = false;
+
+	@ConfigItem(keyName = "menuColourHidden", name = "Colour hidden items in the menu",
+		description = "Take rows for items you hid, in the hidden colour")
+	public boolean menuColourHidden = false;
+
+	@ConfigItem(keyName = "menuDeprioritiseHidden", name = "Hidden items last in the menu",
+		description = "Moves their Take rows to the bottom, keeping their order")
+	public boolean menuDeprioritiseHidden = false;
+
+	/**
+	 * Rows collected for moving, reused so the handler does not allocate every frame.
+	 *
+	 * MenuBuilt fires on every frame the mouse is over anything, so this one is worth the field.
+	 * 64 is far more Take rows than a tile can produce and bounds the work either way.
+	 */
+	private final int[] menuHidden = new int[64];
 
 	/**
 	 * Hidden by the hotkey or a double-tap, for this session only.
@@ -611,6 +640,112 @@ public final class GroundItemsPlugin extends Plugin {
 			text = text + " @ " + formatValue(item.worth() / item.count);
 		}
 		return text;
+	}
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	/**
+	 * Recolours and reorders the Take rows for items the player has a rule about.
+	 *
+	 * COLOUR ONLY, AND ORDER ONLY. Nothing here can change what a row says or what it does - the
+	 * API has no way to - so the worst a wrong rule can do is draw the right option in an odd
+	 * colour or put it lower down. "Collapse the ground item menu" is the RuneLite option this
+	 * stops short of, deliberately: merging rows removes clickable options, and that is input
+	 * rather than drawing.
+	 *
+	 * Runs on every frame the mouse is over something, so it returns on the first line unless a
+	 * player asked for one of the three.
+	 */
+	@Subscribe
+	public void onMenuBuilt(MenuBuilt event) {
+		if (!this.menuColourHighlighted && !this.menuColourHidden
+			&& !this.menuDeprioritiseHidden) {
+			return;
+		}
+		GroundItemPalette palette = this.palette();
+		int moving = 0;
+		for (int i = 1; i < event.size; i++) {
+			if (!this.ctx.isGroundItemTake(i)) {
+				continue;
+			}
+			String name = menuItemName(this.ctx.getMenuOption(i));
+			if (name.length() == 0) {
+				continue;
+			}
+			int rgb = menuColourFor(name, this.menuColourHighlighted, this.menuColourHidden,
+				palette);
+			if (rgb != 0) {
+				this.ctx.setMenuColour(i, rgb);
+			}
+			if (this.menuDeprioritiseHidden && moving < this.menuHidden.length
+				&& GroundItemPrefs.isHidden(name)) {
+				this.menuHidden[moving] = i;
+				moving++;
+			}
+		}
+		// Only now, and only if there is something to move: the common frame has no hidden item
+		// under the cursor and should allocate nothing.
+		if (moving > 0) {
+			int[] order = deprioritiseOrder(this.menuHidden, moving);
+			for (int j = 0; j < order.length; j++) {
+				this.ctx.deprioritiseMenuEntry(order[j]);
+			}
+		}
+	}
+
+	/**
+	 * The bare item name out of a "Take @lre@Bones" row, or "" for a row with no target.
+	 *
+	 * Through MenuSwaps, which already strips the tags and the level suffix, so a rule keyed on a
+	 * name matches here exactly the way it matches a label over the tile.
+	 */
+	static String menuItemName(String option) {
+		int at = MenuSwaps.tagAt(option);
+		return at < 0 ? "" : MenuSwaps.parseTarget(option, at);
+	}
+
+	/**
+	 * The colour a Take row is drawn in, or 0 to leave it the white the client uses.
+	 *
+	 * The same colour as the label over the tile, including a rule's own: seeing one colour on the
+	 * floor and another in the menu for the same item would read as two different items.
+	 */
+	static int menuColourFor(String name, boolean colourHighlighted, boolean colourHidden,
+			GroundItemPalette palette) {
+		if (name.length() == 0) {
+			return 0;
+		}
+		if (colourHighlighted && GroundItemPrefs.isHighlighted(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;
+		}
+		if (colourHidden && GroundItemPrefs.isHidden(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;
+		}
+		return 0;
+	}
+
+	/**
+	 * The indices to call deprioritiseMenuEntry with, in call order, to move a set of rows to the
+	 * bottom while keeping their order relative to each other.
+	 *
+	 * TWO THINGS MAKE THIS LESS OBVIOUS THAN IT LOOKS. Each move bubbles its row down to index 1,
+	 * which shifts every row BELOW it up by one - so an index read before the first move is stale
+	 * by the second. And the row moved LAST ends up lowest, so the rows have to be moved from the
+	 * top down for the one that was on top to stay on top.
+	 *
+	 * Together those give order[j] = rows[count - 1 - j] + j: take them highest-first, and add one
+	 * for each move already made, because every one of those was above this row and pushed it up.
+	 *
+	 * {@code rows} must be ascending, which is how the scan collects them.
+	 */
+	static int[] deprioritiseOrder(int[] rows, int count) {
+		int[] order = new int[count];
+		for (int j = 0; j < count; j++) {
+			order[j] = rows[count - 1 - j] + j;
+		}
+		return order;
 	}
 
 	/**

@@ -96,6 +96,10 @@ public class MenuTest extends MenuShellBase {
 	/** A menu of n rows: "Cancel" at index 0 and "Take n" upward, which is how the client fills it. */
 	MenuTest menu(int n) {
 		this.menuOption = new String[500];
+		// Cleared with the options, because the client clears it with the options: the rebuild
+		// that writes Cancel into index 0 wipes every override, since an index means nothing once
+		// the list behind it has changed.
+		this.menuColour = new int[500];
 		this.menuOption[0] = "Cancel";
 		for (int i = 1; i < n; i++) {
 			this.menuOption[i] = "Take item " + i;
@@ -117,6 +121,23 @@ public class MenuTest extends MenuShellBase {
 		Pix2D.bind(520, 340, buf);
 		this.drawMenu();
 		return this.fontBold12.rows;
+	}
+
+	/**
+	 * Puts the cursor on the row at visual position p, in the band drawMenu tests against.
+	 *
+	 * menuArea 0 means the viewport, so the draw subtracts the viewport's origin from the mouse
+	 * before comparing - which the point has to add back, or every row reads as un-hovered.
+	 */
+	void hover(int p) {
+		this.mouseX = this.layout.vpX + this.menuX + 5;
+		this.mouseY = this.layout.vpY + this.menuRowY(p) - 5;
+	}
+
+	/** The cursor nowhere near the menu. */
+	void hoverNothing() {
+		this.mouseX = -100;
+		this.mouseY = -100;
 	}
 
 	static int pass;
@@ -187,6 +208,8 @@ public class MenuTest extends MenuShellBase {
 		barTests();
 		System.out.println("7. resizable: a window-sized viewport under the panels");
 		resizableTests();
+		System.out.println("8. a plugin's per-row colour");
+		overrideTests();
 		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS")
 			: (fail + " FAILED of " + (pass + fail)));
@@ -240,6 +263,95 @@ public class MenuTest extends MenuShellBase {
 			"the chatbox's " + CHAT_H + "px shows " + chatRows + " (" + b.menuRowsShown + ")");
 		check(b.menuY >= 0 && b.menuY + b.menuHeight <= CHAT_H,
 			"...and fits: y " + b.menuY + " + h " + b.menuHeight);
+	}
+
+	// ---------------------------------------------------------------- 8
+	/**
+	 * A plugin's per-row colour override, which is the whole client half of menu restyling.
+	 *
+	 * THREE PROPERTIES, and the third is the one worth the test. The override is drawn. It is
+	 * drawn on the row it was set on, which is not the row it looks like: the array is upside down,
+	 * so menuColour is indexed the way menuOption is and the TOP row is the HIGHEST index. And
+	 * hovering still wins over it, because the hover colour is the only thing on screen that says
+	 * which row a click is about to take - a coloured row that stopped responding to the cursor
+	 * would have traded feedback for decoration.
+	 */
+	static void overrideTests() {
+		int white = 16777215;
+		int hovered = 16776960;
+		int green = 0x40FF40;
+
+		MenuTest c = new MenuTest().menu(4);
+		c.openAt(200, 100);
+		c.hoverNothing();
+		List<MenuRow> plain = c.redraw();
+		check(plain.size() == 4, "a four-entry menu fits, so all four rows draw - Cancel at the "
+			+ "bottom, which is index 0 (" + plain.size() + ")");
+		boolean allWhite = true;
+		for (MenuRow row : plain) {
+			allWhite = allWhite && row.colour == white;
+		}
+		check(allWhite, "with no override every row is the white the client always drew");
+
+		// Index 3 is the TOP row of a four-entry menu - menuRowIndex(0) - which is also the
+		// left-click. Colouring it and asserting the TOP row changed is what catches the array
+		// being read the wrong way up.
+		c.menuColour[3] = green;
+		List<MenuRow> lit = c.redraw();
+		check(lit.get(0).colour == green,
+			"an override on the last index colours the TOP row, because the array is upside down");
+		check(lit.get(0).text.equals(c.menuOption[3]), "...and that row is the one it was set on");
+		check(lit.get(1).colour == white && lit.get(2).colour == white
+				&& lit.get(3).colour == white,
+			"...and no other row is touched, Cancel included");
+
+		// The bottom-but-one, to pin the mapping at both ends rather than at one.
+		c.menuColour[3] = 0;
+		c.menuColour[1] = green;
+		List<MenuRow> low = c.redraw();
+		check(low.get(2).colour == green && low.get(0).colour == white,
+			"an override on index 1 colours the BOTTOM row of the window, not the top");
+		check(low.get(2).text.equals(c.menuOption[1]), "...the row it was set on");
+
+		// Setting it back to 0 is how a plugin undoes one, and is also what the per-frame clear
+		// does - a colour that could not be removed would stick for the session.
+		c.menuColour[1] = 0;
+		check(c.redraw().get(2).colour == white, "0 puts a row back to white");
+
+		// HOVER WINS, over an override and over nothing.
+		c.menuColour[3] = green;
+		c.hover(0);
+		List<MenuRow> over = c.redraw();
+		check(over.get(0).colour == hovered,
+			"hovering a coloured row still draws it in the hover colour, not its override");
+		check(over.get(1).colour == white,
+			"...and only the hovered row, so the override is not smeared");
+		c.hover(1);
+		List<MenuRow> other = c.redraw();
+		check(other.get(1).colour == hovered, "hovering a plain row highlights it as it always did");
+		check(other.get(0).colour == green,
+			"...and the coloured row keeps its colour while the cursor is elsewhere");
+
+		// A SCROLLED MENU. menuRowIndex subtracts menuScroll, so the draw and the override have to
+		// agree about it or a colour slides by a row every notch of the wheel.
+		MenuTest big = new MenuTest().menu(30);
+		big.openAt(200, 100);
+		big.hoverNothing();
+		big.menuColour[29] = green;
+		check(big.redraw().get(0).colour == green, "the top row of a long menu takes its override");
+		big.mouseScrollDelta = 2;
+		big.handleMenuScroll();
+		check(big.menuScroll == 2, "the menu is scrolled down two rows");
+		List<MenuRow> scrolled = big.redraw();
+		check(scrolled.get(0).text.equals(big.menuOption[27]),
+			"...so the top row is now entry 27");
+		check(scrolled.get(0).colour == white,
+			"...which has no override, and is not wearing entry 29's");
+		boolean moved = false;
+		for (int p = 0; p < scrolled.size(); p++) {
+			moved = moved || scrolled.get(p).colour == green;
+		}
+		check(!moved, "...and entry 29's colour went off the top of the window with entry 29");
 	}
 
 	// ---------------------------------------------------------------- 2

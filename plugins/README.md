@@ -272,6 +272,7 @@ public class MyToolPlugin extends Plugin {
 | 3 | The cursor: `ctx.getMouseX`, `ctx.getMouseY`, `ctx.getHoverTileX`, `ctx.getHoverTileZ`, `ctx.sceneToWorldX`, `ctx.sceneToWorldZ`. |
 | 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
 | 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
+| 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -331,7 +332,7 @@ Longer lists - rules per item, things a player adds and removes - are a `ConfigL
 
 ### Ground items, in detail
 
-The most configured plugin here, and the one to copy from. Eighteen settings:
+The most configured plugin here, and the one to copy from. 28 settings:
 
 | | |
 | --- | --- |
@@ -343,6 +344,7 @@ The most configured plugin here, and the one to copy from. Eighteen settings:
 | Beams | Over highlighted items, from a tier up, and the shape of them |
 | Reading | Outlined text instead of a drop shadow |
 | Input | A key that hides and shows the labels, and double-tap Alt to do the same |
+| Menu | Colour the Take rows for highlighted and for hidden items, and move hidden ones to the bottom |
 
 Plus the hide/highlight rules themselves, added by right-clicking an item rather than typed, up
 to 128 of them - each of which can have **a colour of its own**, cycled through ten named ones in
@@ -372,6 +374,53 @@ on a tile now. `GroundItemArrivals` remembers the last scan and answers the diff
 is deliberately not part of that key: taking one coin off a stack is not a drop, and neither is a
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
+
+## Restyling the right-click menu
+
+Level 6. From a `MenuBuilt` handler, a plugin can draw one row in another colour and move one row
+to the bottom:
+
+```java
+@Subscribe
+public void onMenuBuilt(MenuBuilt event) {
+    for (int i = 1; i < event.size; i++) {
+        if (this.ctx.isGroundItemTake(i)) {
+            this.ctx.setMenuColour(i, 0x707070);
+            this.ctx.deprioritiseMenuEntry(i);
+        }
+    }
+}
+```
+
+**There is no way to change what a row says or what it does**, and there will not be. A plugin that
+could relabel a row could put "Bank" where "Attack" is; one that could remove a row could take an
+option away without the player ever knowing it was offered. The line the whole API is drawn on is
+that a plugin draws and reads while the client owns input, and the menu is the sharpest place that
+line matters. This is why RuneLite's *Collapse ground item menu* has no equivalent here.
+
+Three things about it are easy to get wrong:
+
+**The array is upside down.** Index 0 is `Cancel` at the bottom of the menu and the HIGHEST index
+is the top row - the one a left click performs, which `ctx.getLeftClickIndex()` will tell you. So
+"deprioritise" moves a row *down* toward index 1, which is the opposite of what the indices look
+like.
+
+**Colours are cleared every frame.** They are stored by index, and an index means nothing once the
+list behind it has been rebuilt - so the same rebuild that writes `Cancel` into index 0 wipes every
+override. Set them again from each `MenuBuilt`, which is also why a handler for it should do as
+little as possible: it fires on every frame the cursor is over anything, menu open or not.
+
+**Hovering still wins.** A row under the cursor is drawn in the hover colour whatever override it
+carries. The hover is the only thing on screen that says which row a click is about to take, and a
+coloured row that stopped answering the cursor would have traded feedback for decoration.
+
+`swapMenuEntries` carries a row's action, its parameters **and** its colour, so a row you recolour
+and then move keeps its colour rather than leaving it on whatever takes its place.
+
+Moving several rows to the bottom is not a loop over them: each move shifts everything below it, so
+the indices you read before the first move are stale by the second, and the row moved **last** ends
+up lowest. `GroundItemsPlugin.deprioritiseOrder` is the worked version of that arithmetic if you
+need it.
 
 ## Telling the player something
 

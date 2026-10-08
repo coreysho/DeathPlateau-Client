@@ -17,6 +17,7 @@ import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.event.KeyPressed;
+import jagex2.client.plugin.PluginApi;
 import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
@@ -96,6 +97,7 @@ public class GroundItemsTest {
 		paletteTests();
 		readingTests();
 		perItemColourTests();
+		menuRuleTests();
 
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
@@ -114,6 +116,7 @@ public class GroundItemsTest {
 		configTests();
 		lootPageTests();
 		formatTests();
+		menuTests();
 
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -539,6 +542,149 @@ public class GroundItemsTest {
 	}
 
 	/** The hotkey, the double-tap, and the beam's shape. */
+	/**
+	 * The three rules behind menu restyling, none of which needs a client.
+	 *
+	 * The interesting one is deprioritiseOrder. "Move these rows to the bottom" looks like a loop
+	 * and is not: each move shifts the rows below it, and the row moved LAST ends up lowest, so
+	 * the indices read before the first move are wrong by the second and the obvious order comes
+	 * out reversed. The simulation at the end is the check that matters - it runs the moves against
+	 * an array the same way deprioritiseMenuEntry does, so the claim is about the result rather
+	 * than about the formula.
+	 */
+	static void menuRuleTests() {
+		GroundItemPrefs.clear();
+
+		// ---- the name out of a row
+		check(GroundItemsPlugin.menuItemName("Take @lre@Bones").equals("Bones"),
+			"the item name comes out of a Take row with its tag stripped");
+		check(GroundItemsPlugin.menuItemName("Examine @lre@Clue scroll").equals("Clue scroll"),
+			"...names with spaces intact");
+		check(GroundItemsPlugin.menuItemName("Walk here").length() == 0,
+			"a row with no target gives no name, rather than its own text");
+		check(GroundItemsPlugin.menuItemName("Cancel").length() == 0, "...and nor does Cancel");
+		check(GroundItemsPlugin.menuItemName("").length() == 0, "...nor an empty row");
+		// The level suffix, because the same parse serves npc rows and a rule keyed on "Guard"
+		// has to match a level-21 one.
+		check(GroundItemsPlugin.menuItemName("Attack @yel@Guard@gr2@ (level-21)").equals("Guard"),
+			"...and a combat level is not part of the name");
+
+		// ---- the colour a row is drawn in
+		GroundItemPalette palette = GroundItemPalette.DEFAULTS;
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIDE);
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+
+		check(GroundItemsPlugin.menuColourFor("Bones", false, false, palette) == 0,
+			"with both settings off no row is recoloured");
+		check(GroundItemsPlugin.menuColourFor("Clue scroll", false, false, palette) == 0,
+			"...neither kind of rule");
+		check(GroundItemsPlugin.menuColourFor("Bones", false, true, palette) == palette.hidden,
+			"a hidden item's row takes the hidden colour");
+		check(GroundItemsPlugin.menuColourFor("Clue scroll", true, false, palette)
+				== palette.highlighted,
+			"a highlighted item's row takes the highlighted colour");
+		check(GroundItemsPlugin.menuColourFor("Bones", true, false, palette) == 0,
+			"the highlight setting alone leaves a hidden item alone");
+		check(GroundItemsPlugin.menuColourFor("Clue scroll", false, true, palette) == 0,
+			"...and the hidden setting alone leaves a highlighted one alone");
+		check(GroundItemsPlugin.menuColourFor("Shark", true, true, palette) == 0,
+			"an item with no rule is never recoloured, whatever is on");
+		check(GroundItemsPlugin.menuColourFor("", true, true, palette) == 0,
+			"...and a row with no name is left alone rather than looked up as \"\"");
+
+		// THE CASE THAT MAKES THAT GUARD REAL, and the one the audit found the check above could
+		// not see: a rule cannot be NAMED "" through either add path, but "*" is a documented
+		// hand-edit for "everything" and it matches "" like it matches anything else. A player
+		// with hide=* in their file would otherwise have every targetless row - Walk here, Cancel
+		// - drawn as a hidden item.
+		GroundItemPrefs.toggle("*", GroundItemPrefs.HIDE);
+		check(GroundItemPrefs.isHidden(""), "a hide=* rule does match the empty name");
+		check(GroundItemsPlugin.menuColourFor("", false, true, palette) == 0,
+			"...and a row with no name is still not coloured as a hidden item");
+		check(GroundItemsPlugin.menuColourFor("Bones", false, true, palette) == palette.hidden,
+			"...while a row that does have a name is");
+		GroundItemPrefs.removeName("*");
+		check(!GroundItemPrefs.isHidden(""), "the wildcard is gone again");
+
+		// A rule's own colour wins here too, so the floor and the menu agree about an item. Two
+		// colours for the same thing reads as two different things.
+		int at = GroundItemPrefs.find("Clue scroll");
+		GroundItemPrefs.cycleColour(at);
+		int own = GroundItemPrefs.colour(at);
+		check(own != GroundItemPrefs.DEFAULT_COLOUR, "the rule has a colour of its own");
+		check(GroundItemsPlugin.menuColourFor("Clue scroll", true, true, palette) == own,
+			"...and the menu row is drawn in it, not the plugin's highlighted colour");
+		int bones = GroundItemPrefs.find("Bones");
+		GroundItemPrefs.cycleColour(bones);
+		check(GroundItemsPlugin.menuColourFor("Bones", true, true, palette)
+				== GroundItemPrefs.colour(bones),
+			"...the same for a hidden rule");
+		GroundItemPrefs.clear();
+
+		// ---- the order to move rows in
+		check(GroundItemsPlugin.deprioritiseOrder(new int[] { 5 }, 0).length == 0,
+			"nothing to move is no moves");
+		int[] one = GroundItemsPlugin.deprioritiseOrder(new int[] { 5 }, 1);
+		check(one.length == 1 && one[0] == 5, "one row is moved at the index it is at");
+		// Two rows: the TOP one goes first, and the second one's index has gone up by one because
+		// the first move shifted everything below it. Taking them bottom-first instead would
+		// reverse them, which is the bug this exists to prevent.
+		int[] two = GroundItemsPlugin.deprioritiseOrder(new int[] { 3, 4 }, 2);
+		check(two.length == 2 && two[0] == 4,
+			"two rows start with the higher one, which is the one nearer the top");
+		check(two[1] == 4, "...and the lower one has been pushed up to 4 by that move");
+		int[] three = GroundItemsPlugin.deprioritiseOrder(new int[] { 2, 3, 4 }, 3);
+		check(three[0] == 4 && three[1] == 4 && three[2] == 4,
+			"three rows that were already at the top are all moved from the same index");
+		int[] gap = GroundItemsPlugin.deprioritiseOrder(new int[] { 1, 3 }, 2);
+		check(gap[0] == 3 && gap[1] == 2,
+			"rows with something between them: 3 first, then 1 shifted up to 2");
+		check(GroundItemsPlugin.deprioritiseOrder(new int[] { 2, 3, 4, 5 }, 2).length == 2,
+			"only the first count entries are read, so the reused buffer's tail is ignored");
+
+		// THE SIMULATION. The formula above could be self-consistently wrong; this runs the moves
+		// the way deprioritiseMenuEntry does and asserts where the rows end up.
+		check(movedToBottom(new String[] { "Cancel", "A", "B", "H1", "H2" }, new int[] { 3, 4 }, 2)
+				.equals("Cancel,H1,H2,A,B"),
+			"two hidden rows end up at the bottom, above Cancel, in the order they were in");
+		check(movedToBottom(new String[] { "Cancel", "H1", "A", "H2" }, new int[] { 1, 3 }, 2)
+				.equals("Cancel,H1,H2,A"),
+			"...and so do two with an ordinary row between them");
+		check(movedToBottom(new String[] { "Cancel", "A", "H1" }, new int[] { 2 }, 1)
+				.equals("Cancel,H1,A"),
+			"one hidden row drops below the ordinary one above it");
+		check(movedToBottom(new String[] { "Cancel", "H1", "A" }, new int[] { 1 }, 1)
+				.equals("Cancel,H1,A"),
+			"a hidden row already at the bottom stays where it is");
+		check(movedToBottom(new String[] { "Cancel", "H1", "H2", "H3" }, new int[] { 1, 2, 3 }, 3)
+				.equals("Cancel,H1,H2,H3"),
+			"a menu of nothing but hidden rows is left exactly as it was");
+	}
+
+	/**
+	 * The moves deprioritiseOrder asks for, run against an array the way PluginContext runs them:
+	 * bubble the row at the index down to 1 by swapping with its neighbour. Returned bottom-first,
+	 * so index 0 (Cancel) reads first.
+	 */
+	static String movedToBottom(String[] menu, int[] rows, int count) {
+		int[] order = GroundItemsPlugin.deprioritiseOrder(rows, count);
+		for (int j = 0; j < order.length; j++) {
+			for (int at = order[j]; at > 1; at--) {
+				String swap = menu[at];
+				menu[at] = menu[at - 1];
+				menu[at - 1] = swap;
+			}
+		}
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < menu.length; i++) {
+			if (i > 0) {
+				out.append(',');
+			}
+			out.append(menu[i]);
+		}
+		return out.toString();
+	}
+
 	static void readingTests() {
 		// ONE CHARACTER, EITHER CASE EITHER WAY ROUND. The client delivers a lowercase g when
 		// nobody is holding shift, so a setting of "G" has to answer to it or a hotkey typed in
@@ -1106,6 +1252,15 @@ public class GroundItemsTest {
 			check(item != null && item.isInt(), prices[i] + " is a number");
 		}
 
+		// THE COUNT, AGAINST THE README. It said "Eighteen settings" while the plugin had
+		// twenty-five, which is the sort of drift nothing notices and everyone reads. The number
+		// is a digit in the README for exactly this: it is cheap to check and the check is what
+		// keeps the page honest.
+		int count = entry.getConfig().getItems().size();
+		check(read("plugins/README.md").indexOf(
+				"the one to copy from. " + count + " settings:") >= 0,
+			"the README says how many settings this plugin has, and it is " + count);
+
 		// And the drop-down, whose values have to be the ones the code compares against.
 		PluginConfig.Item price = setting("priceDisplay");
 		check(price != null && price.choices().length == 3,
@@ -1116,6 +1271,277 @@ public class GroundItemsTest {
 		check(setting("radius").intValue() == 7, "a typed radius is kept (7)");
 		setSetting("radius", "12");
 		check(setting("radius").intValue() == 12, "...and can be set back");
+	}
+
+	// ---------------------------------------------------------------- 10: the right-click menu
+
+	/** Client.java's own action ids for the two rows an item on the floor produces. */
+	static final int TAKE = 684;
+	static final int EXAMINE = 1564;
+
+	/**
+	 * Recolouring and reordering Take rows, through the real manager against a real menu.
+	 *
+	 * NOTHING HERE IS SIMULATED. The rows are written into the client's own menu arrays the way
+	 * its object handler writes them, the handler is reached by posting MenuBuilt through the real
+	 * PluginManager, and what it does lands in client.menuColour and client.menuOption - which is
+	 * exactly what drawMenu reads. The draw itself is MenuTest's half of this.
+	 *
+	 * THE ORDER IS UPSIDE DOWN throughout: index 0 is Cancel at the bottom of the menu and the
+	 * HIGHEST index is the top row, which is the one a left click takes. So "deprioritise" moves a
+	 * row toward index 1, and a check that reads like it has the ends swapped has not.
+	 */
+	static void menuTests() {
+		reset();
+		GroundItemPrefs.clear();
+
+		// READ BEFORE ANYTHING WRITES THEM. All three are off out of the box, and that is the
+		// decision rather than an accident: the menu is the one piece of the client a player's
+		// hands know without looking, and a first run that rearranged it would have moved
+		// something they were already mid-click on.
+		check(setting("menuColourHighlighted") != null
+				&& !setting("menuColourHighlighted").booleanValue()
+				&& setting("menuColourHidden") != null
+				&& !setting("menuColourHidden").booleanValue()
+				&& setting("menuDeprioritiseHidden") != null
+				&& !setting("menuDeprioritiseHidden").booleanValue(),
+			"all three menu settings are off until a player turns one on");
+
+		check(setting("menuColourHighlighted") != null
+				&& setting("menuColourHighlighted").isBoolean(),
+			"colouring highlighted rows is a switch");
+		check(setting("menuColourHidden") != null && setting("menuColourHidden").isBoolean(),
+			"...and so is colouring hidden ones");
+		check(setting("menuDeprioritiseHidden") != null
+				&& setting("menuDeprioritiseHidden").isBoolean(),
+			"...and so is moving them to the bottom");
+		check(PluginApi.LEVEL == 6, "this client is API level 6 (" + PluginApi.LEVEL + ")");
+		check(read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java")
+				.indexOf("apiLevel = 6") >= 0,
+			"...and the plugin declares the level it needs, so an older client refuses it rather "
+				+ "than loading it and failing on the first menu");
+
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIDE);
+		GroundItemPrefs.toggle("Clue scroll", GroundItemPrefs.HIGHLIGHT);
+
+		// ---- all three off: the handler returns on its first line and touches nothing. The
+		// default state, and the one that runs every frame for most players.
+		menu(new String[] { "Walk here", "Take @lre@Bones", "Take @lre@Clue scroll" },
+			new int[] { Client.WALK_HERE_ACTION, TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == 0 && colourAt(2) == 0 && colourAt(3) == 0,
+			"with all three off no row is recoloured");
+		check(menuText().equals("Cancel|Walk here|Take Bones|Take Clue scroll"),
+			"...and nothing is moved");
+
+		// ---- colouring hidden rows
+		setSetting("menuColourHidden", "true");
+		menu(new String[] { "Walk here", "Take @lre@Bones", "Take @lre@Clue scroll" },
+			new int[] { Client.WALK_HERE_ACTION, TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(2) == HIDDEN_COLOUR, "the hidden item's Take row is drawn in grey");
+		check(colourAt(3) == 0, "...and the highlighted one is not, with only this setting on");
+		check(colourAt(1) == 0, "...and Walk here, which has no item name, is left alone");
+		check(colourAt(0) == 0, "...and so is Cancel");
+
+		// Only Take. An Examine on a hidden item is still a row a player might want to read, and
+		// greying out everything about the item would be a different feature.
+		menu(new String[] { "Take @lre@Bones", "Examine @lre@Bones" },
+			new int[] { TAKE, EXAMINE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == HIDDEN_COLOUR, "the Take row is coloured");
+		check(colourAt(2) == 0, "...and the Examine row for the same item is not");
+
+		// ---- colouring highlighted rows, and a rule's own colour
+		setSetting("menuColourHidden", "false");
+		setSetting("menuColourHighlighted", "true");
+		menu(new String[] { "Take @lre@Bones", "Take @lre@Clue scroll" },
+			new int[] { TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(2) == HIGHLIGHT_COLOUR, "the highlighted item's row is drawn in magenta");
+		check(colourAt(1) == 0, "...and the hidden one is not, with only this setting on");
+
+		int at = GroundItemPrefs.find("Clue scroll");
+		GroundItemPrefs.cycleColour(at);
+		int own = GroundItemPrefs.colour(at);
+		menu(new String[] { "Take @lre@Clue scroll" }, new int[] { TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == own && own != HIGHLIGHT_COLOUR,
+			"a rule with its own colour gets it in the menu too, so the floor and the menu agree");
+
+		// An item with no rule at all, with both colour settings on.
+		setSetting("menuColourHidden", "true");
+		menu(new String[] { "Take @lre@Shark" }, new int[] { TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == 0, "an item with no rule keeps the white the client drew it in");
+
+		// ---- moving hidden rows to the bottom
+		setSetting("menuColourHidden", "false");
+		setSetting("menuColourHighlighted", "false");
+		setSetting("menuDeprioritiseHidden", "true");
+
+		menu(new String[] { "Walk here", "Take @lre@Bones", "Take @lre@Shark" },
+			new int[] { Client.WALK_HERE_ACTION, TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Bones|Walk here|Take Shark"),
+			"the hidden item's row drops to the bottom, below Walk here, and the rest keep order");
+		check(client.menuAction[1] == TAKE,
+			"...and its action travelled with it, so the row still takes the item");
+
+		// The left-click is the top index, and moving a hidden row out of it is the point: an
+		// accidental left click should not pick up the thing you told the client to hide.
+		menu(new String[] { "Take @lre@Shark", "Take @lre@Bones" }, new int[] { TAKE, TAKE });
+		check(menuText().equals("Cancel|Take Shark|Take Bones"), "Bones starts as the left-click");
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Bones|Take Shark"),
+			"...and is moved out of it, leaving Shark as what a left click takes");
+
+		// Two hidden rows keep their order relative to each other.
+		GroundItemPrefs.toggle("Burnt bread", GroundItemPrefs.HIDE);
+		menu(new String[] { "Take @lre@Burnt bread", "Take @lre@Shark", "Take @lre@Bones" },
+			new int[] { TAKE, TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Burnt bread|Take Bones|Take Shark"),
+			"two hidden rows both drop below the ordinary one, in the order they were in");
+
+		// ---- both at once: THE COLOUR HAS TO TRAVEL WITH THE ROW. Overrides are stored by index,
+		// so a colour left behind lands on whatever row took the place of the one that moved -
+		// which with these two settings on is the ordinary item the player wanted to see.
+		setSetting("menuColourHidden", "true");
+		menu(new String[] { "Take @lre@Shark", "Take @lre@Bones" }, new int[] { TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Bones|Take Shark"), "the hidden row moved");
+		check(colourAt(1) == HIDDEN_COLOUR, "...and its grey went with it");
+		check(colourAt(2) == 0, "...and the row that took its place is not wearing it");
+
+		// Three rows, so the colour has further to travel than one swap.
+		menu(new String[] { "Walk here", "Take @lre@Shark", "Take @lre@Bones" },
+			new int[] { Client.WALK_HERE_ACTION, TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Bones|Walk here|Take Shark"), "it moved two places");
+		check(colourAt(1) == HIDDEN_COLOUR && colourAt(2) == 0 && colourAt(3) == 0,
+			"...and its colour is on it and nowhere else");
+
+		// ---- a menu with nothing in it, and one with no Take rows: neither is a special case in
+		// the handler, and both happen every frame the cursor is over scenery.
+		menu(new String[] {}, new int[] {});
+		manager.onMenuBuilt(client.menuSize);
+		check(client.menuSize == 1 && colourAt(0) == 0, "a Cancel-only menu comes back untouched");
+		menu(new String[] { "Walk here", "Open @cya@Door" },
+			new int[] { Client.WALK_HERE_ACTION, 53 });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Walk here|Open Door") && colourAt(1) == 0
+				&& colourAt(2) == 0,
+			"a menu with no Take rows is untouched");
+
+		// A hide=* rule, which is the hand-edit for "hide everything". Every Take row is hidden,
+		// and the rows with no item name must still be left alone: the handler skips them before
+		// it ever asks about a rule, and menuColourFor guards the same thing behind it.
+		setSetting("menuColourHidden", "true");
+		setSetting("menuDeprioritiseHidden", "true");
+		GroundItemPrefs.toggle("*", GroundItemPrefs.HIDE);
+		menu(new String[] { "Walk here", "Take @lre@Shark" },
+			new int[] { Client.WALK_HERE_ACTION, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Shark|Walk here"),
+			"under hide=* the Take row drops to the bottom and Walk here stays above it");
+		check(colourAt(1) == HIDDEN_COLOUR, "...the Take row is grey");
+		check(colourAt(2) == 0, "...and Walk here, which has no item name, is not");
+
+		// A TAKE ROW WHOSE ITEM HAS NO NAME. The client writes "Take @lre@" + name, so an obj
+		// type with an empty name gives a row with no readable target - and a hide=* rule matches
+		// the empty name, so without the skip in the scan that row joins the ones being moved and
+		// drags the menu around. Three rows, because two adjacent moves cancel out and would make
+		// a missing skip look harmless.
+		menu(new String[] { "Take @lre@", "Walk here", "Take @lre@Shark" },
+			new int[] { TAKE, Client.WALK_HERE_ACTION, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Shark|Take |Walk here"),
+			"a Take row whose item has no name is left where it is, and only Shark moves");
+		check(colourAt(2) == 0, "...and it is not coloured either");
+		GroundItemPrefs.removeName("*");
+
+		// ---- and turning everything off again leaves the menu alone, so none of this is sticky.
+		setSetting("menuColourHidden", "false");
+		setSetting("menuDeprioritiseHidden", "false");
+		menu(new String[] { "Take @lre@Shark", "Take @lre@Bones" }, new int[] { TAKE, TAKE });
+		manager.onMenuBuilt(client.menuSize);
+		check(menuText().equals("Cancel|Take Shark|Take Bones") && colourAt(1) == 0
+				&& colourAt(2) == 0,
+			"switching the settings back off leaves the menu exactly as the client built it");
+		GroundItemPrefs.clear();
+
+		// ---- THE LINE THE API IS DRAWN ON, which no run of it can state: the context can colour
+		// a row and move a row, and there is no way through it to change what a row SAYS or what
+		// it DOES. A plugin that could relabel one could put "Bank" where "Attack" is, and the
+		// whole API rests on a plugin drawing and reading while the client owns input.
+		String ctx = read("src/main/java/jagex2/client/plugin/PluginContext.java");
+		check(ctx.indexOf("public void setMenuColour(") >= 0, "the context can colour a row");
+		check(ctx.indexOf("public void deprioritiseMenuEntry(") >= 0, "...and move one");
+		check(ctx.indexOf("setMenuOption(") < 0,
+			"...and there is no way to change what a row says");
+		check(ctx.indexOf("setMenuAction(") < 0, "...nor what it does");
+		check(ctx.indexOf("public void removeMenuEntry(") < 0
+				&& ctx.indexOf("public void addMenuEntry(") < 0,
+			"...nor to add or remove one, which is why Collapse is not here");
+
+		// The guards, which a test cannot reach: PluginContext's constructor is package-private,
+		// so the only way in is the real manager, and the real manager only ever passes indices
+		// the handler read out of the live menu.
+		int setter = ctx.indexOf("public void setMenuColour(");
+		String setterBody = setter < 0 ? "" : ctx.substring(setter, ctx.indexOf("\n\t}", setter));
+		check(setterBody.indexOf("index >= 0") >= 0 && setterBody.indexOf("index < this.client.menuSize") >= 0,
+			"a colour outside the live menu is dropped rather than written past it");
+		check(setterBody.indexOf("index < this.client.menuColour.length") >= 0,
+			"...and so is one past the end of the array, whatever menuSize says");
+		int dep = ctx.indexOf("public void deprioritiseMenuEntry(");
+		String depBody = dep < 0 ? "" : ctx.substring(dep, ctx.indexOf("\n\t}", dep));
+		check(depBody.indexOf("index <= 1") >= 0,
+			"index 1 is already the bottom, and Cancel at 0 stays there");
+		check(depBody.indexOf("this.swapMenuEntries(at, at - 1)") >= 0,
+			"...and the move is built on swapMenuEntries, so a row's action goes with its text");
+		int swap = ctx.indexOf("public void swapMenuEntries(");
+		String swapBody = swap < 0 ? "" : ctx.substring(swap, ctx.indexOf("\n\t}", swap));
+		check(swapBody.indexOf("this.client.menuColour[a] = this.client.menuColour[b]") >= 0,
+			"...and a row's colour goes with it too, or a moved row leaves its colour behind");
+	}
+
+	/**
+	 * A menu the way the client builds one: "Cancel" at index 0 and the given rows appended above
+	 * it, so the LAST one is the top row and the left click.
+	 */
+	static void menu(String[] options, int[] actions) {
+		client.menuSize = 0;
+		for (int i = 0; i < client.menuColour.length; i++) {
+			client.menuColour[i] = 0;
+		}
+		client.menuOption[0] = "Cancel";
+		client.menuAction[0] = 1016;
+		client.menuSize = 1;
+		for (int i = 0; i < options.length; i++) {
+			client.menuOption[client.menuSize] = options[i];
+			client.menuAction[client.menuSize] = actions[i];
+			client.menuParamA[client.menuSize] = 0;
+			client.menuParamB[client.menuSize] = 0;
+			client.menuParamC[client.menuSize] = 0;
+			client.menuSize++;
+		}
+	}
+
+	static int colourAt(int index) {
+		return client.menuColour[index];
+	}
+
+	/** The menu bottom-first, tags stripped, so a check reads as the array is laid out. */
+	static String menuText() {
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < client.menuSize; i++) {
+			if (i > 0) {
+				out.append('|');
+			}
+			out.append(jagex2.client.DevLog.stripTags(client.menuOption[i]));
+		}
+		return out.toString();
 	}
 
 	// ---------------------------------------------------------------- 9: the Loot nearby page

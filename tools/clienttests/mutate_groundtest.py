@@ -26,6 +26,7 @@ OVERLAY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/OverlayGraphics
 ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemArrivals.java')
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
 PREFS = os.path.join(ROOT, 'src/main/java/jagex2/client/GroundItemPrefs.java')
+CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
 MUTS = [
@@ -48,11 +49,16 @@ MUTS = [
      'if (GroundItemPrefs.isHighlighted(item.name)) {',
      'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {'),
     # ---- PER-ITEM COLOURS. A rule's own colour has to win, and the arrays have to stay paired.
-    (PLUGIN, "a rule's own colour ignored, so setting one does nothing",
-     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;',
+    # Anchored on the colourOf() line above, because menu restyling added a second pair of these
+    # for the Take rows - same question, different argument - and a pattern matching both would
+    # be a silent skip.
+    (PLUGIN, "a rule's own colour ignored on the label, so setting one does nothing",
+     '''int own = GroundItemPrefs.colourOf(item.name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;''',
      'return palette.highlighted;'),
-    (PLUGIN, "a hidden rule's own colour ignored",
-     'return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;',
+    (PLUGIN, "a hidden rule's own colour ignored on the label",
+     '''int own = GroundItemPrefs.colourOf(item.name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;''',
      'return palette.hidden;'),
     (PREFS, '''a new rule added by toggle left at the zero-filled colour, so its item silently disappears''',
      '''public static boolean toggle(String item, int mode) {
@@ -363,6 +369,116 @@ MUTS = [
      '''				if (this.textOutline) {''',
      '''				if (true) {'''),
 
+    # ---- MENU RESTYLING. Recolouring and reordering the Take rows: which rows are found, which
+    # colour each gets, and the order they are moved in - which is the part that is not a loop.
+    (CONTEXT, '''the Take action id off by one, so no ground item row is ever found''',
+     '''	private static final int TAKE_ACTION = 684;''',
+     '''	private static final int TAKE_ACTION = 685;'''),
+    (PLUGIN, '''the Take filter dropped, so Examine and every other row is restyled too''',
+     '''			if (!this.ctx.isGroundItemTake(i)) {
+				continue;
+			}
+''',
+     ''''''),
+    (PLUGIN, '''the row text used raw, tags and all, so no rule matches it''',
+     '''		return at < 0 ? "" : MenuSwaps.parseTarget(option, at);''',
+     '''		return option;'''),
+    (PLUGIN, '''a row with no target reading as an item called by its own text''',
+     '''		return at < 0 ? "" : MenuSwaps.parseTarget(option, at);''',
+     '''		return at < 0 ? option : MenuSwaps.parseTarget(option, at);'''),
+    (PLUGIN, '''the hidden and highlighted menu colours swapped''',
+     '''		if (colourHighlighted && GroundItemPrefs.isHighlighted(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;
+		}
+		if (colourHidden && GroundItemPrefs.isHidden(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;
+		}''',
+     '''		if (colourHighlighted && GroundItemPrefs.isHighlighted(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;
+		}
+		if (colourHidden && GroundItemPrefs.isHidden(name)) {
+			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;
+		}'''),
+    (PLUGIN, '''highlighted rows coloured whether the player asked for it or not''',
+     '''		if (colourHighlighted && GroundItemPrefs.isHighlighted(name)) {''',
+     '''		if (GroundItemPrefs.isHighlighted(name)) {'''),
+    (PLUGIN, '''hidden rows coloured whether the player asked for it or not''',
+     '''		if (colourHidden && GroundItemPrefs.isHidden(name)) {''',
+     '''		if (GroundItemPrefs.isHidden(name)) {'''),
+    (PLUGIN, '''a rule's own colour ignored in the menu, so the floor and the menu disagree''',
+     '''			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.highlighted : own;''',
+     '''			return palette.highlighted;'''),
+    (PLUGIN, '''a hidden rule's own colour ignored in the menu''',
+     '''			int own = GroundItemPrefs.colourOf(name);
+			return own == GroundItemPrefs.DEFAULT_COLOUR ? palette.hidden : own;''',
+     '''			return palette.hidden;'''),
+    (PLUGIN, '''a Take row whose item has no name not skipped, so hide=* drags it around too''',
+     '''			if (name.length() == 0) {
+				continue;
+			}
+''',
+     ''),
+    (PLUGIN, '''a nameless row looked up as a rule called "", which a hide=* rule does match''',
+     '''		if (name.length() == 0) {
+			return 0;
+		}
+		if (colourHighlighted''',
+     '''		if (colourHighlighted'''),
+    (PLUGIN, '''rows moved bottom-first, which comes out with them reversed''',
+     '''			order[j] = rows[count - 1 - j] + j;''',
+     '''			order[j] = rows[j] + j;'''),
+    (PLUGIN, '''the shift from earlier moves not added, so the second row moved is the wrong one''',
+     '''			order[j] = rows[count - 1 - j] + j;''',
+     '''			order[j] = rows[count - 1 - j];'''),
+    (PLUGIN, '''the moves applied in reverse, which reverses the rows''',
+     '''			for (int j = 0; j < order.length; j++) {
+				this.ctx.deprioritiseMenuEntry(order[j]);
+			}''',
+     '''			for (int j = order.length - 1; j >= 0; j--) {
+				this.ctx.deprioritiseMenuEntry(order[j]);
+			}'''),
+    (PLUGIN, '''the whole buffer read rather than the rows collected this frame''',
+     '''			int[] order = deprioritiseOrder(this.menuHidden, moving);''',
+     '''			int[] order = deprioritiseOrder(this.menuHidden, this.menuHidden.length);'''),
+    (PLUGIN, '''the early return missing a setting, so moving rows alone does nothing''',
+     '''		if (!this.menuColourHighlighted && !this.menuColourHidden
+			&& !this.menuDeprioritiseHidden) {''',
+     '''		if (!this.menuColourHighlighted && !this.menuColourHidden) {'''),
+    (PLUGIN, '''rows collected for moving whether the player asked for it or not''',
+     '''			if (this.menuDeprioritiseHidden && moving < this.menuHidden.length''',
+     '''			if (moving < this.menuHidden.length'''),
+    (CONTEXT, '''a moved row leaving its colour behind, on whatever took its place''',
+     '''		if (a < this.client.menuColour.length && b < this.client.menuColour.length) {
+			int colour = this.client.menuColour[a];
+			this.client.menuColour[a] = this.client.menuColour[b];
+			this.client.menuColour[b] = colour;
+		}
+''',
+     ''''''),
+    (CONTEXT, '''the bubble running into index 0, which swaps Cancel out of the bottom''',
+     '''		for (int at = index; at > 1; at--) {''',
+     '''		for (int at = index; at > 0; at--) {'''),
+    (CONTEXT, '''a colour set on a row the menu does not have''',
+     '''		if (index >= 0 && index < this.client.menuSize && index < this.client.menuColour.length) {''',
+     '''		if (index >= 0) {'''),
+    (CONTEXT, '''a colour written one past the end of the array the draw reads''',
+     '''&& index < this.client.menuColour.length) {''',
+     '''&& index <= this.client.menuColour.length) {'''),
+    (CONTEXT, '''setMenuColour writing nothing, so every override is dropped''',
+     '''			this.client.menuColour[index] = rgb;
+''',
+     ''''''),
+    (PLUGIN, '''the declared API level left behind, so an older client loads this and breaks''',
+     '''	apiLevel = 6
+)''',
+     '''	apiLevel = 0
+)'''),
+
 ]
 
 
@@ -372,7 +488,7 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)

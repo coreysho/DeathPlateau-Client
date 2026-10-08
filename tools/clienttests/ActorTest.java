@@ -207,9 +207,13 @@ public class ActorTest {
 	// ---------------------------------------------------------------- 5
 
 	static void sourceTests() {
-		check(PluginApi.LEVEL == 5, "this client is API level 5 (" + PluginApi.LEVEL + ")");
+		// The level the scene actors need, not the level the client is at: that pin moves with
+		// each addition and belongs to the newest suite, which is where it is now. What this one
+		// has to keep true is that a plugin written against 5 still runs here.
+		check(PluginApi.LEVEL >= 5, "this client is at least API level 5 (" + PluginApi.LEVEL + ")");
 		check(PluginApi.supports(5), "a plugin asking for 5 runs here");
-		check(!PluginApi.supports(6), "one asking for 6 does not");
+		check(!PluginApi.supports(PluginApi.LEVEL + 1),
+			"one asking for a level past this client's does not");
 		check(PluginApi.supports(0) && PluginApi.supports(4), "and everything older still does");
 
 		// AN ACTOR CARRIES NO HANDLE. This is the design rule, and no pure function can state it:

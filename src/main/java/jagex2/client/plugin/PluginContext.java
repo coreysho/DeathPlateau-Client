@@ -371,7 +371,69 @@ public final class PluginContext {
 		return this.client.menuSize < 2 ? -1 : this.client.menuSize - 1;
 	}
 
-	/** Exchanges two entries, keeping each one's action and parameters with its text. */
+	/**
+	 * The client's own action id for taking something off the floor.
+	 *
+	 * Private, and asked about through {@link #isGroundItemTake(int)}, because 684 is a number out
+	 * of a decompiled switch and not a thing a plugin should be written against - it is exactly the
+	 * sort of internal the whole context exists to keep out of plugins.
+	 */
+	private static final int TAKE_ACTION = 684;
+
+	/** Whether this menu entry is "Take" on something lying on the floor. */
+	public boolean isGroundItemTake(int index) {
+		return this.getMenuAction(index) == TAKE_ACTION;
+	}
+
+	/**
+	 * Draws one menu row in this colour instead of white. 0 puts it back.
+	 *
+	 * ONLY THE COLOUR. There is deliberately no way to change a row's text or its action: a plugin
+	 * that could relabel a row could put "Bank" where "Attack" is, and the line the whole API is
+	 * drawn on is that a plugin draws and reads while the client owns input.
+	 *
+	 * Set it from a {@link jagex2.client.plugin.event.MenuBuilt} handler. The overrides are
+	 * cleared every frame the menu is rebuilt, because an index means nothing once the list has
+	 * been rebuilt - so this has to be set again each time, which is also why a handler for it
+	 * should do as little as possible.
+	 *
+	 * Hovering a row still highlights it, override or not. A recoloured row that stopped
+	 * responding to the cursor would have traded a colour for the one piece of feedback that says
+	 * which row is about to be clicked.
+	 */
+	public void setMenuColour(int index, int rgb) {
+		if (index >= 0 && index < this.client.menuSize && index < this.client.menuColour.length) {
+			this.client.menuColour[index] = rgb;
+		}
+	}
+
+	/**
+	 * Moves an entry to the bottom of the menu, keeping everything else in order.
+	 *
+	 * THE BOTTOM IS INDEX 1, NOT THE END OF THE ARRAY. The menu draws backwards - menuRowIndex is
+	 * menuSize - 1 - p - so the HIGHEST index is the top row and the one a left click runs, and
+	 * index 0 is Cancel, which stays at the bottom. "Deprioritise" therefore means moving down
+	 * toward 1, which is the opposite of what the array makes it look like.
+	 *
+	 * Built on swapMenuEntries, so an entry's action and parameters travel with its text.
+	 */
+	public void deprioritiseMenuEntry(int index) {
+		if (index <= 1 || index >= this.client.menuSize) {
+			return;
+		}
+		for (int at = index; at > 1; at--) {
+			this.swapMenuEntries(at, at - 1);
+		}
+	}
+
+	/**
+	 * Exchanges two entries, keeping each one's action, parameters and colour with its text.
+	 *
+	 * THE COLOUR TRAVELS TOO. Overrides are stored by index, so a plugin that recoloured a row and
+	 * then moved it would have left the colour on whatever row took its place - and the two
+	 * settings that want this are on the same handler, so that is the ordinary case rather than a
+	 * corner of it.
+	 */
 	public void swapMenuEntries(int a, int b) {
 		int size = this.client.menuSize;
 		if (a == b || a < 0 || b < 0 || a >= size || b >= size) {
@@ -392,6 +454,11 @@ public final class PluginContext {
 		int paramC = this.client.menuParamC[a];
 		this.client.menuParamC[a] = this.client.menuParamC[b];
 		this.client.menuParamC[b] = paramC;
+		if (a < this.client.menuColour.length && b < this.client.menuColour.length) {
+			int colour = this.client.menuColour[a];
+			this.client.menuColour[a] = this.client.menuColour[b];
+			this.client.menuColour[b] = colour;
+		}
 	}
 
 	/** Promotes an entry to the left click, leaving the rest of the menu as it was. */

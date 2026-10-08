@@ -52,6 +52,15 @@ package jagex2.client.plugin;
  *     compiles and still runs here - but a plugin that SETS one needs a client that reads it, and
  *     on an older client the setting would silently fall back to a plain text box. That is the
  *     kind of quiet wrong-looking UI a level exists to prevent, so it moves.</dd>
+ * <dt>6</dt><dd>Restyling the right-click menu: {@code ctx.setMenuColour} to draw one row in
+ *     another colour, {@code ctx.deprioritiseMenuEntry} to move one to the bottom, and
+ *     {@code ctx.isGroundItemTake} to ask whether a row is a Take without knowing the action id.
+ *     <p>
+ *     STILL NO TEXT AND NO ACTION. A row's words and what it does are not writable, and that is
+ *     the point rather than an omission: a plugin that could relabel a row could put "Bank"
+ *     where "Attack" is. A colour and a position can only change how the menu looks and what
+ *     order it offers things in - the client still decides what each row does, and nothing here
+ *     adds or removes a row.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -60,7 +69,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 5;
+	public static final int LEVEL = 6;
 
 	private PluginApi() {
 	}
