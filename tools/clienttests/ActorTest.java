@@ -84,7 +84,10 @@ public class ActorTest {
 		check(two.centreX() == 704 + 64, "and a 2x2's is half a tile");
 
 		// Defences, because this is handed straight to projection arithmetic.
-		check(new Actor(null, 0, -1, 0, 0, 1, false).name.equals("?"),
+		// "?".equals(...) and not the other way round: with the fallback removed, name is null
+		// and null.equals would throw out of the suite - which the audit counts as a crash, not
+		// a catch, because a crash does not say which rule broke.
+		check("?".equals(new Actor(null, 0, -1, 0, 0, 1, false).name),
 			"a missing name reads ? rather than crashing a plugin that matches on it");
 		check(npc("X", 0, 1, 0, 0, 0).size == 1, "a size of 0 is treated as 1");
 		check(npc("X", 0, 1, 0, 0, -5).size == 1, "...and so is a negative one");
@@ -185,6 +188,20 @@ public class ActorTest {
 		Actor origin = npc("Origin", 1, 2, 0, 0, 1);
 		check(Actor.compareByDistance(origin, corner, 0, 0) < 0,
 			"opposite corners of the scene still order correctly");
+
+		// DELIBERATELY BEYOND ANY REAL SCENE. A scene is 13312 fine units across, so nothing a
+		// client can produce overflows an int here - which is exactly why the widening to long
+		// would otherwise be untested, and an overflow shows up as an ordering quietly in the
+		// wrong order rather than as anything that announces itself. These are pure functions,
+		// so they can be asked about distances a bigger scene would bring.
+		Actor vastNear = npc("VastNear", 1, 1, 1 << 29, 0, 1);
+		Actor vastFar = npc("VastFar", 1, 2, 1 << 30, 0, 1);
+		check(Actor.distanceSquared(vastNear, 0, 0) > 0,
+			"a distance a bigger scene would bring stays positive rather than overflowing");
+		check(Actor.distanceSquared(vastNear, 0, 0) < Actor.distanceSquared(vastFar, 0, 0),
+			"...and still compares the right way round");
+		check(Actor.compareByDistance(vastNear, vastFar, 0, 0) < 0,
+			"...so the ordering survives a scene larger than this one");
 	}
 
 	// ---------------------------------------------------------------- 5
@@ -229,6 +246,32 @@ public class ActorTest {
 			"getPlayers adds the local player, which playerIds does not contain");
 		check(pbody.indexOf("other == me") >= 0,
 			"...and cannot list you twice if playerIds ever does contain you");
+		// A PLAYER'S ID IS -1, which is what isNpc answers on. Built inside player(), so no
+		// test that constructs an Actor directly can see it being got wrong.
+		int maker = ctx.indexOf("private static Actor player(ClientPlayer p, boolean self)");
+		int makerEnd = maker < 0 ? -1 : ctx.indexOf("\n\t}", maker);
+		String mbody = maker < 0 || makerEnd < 0 ? "" : ctx.substring(maker, makerEnd);
+		check(mbody.length() > 0, "the player-to-Actor step is readable");
+		check(mbody.indexOf("-1") >= 0,
+			"a player is given the -1 npc id, so isNpc answers no for a person");
+
+		// NEAREST FIRST IS A PROMISE both accessors make, and the cap in Npc indicators relies
+		// on it: without the sort, a cap keeps an arbitrary 32 rather than the closest 32.
+		check(body.indexOf("sortByDistanceFromPlayer") >= 0,
+			"getNpcs sorts before returning, so nearest-first is true of what it hands back");
+		check(pbody.indexOf("sortByDistanceFromPlayer") >= 0, "...and so does getPlayers");
+
+		// OUT-OF-SCENE ACTORS ARE DROPPED. The client drops them too rather than drawing them,
+		// and projection cannot answer for a position the scene does not cover - a kept one
+		// becomes a label pinned in the corner of the screen.
+		int scene = ctx.indexOf("private static boolean inScene(int sceneX, int sceneZ)");
+		int sceneEnd = scene < 0 ? -1 : ctx.indexOf("\n\t}", scene);
+		String sbody = scene < 0 || sceneEnd < 0 ? "" : ctx.substring(scene, sceneEnd);
+		check(sbody.length() > 0, "the scene-bounds test is readable");
+		check(sbody.indexOf("104") >= 0 && sbody.indexOf(">= 0") >= 0,
+			"an actor outside the 104x104 scene is dropped rather than returned");
+		check(body.indexOf("inScene(") >= 0 && pbody.indexOf("inScene(") >= 0,
+			"...and both accessors apply it");
 
 		// The cap, which is what stops a one-letter name costing a frame.
 		String plugin = read("src/main/java/jagex2/client/plugin/builtin/NpcIndicatorsPlugin.java");

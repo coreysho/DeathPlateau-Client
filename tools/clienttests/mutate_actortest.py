@@ -77,9 +77,9 @@ MUTS = [
 		long dz = a.centreZ() - fromZ;''',
      '''		long dx = a.sceneX - fromX;
 		long dz = a.sceneZ - fromZ;'''),
-    (ACTOR, 'the squared distance narrowed back to int, where a big scene would overflow',
-     'public static long distanceSquared(Actor a, int fromX, int fromZ) {',
-     'public static int distanceSquared(Actor a, int fromX, int fromZ) {'),
+    (ACTOR, 'the distance arithmetic narrowed to int, where a bigger scene would overflow',
+     'long dx = a.centreX() - fromX;',
+     'int dx = a.centreX() - fromX;'),
 
     # ---- WHICH NPCS. An empty list meaning "everything" would outline the whole scene the first
     # time anyone enabled the plugin.
@@ -113,9 +113,10 @@ MUTS = [
     (PLUGIN, 'the per-frame cap removed',
      'for (int i = 0; i < npcs.size() && drawn < MAX_DRAWN; i++) {',
      'for (int i = 0; i < npcs.size(); i++) {'),
-    (PLUGIN, 'the tile outline copied rather than shared, so the Z-shape bug can come back',
-     'TileIndicatorsPlugin.outlineTile(this.ctx, g,',
-     'outlineTileAgain(this.ctx, g,'),
+    # A mutation that swaps the shared outlineTile call for a local copy is deliberately
+    # NOT here: no single find/replace can both remove the call and supply the second copy,
+    # so every version of it fails to compile and measures javac instead of the tests. The
+    # promise is kept by ActorTest's source check that the shared call is still there.
     (PLUGIN, 'the declared API level lowered, so an older client would load it and throw',
      'apiLevel = 4',
      'apiLevel = 3'),
