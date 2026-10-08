@@ -27,10 +27,10 @@ MUTS = [
      'if (this.field196 && jaggrabUsable(JAGGRAB_PORT, WS_URL)) {',
      'if (this.field196) {'),
     (CLIENT, 'JAGGRAB left on through the tunnels, where no port forwards it',
-     'return hostGiven ? 43595 : 0;',
+     'return direct ? 43595 : 0;',
      'return 43595;'),
     (CLIENT, 'JAGGRAB off even when pointed straight at the server',
-     'return hostGiven ? 43595 : 0;',
+     'return direct ? 43595 : 0;',
      'return 0;'),
     (CLIENT, 'an explicit setting ignored, so nobody can tunnel it on purpose',
      '''		if (given != null) {
@@ -132,6 +132,70 @@ MUTS = [
     (CLIENT, "the browser's default dropped along with the desktop's, breaking the webclient",
      ': (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);',
      ': null;'),
+
+    # ---- WHICH HOSTS COUNT AS THE SERVER ITSELF. lostcity.host given used to arm
+    # JAGGRAB on its own, which aimed 43595 at a tunnel for anyone whose host was one.
+    (CLIENT, '''lostcity.host given arming JAGGRAB on its own again, tunnel or not''',
+     '''HOST_GIVEN && directHost(SERVER_HOST));''',
+     '''HOST_GIVEN);'''),
+    (CLIENT, '''the host check inverted, arming JAGGRAB only where it cannot work''',
+     '''HOST_GIVEN && directHost(SERVER_HOST));''',
+     '''HOST_GIVEN && !directHost(SERVER_HOST));'''),
+    (CLIENT, '''no host counted as the server, so a LAN launch loses JAGGRAB''',
+     '''		return privateIp(name);''',
+     '''		return false;'''),
+    (CLIENT, '''a dotted public name counted as a machine on this network''',
+     '''		if (name.indexOf('.') < 0) {''',
+     '''		if (true) {'''),
+    (CLIENT, '''the tailnet suffix dropped''',
+     '''|| name.endsWith(".home.arpa") || name.endsWith(".ts.net")''',
+     '''|| name.endsWith(".home.arpa")'''),
+    (CLIENT, '''the mDNS and internal suffixes dropped''',
+     '''		if (name.endsWith(".local") || name.endsWith(".lan") || name.endsWith(".internal")
+			|| name.endsWith(".home.arpa") || name.endsWith(".ts.net")) {
+			return true;
+		}
+''',
+     ''''''),
+    (CLIENT, '''172.16/12's bounds dropped, so a public 172.15 looks private''',
+     '''		if (octet[0] == 172 && octet[1] >= 16 && octet[1] <= 31) {''',
+     '''		if (octet[0] == 172) {'''),
+    (CLIENT, '''100.64/10's bounds dropped, so any 100.x looks like a tailnet''',
+     '''		if (octet[0] == 100 && octet[1] >= 64 && octet[1] <= 127) {''',
+     '''		if (octet[0] == 100) {'''),
+    (CLIENT, '''192.168 widened to any 192''',
+     '''		if (octet[0] == 192 && octet[1] == 168) {''',
+     '''		if (octet[0] == 192) {'''),
+    (CLIENT, '''octets out of range believed, so 999.1.1.1 parses as something''',
+     '''			if (octet[i] < 0 || octet[i] > 255) {
+				return false;
+			}
+''',
+     ''''''),
+    # A mutation that rethrows from privateIp is deliberately NOT here. SERVER_HOST splits
+    # into exactly four parts, so JAGGRAB_PORT's initialiser reaches parseInt and the class
+    # fails to load - no check in that JVM gets to run, so the signal is a crash and a crash
+    # is not a catch. The catch it would target is covered by the named "does not throw out
+    # of class load" checks in JaggrabTest instead.
+    (CLIENT, '''a short or long dotted quad accepted''',
+     '''		if (parts.length != 4) {''',
+     '''		if (parts.length < 1) {'''),
+    (CLIENT, '''whitespace round a host no longer forgiven''',
+     '''String name = host.trim().toLowerCase();''',
+     '''String name = host.toLowerCase();'''),
+    (CLIENT, '''upper case no longer forgiven''',
+     '''String name = host.trim().toLowerCase();''',
+     '''String name = host.trim();'''),
+    (CLIENT, '''a null host thrown rather than declined, at class load''',
+     '''		if (host == null) {
+			return false;
+		}
+''',
+     ''''''),
+    (CLIENT, '''a routable IPv6 address counted as the server''',
+     '''			return name.equals("::1") || name.equals("0:0:0:0:0:0:0:1")
+				|| name.startsWith("fe80:") || name.startsWith("fc") || name.startsWith("fd");''',
+     '''			return true;'''),
 ]
 
 

@@ -33,6 +33,9 @@ public class JaggrabTest {
 		System.out.println("2. when it may be used at all");
 		usableTests();
 		System.out.println();
+		System.out.println("2b. which hosts count as the server itself");
+		directTests();
+		System.out.println();
 		System.out.println("3. what this build resolved to, and where the cache comes from");
 		liveTests();
 		System.out.println();
@@ -100,6 +103,112 @@ public class JaggrabTest {
 		check(!Client.jaggrabUsable(43595, "wss://example/rs2.cgi"),
 			"and never over a websocket, which is the game stream");
 		check(!Client.jaggrabUsable(0, "wss://example/rs2.cgi"), "nor with neither");
+	}
+
+	// ---------------------------------------------------------------- 2b
+
+	/*
+	 * LOSTCITY.HOST GIVEN USED TO BE ENOUGH to turn JAGGRAB on, and a host can perfectly well be
+	 * a tunnel. Testing the public path from the server's own desk logged
+	 * "jaggrab carolyn-fever.tun.ply.gg:43595" - a port nothing forwards, armed on a client that
+	 * reaches its server through playit. It cost nothing only because the HTTP attempt goes first.
+	 * The rule has to separate "I told the client a host" from "the host is the server".
+	 */
+	static void directTests() {
+		// The addresses that are unambiguously this machine or this network.
+		String[] direct = {
+			"localhost", "127.0.0.1", "127.1.2.3", "::1", "0:0:0:0:0:0:0:1", "[::1]",
+			"10.0.0.5", "192.168.1.70", "172.16.0.9", "172.31.255.254",
+			"100.101.102.103",          // Tailscale's CGNAT range
+			"fd7a:115c:a1e0::1",        // Tailscale's own IPv6 prefix, unique-local
+			"fe80::1",                  // link-local
+			"169.254.1.1",              // link-local v4
+			"deathplateau",             // a bare machine name has no dots and cannot be public
+			"homelab.local", "server.lan", "box.internal", "pi.home.arpa",
+			"deathplateau.tailnet-abc.ts.net",
+		};
+		for (int i = 0; i < direct.length; i++) {
+			check(Client.directHost(direct[i]), direct[i] + " is the server itself");
+		}
+
+		// And the ones that are something forwarding to it. The first two are this server's own.
+		String[] forwarded = {
+			"carolyn-fever.tun.ply.gg", "carolyn-scientist.tun.ply.gg",
+			"death-plateau.playit.plus", "example.com", "8.8.8.8", "203.0.113.7",
+			"172.15.0.1", "172.32.0.1",   // just outside 172.16/12, so not private
+			"100.63.0.1", "100.128.0.1",  // just outside 100.64/10
+			"192.167.0.1", "193.168.0.1", // not 192.168
+			"2606:4700::1111",            // a routable v6 address
+			"notlocalhost.com",           // ".local"-ish without being it
+		};
+		for (int i = 0; i < forwarded.length; i++) {
+			check(!Client.directHost(forwarded[i]),
+				forwarded[i] + " is something forwarding, so 43595 is not assumed");
+		}
+		// A bare name that merely LOOKS like a suffix is still a bare name: no dot, so it cannot
+		// be public, so it is this network's. (This started as a "forwarded" expectation of mine
+		// and the code was right.)
+		check(Client.directHost("mylocal"), "a bare name with no dot is this network's, suffix or not");
+
+		// Nothing, blank and nonsense must not throw out of a static initialiser.
+		// The first four octets of these are a private range, so a missing length or range check
+		// would return true for them. Everything else here falls through to "no match" whether
+		// the checks are there or not, which is why the audit found both of those mutations
+		// surviving: the data could not tell the two cases apart.
+		String[] nonsense = { null, "", "   ", ".", "...", "1.2.3", "1.2.3.4.5", "999.1.1.1",
+			"10.0.0.x", "-1.0.0.0", "10.0.0.-1",
+			"10.0.0.999", "10.999.0.1", "192.168.1.256",   // an octet past 255
+			"10.0.0.0.5", "192.168.1.1.1",                 // five parts, not four
+			"10.0.0", "192.168.1" };                       // three parts, not four
+		for (int i = 0; i < nonsense.length; i++) {
+			boolean threw = false;
+			boolean got = false;
+			try {
+				got = Client.directHost(nonsense[i]);
+			} catch (Throwable broke) {
+				threw = true;
+			}
+			check(!threw, "\"" + nonsense[i] + "\" does not throw out of class load (" + got + ")");
+		}
+		check(!Client.directHost(null) && !Client.directHost("") && !Client.directHost("   "),
+			"...and nothing, empty and blank are not the server");
+		// Not throwing is not enough: a malformed literal must also come out FALSE, or a typo in
+		// a property arms JAGGRAB against an address that does not exist.
+		for (int i = 0; i < nonsense.length; i++) {
+			check(!Client.directHost(nonsense[i]),
+				"\"" + nonsense[i] + "\" is not an address on this network either");
+		}
+
+		// Whitespace and case are forgiven, because a property or env var carries both.
+		check(Client.directHost("  192.168.1.5  "), "whitespace round an address is forgiven");
+		check(Client.directHost("HOMELAB.LOCAL"), "and so is upper case");
+
+		// The two halves joined: this is the rule JAGGRAB_PORT actually applies.
+        check(Client.jaggrabPort(null, Client.directHost("192.168.1.70")) == 43595,
+			"a LAN host arms JAGGRAB on the server's own port");
+		check(Client.jaggrabPort(null, Client.directHost("carolyn-fever.tun.ply.gg")) == 0,
+			"a tunnel host does not, which is the bug this closes");
+		check(Client.jaggrabPort("43595", Client.directHost("carolyn-fever.tun.ply.gg")) == 43595,
+			"...and a server really reachable by name can still say so explicitly");
+
+		// AND JAGGRAB_PORT HAS TO APPLY IT. Every live check in this suite runs with no
+		// lostcity.* properties, where HOST_GIVEN is false and JAGGRAB is off either way - so
+		// dropping directHost from the field's initialiser would change nothing any of them can
+		// see. Only the source can: the field is final and set once at class load.
+		String source = read("src/main/java/jagex2/client/Client.java");
+		int at = source.indexOf("public static final int JAGGRAB_PORT");
+		int end = at < 0 ? -1 : source.indexOf(";", at);
+		String init = at < 0 || end < 0 ? "" : source.substring(at, end);
+		check(init.length() > 0, "JAGGRAB_PORT's initialiser is readable");
+		check(init.indexOf("directHost(SERVER_HOST)") >= 0,
+			"JAGGRAB_PORT asks whether the host IS the server, not just whether one was given");
+		// Asking only whether the call APPEARS is satisfied by "!directHost(...)" too, which arms
+		// JAGGRAB on exactly the hosts where it cannot work. The audit caught that: this check
+		// passed with the condition inverted.
+		check(init.indexOf("!directHost") < 0,
+			"...and is not asking for the opposite of it");
+		check(init.indexOf("HOST_GIVEN &&") >= 0,
+			"...and still requires one to have been given at all");
 	}
 
 	// ---------------------------------------------------------------- 3
