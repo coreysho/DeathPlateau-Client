@@ -270,6 +270,7 @@ public class MyToolPlugin extends Plugin {
 | 1 | Overlays, config items, config lists with a value and a progress bar, `addPanel`, and `PluginContext` as it was then. |
 | 2 | `ctx.notify`, `ctx.playSound`, `ctx.hasSound`. |
 | 3 | The cursor: `ctx.getMouseX`, `ctx.getMouseY`, `ctx.getHoverTileX`, `ctx.getHoverTileZ`, `ctx.sceneToWorldX`, `ctx.sceneToWorldZ`. |
+| 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -349,6 +350,47 @@ hovering would have its walk swallowed.
 None of that is a plugin's problem, and none of it is reachable from one. It is written down
 because it is the reason this reads as a value rather than as a method you call with a point.
 
+## Who else is in the scene
+
+`ctx.getNpcs()` and `ctx.getPlayers()` hand back `Actor`s, nearest first. An Actor is a name, a
+combat level, an npc id, a position, a size, and whether it is you:
+
+```java
+for (Actor npc : ctx.getNpcs()) {
+    if (!npc.name.equalsIgnoreCase("Goblin")) {
+        continue;
+    }
+    if (ctx.project(npc.centreX(), npc.centreZ(), 230)) {
+        g.textCentred(ctx.getProjectedX(), ctx.getProjectedY(), npc.name, 0x00FF00);
+    }
+}
+```
+
+**Two positions, and the difference matters.** `sceneX`/`sceneZ` are fine coordinates, 128 to a
+tile, and are where the actor is *mid-step* - `ctx.project` takes these, and a name tag drawn from
+them follows a walking npc smoothly. `sceneTileX`/`sceneTileZ` are the tile it stands on, for
+`ctx.projectTile`; a label drawn from those snaps tile to tile, which is right for an outline and
+wrong for a tag.
+
+**Use `centreX()`/`centreZ()` for anything bigger than one tile.** A large npc is anchored at its
+south-west tile, so drawing at `sceneX` puts the label on that corner rather than over the thing.
+That is the bug every first boss overlay has.
+
+**It is a snapshot, not a handle.** Everything is copied on the game thread, and an Actor holds no
+reference to the entity behind it - so there is nothing on it to click, follow or attack. That is
+the same line everything else here is drawn on: a plugin draws and reads, the client owns input
+and the socket. It is also a correctness matter rather than only a design one: the client's npc
+config is a 20-entry round-robin cache that recycles once more than 20 npc types are on screen, so
+a plugin holding a live reference would eventually be reading a different npc than the one it
+asked about.
+
+`ctx.getPlayers()` includes you, with `self` set, because the client keeps the local player apart
+from the others and a plugin drawing a marker under its own feet would otherwise have to rebuild
+half an Actor by hand. Filter on the flag when you want everyone else.
+
+Both allocate and walk the scene, so call them once a frame and walk the result. Sort a list you
+filtered back into order with `Actor.compareByDistance`.
+
 ## Moving overlays
 
 **Hold Alt and drag any overlay anywhere in the viewport.** The one under the cursor is outlined
@@ -386,7 +428,7 @@ left press on something a screen overlay drew.
 
 ## What comes with the client
 
-Ten plugins ship built in. All of them were features of the client before they were plugins, or
+Eleven plugins ship built in. All of them were features of the client before they were plugins, or
 are small enough that a jar of their own would be more ceremony than code:
 
 | Plugin | On by default | What it does |
@@ -401,9 +443,10 @@ are small enough that a jar of their own would be more ceremony than code:
 | Idle notifier | no | Says when you stop gaining experience. |
 | Mouse highlight | no | What a left click would do, next to the cursor. |
 | Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
+| Npc indicators | no | Marks the npcs you name, by tile and by name tag. |
 
 The first five were client features and are on because turning them off would change what
-existing players see. The last five are additions and start off: an addition that turns itself
+existing players see. The other six are additions and start off: an addition that turns itself
 on rewrites everyone's screen on their next launch.
 
 ### What is not here, and why

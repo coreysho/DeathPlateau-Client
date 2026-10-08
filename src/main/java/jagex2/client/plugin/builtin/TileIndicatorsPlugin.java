@@ -4,6 +4,7 @@ import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
+import jagex2.client.plugin.PluginContext;
 import jagex2.client.plugin.PluginDescriptor;
 
 /**
@@ -87,7 +88,19 @@ public final class TileIndicatorsPlugin extends Plugin {
 	 * whole screen - which is what a partly-off-screen tile looks like if you skip this check.
 	 */
 	void outline(OverlayGraphics g, int sceneTileX, int sceneTileZ, int colour) {
-		if (!this.ctx.isInScene(sceneTileX, sceneTileZ)) {
+		outlineTile(this.ctx, g, sceneTileX, sceneTileZ, colour);
+	}
+
+	/**
+	 * The same outline, as a static anyone can call.
+	 *
+	 * Npc indicators wants a tile ring too, and a second copy of the corner walk below is a
+	 * second place for the "joins up into a Z" bug to come back. Shared the way
+	 * MouseHighlightPlugin.parseColour already is.
+	 */
+	static void outlineTile(PluginContext ctx, OverlayGraphics g, int sceneTileX, int sceneTileZ,
+			int colour) {
+		if (!ctx.isInScene(sceneTileX, sceneTileZ)) {
 			return;
 		}
 		int[] xs = new int[4];
@@ -98,11 +111,11 @@ public final class TileIndicatorsPlugin extends Plugin {
 			// than a Z and the lines joining them are the tile's edges.
 			for (int step = 0; step <= 1; step++) {
 				int dx = dz == 0 ? step : 1 - step;
-				if (!this.ctx.project((sceneTileX + dx) * TILE, (sceneTileZ + dz) * TILE, 0)) {
+				if (!ctx.project((sceneTileX + dx) * TILE, (sceneTileZ + dz) * TILE, 0)) {
 					return;
 				}
-				xs[corner] = this.ctx.getProjectedX();
-				ys[corner] = this.ctx.getProjectedY();
+				xs[corner] = ctx.getProjectedX();
+				ys[corner] = ctx.getProjectedY();
 				corner++;
 			}
 		}

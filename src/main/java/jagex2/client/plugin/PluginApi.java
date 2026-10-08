@@ -34,6 +34,15 @@ package jagex2.client.plugin;
  * <dt>3</dt><dd>The cursor: {@code ctx.getMouseX}, {@code ctx.getMouseY},
  *     {@code ctx.getHoverTileX}, {@code ctx.getHoverTileZ}, and {@code ctx.sceneToWorldX} /
  *     {@code sceneToWorldZ} for keeping a tile across a region change.</dd>
+ * <dt>4</dt><dd>Who else is in the scene: {@code ctx.getNpcs} and {@code ctx.getPlayers},
+ *     returning {@link Actor} snapshots - name, combat level, npc id, fine and tile position,
+ *     size, and whether it is you - sorted nearest first.
+ *     <p>
+ *     Reads only. An Actor is a copy taken on the game thread and carries no handle on the
+ *     entity, so there is nothing on it to click, attack or follow: the client still owns input
+ *     and the socket. That is also why it is a snapshot rather than a live object - the client's
+ *     own npc config is a 20-entry round-robin cache that recycles under you, which Actor's
+ *     comment covers.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -42,7 +51,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 3;
+	public static final int LEVEL = 4;
 
 	private PluginApi() {
 	}
