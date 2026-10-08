@@ -6,11 +6,13 @@ import jagex2.client.GroundItemPrefs;
 import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
+import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 
 /**
@@ -56,11 +58,133 @@ public final class GroundItemsPlugin extends Plugin {
 	private static final int MAX_LABELS = 48;
 	private static final int MAX_PER_TILE = 24;
 
-	private static final int COLOUR = 0xFFFFFF;
-	private static final int HIGHLIGHT_COLOUR = 0xFF40FF;
-	private static final int HIDDEN_COLOUR = 0x707070;
-	private static final int[] TIERS = { 1000000, 100000, 10000, 1000 };
-	private static final int[] TIER_COLOURS = { 0xFF9040, 0x40C0FF, 0x40FF40, 0xFFFF80 };
+	/**
+	 * The ten colours and thresholds now live in {@link GroundItemPalette}, whose DEFAULTS are
+	 * exactly what was compiled in here before. They are read into one palette per frame rather
+	 * than per item: colourFor runs per item per tile per frame.
+	 */
+	@ConfigItem(keyName = "plainColour", name = "Ordinary items", colour = true,
+		description = "Anything that clears no value tier")
+	public String plainColour = "FFFFFF";
+
+	@ConfigItem(keyName = "highlightColour", name = "Items you highlighted", colour = true)
+	public String highlightColour = "FF40FF";
+
+	@ConfigItem(keyName = "hiddenColour", name = "Hidden items, under Alt", colour = true)
+	public String hiddenColour = "707070";
+
+	@ConfigItem(keyName = "tier1Price", name = "Top tier from", description = "0 turns the tier off")
+	public int tier1Price = 1000000;
+
+	@ConfigItem(keyName = "tier1Colour", name = "Top tier colour", colour = true)
+	public String tier1Colour = "FF9040";
+
+	@ConfigItem(keyName = "tier2Price", name = "High tier from", description = "0 turns the tier off")
+	public int tier2Price = 100000;
+
+	@ConfigItem(keyName = "tier2Colour", name = "High tier colour", colour = true)
+	public String tier2Colour = "40C0FF";
+
+	@ConfigItem(keyName = "tier3Price", name = "Medium tier from", description = "0 turns the tier off")
+	public int tier3Price = 10000;
+
+	@ConfigItem(keyName = "tier3Colour", name = "Medium tier colour", colour = true)
+	public String tier3Colour = "40FF40";
+
+	@ConfigItem(keyName = "tier4Price", name = "Low tier from", description = "0 turns the tier off")
+	public int tier4Price = 1000;
+
+	@ConfigItem(keyName = "tier4Colour", name = "Low tier colour", colour = true)
+	public String tier4Colour = "FFFF80";
+
+	// ---- what is shown at all
+
+	/*
+	 * THESE THREE INITIALISERS ARE A MIGRATION, not just defaults.
+	 *
+	 * Radius, minimum value and show-hidden were cycling rows stored in GroundItemPrefs' own
+	 * qol_grounditems.dat, from before plugins had settings. Writing a plain 12 here would quietly
+	 * reset every player who had changed one, because PluginConfig.load leaves a field alone when
+	 * the key has never been written - "never set: the field's initialiser stands". So the
+	 * initialiser reads the old file, and the result is exactly right in both directions: a player
+	 * who never touched the new setting keeps what they chose in the old panel, and one who has
+	 * touched it has their saved value loaded over the top.
+	 *
+	 * GroundItemPrefs loads itself on first access, so this does not depend on anything having
+	 * run first.
+	 *
+	 * The old file keeps these values and nothing writes them any more, which is deliberate: it
+	 * makes the migration survive a player rolling back to an older client and forward again.
+	 */
+	@ConfigItem(keyName = "radius", name = "How far away items are named")
+	public int radius = GroundItemPrefs.radius();
+
+	@ConfigItem(keyName = "minValue", name = "Hide items worth less than",
+		description = "0 names everything")
+	public int minValue = GroundItemPrefs.minValue();
+
+	@ConfigItem(keyName = "showHidden", name = "Show hidden items",
+		description = "Hold Alt to reveal them anyway")
+	public boolean showHidden = GroundItemPrefs.showHidden();
+
+	@ConfigItem(keyName = "highlightedOnly", name = "Only items you highlighted",
+		description = "Everything else is left unnamed")
+	public boolean highlightedOnly = false;
+
+	@ConfigItem(keyName = "highlightTiles", name = "Outline the tiles items are on")
+	public boolean highlightTiles = false;
+
+	/** The three forms {@link #priceDisplay} takes. Constants, so the choices and code agree. */
+	static final String PRICE_NONE = "Name only";
+	static final String PRICE_VALUE = "Name and value";
+	static final String PRICE_EACH = "Name, value and each";
+
+	@ConfigItem(keyName = "priceDisplay", name = "What a row says",
+		choices = { PRICE_NONE, PRICE_VALUE, PRICE_EACH })
+	public String priceDisplay = PRICE_NONE;
+
+	// ---- telling you something landed
+
+	/**
+	 * The tiers a notification or a beam can be asked for, by name rather than by price.
+	 *
+	 * Named after the tiers above rather than repeating their numbers, because a player who moves
+	 * "High tier from" expects what they asked to be notified about to move with it. A number here
+	 * would be a second threshold to keep in step by hand.
+	 */
+	static final String TIER_OFF = "Off";
+	static final String TIER_TOP = "Top tier";
+	static final String TIER_HIGH = "High tier";
+	static final String TIER_MEDIUM = "Medium tier";
+	static final String TIER_LOW = "Low tier";
+
+	@ConfigItem(keyName = "notifyHighlighted", name = "Notify when a highlighted item drops")
+	public boolean notifyHighlighted = false;
+
+	@ConfigItem(keyName = "notifyTier", name = "Notify from this tier up",
+		choices = { TIER_OFF, TIER_TOP, TIER_HIGH, TIER_MEDIUM, TIER_LOW })
+	public String notifyTier = TIER_OFF;
+
+	@ConfigItem(keyName = "beamHighlighted", name = "Beam over highlighted items")
+	public boolean beamHighlighted = false;
+
+	@ConfigItem(keyName = "beamTier", name = "Beam from this tier up",
+		choices = { TIER_OFF, TIER_TOP, TIER_HIGH, TIER_MEDIUM, TIER_LOW })
+	public String beamTier = TIER_OFF;
+
+	/**
+	 * What was on the floor last tick, so a drop landing can be told from loot lying there.
+	 *
+	 * Scanned on GameTick rather than in render: a notification is about something happening in
+	 * the game, which happens 1.6 times a second, and doing it per frame would be doing it fifty.
+	 */
+	private final GroundItemArrivals arrivals = new GroundItemArrivals();
+
+	/** The beam: how many boxes, how tall each is, how wide at the base, and how solid. */
+	private static final int BEAM_SEGMENTS = 14;
+	private static final int BEAM_SEGMENT_H = 14;
+	private static final int BEAM_W = 22;
+	private static final int BEAM_ALPHA = 96;
 
 	/** The [-] and [+] under Alt, and the scroll bar beside a pile too tall to show. */
 	private static final int CONTROL_W = 10;
@@ -97,7 +221,8 @@ public final class GroundItemsPlugin extends Plugin {
 				return LAYER_SCENE;
 			}
 		});
-		this.addConfigList("Display", this.displayList());
+		// The three cycling rows that used to be here are settings now - a typed radius rather
+		// than one of seven presets, and a value anyone can set to the number they mean.
 		this.addConfigList("Items", this.itemList());
 		this.addPanel("Loot nearby", "list", this.lootList());
 	}
@@ -111,16 +236,107 @@ public final class GroundItemsPlugin extends Plugin {
 		}
 		// Holding Alt reveals hidden items as well as offering the controls.
 		boolean alt = this.ctx.isAltHeld();
-		boolean reveal = GroundItemPrefs.showHidden() || alt;
-		long floor = GroundItemPrefs.minValue();
+		boolean reveal = this.showHidden || alt;
+		long floor = this.minValue < 0 ? 0L : (long) this.minValue;
 
-		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(GroundItemPrefs.radius());
+		// ONE PALETTE A FRAME. colourFor runs per item per tile, and parsing seven hex strings in
+		// that loop would be parsing them a few hundred times to get the same seven answers.
+		GroundItemPalette palette = this.palette();
+
+		// A radius out of range is a typo, not a request: 0 would name nothing and the player
+		// would have no way to tell that from the plugin being broken, and past the scene there
+		// is nothing more to find.
+		int radius = this.radius < 1 ? 1 : this.radius > 104 ? 104 : this.radius;
+		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(radius);
 		for (int i = 0; i < piles.size() && this.drawn < MAX_LABELS; i++) {
-			this.renderPile(g, piles.get(i), alt, reveal, floor);
+			this.renderPile(g, piles.get(i), alt, reveal, floor, palette);
 		}
 	}
 
-	private void renderPile(OverlayGraphics g, GroundItemPile pile, boolean alt, boolean reveal, long floor) {
+	@Subscribe
+	public void onGameTick(GameTick event) {
+		if (!this.ctx.isLoggedIn()) {
+			// Logged out, so the next scan starts fresh rather than reporting the floor of
+			// wherever the player logs in next as a pile of new drops.
+			this.arrivals.reset();
+			return;
+		}
+		boolean wantNotify = this.notifyHighlighted || !TIER_OFF.equals(this.notifyTier);
+		if (!wantNotify && TIER_OFF.equals(this.beamTier) && !this.beamHighlighted) {
+			// Nothing is asking, so do not even scan - but forget what was there, or turning a
+			// notification on later would report the whole floor at once.
+			this.arrivals.reset();
+			return;
+		}
+
+		GroundItemPalette palette = this.palette();
+		long notifyFrom = thresholdFor(this.notifyTier, palette);
+		int radius = this.radius < 1 ? 1 : this.radius > 104 ? 104 : this.radius;
+		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(radius);
+
+		this.arrivals.begin();
+		for (int p = 0; p < piles.size(); p++) {
+			GroundItemPile pile = piles.get(p);
+			int worldX = this.ctx.sceneToWorldX(pile.sceneTileX);
+			int worldZ = this.ctx.sceneToWorldZ(pile.sceneTileZ);
+			for (int i = 0; i < pile.items.size(); i++) {
+				GroundItem item = pile.items.get(i);
+				boolean fresh = this.arrivals.add(
+					GroundItemArrivals.key(worldX, worldZ, this.ctx.getPlane(), item.id));
+				if (fresh && wantNotify && worthTelling(item, notifyFrom, this.notifyHighlighted)) {
+					this.ctx.notify("Death Plateau", item.name + " dropped.");
+				}
+			}
+		}
+		this.arrivals.finish();
+	}
+
+	/**
+	 * Whether a drop is one the player asked to hear about.
+	 *
+	 * Highlighted wins outright and ignores the tier, the same way it ignores the value floor when
+	 * drawing: a player who named an item wants to know it landed whatever it is worth.
+	 */
+	static boolean worthTelling(GroundItem item, long notifyFrom, boolean notifyHighlighted) {
+		if (notifyHighlighted && GroundItemPrefs.isHighlighted(item.name)) {
+			return true;
+		}
+		return notifyFrom > 0L && item.worth() >= notifyFrom;
+	}
+
+	/**
+	 * The price a named tier starts at, or 0 for "off".
+	 *
+	 * Reads the palette rather than its own number, so moving "High tier from" moves what gets
+	 * notified about too. Reads it AFTER sorting, which is why it goes through threshold(i): a
+	 * player who typed the prices out of order still gets the tier they picked rather than the
+	 * slot they typed it into.
+	 */
+	static long thresholdFor(String tier, GroundItemPalette palette) {
+		if (TIER_TOP.equals(tier)) {
+			return palette.threshold(0);
+		}
+		if (TIER_HIGH.equals(tier)) {
+			return palette.threshold(1);
+		}
+		if (TIER_MEDIUM.equals(tier)) {
+			return palette.threshold(2);
+		}
+		if (TIER_LOW.equals(tier)) {
+			return palette.threshold(3);
+		}
+		return 0L;
+	}
+
+	/** The player's ten colours and thresholds, as one value. */
+	GroundItemPalette palette() {
+		return GroundItemPalette.from(this.plainColour, this.highlightColour, this.hiddenColour,
+			new int[] { this.tier1Price, this.tier2Price, this.tier3Price, this.tier4Price },
+			new String[] { this.tier1Colour, this.tier2Colour, this.tier3Colour, this.tier4Colour });
+	}
+
+	private void renderPile(OverlayGraphics g, GroundItemPile pile, boolean alt, boolean reveal,
+			long floor, GroundItemPalette palette) {
 		if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, ITEM_HEIGHT)) {
 			return;
 		}
@@ -135,11 +351,19 @@ public final class GroundItemsPlugin extends Plugin {
 
 		// PASS ONE: which rows will appear at all, and in what colour. A hidden row is not a row,
 		// so the column can only be laid out once this is known.
-		List<Row> rows = visibleRows(pile, reveal, floor);
+		List<Row> rows = visibleRows(pile, reveal, floor, palette, this.highlightedOnly);
 		int visible = rows.size();
 		if (visible == 0) {
 			return;
 		}
+
+		// The tile, in the colour of the top row - the most valuable thing on it, since rows come
+		// in the client's stacking order. Drawn before the labels so the text sits over the line.
+		if (this.highlightTiles) {
+			TileIndicatorsPlugin.outlineTile(this.ctx, g, pile.sceneTileX, pile.sceneTileZ,
+				rows.get(0).colour);
+		}
+		this.drawBeam(g, pile, rows, palette);
 
 		// The window into those rows. A pile taller than ROWS_SHOWN shows a slice of itself and
 		// the wheel moves the slice; every other pile shows all of itself and ignores the offset.
@@ -158,7 +382,7 @@ public final class GroundItemsPlugin extends Plugin {
 		for (int at = offset; at < offset + shown && at < visible; at++) {
 			Row row = rows.get(at);
 			GroundItem item = row.item;
-			String label = label(item);
+			String label = label(item, this.priceDisplay);
 
 			if (alt) {
 				int right = this.drawControls(g, item, label, originX, rowY, row.colour);
@@ -205,11 +429,16 @@ public final class GroundItemsPlugin extends Plugin {
 	 * hidden item left a hole where it used to be. Laying out over this list cannot do that.
 	 */
 	static List<Row> visibleRows(GroundItemPile pile, boolean reveal, long floor) {
+		return visibleRows(pile, reveal, floor, GroundItemPalette.DEFAULTS, false);
+	}
+
+	static List<Row> visibleRows(GroundItemPile pile, boolean reveal, long floor,
+			GroundItemPalette palette, boolean highlightedOnly) {
 		List<Row> rows = new java.util.ArrayList<Row>();
 		int distinct = Math.min(pile.items.size(), MAX_PER_TILE);
 		for (int i = 0; i < distinct; i++) {
 			GroundItem item = pile.items.get(i);
-			int colour = colourFor(item, reveal, floor);
+			int colour = colourFor(item, reveal, floor, palette, highlightedOnly);
 			if (colour != 0) {
 				rows.add(new Row(item, colour));
 			}
@@ -219,30 +448,111 @@ public final class GroundItemsPlugin extends Plugin {
 
 	/** What a row says: the name, and the count when there is more than one. */
 	static String label(GroundItem item) {
-		return item.count > 1 ? item.name + " x " + formatCount(item.count) : item.name;
+		return label(item, PRICE_NONE);
 	}
 
-	/** The colour a row is drawn in, or 0 for a row that is not drawn at all. */
+	/**
+	 * The same, with the value appended when the player asked for it.
+	 *
+	 * "Name and value" is the whole stack, which is the number that decides whether it is worth
+	 * walking over to; "and each" adds the per-item price, which is the number that decides
+	 * whether it is worth a trip back. A stack of one says the same thing twice, so the each form
+	 * is only added when there is more than one.
+	 */
+	static String label(GroundItem item, String priceDisplay) {
+		String text = item.count > 1 ? item.name + " x " + formatCount(item.count) : item.name;
+		if (PRICE_NONE.equals(priceDisplay) || item.worth() <= 0L) {
+			return text;
+		}
+		text = text + " (" + formatValue(item.worth()) + ")";
+		if (PRICE_EACH.equals(priceDisplay) && item.count > 1) {
+			text = text + " @ " + formatValue(item.worth() / item.count);
+		}
+		return text;
+	}
+
+	/**
+	 * The colour a row is drawn in, or 0 for a row that is not drawn at all, with the colours the
+	 * plugin shipped with. Kept so the rule can be asked about without building a palette, which
+	 * is how every test of it reads.
+	 */
 	static int colourFor(GroundItem item, boolean reveal, long floor) {
+		return colourFor(item, reveal, floor, GroundItemPalette.DEFAULTS, false);
+	}
+
+	/** The same rule, in the player's colours. */
+	static int colourFor(GroundItem item, boolean reveal, long floor, GroundItemPalette palette,
+			boolean highlightedOnly) {
 		if (item.name.length() == 0) {
 			return 0;
 		}
 		if (GroundItemPrefs.isHighlighted(item.name)) {
-			return HIGHLIGHT_COLOUR;                        // always shown, floor ignored
+			return palette.highlighted;                     // always shown, floor ignored
+		}
+		// "Only items you highlighted" is checked AFTER the highlight test and before everything
+		// else, so it hides the rest of the floor without hiding what it is for.
+		if (highlightedOnly) {
+			return 0;
 		}
 		if (GroundItemPrefs.isHidden(item.name)) {
-			return reveal ? HIDDEN_COLOUR : 0;
+			return reveal ? palette.hidden : 0;
 		}
 		long worth = item.worth();
 		if (worth < floor) {
 			return 0;
 		}
-		for (int tier = 0; tier < TIERS.length; tier++) {
-			if (worth >= (long) TIERS[tier]) {
-				return TIER_COLOURS[tier];
+		return palette.forWorth(worth);
+	}
+
+	/**
+	 * A column of light over a pile worth noticing.
+	 *
+	 * NOT A MODEL, a line of boxes that narrow as they rise. A real lootbeam is a textured model
+	 * the 377 renderer has no notion of, and the honest version of it here is a stack of projected
+	 * quads - which reads as a beam at a distance, which is the only range it matters at. Drawn
+	 * from the item's own colour so a top-tier drop and a low-tier one are not the same pillar.
+	 *
+	 * Projected per segment rather than drawn as a trapezoid between two projected ends, because
+	 * perspective is not linear: a beam drawn between its base and tip leans the wrong way when
+	 * the camera is low, which is exactly when a player is looking for it.
+	 */
+	private void drawBeam(OverlayGraphics g, GroundItemPile pile, List<Row> rows,
+			GroundItemPalette palette) {
+		long from = thresholdFor(this.beamTier, palette);
+		GroundItem best = null;
+		for (int i = 0; i < rows.size(); i++) {
+			GroundItem item = rows.get(i).item;
+			boolean named = this.beamHighlighted && GroundItemPrefs.isHighlighted(item.name);
+			if (!named && (from <= 0L || item.worth() < from)) {
+				continue;
+			}
+			// The most valuable thing on the tile gets the beam: one pile, one beam, whatever is
+			// stacked under it.
+			if (best == null || item.worth() > best.worth()) {
+				best = item;
 			}
 		}
-		return COLOUR;
+		if (best == null) {
+			return;
+		}
+		int colour = colourFor(best, true, 0L, palette, false);
+		if (colour == 0) {
+			return;
+		}
+		for (int segment = 0; segment < BEAM_SEGMENTS; segment++) {
+			int height = segment * BEAM_SEGMENT_H;
+			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, height)) {
+				return;                                  // left the screen: the rest would too
+			}
+			// Narrowing with height, so the thing reads as going away from you rather than as a
+			// rectangle standing on a tile.
+			int width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+			if (width < 1) {
+				width = 1;
+			}
+			g.fillAlpha(this.ctx.getProjectedX() - width / 2, this.ctx.getProjectedY(),
+				width, BEAM_SEGMENT_H, colour, BEAM_ALPHA);
+		}
 	}
 
 	/**
@@ -406,56 +716,6 @@ public final class GroundItemsPlugin extends Plugin {
 	}
 
 	// ------------------------------------------------------------------ the config page
-
-	/**
-	 * The three settings, as rows that cycle rather than values that are typed.
-	 *
-	 * They were cycling rows in the F11 panel and they stay cycling rows here: a radius is one of
-	 * seven sensible numbers, not any number, and a list row whose button shows where it is now
-	 * says that better than a text box would.
-	 */
-	private ConfigList displayList() {
-		return new ConfigList() {
-
-			public int size() {
-				return 3;
-			}
-
-			public String label(int index) {
-				return index == 0 ? "Radius" : index == 1 ? "Minimum value" : "Show hidden items";
-			}
-
-			public String detail(int index) {
-				return index == 0 ? "How far away items are named"
-					: index == 1 ? "Items worth less are not named"
-					: "Hold Alt to reveal them anyway";
-			}
-
-			public String action(int index) {
-				if (index == 0) {
-					return GroundItemPrefs.radius() + " tiles";
-				}
-				if (index == 1) {
-					return floor(GroundItemPrefs.minValue());
-				}
-				return GroundItemPrefs.showHidden() ? "Shown" : "Hidden";
-			}
-
-			public void onAction(int index) {
-				if (index == 0) {
-					GroundItemPrefs.cycleRadius();
-				} else if (index == 1) {
-					GroundItemPrefs.cycleMinValue();
-				} else {
-					GroundItemPrefs.toggleShowHidden();
-				}
-			}
-
-			public boolean removable(int index) {
-				return false;
-			}
-		};
-	}
 
 	/** The named rules: what is hidden, what is highlighted. */
 	private ConfigList itemList() {
@@ -640,6 +900,29 @@ public final class GroundItemsPlugin extends Plugin {
 	}
 
 	/** A stack size the way the client writes it elsewhere: 100K, 10M. */
+	/**
+	 * The same scale for a value rather than a count.
+	 *
+	 * SEPARATE FROM THE INT FORM because a value is not a count: a stack of 2,000,000,000 coins
+	 * worth 1 each already overflows an int, and a cast would print a negative price rather than
+	 * a large one. Carries on past M to B for the same reason.
+	 */
+	static String formatValue(long value) {
+		if (value < 0L) {
+			return "?";
+		}
+		if (value < 100000L) {
+			return String.valueOf(value);
+		}
+		if (value < 10000000L) {
+			return value / 1000L + "K";
+		}
+		if (value < 10000000000L) {
+			return value / 1000000L + "M";
+		}
+		return value / 1000000000L + "B";
+	}
+
 	static String formatCount(int count) {
 		if (count < 100000) {
 			return String.valueOf(count);

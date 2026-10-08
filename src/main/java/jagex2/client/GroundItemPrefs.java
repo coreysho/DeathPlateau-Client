@@ -33,17 +33,30 @@ public final class GroundItemPrefs {
 	private static final String FILE_NAME = "qol_grounditems.dat";
 
 	/**
-	 * Entries in the hide/highlight list. Capped so the panel fits the 512x334 viewport with no
-	 * paging: 24px header + (3 action rows + MAX) * 15 + 22px footer must stay under 334.
+	 * Entries in the hide/highlight list.
+	 *
+	 * THE OLD CAP WAS 14, "so the panel fits the 512x334 viewport with no paging". That viewport
+	 * was the in-game F11 panel these rules used to be edited in. They live in the plugin sidebar
+	 * now, which is a Swing panel inside a JScrollPane - it pages by scrolling, and has for a
+	 * while, so 14 was costing players thirteen rules for a reason that had stopped being true.
+	 *
+	 * Still capped, because this is a fixed-size array read in a loop per item per frame and a
+	 * rule list nobody meant to type is better refused than silently slowing the client down.
+	 * 128 is past anything a person will sit and enter by hand.
 	 */
-	public static final int MAX = 14;
+	public static final int MAX = 128;
 
 	public static final int HIDE = 0;
 	public static final int HIGHLIGHT = 1;
 
 	/**
-	 * Values the panel cycles through. Presets rather than free numbers because there is no text
-	 * entry: a row you click to step through six sensible values needs no keyboard at all.
+	 * Values the old in-game panel cycled through, because it had no text entry.
+	 *
+	 * NOTHING DRIVES THESE ANY MORE. Radius, minimum value and show-hidden are plugin settings
+	 * now, typed rather than cycled - see GroundItemsPlugin's three initialisers, which read the
+	 * accessors below once so a player who set them in the old panel keeps what they chose. The
+	 * file is still written with them so that migration survives a rollback to an older client
+	 * and forward again.
 	 */
 	private static final int[] RADIUS_STEPS = { 4, 6, 8, 10, 12, 16, 20 };
 	private static final int[] VALUE_STEPS = { 0, 100, 1000, 5000, 10000, 100000, 1000000 };

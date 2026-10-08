@@ -21,6 +21,8 @@ from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessar
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 PLUGIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java')
+PALETTE = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemPalette.java')
+ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/GroundItemArrivals.java')
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
@@ -36,12 +38,12 @@ MUTS = [
 
     # The three rules.
     (PLUGIN, 'hidden items drawn whether or not anything is revealing them',
-     'return reveal ? HIDDEN_COLOUR : 0;',
-     'return HIDDEN_COLOUR;'),
+     'return reveal ? palette.hidden : 0;',
+     'return palette.hidden;'),
     (PLUGIN, 'highlighted items made to obey the value floor after all',
-     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn HIGHLIGHT_COLOUR;',
+     'if (GroundItemPrefs.isHighlighted(item.name)) {\n\t\t\treturn palette.highlighted;',
      'if (GroundItemPrefs.isHighlighted(item.name) && item.worth() >= floor) {\n'
-     '\t\t\treturn HIGHLIGHT_COLOUR;'),
+     '\t\t\treturn palette.highlighted;'),
     (PLUGIN, 'an item the cache has no name for drawn as an empty row',
      'if (item.name.length() == 0) {\n\t\t\treturn 0;\n\t\t}\n',
      ''),
@@ -93,25 +95,92 @@ MUTS = [
     # Anchored on the line above it. There are two lists with a removable() of false now - the
     # display settings and the loot page - and the bare method body matches both, which makes
     # the mutation ambiguous rather than wrong.
-    (PLUGIN, 'the three display settings made removable, like the item rules',
-     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
-     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn false;\n\t\t\t}',
-     'GroundItemPrefs.toggleShowHidden();\n\t\t\t\t}\n\t\t\t}\n\n'
-     '\t\t\tpublic boolean removable(int index) {\n\t\t\t\treturn true;\n\t\t\t}'),
-    # And the new page, whose rows are a readout rather than a list of the player's rules.
+    # The 'display settings made removable' mutation is gone with the list it broke: radius,
+    # minimum value and show-hidden are @ConfigItem settings now, not ConfigList rows, so
+    # there is no removable() for them to answer wrongly. GroundItemsTest asserts their
+    # types instead, which is the promise that replaced it.
     (PLUGIN, 'the loot page totalling one of a non-stackable rather than all of them',
      'near.worth += (long) item.count * (long) item.price;',
      'near.worth += item.worth();'),
     (PLUGIN, 'the loot page using the value floor\'s formatter, so a worth reads as "or more"',
      'return near == null || near.worth <= 0 ? null : money(near.worth);',
      'return near == null || near.worth <= 0 ? null : floor((int) near.worth);'),
+    (PALETTE, '''the thresholds left in the order they were typed, so a tier gives another's colour''',
+     '''		sortDescending(this.thresholds, this.colours);''',
+     ''''''),
+    (PALETTE, '''the sort moving the thresholds and leaving the colours behind''',
+     '''				colours[at + 1] = colours[at];
+''',
+     ''''''),
+    (PALETTE, '''the sort put the other way up, so the lowest tier swallows everything''',
+     '''while (at >= 0 && thresholds[at] < threshold) {''',
+     '''while (at >= 0 && thresholds[at] > threshold) {'''),
+    (PALETTE, '''a tier set to 0 matching everything, painting the whole floor''',
+     '''if (this.thresholds[tier] > 0 && worth >= (long) this.thresholds[tier]) {''',
+     '''if (worth >= (long) this.thresholds[tier]) {'''),
+    (PALETTE, '''the tier boundary made exclusive, so an item worth exactly it drops a tier''',
+     '''if (this.thresholds[tier] > 0 && worth >= (long) this.thresholds[tier]) {''',
+     '''if (this.thresholds[tier] > 0 && worth > (long) this.thresholds[tier]) {'''),
+    (PALETTE, '''a colour out of a settings file parsed without the fallback, out of a render''',
+     '''				? PluginConfig.parseColour(colours[i]) : DEFAULTS.colour(i);''',
+     '''				? Integer.parseInt(colours[i], 16) : DEFAULTS.colour(i);'''),
+    (ARRIVALS, '''the first scan reporting every item already on the floor as a fresh drop''',
+     '''return this.previous.length > 0 && !contains(this.previous, key);''',
+     '''return !contains(this.previous, key);'''),
+    (ARRIVALS, '''everything reported new every tick, so standing still is a notification storm''',
+     '''return this.previous.length > 0 && !contains(this.previous, key);''',
+     '''return this.previous.length > 0;'''),
+    (ARRIVALS, '''nothing ever reported new, so the feature silently does nothing''',
+     '''return this.previous.length > 0 && !contains(this.previous, key);''',
+     '''return false;'''),
+    (ARRIVALS, '''the scan not remembering what it saw, so every tick is a first scan''',
+     '''		this.previous = kept;''',
+     ''''''),
+    (ARRIVALS, '''a reset leaving what it had, so logging in elsewhere is a storm''',
+     '''		this.previous = new long[0];
+''',
+     ''''''),
+    (ARRIVALS, '''the key ignoring the tile, so one drop hides another somewhere else''',
+     '''return ((long) (worldX & 0x7FFF) << 34)''',
+     '''return ((long) 0 << 34)'''),
+    (ARRIVALS, '''the key ignoring the item, so a second drop on one tile is never new''',
+     '''			| (long) (id & 0x1FFFF);''',
+     '''			| 0L;'''),
+    (ARRIVALS, '''the cap removed, so a crowded floor grows without limit''',
+     '''		if (this.count < MAX) {''',
+     '''		if (true) {'''),
+    (PLUGIN, '''a highlighted drop notified even when the player did not ask for that''',
+     '''if (notifyHighlighted && GroundItemPrefs.isHighlighted(item.name)) {''',
+     '''if (GroundItemPrefs.isHighlighted(item.name)) {'''),
+    (PLUGIN, '''everything notified when the tier is Off''',
+     '''return notifyFrom > 0L && item.worth() >= notifyFrom;''',
+     '''return item.worth() >= notifyFrom;'''),
+    (PLUGIN, '''the notify tier reading its own number rather than the sorted palette''',
+     '''		if (TIER_TOP.equals(tier)) {
+			return palette.threshold(0);
+		}''',
+     '''		if (TIER_TOP.equals(tier)) {
+			return 1000000L;
+		}'''),
+    (PLUGIN, '''a logged-out client keeping its floor, so logging in elsewhere is a storm''',
+     '''			this.arrivals.reset();
+			return;
+		}
+		boolean wantNotify''',
+     '''			return;
+		}
+		boolean wantNotify'''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (PLUGIN, ITEM):
+    # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
+    # mutation, it is a KeyError that kills the run partway through - which is how the first
+    # eighteen mutations added here never ran at all.
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     guard(orig)

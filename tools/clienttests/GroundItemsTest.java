@@ -16,6 +16,7 @@ import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.GroundItem;
 import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Overlay;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 import jagex2.config.ObjType;
@@ -89,6 +90,10 @@ public class GroundItemsTest {
 		GroundItemPrefs.clear();
 		ruleTests();
 
+		arrivalTests();
+		notifyTests();
+		paletteTests();
+
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
 			System.out.println(fails == 0 ? "ALL PASS (the drawing sections were skipped)"
@@ -114,6 +119,239 @@ public class GroundItemsTest {
 	// ---------------------------------------------------------------- 1: the rules
 
 	/**
+	 * Which ground items count as NEW, which is what a notification and a beam both rest on.
+	 *
+	 * The two ways to get this wrong are opposite and both bad: report things that were already
+	 * lying there and the player gets a notification storm for walking into a loot pile; miss real
+	 * drops and the feature silently does nothing.
+	 */
+	static void arrivalTests() {
+		GroundItemArrivals seen = new GroundItemArrivals();
+		long coins = GroundItemArrivals.key(3200, 3200, 0, 995);
+		long bones = GroundItemArrivals.key(3200, 3200, 0, 526);
+
+		// THE FIRST SCAN REPORTS NOTHING. Everything already on the floor was not dropped while
+		// the player was watching, and a player walking up to a pile wants silence.
+		seen.begin();
+		check(!seen.add(coins), "the first scan reports nothing new, however much is lying there");
+		check(!seen.add(bones), "...for any of it");
+		seen.finish();
+		check(seen.remembered() == 2, "but it remembers what it saw (" + seen.remembered() + ")");
+
+		// The same items again are not new.
+		seen.begin();
+		check(!seen.add(coins), "an item still lying there is not a new drop");
+		check(!seen.add(bones), "...nor the one beside it");
+		seen.finish();
+
+		// Something else landing is.
+		long sword = GroundItemArrivals.key(3200, 3200, 0, 1277);
+		seen.begin();
+		seen.add(coins);
+		seen.add(bones);
+		check(seen.add(sword), "something that was not there is a new drop");
+		seen.finish();
+
+		// And it is only new once.
+		seen.begin();
+		seen.add(coins);
+		seen.add(bones);
+		check(!seen.add(sword), "...and only the once");
+		seen.finish();
+
+		// AN ITEM THAT WENT AWAY AND CAME BACK is new again, which is right: a respawn or a fresh
+		// drop on a tile someone cleared is a thing that just landed.
+		seen.begin();
+		seen.add(coins);
+		seen.finish();
+		seen.begin();
+		seen.add(coins);
+		check(seen.add(bones), "an item dropped again after being taken is new again");
+		seen.finish();
+
+		// COUNT IS NOT IDENTITY. Taking one coin off a stack changes the count and is not a drop,
+		// and a kill adding to a stack already there is not one either. The key has no count in
+		// it at all, which is what makes that true rather than nearly true.
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				== GroundItemArrivals.key(3200, 3200, 0, 995),
+			"the same item on the same tile is the same key whatever the stack does");
+
+		// Place and plane are part of it.
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3201, 3200, 0, 995), "a tile east is a different key");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3201, 0, 995), "and a tile north");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3200, 1, 995), "and an upstairs");
+		check(GroundItemArrivals.key(3200, 3200, 0, 995)
+				!= GroundItemArrivals.key(3200, 3200, 0, 526), "and a different item");
+
+		// A reset is what a log out does, so logging in somewhere else is not a storm.
+        seen.reset();
+		check(!seen.seenAnything(), "a reset forgets everything");
+		seen.begin();
+		check(!seen.add(coins), "...so the next scan reports nothing new again");
+		seen.finish();
+
+		// Bounded, because the scan is per tick and a crowded floor must cost a fixed amount.
+		// WRAPPED for the same reason: without the cap this runs off the end of the array, and an
+		// ArrayIndexOutOfBoundsException out of the suite does not name the rule that broke.
+		seen.reset();
+		boolean overflowed = false;
+		try {
+			seen.begin();
+			for (int i = 0; i < GroundItemArrivals.MAX + 500; i++) {
+				seen.add(GroundItemArrivals.key(3000 + i % 64, 3000 + i / 64, 0, i));
+			}
+			seen.finish();
+		} catch (Throwable broke) {
+			overflowed = true;
+		}
+		check(!overflowed, "a floor past the cap does not run off the end of anything");
+		check(!overflowed && seen.remembered() == GroundItemArrivals.MAX,
+			"a floor past the cap remembers the cap and no more (" + seen.remembered() + ")");
+
+		// A LOG OUT HAS TO FORGET. onGameTick needs a client and a login state, so no test here
+		// can call it - and the audit found that the reset could be deleted with every check
+		// above still green. Read out of the source, the way the other wiring promises are.
+		String plugin = read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java");
+		int tick = plugin.indexOf("public void onGameTick(");
+		int tickEnd = tick < 0 ? -1 : plugin.indexOf("\n\t}", tick);
+		String tickBody = tick < 0 || tickEnd < 0 ? "" : plugin.substring(tick, tickEnd);
+		check(tickBody.length() > 0, "onGameTick is readable");
+		int loggedOut = tickBody.indexOf("!this.ctx.isLoggedIn()");
+		int firstReset = tickBody.indexOf("this.arrivals.reset()");
+		check(loggedOut >= 0 && firstReset > loggedOut,
+			"a logged-out client forgets the floor, so logging in elsewhere is not a storm");
+		// And when nothing is asking for notifications or beams either, so turning one on later
+		// does not report everything in sight at once.
+		check(countOf(tickBody, "this.arrivals.reset()") == 2,
+			"...and so does a tick where nothing is asking (" + countOf(tickBody, "this.arrivals.reset()") + ")");
+
+		// Nothing here may throw on nonsense: worldX is whatever sceneToWorldX returned.
+		boolean threw = false;
+		try {
+			GroundItemArrivals.key(-1, -1, -1, -1);
+			GroundItemArrivals.key(Integer.MAX_VALUE, Integer.MIN_VALUE, 99, 99999);
+		} catch (Throwable broke) {
+			threw = true;
+		}
+		check(!threw, "a nonsense coordinate does not throw out of a tick");
+	}
+
+	/** Which drops are worth telling the player about, and which tier a name means. */
+	static void notifyTests() {
+		GroundItemPrefs.clear();
+		GroundItemPalette palette = GroundItemPalette.DEFAULTS;
+
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_OFF, palette) == 0L,
+			"Off is no threshold at all");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, palette) == 1000000L,
+			"Top tier reads the top threshold");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_LOW, palette) == 1000L,
+			"and Low tier the lowest");
+		check(GroundItemsPlugin.thresholdFor(null, palette) == 0L, "an absent choice is Off");
+		check(GroundItemsPlugin.thresholdFor("Enormous", palette) == 0L,
+			"and so is one from a release that offered something else");
+
+		// IT READS THE PALETTE, so moving a tier's price moves what gets notified about. After
+		// sorting, so a player who typed the prices out of order gets the tier they picked.
+		GroundItemPalette shuffled = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 1000, 1000000, 10000, 100000 },
+			new int[] { 0xFFFF80, 0xFF9040, 0x40FF40, 0x40C0FF });
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, shuffled) == 1000000L,
+			"Top tier is the biggest price, not the first one typed");
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_LOW, shuffled) == 1000L,
+			"and Low tier the smallest");
+
+		// A tier threshold of 0 is one the player turned off, so nothing is notified from it.
+		GroundItemPalette noTop = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 0, 100000, 10000, 1000 },
+			new int[] { 0xFF9040, 0x40C0FF, 0x40FF40, 0xFFFF80 });
+		check(!GroundItemsPlugin.worthTelling(item("Gold", 1, 5000000),
+				GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_OFF, noTop), false),
+			"nothing is notified when the tier is Off, however valuable");
+		// "TOP TIER" MEANS THE HIGHEST PRICE, NOT THE TOP BOX. Thresholds are sorted, so setting
+		// "Top tier from" to 0 does not leave a hole at the top - the 0 sorts to the bottom and
+		// Top tier becomes the largest price still set, here 100k. A player who zeroes a box to
+		// turn a notification off has to pick Off in the drop-down instead; zeroing the price
+		// turns off that COLOUR tier, which is a different question. Asserted because it is
+		// surprising, not because it is wrong.
+		check(GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, noTop) == 100000L,
+			"zeroing the top price makes Top tier the next price down, not nothing");
+		check(GroundItemsPlugin.worthTelling(item("Gold", 1, 5000000),
+				GroundItemsPlugin.thresholdFor(GroundItemsPlugin.TIER_TOP, noTop), false),
+			"...so a valuable drop is still notified from it");
+		check(noTop.forWorth(5000000L) == 0x40C0FF,
+			"and the colour tier it zeroed really is gone: a million now draws in the next one");
+
+		// The value rule.
+		check(GroundItemsPlugin.worthTelling(item("Gold", 1, 1000000), 1000000L, false),
+			"something worth exactly the threshold is worth telling");
+		check(!GroundItemsPlugin.worthTelling(item("Gold", 1, 999999), 1000000L, false),
+			"and something under it is not");
+		check(!GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 0L, false),
+			"with no threshold and no highlight, nothing is");
+
+		// HIGHLIGHTED WINS OUTRIGHT, the same way it ignores the value floor when drawing: a
+		// player who named an item wants to know it landed whatever it is worth.
+		GroundItemPrefs.toggle("Bones", GroundItemPrefs.HIGHLIGHT);
+		check(GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 1000000L, true),
+			"a highlighted item is worth telling whatever it is worth");
+		check(!GroundItemsPlugin.worthTelling(item("Bones", 1, 1), 1000000L, false),
+			"...but only when the player asked for highlighted drops");
+		GroundItemPrefs.clear();
+	}
+
+	/** The palette's own arithmetic: the tiers, the sort, and a tier turned off. */
+	static void paletteTests() {
+		GroundItemPalette defaults = GroundItemPalette.DEFAULTS;
+		check(defaults.forWorth(1000000L) == 0xFF9040, "a million is the top tier");
+		check(defaults.forWorth(999999L) == 0x40C0FF, "just under it is the next one down");
+		check(defaults.forWorth(1000L) == 0xFFFF80, "a thousand is the lowest tier");
+		check(defaults.forWorth(999L) == defaults.plain, "under every tier is the plain colour");
+		check(defaults.forWorth(0L) == defaults.plain, "and so is nothing at all");
+
+		// THE SORT, which is the part that matters: the tier walk takes the first threshold an
+		// item clears, so prices typed out of order would otherwise give the wrong colour.
+		GroundItemPalette shuffled = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 1000, 1000000, 10000, 100000 },
+			new int[] { 0xFFFF80, 0xFF9040, 0x40FF40, 0x40C0FF });
+		check(shuffled.threshold(0) == 1000000 && shuffled.threshold(3) == 1000,
+			"thresholds come out biggest first however they were typed");
+		check(shuffled.colour(0) == 0xFF9040 && shuffled.colour(3) == 0xFFFF80,
+			"...and each colour travels with its own threshold, not with its slot");
+		check(shuffled.forWorth(10000L) == 0x40FF40,
+			"so a 10k item gets the 10k colour, not the one typed first");
+
+		// A tier turned off must not swallow the floor: everything is worth at least nothing.
+		GroundItemPalette off = new GroundItemPalette(0xFFFFFF, 0xFF40FF, 0x707070,
+			new int[] { 0, 0, 0, 0 },
+			new int[] { 0xFF0000, 0xFF0000, 0xFF0000, 0xFF0000 });
+		check(off.forWorth(0L) == off.plain, "a tier set to 0 is off, not a tier matching anything");
+		check(off.forWorth(5000000L) == off.plain, "...for any value");
+
+		// Junk from a settings file: nothing may throw, and a bad colour reads as the fallback.
+		// WRAPPED, because without the fallback this throws out of the build - and an exception
+		// out of the suite is a crash rather than a check, which says nothing about which rule
+		// broke. The audit called that out, and it is the same reason the nonsense loops above
+		// catch Throwable.
+		GroundItemPalette junk = null;
+		boolean junkThrew = false;
+		try {
+			junk = GroundItemPalette.from("zzzzzz", null, "#12", null,
+				new String[] { "", "nonsense", null, "00FF00" });
+		} catch (Throwable broke) {
+			junkThrew = true;
+		}
+		check(!junkThrew, "a palette built from junk does not throw out of a render");
+		check(!junkThrew && junk.plain == 0xFFFF00,
+			"an unparseable colour falls back rather than throwing");
+		check(!junkThrew && junk.forWorth(0L) == 0xFFFF00,
+			"...and so does the palette built from it");
+	}
+
+	/**
 	 * Which rows a pile has, and in what colour, with no client at all.
 	 *
 	 * This is the half with the rules in it, and the half worth checking against hand-built
@@ -122,7 +360,10 @@ public class GroundItemsTest {
 	 */
 	static void ruleTests() {
 		GroundItemPrefs.clear();
-		setShowHidden(false);
+		// No setShowHidden reset here any more: it was global state in GroundItemPrefs that could
+		// leak between sections, and it is a plugin setting now. Every assertion below passes
+		// reveal explicitly, which is what made the reset vestigial rather than load-bearing -
+		// and this section runs before there is a plugin to ask.
 
 		check(GroundItemsPlugin.visibleRows(pileOf(item("Bones", 1, 100)), false, 0).size() == 1,
 			"an ordinary item above the floor is a row");
@@ -467,68 +708,54 @@ public class GroundItemsTest {
 
 	// ---------------------------------------------------------------- 8: the config page
 
-	/** What the F11 panel used to be: two lists on the plugin's own page. */
+	/**
+	 * The rules list, and the settings that used to be cycling rows beside it.
+	 *
+	 * THERE IS ONE CONFIG LIST NOW, not two. Radius, minimum value and show-hidden were three
+	 * rows a player clicked to step through presets, because the in-game panel they lived in had
+	 * no text entry. They are ordinary settings now - typed, and alongside ten colours and
+	 * thresholds that used to be compiled in.
+	 */
 	static void configTests() {
 		reset();
 		GroundItemPrefs.clear();
 
 		List<PluginManager.ListSnapshot> lists = manager.snapshotConfigLists(entry);
-		check(lists.size() == 2, "the plugin has two config lists (" + lists.size() + ")");
-		if (lists.size() != 2) {
-			return;
+		check(lists.size() == 1, "the plugin has one config list (" + lists.size() + ")");
+		check(lists.size() == 1 && lists.get(0).title.equals("Items"),
+			"and it is the rules: the three cycling rows are settings now");
+
+		// The three that moved, with the types their editors depend on.
+		check(setting("radius") != null && setting("radius").isInt(),
+			"radius is a number a player types");
+		check(setting("minValue") != null && setting("minValue").isInt(),
+			"and so is the value floor");
+		check(setting("showHidden") != null && setting("showHidden").isBoolean(),
+			"and show hidden is a switch");
+
+		// The ten that were constants. Colours have to report as colours or they get a text box.
+		String[] colours = { "plainColour", "highlightColour", "hiddenColour",
+			"tier1Colour", "tier2Colour", "tier3Colour", "tier4Colour" };
+		for (int i = 0; i < colours.length; i++) {
+			PluginConfig.Item item = setting(colours[i]);
+			check(item != null && item.isColour(), colours[i] + " is edited as a colour");
 		}
-		check(lists.get(0).title.equals("Display") && lists.get(1).title.equals("Items"),
-			"the settings, then the rules");
-
-		List<ConfigList.Row> display = lists.get(0).rows;
-		check(display.size() == 3, "three settings (" + display.size() + ")");
-		check(!display.get(0).removable && !display.get(1).removable && !display.get(2).removable,
-			"none of which can be removed: they are settings, not entries");
-		check(display.get(0).action.equals(GroundItemPrefs.radius() + " tiles"),
-			"the radius row shows the radius");
-
-		int was = GroundItemPrefs.radius();
-		lists.get(0).act(0);
-		check(GroundItemPrefs.radius() != was, "pressing it cycles to the next one ("
-			+ was + " -> " + GroundItemPrefs.radius() + ")");
-		check(manager.snapshotConfigLists(entry).get(0).rows.get(0).action
-			.equals(GroundItemPrefs.radius() + " tiles"), "...and the row says so next time it is read");
-
-		int value = GroundItemPrefs.minValue();
-		lists.get(0).act(1);
-		check(GroundItemPrefs.minValue() != value, "the value floor cycles too");
-
-		boolean hidden = GroundItemPrefs.showHidden();
-		lists.get(0).act(2);
-		check(GroundItemPrefs.showHidden() != hidden, "and Show hidden is a toggle");
-		lists.get(0).act(2);
-
-		// Back to the defaults the rest of a run assumes, by going the rest of the way round.
-		while (GroundItemPrefs.radius() != was) {
-			GroundItemPrefs.cycleRadius();
+		String[] prices = { "tier1Price", "tier2Price", "tier3Price", "tier4Price" };
+		for (int i = 0; i < prices.length; i++) {
+			PluginConfig.Item item = setting(prices[i]);
+			check(item != null && item.isInt(), prices[i] + " is a number");
 		}
-		while (GroundItemPrefs.minValue() != value) {
-			GroundItemPrefs.cycleMinValue();
-		}
-		check(GroundItemPrefs.radius() == was && GroundItemPrefs.minValue() == value,
-			"both cycle all the way round rather than stopping at the end");
 
-		check(lists.get(1).rows.isEmpty() && lists.get(1).emptyMessage != null
-			&& lists.get(1).emptyMessage.length() > 0,
-			"with no rules set, the Items list says what to do instead of showing nothing");
+		// And the drop-down, whose values have to be the ones the code compares against.
+		PluginConfig.Item price = setting("priceDisplay");
+		check(price != null && price.choices().length == 3,
+			"what a row says is a drop-down of three forms");
 
-		GroundItemPrefs.set("Bones", GroundItemPrefs.HIDE);
-		lists = manager.snapshotConfigLists(entry);
-		check(lists.get(1).rows.size() == 1 && lists.get(1).rows.get(0).label.equals("Bones"),
-			"a rule appears as a row");
-		check(lists.get(1).rows.get(0).action.equals("Hidden"), "...saying what the rule is");
-		check(lists.get(1).rows.get(0).removable, "...and it can be removed, unlike a setting");
-		lists.get(1).act(0);
-		check(GroundItemPrefs.isHighlighted("Bones"), "pressing it cycles hidden to highlighted");
-		lists = manager.snapshotConfigLists(entry);
-		lists.get(1).remove(0);
-		check(GroundItemPrefs.count() == 0, "and removing it drops the rule");
-		GroundItemPrefs.clear();
+		// Writing one through the real config path takes effect and is read back.
+		setSetting("radius", "7");
+		check(setting("radius").intValue() == 7, "a typed radius is kept (7)");
+		setSetting("radius", "12");
+		check(setting("radius").intValue() == 12, "...and can be set back");
 	}
 
 	// ---------------------------------------------------------------- 9: the Loot nearby page
@@ -797,9 +1024,53 @@ public class GroundItemsTest {
 		client.actionKey[GameShell.KEY_ALT] = held ? 1 : 0;
 	}
 
+	/**
+	 * Show hidden is a plugin setting now, not a cycling row in GroundItemPrefs, so this drives
+	 * it through the real config - the same path the panel's switch takes.
+	 */
 	static void setShowHidden(boolean on) {
-		if (GroundItemPrefs.showHidden() != on) {
-			GroundItemPrefs.toggleShowHidden();
+		setSetting("showHidden", on ? "1" : "0");
+	}
+
+	/** Writes one of the plugin's settings by key, failing loudly if there is no such setting. */
+	static void setSetting(String key, String value) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				check(entry.getConfig().set(items.get(i), value),
+					"setting " + key + " to " + value + " is accepted");
+				return;
+			}
+		}
+		check(false, "there is a setting called " + key);
+	}
+
+	/** One of the plugin's settings by key, or null. */
+	static PluginConfig.Item setting(String key) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				return items.get(i);
+			}
+		}
+		return null;
+	}
+
+	static int countOf(String haystack, String needle) {
+		int n = 0;
+		for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+			n++;
+		}
+		return n;
+	}
+
+	static String read(String path) {
+		try {
+			return new String(java.nio.file.Files.readAllBytes(
+				new java.io.File(System.getProperty("dp.root", "."), path).toPath()), "UTF-8");
+		} catch (Throwable missing) {
+			check(false, "cannot read " + path + " (" + missing + ")");
+			return "";
 		}
 	}
 

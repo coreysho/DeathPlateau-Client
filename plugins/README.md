@@ -329,6 +329,36 @@ because they opened a panel is worse than showing them something odd.
 Longer lists - rules per item, things a player adds and removes - are a `ConfigList` instead; see
 *A page of your own*. The panel scrolls, so a list is not capped by the height of anything.
 
+### Ground items, in detail
+
+The most configured plugin here, and the one to copy from. Eighteen settings:
+
+| | |
+| --- | --- |
+| Colours | Ordinary, highlighted, and hidden items - three swatches |
+| Value tiers | Four tiers, each a price you type and a colour you pick |
+| Shown | How far away, hide under value, show hidden, only highlighted, outline tiles |
+| Rows | Name only / Name and value / Name, value and each |
+| Notify | On a highlighted drop, and from a tier up |
+| Beams | Over highlighted items, and from a tier up |
+
+Plus the hide/highlight rules themselves, added by right-clicking an item rather than typed, up
+to 128 of them.
+
+**"Top tier" means the highest price, not the top box.** Tier thresholds are sorted before use,
+because the tier walk takes the first threshold an item's worth clears - prices typed out of order
+would otherwise give an item the wrong tier's colour silently. A consequence worth knowing: set
+"Top tier from" to 0 and the 0 sorts to the bottom, so "Top tier" in the notify and beam
+drop-downs becomes the next price down. Zeroing a price turns off that **colour** tier; turning a
+notification off means choosing **Off**.
+
+**A new drop is a difference between two ticks**, which no pile can tell you - a pile is what is
+on a tile now. `GroundItemArrivals` remembers the last scan and answers the difference, keyed on
+**world** coordinates rather than scene ones, because the scene slides under the player. The count
+is deliberately not part of that key: taking one coin off a stack is not a drop, and neither is a
+kill adding to a stack already there. The first scan after a login reports nothing, so walking up
+to a loot pile is silent.
+
 ## Telling the player something
 
 ```java
@@ -475,7 +505,7 @@ are small enough that a jar of their own would be more ceremony than code:
 | Plugin | On by default | What it does |
 | --- | --- | --- |
 | Anti-drag | yes | How long a click is held before an item starts dragging. |
-| Ground items | yes | Names and values over what is on the floor, with rules per item. |
+| Ground items | yes | Names and values over what is on the floor, with rules per item, value tiers you colour, notifications and beams. |
 | Left-click swaps | yes | Which option a left click performs. |
 | XP drops | yes | Experience gained, in the top-right corner. |
 | Barrows doors | yes | Highlights the door that opens. |
