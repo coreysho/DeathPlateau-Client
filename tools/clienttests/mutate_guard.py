@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Put the source back, whatever happens to a mutation runner - and check that it is back.
+"""Where a mutation is written, and the check that none was left behind.
 
-Every mutate_*.py script rewrites real source files in place, one break at a time, and restores
-them in a `finally`. That covers a run that fails, throws or times out. It does not cover the
-process being killed: a SIGTERM ends Python without running `finally` at all.
+MUTATIONS GO IN A COPY NOW. workspace() hands a runner a throwaway copy of the repository and a
+way to translate a path into it, so nothing under the working tree is ever opened for writing.
+The tree stays clean and committable for the whole two hours a full audit takes, and the copy is
+a snapshot besides - an unrelated edit to the working tree mid-run cannot reach the run.
+
+WHAT CAME BEFORE, because it is the reason the copy exists: every mutate_*.py rewrote real source
+in place, one break at a time, and restored it in a `finally`. That covers a run that fails,
+throws or times out. It does not cover the process being killed - a SIGTERM ends Python without
+running `finally` at all - so there were atexit and signal handlers to restore the originals too.
 
 That is not hypothetical. A kill landed mid-mutation and left a deliberately broken line sitting
 in Client.java - a bare ";" where a log line's text used to be, the exact code the mutation was
@@ -11,11 +17,13 @@ testing. The file looked plausible and the build passed, because a mutation is b
 small, compiling change, and the next commit would have shipped it as a release to every player's
 launcher. Nothing in the normal workflow would have caught it.
 
-So guard() registers atexit for a normal exit or an unhandled exception, and signal handlers for
-the kill. Restoring twice is harmless, so every path just writes the originals back.
+None of that closed the window. SIGKILL cannot be caught, and neither can the machine going away,
+so restoring narrowed the gap without removing it - and for the two hours a full audit takes, the
+tree was deliberately broken either way. A copy has no window to close and no tree to restore, so
+the handlers went with the in-place writes rather than being kept as an uncalled safety net
+nobody would remember to wire up.
 
-WHAT THIS STILL CANNOT DO: SIGKILL cannot be caught, and neither can the machine going away. The
-guard narrows the window; it does not close it. check() below is the backstop - it reads every
+check() below is the backstop either way - it reads every
 mutate_*.py in this directory and asserts each pattern appears in its file exactly once, which
 catches a leftover mutation AND a pattern gone stale against moved source. A stale pattern is
 worth catching on its own: the runners report a non-matching pattern as SKIP and count it as a
@@ -23,50 +31,90 @@ survivor, so a renamed variable can quietly stop a mutation from testing anythin
 
     python3 tools/clienttests/mutate_guard.py          # check every mutate_*.py
     python3 tools/clienttests/mutate_guard.py jaggrab  # just the ones whose name matches
+
+    DP_MUTATE_DIR=/somewhere python3 tools/clienttests/mutate_xptest.py   # put the copies there
 """
 import atexit
 import glob
 import importlib.util
 import os
-import signal
+import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+
+# What a mutation run needs to compile and drive the client. Everything a run_*.py reads out of
+# ROOT, and nothing else: the copy exists to be cheap enough that every suite can make one.
+COPIED = ('src', 'launcher', 'tools', 'plugins', '.github')
+
+# Read, never written, and large enough not to copy. No mutation targets anything under it, and
+# it is gitignored, so a runner that writes a preview there writes it where it always did.
+LINKED = ('build',)
 
 
-def guard(originals):
-    """Arrange for {path: contents} to be written back on exit, on an exception, or on a kill.
+def workspace(prefix):
+    """A copy of the repository to mutate in, so the working tree is never written.
 
-    Call it once, immediately after reading the originals and before the first mutation. Accepts
-    the dict the multi-file runners keep; a single-file runner passes {THE_FILE: text}.
+    WHY A COPY AT ALL. A runner used to rewrite real source in place and put it back in a
+    `finally`. That works, and it is still what guard() below is for, but it means the working
+    tree is deliberately broken for most of a run's two hours - so any "is the tree clean" check
+    sees a mutation and reports it as uncommitted work, and committing during a run would ship a
+    deliberately broken line as a release. The window was narrow and real: a kill once left a
+    bare ";" in Client.java where a mutation had been.
+
+    A copy closes it. Nothing under the working tree is opened for writing at any point, so the
+    tree stays clean and committable throughout, and a kill at the worst moment leaves a broken
+    file in a temp directory nobody builds from.
+
+    IT IS ALSO A SNAPSHOT, which is a second thing worth having. Half an XP drops run was once
+    lost to an unrelated half-finished edit in another file: the suite recompiles the whole
+    client each pass, so the broken file turned every remaining mutation into a fake "caught by a
+    crash". Against a copy taken at the start, an edit to the working tree mid-run cannot reach
+    the run at all.
+
+    Returns (root, inside) where inside(path) maps a working-tree path into the copy. The copy
+    goes under DP_MUTATE_DIR when that is set, the system temp directory otherwise, and is
+    deleted on exit.
     """
-    originals = dict(originals)
-
-    def restore():
-        for path, text in originals.items():
-            try:
-                with open(path, 'w', encoding='utf-8', newline='') as f:
-                    f.write(text)
-            except OSError as cannot:
-                # There is nothing useful to do from inside a handler, but saying which file is
-                # still broken is the difference between a known problem and a shipped one.
-                print('  COULD NOT RESTORE %s (%s) - CHECK IT BEFORE COMMITTING' % (path, cannot))
-
-    def restore_and_die(signum, _frame):
-        restore()
-        print('\n  interrupted by signal %d - %d file(s) restored' % (signum, len(originals)))
-        sys.exit(1)
-
-    atexit.register(restore)
-    for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
-        sig = getattr(signal, name, None)
-        if sig is None:
-            continue
+    # DP_MUTATE_DIR says where to put it. The default is the system temp directory, which is
+    # where every run_*.py already builds, so nothing has to be configured for this to work; set
+    # the variable when the copies should live somewhere specific - a scratch area outside the
+    # checkout, or a faster disk than /tmp.
+    where = os.environ.get('DP_MUTATE_DIR') or None
+    if where:
         try:
-            signal.signal(sig, restore_and_die)
-        except (OSError, ValueError):
-            pass  # not every signal can be caught on every platform, and that is not a failure
-    return restore
+            os.makedirs(where, exist_ok=True)
+        except OSError:
+            where = None        # unwritable: fall back rather than refuse to run the audit
+    root = tempfile.mkdtemp(prefix='mutate-' + prefix + '-', dir=where)
+    atexit.register(shutil.rmtree, root, True)
+    for name in COPIED:
+        source = os.path.join(REPO, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, os.path.join(root, name))
+    for name in LINKED:
+        source = os.path.join(REPO, name)
+        if os.path.exists(source):
+            try:
+                os.symlink(source, os.path.join(root, name))
+            except OSError:
+                pass            # a platform without symlinks loses only the preview runners
+
+    # Said out loud, because a run that is mutating somewhere unexpected is otherwise
+    # indistinguishable from one that is working - and "did it really use the copy" was the first
+    # question asked of this mechanism.
+    print('mutating a copy of the repository in %s' % root)
+
+    def inside(path):
+        """The copy's version of a working-tree path."""
+        relative = os.path.relpath(os.path.abspath(path), REPO)
+        if relative.startswith(os.pardir):
+            raise ValueError('%s is outside the repository, so it has no copy' % path)
+        return os.path.join(root, relative)
+
+    return root, inside
 
 
 def load(script):
