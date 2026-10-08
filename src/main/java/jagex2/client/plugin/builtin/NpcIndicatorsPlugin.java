@@ -34,7 +34,7 @@ import jagex2.client.plugin.PluginDescriptor;
 	name = "Npc indicators",
 	description = "Marks the npcs you name, by tile and by name tag",
 	key = "npc-indicators",
-	apiLevel = 4
+	apiLevel = 5
 )
 public final class NpcIndicatorsPlugin extends Plugin {
 
@@ -46,6 +46,10 @@ public final class NpcIndicatorsPlugin extends Plugin {
 	 * and the tag sits inside the npc; this clears a human-sized one, and a bigger npc gets a
 	 * little more from its size below.
 	 */
+	/** The two values {@link #tagPosition} takes. Constants, so the choices and the test agree. */
+	static final String ABOVE = "Above";
+	static final String AT_FEET = "At feet";
+
 	private static final int TAG_HEIGHT = 230;
 
 	/** Extra height per tile of size, so a big npc's tag clears it too. */
@@ -64,7 +68,7 @@ public final class NpcIndicatorsPlugin extends Plugin {
 		name = "Npcs to mark, comma separated (part of a name is enough)")
 	public String names = "";
 
-	@ConfigItem(keyName = "colour", name = "Marker colour")
+	@ConfigItem(keyName = "colour", name = "Marker colour", colour = true)
 	public String colour = "00FF00";
 
 	@ConfigItem(keyName = "tile", name = "Outline the tiles they stand on")
@@ -75,6 +79,16 @@ public final class NpcIndicatorsPlugin extends Plugin {
 
 	@ConfigItem(keyName = "level", name = "Include the combat level in the name")
 	public boolean level = false;
+
+	/**
+	 * Over the npc's head, or on the ground at its feet.
+	 *
+	 * A drop-down rather than a boolean called something like "tagAtFeet", because there is no
+	 * reading of that name that tells a player which way round it goes.
+	 */
+	@ConfigItem(keyName = "tagPosition", name = "Where the name sits",
+		description = "Over its head, or on the ground", choices = { ABOVE, AT_FEET })
+	public String tagPosition = ABOVE;
 
 	protected void startUp() {
 		this.addOverlay(new Overlay() {
@@ -120,7 +134,7 @@ public final class NpcIndicatorsPlugin extends Plugin {
 	}
 
 	private void drawTag(OverlayGraphics g, Actor npc, int colour) {
-		int height = TAG_HEIGHT + (npc.size - 1) * TAG_HEIGHT_PER_SIZE;
+		int height = tagHeight(this.tagPosition, npc.size);
 		// centreX/centreZ, so a big npc's tag is over the middle of it. project answers false for
 		// anything the scene cannot place - behind the camera, or on the outermost tiles, which
 		// projectFromGround refuses - and drawing from a failed projection is how an overlay ends
@@ -139,6 +153,20 @@ public final class NpcIndicatorsPlugin extends Plugin {
 	 * "Banker (level-0)" is worse than "Banker". This is the same rule the client's own menu rows
 	 * follow - see the addNpcOptions comment about a fishing spot reading "(level-2)".
 	 */
+	/**
+	 * How far above the ground the tag goes. Pure, so the rule is tested as one.
+	 *
+	 * Anything that is not "At feet" reads as above, including an empty string or a value left
+	 * behind by a release that offered a third choice: an unknown setting must fall back to the
+	 * default rather than put the tag somewhere nobody asked for.
+	 */
+	static int tagHeight(String position, int size) {
+		if (AT_FEET.equals(position)) {
+			return 0;
+		}
+		return TAG_HEIGHT + (size - 1) * TAG_HEIGHT_PER_SIZE;
+	}
+
 	static String label(Actor npc, boolean withLevel) {
 		if (!withLevel || npc.combatLevel <= 0) {
 			return npc.name;
