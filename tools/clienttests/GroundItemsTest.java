@@ -93,6 +93,7 @@ public class GroundItemsTest {
 		arrivalTests();
 		notifyTests();
 		paletteTests();
+		readingTests();
 
 		if (java.awt.GraphicsEnvironment.isHeadless()) {
 			System.out.println("  SKIP  no display, so a Client cannot be constructed - run with xvfb-run");
@@ -349,6 +350,92 @@ public class GroundItemsTest {
 			"an unparseable colour falls back rather than throwing");
 		check(!junkThrew && junk.forWorth(0L) == 0xFFFF00,
 			"...and so does the palette built from it");
+	}
+
+	/** The hotkey, the double-tap, and the beam's shape. */
+	static void readingTests() {
+		// ONE CHARACTER, EITHER CASE EITHER WAY ROUND. The client delivers a lowercase g when
+		// nobody is holding shift, so a setting of "G" has to answer to it or a hotkey typed in
+		// capitals would simply never fire.
+		check(GroundItemsPlugin.hotkeyCode("g") == 'g', "a lowercase key is itself");
+		check(GroundItemsPlugin.hotkeyCode("G") == 'g', "and an uppercase one is the same key");
+		check(GroundItemsPlugin.hotkeyCode(" g ") == 'g', "whitespace round it is forgiven");
+		check(GroundItemsPlugin.hotkeyCode("4") == '4', "a digit is a key too");
+
+		// F-keys are the client's own range, 1008 for F1, as KeyPressed documents.
+		check(GroundItemsPlugin.hotkeyCode("F1") == 1008, "F1 is the client's 1008");
+		check(GroundItemsPlugin.hotkeyCode("f12") == 1019, "and F12 its 1019, in either case");
+		check(GroundItemsPlugin.hotkeyCode("F13") == -1, "there is no F13");
+		check(GroundItemsPlugin.hotkeyCode("F0") == -1, "nor an F0");
+
+		// No hotkey is the default, and anything unreadable is no hotkey rather than a throw.
+		// "F" ON ITS OWN IS THE LETTER F, not a malformed function key - a player typing one
+		// character means that character, and only F1 to F12 are the function keys. Asserted
+		// because it is the ambiguous case, and because my first version of this list had it
+		// down as unreadable.
+		check(GroundItemsPlugin.hotkeyCode("F") == 'f', "F on its own is the letter F");
+		String[] none = { null, "", "   ", "Ctrl", "shift", "Fx", "F-1", "gg", "++" };
+		for (int i = 0; i < none.length; i++) {
+			boolean threw = false;
+			int got = 0;
+			try {
+				got = GroundItemsPlugin.hotkeyCode(none[i]);
+			} catch (Throwable broke) {
+				threw = true;
+			}
+			check(!threw, "\"" + none[i] + "\" does not throw out of a key press");
+			check(!threw && got == -1, "...and is no hotkey");
+		}
+
+		// THE DOUBLE-TAP IS OFF BY DEFAULT, and that matters more than it looks: Alt is already
+		// held for the [-] and [+] controls, so a player who never asked for this must not be
+		// able to blank their own labels by reaching for Alt twice while looting.
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 900L, 0),
+			"with a window of 0, two taps are not a double-tap");
+		check(GroundItemsPlugin.isDoubleTap(1000L, 900L, 250),
+			"inside the window they are");
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 700L, 250),
+			"outside it they are not");
+		check(GroundItemsPlugin.isDoubleTap(1000L, 750L, 250),
+			"and exactly on the window still counts");
+		check(!GroundItemsPlugin.isDoubleTap(1000L, 0L, 250),
+			"a first tap since the client started is not a second one");
+
+		// The beam's shapes have to differ, or the drop-down is decoration.
+		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0);
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8) < base,
+			"a tapered beam narrows as it rises");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0),
+			"a straight one does not");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0) < base,
+			"and a narrow one is thinner from the floor up");
+		check(GroundItemsPlugin.beamWidth("Enormous", 0) == base,
+			"a shape from a release that offered something else draws the default");
+
+		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
+		// negative one is whatever fillAlpha makes of it.
+		boolean tooThin = false;
+		String[] styles = { GroundItemsPlugin.BEAM_TAPERED, GroundItemsPlugin.BEAM_STRAIGHT,
+			GroundItemsPlugin.BEAM_NARROW, null, "" };
+		for (int st = 0; st < styles.length && !tooThin; st++) {
+			for (int segment = 0; segment < 200; segment++) {
+				if (GroundItemsPlugin.beamWidth(styles[st], segment) < 1) {
+					tooThin = true;
+					break;
+				}
+			}
+		}
+		check(!tooThin, "every shape stays at least a pixel wide, at any height");
+
+		// And the outlined text the labels can use exists where the plugin reaches for it.
+		String overlay = read("src/main/java/jagex2/client/plugin/OverlayGraphics.java");
+		check(overlay.indexOf("public void textCentredOutlined(") >= 0,
+			"the outlined text primitive is there to be used");
+		String plugin = read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java");
+		check(plugin.indexOf("g.textCentredOutlined(") >= 0,
+			"...and the rows use it when the player asks for an outline");
+		check(plugin.indexOf("if (this.textOutline) {") >= 0, "...only when they ask");
 	}
 
 	/**
