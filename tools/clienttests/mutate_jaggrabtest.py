@@ -7,11 +7,16 @@ player off the server, so the guard is worth testing properly.
 
     python3 tools/clienttests/mutate_jaggrabtest.py [filter]
 """
-import atexit
 import os
-import signal
 import subprocess
 import sys
+
+# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
+# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
+# the tree where the next commit would have shipped it. mutate_guard also has the standalone
+# check that every pattern still matches its source exactly once.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -199,41 +204,11 @@ MUTS = [
 ]
 
 
-def guard(path, orig):
-    """RESTORE THE SOURCE WHATEVER HAPPENS TO THIS PROCESS.
-
-    The per-mutation `finally` below covers a run that fails or times out. It does not cover this
-    process being killed: a SIGTERM ends Python without running `finally` at all. That happened -
-    a kill landed mid-mutation and left a deliberately broken line sitting in Client.java, the
-    exact code the mutation was testing, where the next commit would have shipped it to every
-    player. atexit covers a normal exit and an unhandled exception; the signal handlers cover the
-    kill. Restoring twice is harmless, so all of them simply write the original back.
-    """
-    def restore(*_args):
-        with open(path, 'w', encoding='utf-8', newline='') as f:
-            f.write(orig)
-
-    def restore_and_die(signum, _frame):
-        restore()
-        print('\n  interrupted by signal %d - %s restored' % (signum, os.path.basename(path)))
-        sys.exit(1)
-
-    atexit.register(restore)
-    for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
-        sig = getattr(signal, name, None)
-        if sig is None:
-            continue
-        try:
-            signal.signal(sig, restore_and_die)
-        except (OSError, ValueError):
-            pass  # not every signal can be caught on every platform
-
-
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     with open(CLIENT, encoding='utf-8', newline='') as f:
         orig = f.read()
-    guard(CLIENT, orig)
+    guard({CLIENT: orig})
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
