@@ -177,6 +177,20 @@ public final class GroundItemsPlugin extends Plugin {
 	public String beamTier = TIER_OFF;
 
 	/** The beam shapes {@link #beamStyle} takes. Constants, so the choices and code agree. */
+	/**
+	 * The shape Jagex's own loot beam sprite has, measured off it rather than guessed.
+	 *
+	 * The asset is 383x1586 - four times taller than it is wide - and its width profile is not a
+	 * cone. From the tip down it stays narrow for the whole top half, reaching only 41px of its
+	 * eventual 349 at the halfway mark, and then flares hard through the bottom third into a
+	 * bell standing on a disc. The SOLID CORE inside it tapers linearly over the same height;
+	 * it is the soft outer that flares.
+	 *
+	 * That difference is the whole reason the old shapes read as cones: a linear taper spends
+	 * its width evenly, and the real thing spends almost none of it until the last third.
+	 */
+	static final String BEAM_LOOT = "Loot beam";
+
 	static final String BEAM_TAPERED = "Tapered";
 	static final String BEAM_STRAIGHT = "Straight";
 	static final String BEAM_NARROW = "Narrow";
@@ -206,8 +220,8 @@ public final class GroundItemsPlugin extends Plugin {
 	public int beamOpacity = DEFAULT_BEAM_ALPHA;
 
 	@ConfigItem(keyName = "beamStyle", name = "Beam shape",
-		choices = { BEAM_TAPERED, BEAM_STRAIGHT, BEAM_NARROW })
-	public String beamStyle = BEAM_TAPERED;
+		choices = { BEAM_LOOT, BEAM_TAPERED, BEAM_STRAIGHT, BEAM_NARROW })
+	public String beamStyle = BEAM_LOOT;
 
 	// ---- reading it
 
@@ -280,7 +294,11 @@ public final class GroundItemsPlugin extends Plugin {
 	static final int BEAM_W = 22;
 
 	/** What the beam was before any of it was a setting, kept as the defaults it still is. */
-	static final int DEFAULT_BEAM_SEGMENTS = 14;
+	/**
+	 * Taller than the fourteen it was, because the real sprite is four times taller than wide
+	 * and fourteen segments of a twenty-two-wide beam is barely two to one.
+	 */
+	static final int DEFAULT_BEAM_SEGMENTS = 24;
 	static final int DEFAULT_BEAM_ALPHA = 96;
 
 	static final int MIN_BEAM_SEGMENTS = 2;
@@ -427,7 +445,9 @@ public final class GroundItemsPlugin extends Plugin {
 	 */
 	static int beamWidth(String style, int segment, int segments) {
 		int width;
-		if (BEAM_STRAIGHT.equals(style)) {
+		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {
 			width = BEAM_W;
 		} else if (BEAM_NARROW.equals(style)) {
 			width = BEAM_W / 4;
@@ -879,6 +899,37 @@ public final class GroundItemsPlugin extends Plugin {
 				}
 			}
 		}
+	}
+
+	/**
+	 * The width of one segment of a loot beam, following the measured profile of Jagex's sprite.
+	 *
+	 * CUBED, NOT LINEAR. The asset was measured at nine heights and normalised against its
+	 * widest: 2% of full width a tenth of the way down from the tip, 7% at three tenths, 12% at
+	 * the halfway mark. Cubing the distance below the tip gives 0.1%, 2.7% and 12.5% - the last
+	 * of which is the one that matters, because halfway is where the eye reads the shape.
+	 * Squaring was tried first and gives 25% there, twice the real thing, which still reads as
+	 * a cone. A linear taper gives 50% and reads as a wedge.
+	 *
+	 * The sprite is wider still below the halfway mark than cubing predicts - 42% where this
+	 * says 22% - but that is its two helical ribbons, which are a separate thing wound round the
+	 * beam rather than part of its body, and which this does not draw. See the README.
+	 *
+	 * Flat-topped at one pixel rather than nought, like every other shape here: a width of 0
+	 * draws nothing and a negative one is whatever fillAlpha makes of it.
+	 */
+	static int lootBeamWidth(int segment, int segments) {
+		if (segments <= 1) {
+			return BEAM_W;
+		}
+		// How far below the tip this segment is, as a share of the beam. The top segment is the
+		// tip, so it is the far end of the loop rather than segment 0.
+		int below = segments - 1 - segment;
+		// Cubed, in integer arithmetic, scaled by the full width at the base. The largest this
+		// reaches is BEAM_W * 39^3, which is a comfortable million short of overflowing.
+		int span = segments - 1;
+		int width = BEAM_W * below * below * below / (span * span * span);
+		return width < 1 ? 1 : width;
 	}
 
 	/** How tall a beam a player asked for, within what is a beam rather than a wall. */

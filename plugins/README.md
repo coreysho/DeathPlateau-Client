@@ -395,8 +395,34 @@ The pulse takes the time as an argument rather than reading the clock, so its cu
 across two whole cycles. It is a triangle rather than a sine: `Math.sin` in a per-frame draw for a
 35% wobble is not a trade anybody would make, and at this speed the two are indistinguishable.
 
-**The tier thresholds and colours are the player's**, four of each, so matching another game's
-palette is a change of values rather than of code.
+**The shape is measured off Jagex's own sprite, not guessed.** The asset is 383x1586 - four times
+taller than it is wide - and its width profile is not a cone. Normalised against its widest point it
+is 2% of full width a tenth of the way below the tip, 7% at three tenths and **12% at the halfway
+mark**, then it flares hard through the bottom third. Cubing the distance below the tip gives 12.5%
+at halfway, which is the figure that decides how the shape reads; squaring gives 25% and a linear
+taper 50%, and both of those still read as cones. That is the `Loot beam` style, and it is the
+default.
+
+Two things in the sprite are deliberately **not** drawn: the pair of helical ribbons wound round its
+lower half, and the sparkles floating near its base. They are separate animated elements rather than
+part of the beam's body, which is why the measured width jumps from 12% to 42% just below halfway -
+that jump is the ribbons, not the beam. Drawing them with `fillAlpha` rectangles would cost more
+than they are worth at the size a beam is actually seen.
+
+**The four colours Jagex ships, sampled from the assets**, for anyone setting their tiers to match:
+
+| | Body | Bright core |
+| --- | --- | --- |
+| Green | `3EEE95` | `B9FDD5` |
+| Red | `EE4D3E` | `FDBDB9` |
+| Purple | `AF3EEE` | `E1B9FD` |
+| Yellow | `EEBA3E` | `FDEAB9` |
+
+The plugin takes the body colour and brightens its own core, so the body column is the one to type
+in. The wiki is explicit that these four are what the game ships and that **which value gets which
+colour is the player's**, which is how this plugin already works: four thresholds, four colours. The
+defaults here are unchanged, because those same colours also draw the item labels and nobody asked
+for those to move.
 
 **A new drop is a difference between two ticks**, which no pile can tell you - a pile is what is
 on a tile now. `GroundItemArrivals` remembers the last scan and answers the difference, keyed on

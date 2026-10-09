@@ -332,19 +332,29 @@ MUTS = [
      '''		if (alt && !this.altWasDown) {''',
      '''		if (alt) {'''),
     (PLUGIN, '''every beam shape drawing the same width, so the choice does nothing''',
-     '''		if (BEAM_STRAIGHT.equals(style)) {
+     '''		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {
 			width = BEAM_W;
 		} else if (BEAM_NARROW.equals(style)) {
 			width = BEAM_W / 4;
 		} else {''',
      '''		if (false) {
+			width = lootBeamWidth(segment, segments);
+		} else if (false) {
 			width = BEAM_W;
 		} else if (false) {
 			width = BEAM_W / 4;
 		} else {'''),
     (PLUGIN, '''a tall beam allowed to reach zero width and draw nothing''',
-     '''		return width < 1 ? 1 : width;''',
-     '''		return width;'''),
+     '''		return width < 1 ? 1 : width;
+	}
+
+	@Subscribe''',
+     '''		return width;
+	}
+
+	@Subscribe'''),
     (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
      '''		} else {
 			width = BEAM_W - segment * BEAM_W / (segments + 1);
@@ -566,6 +576,45 @@ MUTS = [
     (PLUGIN, '''the taper computed over a fixed height, so a tall beam is a needle halfway up''',
      '''			width = BEAM_W - segment * BEAM_W / (segments + 1);''',
      '''			width = BEAM_W - segment * BEAM_W / (DEFAULT_BEAM_SEGMENTS + 1);'''),
+
+    # ---- THE MEASURED SHAPE. Jagex's sprite is 12% of its full width at the halfway mark;
+    # cubing gives 12.5%, squaring 25% and a linear taper 50%. Two of these mutations are those
+    # wrong curves, because "it narrows" is true of all three and says nothing.
+    (PLUGIN, '''the loot beam tapering linearly, which is the cone shape it was built to replace''',
+     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
+     '''		int width = BEAM_W * below / span;'''),
+    (PLUGIN, '''the loot beam tapering by a square, which is still twice the sprite at halfway''',
+     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
+     '''		int width = BEAM_W * below * below / (span * span);'''),
+    (PLUGIN, '''the loot beam taper upside down, so it is widest at the tip''',
+     '''		int below = segments - 1 - segment;''',
+     '''		int below = segment;'''),
+    (PLUGIN, '''a loot beam segment allowed to vanish, so its top half is not drawn''',
+     '''		return width < 1 ? 1 : width;
+	}
+
+	/** How tall a beam''',
+     '''		return width;
+	}
+
+	/** How tall a beam'''),
+    (PLUGIN, '''a one-segment loot beam dividing by zero in a render loop''',
+     '''		if (segments <= 1) {
+			return BEAM_W;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the loot beam shape not reached by its own drop-down value''',
+     '''		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {''',
+     '''		if (BEAM_STRAIGHT.equals(style)) {'''),
+    (PLUGIN, '''the default shape back to the cone, so nobody sees the one this was asked for''',
+     '''	public String beamStyle = BEAM_LOOT;''',
+     '''	public String beamStyle = BEAM_TAPERED;'''),
+    (PLUGIN, '''the default height back to fourteen, which is barely two to one''',
+     '''	static final int DEFAULT_BEAM_SEGMENTS = 24;''',
+     '''	static final int DEFAULT_BEAM_SEGMENTS = 14;'''),
 
 ]
 

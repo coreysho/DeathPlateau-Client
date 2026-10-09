@@ -765,8 +765,8 @@ public class GroundItemsTest {
 		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
 		// negative one is whatever fillAlpha makes of it.
 		boolean tooThin = false;
-		String[] styles = { GroundItemsPlugin.BEAM_TAPERED, GroundItemsPlugin.BEAM_STRAIGHT,
-			GroundItemsPlugin.BEAM_NARROW, null, "" };
+		String[] styles = { GroundItemsPlugin.BEAM_LOOT, GroundItemsPlugin.BEAM_TAPERED,
+			GroundItemsPlugin.BEAM_STRAIGHT, GroundItemsPlugin.BEAM_NARROW, null, "" };
 		for (int st = 0; st < styles.length && !tooThin; st++) {
 			for (int segment = 0; segment < 200; segment++) {
 				if (GroundItemsPlugin.beamWidth(styles[st], segment, tall) < 1
@@ -838,9 +838,65 @@ public class GroundItemsTest {
 			"a beam of no segments is not a beam");
 		check(GroundItemsPlugin.beamSegmentsFor(500) == GroundItemsPlugin.MAX_BEAM_SEGMENTS,
 			"and one into the sky is bounded");
-		check(GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS == 14
-				&& GroundItemsPlugin.DEFAULT_BEAM_ALPHA == 96,
-			"the defaults are the constants the beam had before either was a setting");
+		check(GroundItemsPlugin.DEFAULT_BEAM_ALPHA == 96,
+			"the opacity default is the constant the beam had before it was a setting");
+		check(GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS == 24,
+			"and the height is taller than the fourteen it was, because the sprite this is "
+				+ "modelled on is four times taller than it is wide");
+
+		// ---- THE SHAPE, AGAINST THE SPRITE IT IS MODELLED ON.
+		//
+		// Jagex's loot beam asset is 383x1586 and its width profile is not a cone: measured at
+		// nine heights and normalised against its widest, it is 2% of full width a tenth of the
+		// way below the tip, 7% at three tenths and 12% at the halfway mark. Cubing the distance
+		// below the tip gives 12.5% at the halfway mark, which is the figure that matters
+		// because halfway is where the eye reads the shape. These checks are that curve, not a
+		// restatement of the code: they are percentages taken off the image.
+		int segs = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
+		int span = segs - 1;
+		int full = GroundItemsPlugin.lootBeamWidth(0, segs);
+		check(full == GroundItemsPlugin.BEAM_W,
+			"the base of a loot beam is the full width (" + full + ")");
+		check(GroundItemsPlugin.lootBeamWidth(span, segs) == 1,
+			"and its tip is a point");
+		int half = GroundItemsPlugin.lootBeamWidth(span / 2, segs);
+		check(half * 100 / full >= 9 && half * 100 / full <= 16,
+			"halfway up it is about an eighth of its base, as the sprite is: " + (half * 100 / full)
+				+ "% against the sprite's 12%");
+		// A LINEAR TAPER WOULD BE 50% THERE and a squared one 25%, and both read as cones. This
+		// is the check that says which curve, rather than merely that it narrows.
+		check(half * 100 / full < 20,
+			"...which a linear taper (50%) and a squared one (25%) both fail");
+		int quarter = GroundItemsPlugin.lootBeamWidth(span / 4, segs);
+		check(quarter > half && quarter < full,
+			"a quarter of the way up it is wider than halfway and narrower than the base");
+
+		// Monotonic, and never thinner than a pixel, at any height a player can set.
+		boolean wrong = false;
+		for (int n = GroundItemsPlugin.MIN_BEAM_SEGMENTS; n <= GroundItemsPlugin.MAX_BEAM_SEGMENTS;
+				n++) {
+			int last = Integer.MAX_VALUE;
+			for (int seg = 0; seg < n; seg++) {
+				int w = GroundItemsPlugin.lootBeamWidth(seg, n);
+				if (w < 1 || w > last) {
+					wrong = true;
+				}
+				last = w;
+			}
+		}
+		check(!wrong,
+			"a loot beam only ever narrows as it rises, and never below a pixel, at every height");
+		check(GroundItemsPlugin.lootBeamWidth(0, 1) == GroundItemsPlugin.BEAM_W,
+			"a beam of one segment is its base rather than a divide by zero");
+
+		// And it is the default shape, because it is the one this was asked to look like. Read
+		// off a bare instance rather than through setting(): this section runs in the headless
+		// half, before any Client exists, and reaching for the config here threw and ended the
+		// run with no failure named - which the mutation runner would have reported as a crash.
+		check(GroundItemsPlugin.BEAM_LOOT.equals(new GroundItemsPlugin().beamStyle),
+			"the loot beam shape is what a player gets without choosing one");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, span / 2, segs) == half,
+			"...and the drop-down's value reaches it");
 
 		// THE PULSE, which takes the time rather than reading the clock so its curve can be
 		// checked: the shape of a pulse is exactly the sort of thing that is wrong by a factor
