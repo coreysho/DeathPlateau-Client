@@ -11,12 +11,13 @@ import os
 import subprocess
 import sys
 
-# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
-# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
-# the tree where the next commit would have shipped it. mutate_guard also has the standalone
-# check that every pattern still matches its source exactly once.
+# THE WORKING TREE IS NEVER WRITTEN. Mutations go into a throwaway copy of the repository, so
+# the tree stays clean and committable for the whole run and a kill at the worst moment leaves a
+# broken file in a temp directory nobody builds from. It is a snapshot too: an edit to the tree
+# mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
+# standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -27,6 +28,7 @@ ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Ground
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
 PREFS = os.path.join(ROOT, 'src/main/java/jagex2/client/GroundItemPrefs.java')
 CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
+HOTKEY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Hotkey.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
 MUTS = [
@@ -295,22 +297,22 @@ MUTS = [
 		}
 		boolean wantNotify'''),
 
-    (PLUGIN, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
+    (HOTKEY, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
      '''		return Character.toLowerCase(text.charAt(0));''',
      '''		return text.charAt(0);'''),
-    (PLUGIN, '''F1 off by one, so every function key is the wrong one''',
-     '''					return 1007 + n;''',
-     '''					return 1008 + n;'''),
-    (PLUGIN, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
-     '''				if (n >= 1 && n <= 12) {''',
+    (HOTKEY, '''F1 off by one, so every function key is the wrong one''',
+     '''					return F1 - 1 + n;''',
+     '''					return F1 + n;'''),
+    (HOTKEY, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
+     '''				if (n >= 1 && n <= FUNCTION_KEYS) {''',
      '''				if (n >= 1) {'''),
     # The 'blank hotkey setting' mutation is gone with the guard it deleted: a length-0
     # check was redundant - a blank setting already fails the "exactly one character"
     # test - and the audit finding it deletable with nothing noticing is how a redundant
     # check announces itself. The guard went rather than the mutation gaining a test.
-    (PLUGIN, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
+    (HOTKEY, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
      '''		if (text.length() != 1) {
-			return -1;
+			return NONE;
 		}
 ''',
      ''''''),
@@ -488,10 +490,11 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT, HOTKEY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
-    guard(orig)
+    # Written into a copy, never into the working tree - see mutate_guard.workspace.
+    _work, inside = workspace('groundtest')
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
@@ -503,11 +506,11 @@ def main():
             bad += 1
             continue
         try:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path].replace(find, repl))
-            r = subprocess.run([sys.executable, RUNNER], capture_output=True, text=True)
+            r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True)
         finally:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path])
         fired = [l.strip()[5:].strip() for l in r.stdout.split('\n') if l.startswith('FAIL')]
         if r.returncode == 0:

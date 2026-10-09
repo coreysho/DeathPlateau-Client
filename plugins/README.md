@@ -273,6 +273,7 @@ public class MyToolPlugin extends Plugin {
 | 4 | Who else is in the scene: `ctx.getNpcs`, `ctx.getPlayers`, and the `Actor` they hand back. |
 | 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
+| 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -374,6 +375,226 @@ on a tile now. `GroundItemArrivals` remembers the last scan and answers the diff
 is deliberately not part of that key: taking one coin off a stack is not a drop, and neither is a
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
+
+### Skills, Anti-drag and Left-click swaps, in detail
+
+Six settings, four and three. The last of the eleven, and each gained the thing it was actually
+missing rather than a set of options for the sake of a number.
+
+**Skills** gets the skill filter, a switch for the combat row, a switch for the experience line,
+and an order for the page: skill order, level, experience, or closest to a level. The combat row is
+never sorted with the others — a page ordered by level with "Combat level" somewhere in the middle
+reads as a skill. The sort is a **stable insertion sort** written out rather than handed to
+`Collections.sort` with a comparator per order: twenty-three rows once a tick is nothing either way,
+and "closest to a level" is very nearly not a consistent comparator, two skills both 0 away being a
+real case. Stability matters because a page that reshuffles its ties every tick is unreadable. A
+maxed skill has nothing left to reach, which a plain comparison on 0 puts *first* — it goes last.
+
+**Anti-drag** gets shift, a suspend key, and a chat line. Hold shift and the client's own hold time
+is back for as long as you hold it — shift already means "the quick way" here, since shift-click
+drops and shift-right-click is the settings menu, so the hand is already on the key. The suspend
+key is for the session, not the settings file: a key pressed once by accident should not be a change
+to what a player saved. **The chat line is on by default**, unlike the Ground items hotkey, because
+this feature has no visible state: hiding the ground labels is its own feedback, whereas a suspended
+drag delay looks exactly like a live one until you try to drag something — by which point you have
+already dropped it in the wrong slot.
+
+**Left-click swaps** gets the one thing it could not do before level 6: **colour the row a swap
+promoted**. A swap is invisible by design — the point is that the option is simply there under the
+left button — and that is also what makes a wrong one hard to find, because the menu looks normal
+and the click does the wrong thing. The colour is set *after* the promotion, or it lands on whatever
+index the row came from. Its chat lines can be turned off, with one exception: "you can only have
+128 swaps" always speaks, because that one is the answer to a row that did nothing, and a silent
+failure is the one thing worse than a chatty success.
+
+**One hotkey parse, shared.** Ground items and Anti-drag both read a key out of a settings box, and
+two readings of `F3` would eventually differ by one — which is a hotkey that fires the wrong key,
+indistinguishable from one that does nothing. It lives in `Hotkey` now, with no delegate left behind
+in either plugin.
+
+**Barrows doors has no settings, and that is the answer.** The green is the cache's own data that
+377 threw away — the unlocked form of each door ships with a recolour and a little extra light — so
+there is no drawn highlight to configure and no colour to expose. A setting there would be invented
+rather than configurable.
+
+### Boosts and the Idle notifier, in detail
+
+Boosts has eight settings, the Idle notifier five, and they share one piece of code: **"only these
+skills"**, a comma-separated list where part of a name is enough.
+
+| Boosts | |
+| --- | --- |
+| Shown | When nothing is boosted, the difference instead of the levels, the heading |
+| Looks | A colour for boosted and for drained, text size |
+| Which | Only these skills |
+| Notify | When a boost wears off |
+
+| Idle notifier | |
+| --- | --- |
+| When | Seconds without experience, only counting these skills |
+| Again | Repeat every so many seconds, or say it once |
+| Anyway | Warn before you have trained at all |
+| Sound | An alert sound id, with a Test row to find one |
+
+**Matching is by prefix, and an empty list means every skill.** Prefix because `wood` for
+Woodcutting and `att` for Attack are what people type — a substring rule would make `tack` match
+Attack and a one-letter term match half the list. And an empty list meaning *everything* is the
+opposite of the rule in Npc indicators, which is right in both places: there, an empty list is a
+plugin nobody has set up yet and "everything" would outline the whole scene; here, the filter
+*narrows* something already useful, so "no filter" has to mean "do not narrow it". A list of nothing
+but commas is not a filter either — honouring it literally would show an empty panel with nothing
+to explain it.
+
+**The Idle notifier's repeat is a wind-back of its one counter**, not a second timer: after a
+warning the tick count is set to the repeat interval short of the threshold, so the next warning is
+due exactly then and nothing else is tracked. With no repeat the counter is left *at* the threshold,
+so disarming is what stops it rather than the arithmetic.
+
+**Hitpoints and prayer are never named by the boost-expiry notice.** Everything else wearing off is
+a potion to drink again, which is about what you are doing; those two are how close to death you
+are, and a notification is only a quieter way of reporting a vital. They are excluded by name
+rather than by index, because a `3` in a condition tells nobody why.
+
+**One thing worth knowing about the Boosts panel as it stands.** In 377 the server sends a skill's
+*current* level in `UPDATE_STAT`, and for hitpoints that is current health — so a damaged player's
+Hitpoints row appears in the panel like any other drained stat, e.g. `Hitpoints 35/50`. That
+predates this round and has not been changed; it is pinned by a test that says what it is, so the
+behaviour is a decision somebody can make rather than something that drifts.
+
+### Tile indicators, in detail
+
+Eight settings: the two tiles, a colour each, outline thickness, a fill for each, and how solid a
+fill is.
+
+**A tile is not a rectangle.** It is a quadrilateral whose four edges run at four different angles,
+which is why two things here are built the way they are. The outline is drawn from four projected
+corners rather than as a rect — the version that draws a rect looks fine under the player and wrong
+everywhere else. And **thickness is concentric rings** pulled toward the tile's own centre, because
+"thicken that edge" is a polygon-offset problem rather than a drawing one; rings cannot leave the
+tile the way an outward offset could, and each ring's corners clamp at the centre so a distant tile
+a few pixels across cannot grow a ring *bigger* than the one it was meant to sit inside.
+
+**A fill is scanlines.** `OverlayGraphics` fills rectangles, so the honest version of a filled
+quadrilateral is one one-pixel-high rect per screen row between the quad's edges — which is what a
+polygon fill is, and is cheap at the size of a tile. It goes through `fillAlpha` so it can be seen
+through, which is the only way a fill on the tile you are standing on does not hide you, and the
+outline is drawn *after* it so it sits on top of its own fill.
+
+The span arithmetic is pure and carries the most valuable checks in the plugin, because a wrong
+span is not a slightly wrong tile — it is a bar of colour across the screen. Three cases matter: a
+horizontal edge lying exactly on a row has to contribute **both** its ends, or the top and bottom
+row of every tile is one pixel wide; a row the quad does not reach has to read as "draw nothing"
+rather than as a span; and a tile seen exactly edge-on has every edge horizontal, which is a divide
+by zero in the obvious implementation, inside a render loop.
+
+### Mouse highlight, in detail
+
+Eight settings: the text's colour and size, an outline instead of a box, the box and its colour,
+opacity and border, and whether to show `Walk here`.
+
+**`Walk here` was a rule and is now a setting, with the same default.** Everything that is not
+something is walk-here, so showing it means a label following the cursor across every empty tile —
+noise with a 100% duty cycle. It is offered because someone learning the interface may want it.
+
+**While a right-click menu is open, the label stands aside.** That is not a setting. The label says
+what a *left* click would do, and with a menu open in front of the player that is a click they are
+not about to make — so it would be describing the wrong thing while sitting next to the list of
+right ones. `ctx.isMenuOpen()` is what makes it askable, and is level 7.
+
+### Npc indicators, in detail
+
+Twelve settings, plus the two ways of filling the list.
+
+| | |
+| --- | --- |
+| Which | A comma-separated list of names, part of a name being enough |
+| Marks | Outline their tiles, name them, include the combat level, where the name sits, outline the text |
+| Outline | Which tiles of a big npc, and how thick the border is |
+| Menu | Colour their right-click options |
+| Bounds | Most marked at once |
+| Notify | When one you named appears |
+
+**Two ways to add one, and they are the same store.** Typing the list is the escape hatch;
+shift-right-click is the path. A `Tag` row appears on the settings menu over any npc, and choosing
+it writes the same comma-separated setting the config box holds — through the plugin's own
+`PluginConfig`, so a tag survives a restart rather than living in a field. A second store keyed
+differently would be two things to keep in step.
+
+**Matching is substring; tagging is exact.** `goblin` finds a Goblin and a Goblin Guard, because
+the alternative reads as "nothing happened" the first time someone guesses a name slightly wrong.
+But `Untag Goblin` must not take `Goblin Guard` with it, and a Goblin Guard merely *matched* by
+`Goblin` must still offer to **Tag** rather than to Untag — or the menu would offer to remove
+something it never added. Those are two different questions about the same list and the plugin
+answers them with two different methods on purpose.
+
+**A term may carry its own colour**, written `Goblin=FF0000`. Three monsters marked in the same
+green tell you which three are interesting and nothing else — the same argument the per-item
+colours in Ground items are built on. The first matching term wins, which is the order they are
+written in, so a narrower rule goes above a broader one. A term coloured `000000` is read as having
+no colour of its own, because 0 is already what the match walk answers for "no match": a marker
+drawn in the colour that means "not drawn" is an npc that silently stops being marked.
+
+**One walk answers both questions.** "Does this npc match" and "in what colour" are the same
+search, so `matches` is `termColour` with a non-zero fallback and 0 means no. Two methods walking
+the list separately could disagree about which term won.
+
+**Border thickness is concentric rings, not a thick line.** A tile seen in perspective is a
+quadrilateral whose four edges run at four angles, so "thicken that edge" is a polygon-offset
+problem rather than a drawing one. Rings pulled in toward the tile's own centre are the honest
+cheap version, and they cannot leave the tile the way an outward offset could. Each ring's corners
+clamp at the centre, because a distant tile is a few pixels across and an inset that overshot would
+draw a ring *bigger* than the one it was meant to sit inside.
+
+**Appearances are by name, not by npc.** `Actor` carries the config id, which every Goblin shares,
+so there is nothing here that could tell one Goblin from another — and a notice fired every time
+one of six wandered in and out of the scene would be noise. A *name* going from absent to present
+is the question a player actually has: the boss has spawned. The first tick after turning it on
+reports nothing, and "nothing was here last tick" is tracked separately from "there was no last
+tick" — conflating them made the first arrival after a scene emptied go unreported, which is the
+exact case the feature exists for.
+
+**Menu colouring uses only the colour.** Level 6 offers a row's order too, and this takes none of
+it: moving an npc's `Attack` row is a change to what a click does, which is the client's business.
+A row is identified by its kind tag (`@yel@` is an npc), because that is the only thing separating
+`Attack @yel@Goblin` from `Take @lre@Bones` — without the check, a term like `bones` would colour
+rows about items.
+
+### XP drops, in detail
+
+Fifteen settings, and the thing to know before changing any of them is the rule the feature was
+tuned around:
+
+**A row's fade is set when the row is created and never refreshed.** Every row leaves on its own
+schedule no matter what gains experience after it, which is what makes the column read as drops
+rather than as a list. The numbers came out of that tuning - 3000ms was too slow, 600ms too fast,
+1500ms right - and they are the defaults the boxes start at.
+
+| | |
+| --- | --- |
+| Looks | Drop colour, text size, outline instead of a shadow, the skill icon, the skill's name on the row |
+| Motion | Which way the column runs, how fast rows settle, how long one stays, how many at once |
+| Grouping | Add up gains in the same skill instead of a row per gain |
+| The panel | Show it, how long it stays, the progress bar's colour, experience per hour |
+| Notify | On a level up |
+
+**Grouping had to be built inside that fade rule rather than around it.** Adding a gain into the
+row that is already there does not extend it: a running total that refreshed its own fade would be
+a row that never leaves while you train, which is a different feature and one the drops were
+explicitly tuned away from. It also only ever grows the *newest* row - a row further down has
+already eased into place and had others arrive after it, and growing it would make a number change
+in the middle of the column with nothing arriving to explain it.
+
+**Experience per hour stays at 0 for the first second.** Dividing a gain by a few milliseconds
+gives a figure in the hundreds of millions, which measures the denominator rather than the player.
+The figure is a `long` the whole way through for the same reason: a short session of a maxed
+account leaves `int` behind long before it stops being a number worth printing.
+
+**A 99 never announces a level up.** `getExperienceForLevel` has nothing past level 100 and answers
+level 99's own figure for it, so a maxed skill's "next level" threshold is experience the player
+already has. Without the guard, every single drop at 99 would announce a level up for the rest of
+that account's life. The level-up check also reads the level from *before* the change, because the
+packet handler posts `StatChanged` before it recomputes `skillBaseLevel` - which is what lets the
+plugin compare without keeping a copy of the experience curve.
 
 ## Restyling the right-click menu
 
@@ -567,17 +788,17 @@ are small enough that a jar of their own would be more ceremony than code:
 
 | Plugin | On by default | What it does |
 | --- | --- | --- |
-| Anti-drag | yes | How long a click is held before an item starts dragging. |
+| Anti-drag | yes | How long a click is held before an item drags, with shift and a key to suspend it. |
 | Ground items | yes | Names and values over what is on the floor, with rules per item, value tiers you colour, notifications and beams. |
-| Left-click swaps | yes | Which option a left click performs. |
-| XP drops | yes | Experience gained, in the top-right corner. |
+| Left-click swaps | yes | Which option a left click performs, optionally colouring the row it promoted. |
+| XP drops | yes | Experience gained, in the top-right corner, with the colour, the motion, grouping, experience per hour and a level-up notification. |
 | Barrows doors | yes | Highlights the door that opens. |
-| Boosts | no | Which stats are boosted or drained, and by how much. |
-| Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
-| Idle notifier | no | Says when you stop gaining experience. |
-| Mouse highlight | no | What a left click would do, next to the cursor. |
-| Tile indicators | no | Outlines the tile under the cursor, and the one you are on. |
-| Npc indicators | no | Marks the npcs you name, by tile and by name tag. |
+| Boosts | no | Which stats are boosted or drained, by how much, in your colours, with a notice when one wears off. |
+| Skills | no | Levels, true levels past 99, combat level, experience to the next level, in the order you choose. |
+| Idle notifier | no | Says when you stop gaining experience, optionally in one skill only, once or repeating. |
+| Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
+| Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |
+| Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |
 
 The first five were client features and are on because turning them off would change what
 existing players see. The other six are additions and start off: an addition that turns itself

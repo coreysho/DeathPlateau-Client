@@ -15,18 +15,20 @@ import os
 import subprocess
 import sys
 
-# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
-# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
-# the tree where the next commit would have shipped it. mutate_guard also has the standalone
-# check that every pattern still matches its source exactly once.
+# THE WORKING TREE IS NEVER WRITTEN. Mutations go into a throwaway copy of the repository, so
+# the tree stays clean and committable for the whole run and a kill at the worst moment leaves a
+# broken file in a temp directory nobody builds from. It is a snapshot too: an edit to the tree
+# mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
+# standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 BOOSTS = os.path.join(BUILTIN, 'BoostsPlugin.java')
 SKILLS = os.path.join(BUILTIN, 'SkillsPlugin.java')
+FILTER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/SkillFilter.java')
 RUNNER = os.path.join(HERE, 'run_skilltest.py')
 
 MUTS = [
@@ -44,10 +46,11 @@ MUTS = [
 			}
 ''', ''),
     (BOOSTS, 'a drain drawn in the boost colour, so the two read alike',
-     'lines.add(new Line(text, delta > 0 ? BOOSTED : DRAINED));',
-     'lines.add(new Line(text, BOOSTED));'),
+     'lines.add(new Line(text, delta > 0 ? boosted : drained));',
+     'lines.add(new Line(text, boosted));'),
     (BOOSTS, 'the cache\'s unused skill slots offered as skills',
-     '''			if (!this.isRealSkill(skill)) {
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {
 				continue;
 			}
 ''', ''),
@@ -150,10 +153,53 @@ MUTS = [
      '		rows.add(new Skill("Combat level", combat, combat, 0, 0, -1));',
      ''),
     (SKILLS, 'the placeholder slots listed as skills',
-     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER) {
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER
+					|| !SkillFilter.allows(name, this.skills)) {
 				continue;
 			}
 ''', ''),
+    (SKILLS, 'the skill filter not applied to the page, so the skills box does nothing',
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER
+					|| !SkillFilter.allows(name, this.skills)) {''',
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER) {'''),
+    (SKILLS, 'the combat row shown whether the player asked for it or not',
+     '\t\tif (this.showCombat) {',
+     '\t\tif (true) {'),
+    (SKILLS, 'the combat row never shown',
+     '\t\tif (this.showCombat) {',
+     '\t\tif (false) {'),
+    (SKILLS, 'the experience line shown whether the player asked for it or not',
+     'if (skill == null || !SkillsPlugin.this.showExperience) {',
+     'if (skill == null) {'),
+    (SKILLS, 'the sort never applied, so the order drop-down does nothing',
+     '\t\tsort(listed, this.sortBy);',
+     ''),
+    (SKILLS, 'skill order sorting anyway, so the default is not the client\'s order',
+     '''		if (BY_SKILL.equals(by) || by == null) {
+			return;                                      // the client's order, which is the list
+		}
+''',
+     ''),
+    (SKILLS, 'by level sorted lowest first',
+     '\t\t\treturn first.virtualLevel < second.virtualLevel;      // highest first',
+     '\t\t\treturn first.virtualLevel > second.virtualLevel;'),
+    (SKILLS, 'by experience sorted least first',
+     '\t\t\treturn first.experience < second.experience;',
+     '\t\t\treturn first.experience > second.experience;'),
+    (SKILLS, 'a maxed skill counted as nearest to a level, so it sorts to the top',
+     '''			long left = first.toNext > 0 ? first.toNext : Long.MAX_VALUE;
+			long other = second.toNext > 0 ? second.toNext : Long.MAX_VALUE;''',
+     '''			long left = first.toNext;
+			long other = second.toNext;'''),
+    (SKILLS, 'closest to a level sorted furthest first',
+     '\t\t\treturn left > other;',
+     '\t\t\treturn left < other;'),
+    (SKILLS, 'the sort made unstable, so ties reshuffle every tick',
+     '\t\t\twhile (at > 0 && after(rows.get(at - 1), moving, by)) {',
+     '\t\t\twhile (at > 0 && !after(moving, rows.get(at - 1), by)) {'),
+    (SKILLS, 'an order nobody recognises sorting by level rather than being left alone',
+     '\t\treturn false;\n\t}\n\n\tSkill row(int index) {',
+     '\t\treturn first.virtualLevel < second.virtualLevel;\n\t}\n\n\tSkill row(int index) {'),
     (SKILLS, 'the progress bar reported as a fraction rather than a percentage',
      'return through >= end - start ? 100 : through * 100 / (end - start);',
      'return through >= end - start ? 100 : through / (end - start);'),
@@ -165,16 +211,117 @@ MUTS = [
 		}
 		StringBuilder out = new StringBuilder();
 		int lead = digits.length() % 3;'''),
+    # ---- TRANCHE FOUR: the six new Boosts settings, the expiry notice and the two skills it may
+    # never name, and the skill filter both this plugin and the Idle notifier ask.
+    (FILTER, '''an empty filter excluding every skill, so an unset box empties the panel''',
+     '''		if (!isFiltering(terms)) {
+			return true;
+		}
+''',
+     ''''''),
+    (FILTER, '''a list of nothing but commas treated as a real filter''',
+     '''		for (int i = 0; i < trimmed.length(); i++) {
+			if (trimmed.charAt(i) != ',' && trimmed.charAt(i) != ' ') {
+				return true;
+			}
+		}
+		return false;''',
+     '''		return trimmed.length() > 0;'''),
+    (FILTER, '''matching by substring, so "tack" matches Attack and one letter matches half the list''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (term.length() > 0 && lower.indexOf(term.toLowerCase()) >= 0) {'''),
+    (FILTER, '''matching made exact, so "wood" no longer finds Woodcutting''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (term.length() > 0 && lower.equals(term.toLowerCase())) {'''),
+    (FILTER, '''matching made case-sensitive, so a typed lower-case term finds nothing''',
+     '''		String lower = skillName.toLowerCase();''',
+     '''		String lower = skillName;'''),
+    (FILTER, '''terms not trimmed, so a space after a comma breaks one''',
+     '''			String term = (comma < 0 ? trimmed.substring(from)
+				: trimmed.substring(from, comma)).trim();''',
+     '''			String term = comma < 0 ? trimmed.substring(from)
+				: trimmed.substring(from, comma);'''),
+    (FILTER, '''an empty term matching everything, so a trailing comma opens the filter up''',
+     '''if (term.length() > 0 && lower.startsWith(term.toLowerCase())) {''',
+     '''if (lower.startsWith(term.toLowerCase())) {'''),
+    (FILTER, '''a missing skill name passing every filter''',
+     '''		if (skillName == null || skillName.length() == 0) {
+			return false;
+		}
+''',
+     ''''''),
+    (BOOSTS, '''the boost colour left hardcoded, so the swatch does nothing''',
+     '''		int boosted = PluginConfig.parseColour(this.boostedColour);''',
+     '''		int boosted = 0x44DD44;'''),
+    (BOOSTS, '''the drain colour left hardcoded''',
+     '''		int drained = PluginConfig.parseColour(this.drainedColour);''',
+     '''		int drained = 0xFF4444;'''),
+    (BOOSTS, '''the filter not applied, so the skills box does nothing''',
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {''',
+     '''			if (!this.isRealSkill(skill)) {'''),
+    (BOOSTS, '''the heading drawn whether the player asked for it or not''',
+     '''		if (this.showTitle) {
+			g.textFlat(''',
+     '''		if (true) {
+			g.textFlat('''),
+    (BOOSTS, '''the heading never drawn, so the panel does not say what it is''',
+     '''		if (this.showTitle) {
+			g.textFlat(''',
+     '''		if (false) {
+			g.textFlat('''),
+    (BOOSTS, '''the box not shrunk when the heading goes, leaving an empty row''',
+     '''		int rows = lines.size() + (this.showTitle ? 1 : 0);''',
+     '''		int rows = lines.size() + 1;'''),
+    (BOOSTS, '''the size ignored, so the drop-down does nothing''',
+     '''		g.setFont(OverlayGraphics.fontFor(this.font));''',
+     '''		g.setFont(OverlayGraphics.FONT_SMALL);'''),
+    (BOOSTS, '''the notice given whether the player asked for it or not''',
+     '''		if (!this.notifyExpired || !this.ctx.isLoggedIn()) {''',
+     '''		if (!this.ctx.isLoggedIn()) {'''),
+    (BOOSTS, '''the notice never given, so the switch does nothing''',
+     '''		if (!this.notifyExpired || !this.ctx.isLoggedIn()) {''',
+     '''		if (true) {'''),
+    (BOOSTS, '''HITPOINTS AND PRAYER NAMED BY THE NOTICE, which is a vital reported out loud''',
+     '''			if (!this.isRealSkill(skill) || isVital(name)
+					|| !SkillFilter.allows(name, this.skills)) {''',
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(name, this.skills)) {'''),
+    (BOOSTS, '''the vital list emptied, so hitpoints and prayer are notified like any stat''',
+     '''return lower.equals("hitpoints") || lower.equals("prayer");''',
+     '''return false;'''),
+    (BOOSTS, '''only hitpoints excluded, leaving prayer notified''',
+     '''return lower.equals("hitpoints") || lower.equals("prayer");''',
+     '''return lower.equals("hitpoints");'''),
+    (BOOSTS, '''the vital check made case-sensitive, so a differently-cased cache slips through''',
+     '''		String lower = skillName.toLowerCase();
+		return lower.equals("hitpoints")''',
+     '''		String lower = skillName;
+		return lower.equals("hitpoints")'''),
+    (BOOSTS, '''a drain notified as a boost wearing off, which is a stat coming back''',
+     '''			if (this.ctx.getSkillLevel(skill) > this.ctx.getBaseLevel(skill)) {''',
+     '''			if (this.ctx.getSkillLevel(skill) != this.ctx.getBaseLevel(skill)) {'''),
+    (BOOSTS, '''the first tick announcing every boost already running''',
+     '''			} else if (this.scanned && this.wasBoosted.indexOf(key) >= 0) {''',
+     '''			} else if (this.wasBoosted.indexOf(key) >= 0) {'''),
+    (BOOSTS, '''nothing ever counting as a first tick, so no expiry is ever reported''',
+     '''		this.scanned = true;''',
+     ''''''),
+    (BOOSTS, '''what was boosted not remembered, so an expiry is announced every tick''',
+     '''		this.wasBoosted = now.toString();''',
+     ''''''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (BOOSTS, SKILLS):
+    for path in (BOOSTS, SKILLS, FILTER):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
-    guard(orig)
+    # Written into a copy, never into the working tree - see mutate_guard.workspace.
+    _work, inside = workspace('skilltest')
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
@@ -186,16 +333,16 @@ def main():
             bad += 1
             continue
         try:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path].replace(find, repl))
-            r = subprocess.run([sys.executable, RUNNER], capture_output=True, text=True,
+            r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True,
                                timeout=600)
         except subprocess.TimeoutExpired:
             print('  %-5s %-74s %s' % ('HUNG', why, 'the suite never finished - not a catch'))
             loose += 1
             continue
         finally:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path])
         fired = [l.strip()[5:].strip() for l in r.stdout.split('\n') if l.startswith('FAIL')]
         if r.returncode == 0:

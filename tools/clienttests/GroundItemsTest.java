@@ -689,29 +689,29 @@ public class GroundItemsTest {
 		// ONE CHARACTER, EITHER CASE EITHER WAY ROUND. The client delivers a lowercase g when
 		// nobody is holding shift, so a setting of "G" has to answer to it or a hotkey typed in
 		// capitals would simply never fire.
-		check(GroundItemsPlugin.hotkeyCode("g") == 'g', "a lowercase key is itself");
-		check(GroundItemsPlugin.hotkeyCode("G") == 'g', "and an uppercase one is the same key");
-		check(GroundItemsPlugin.hotkeyCode(" g ") == 'g', "whitespace round it is forgiven");
-		check(GroundItemsPlugin.hotkeyCode("4") == '4', "a digit is a key too");
+		check(Hotkey.code("g") == 'g', "a lowercase key is itself");
+		check(Hotkey.code("G") == 'g', "and an uppercase one is the same key");
+		check(Hotkey.code(" g ") == 'g', "whitespace round it is forgiven");
+		check(Hotkey.code("4") == '4', "a digit is a key too");
 
 		// F-keys are the client's own range, 1008 for F1, as KeyPressed documents.
-		check(GroundItemsPlugin.hotkeyCode("F1") == 1008, "F1 is the client's 1008");
-		check(GroundItemsPlugin.hotkeyCode("f12") == 1019, "and F12 its 1019, in either case");
-		check(GroundItemsPlugin.hotkeyCode("F13") == -1, "there is no F13");
-		check(GroundItemsPlugin.hotkeyCode("F0") == -1, "nor an F0");
+		check(Hotkey.code("F1") == 1008, "F1 is the client's 1008");
+		check(Hotkey.code("f12") == 1019, "and F12 its 1019, in either case");
+		check(Hotkey.code("F13") == -1, "there is no F13");
+		check(Hotkey.code("F0") == -1, "nor an F0");
 
 		// No hotkey is the default, and anything unreadable is no hotkey rather than a throw.
 		// "F" ON ITS OWN IS THE LETTER F, not a malformed function key - a player typing one
 		// character means that character, and only F1 to F12 are the function keys. Asserted
 		// because it is the ambiguous case, and because my first version of this list had it
 		// down as unreadable.
-		check(GroundItemsPlugin.hotkeyCode("F") == 'f', "F on its own is the letter F");
+		check(Hotkey.code("F") == 'f', "F on its own is the letter F");
 		String[] none = { null, "", "   ", "Ctrl", "shift", "Fx", "F-1", "gg", "++" };
 		for (int i = 0; i < none.length; i++) {
 			boolean threw = false;
 			int got = 0;
 			try {
-				got = GroundItemsPlugin.hotkeyCode(none[i]);
+				got = Hotkey.code(none[i]);
 			} catch (Throwable broke) {
 				threw = true;
 			}
@@ -1315,7 +1315,12 @@ public class GroundItemsTest {
 		check(setting("menuDeprioritiseHidden") != null
 				&& setting("menuDeprioritiseHidden").isBoolean(),
 			"...and so is moving them to the bottom");
-		check(PluginApi.LEVEL == 6, "this client is API level 6 (" + PluginApi.LEVEL + ")");
+		// The level menu restyling needs, not the level the client is at: that pin moves with
+		// each addition and belongs to the newest suite, which is MouseTest now. What this one
+		// has to keep true is that a plugin written against 6 still runs here.
+		check(PluginApi.LEVEL >= 6,
+			"this client is at least API level 6 (" + PluginApi.LEVEL + ")");
+		check(PluginApi.supports(6), "a plugin asking for 6 runs here");
 		check(read("src/main/java/jagex2/client/plugin/builtin/GroundItemsPlugin.java")
 				.indexOf("apiLevel = 6") >= 0,
 			"...and the plugin declares the level it needs, so an older client refuses it rather "
@@ -1767,7 +1772,10 @@ public class GroundItemsTest {
 		java.util.Arrays.fill(pixels, 0);
 		Pix2D.bind(W, H, pixels);
 		manager.renderOverlays(W, H, Overlay.LAYER_SCENE);
-		return font.rows;
+		// A COPY. No check here holds two frames at once, but returning the font's own list means
+		// the next frame clears and refills the same object - so the day one does, "it changed"
+		// could never be false. XpDropsTest lost a check to exactly that.
+		return new ArrayList<Drawn>(font.rows);
 	}
 
 	static GroundItem item(String name, int count, int price) {

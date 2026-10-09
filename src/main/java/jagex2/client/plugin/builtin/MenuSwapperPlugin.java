@@ -1,6 +1,8 @@
 package jagex2.client.plugin.builtin;
 
 import jagex2.client.MenuSwaps;
+import jagex2.client.plugin.ConfigItem;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
@@ -30,9 +32,29 @@ import jagex2.client.plugin.event.SettingsMenuOpening;
 	description = "Shift-right-click something to choose what left-clicking it does",
 	key = "menu-swapper",
 	enabledByDefault = true,
-	legacySetting = "menu_swapper"
+	legacySetting = "menu_swapper",
+	apiLevel = 6
 )
 public final class MenuSwapperPlugin extends Plugin {
+
+	/**
+	 * Colour the row a swap put at the top, so a player can see which one it was.
+	 *
+	 * THE ONE THING THIS PLUGIN COULD NOT DO BEFORE level 6 existed. A swap is invisible by
+	 * design - the whole point is that the option is simply there under the left button - and
+	 * that is also what makes a wrong swap hard to find: the menu looks normal and the click
+	 * does the wrong thing. Colouring the promoted row answers "is this mine" without changing
+	 * what any row says or does.
+	 */
+	@ConfigItem(keyName = "colourSwapped", name = "Colour the row a swap promoted")
+	public boolean colourSwapped = false;
+
+	@ConfigItem(keyName = "swapColour", name = "That colour", colour = true)
+	public String swapColour = "00FFFF";
+
+	@ConfigItem(keyName = "announce", name = "Say so in chat when a swap is set or removed",
+		description = "Off is quieter; the swaps list on this page still shows them")
+	public boolean announce = true;
 
 	protected void startUp() {
 		this.addConfigList("Swaps", new ConfigList() {
@@ -136,7 +158,7 @@ public final class MenuSwapperPlugin extends Plugin {
 
 				public void run() {
 					MenuSwaps.remove(target.kind, target.name);
-					MenuSwapperPlugin.this.ctx.addChatMessage(
+					MenuSwapperPlugin.this.say(
 						"Left-click on " + target.name + " is back to normal.");
 				}
 			});
@@ -157,8 +179,10 @@ public final class MenuSwapperPlugin extends Plugin {
 
 	private void set(String kind, String target, String verb) {
 		if (MenuSwaps.add(kind, target, verb)) {
-			this.ctx.addChatMessage(verb + " is now the left-click on " + target + ".");
+			this.say(verb + " is now the left-click on " + target + ".");
 		} else {
+			// NOT behind the switch: "nothing happened" needs a reason, and a full list is
+			// the one case where silence would be a player pressing a row that does nothing.
 			this.ctx.addChatMessage("You can only have " + MenuSwaps.MAX
 				+ " left-click swaps. Remove one from the plugin's settings first.");
 		}
@@ -231,6 +255,26 @@ public final class MenuSwapperPlugin extends Plugin {
 			return;
 		}
 		this.ctx.setLeftClick(best);
+		// COLOURED AFTER THE SWAP, not before: setLeftClick moves the row to the top, and a
+		// colour set on the index it came from would land on whatever took its place. The index
+		// a left click runs is where it is now.
+		if (this.colourSwapped) {
+			this.ctx.setMenuColour(this.ctx.getLeftClickIndex(),
+				PluginConfig.parseColour(this.swapColour));
+		}
+	}
+
+	/**
+	 * A chat line, unless the player has turned them off.
+	 *
+	 * The "you can only have 128" line deliberately does not come through here: that one is the
+	 * answer to a row that did nothing, and a silent failure is the one thing worse than a
+	 * chatty success.
+	 */
+	private void say(String message) {
+		if (this.announce) {
+			this.ctx.addChatMessage(message);
+		}
 	}
 
 	/** Rule a beats rule b: an exact target first, then whichever was set earlier. */

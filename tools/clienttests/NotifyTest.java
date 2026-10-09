@@ -293,7 +293,144 @@ public class NotifyTest {
 		}
 		check(messages() == before, "zero seconds turns it off");
 
+		// ---- THE THREE NEW SETTINGS. Defaults first: the behaviour this shipped with.
+		check(plugin.skills.length() == 0, "no skill filter out of the box");
+		check(plugin.repeatSeconds == 0,
+			"and it says it ONCE, which is the argument the rest of the plugin is built on");
+		check(!plugin.warnWithoutGaining,
+			"and will not warn before you have trained, which is the other one");
+
+		// ---- ONLY THESE SKILLS. "Warn me when I stop fishing" must not be re-armed by the
+		// combat experience from whatever is attacking you while you fish.
+		plugin.idleSeconds = 1;
+		plugin.skills = "fishing";
+		plugin.warnWithoutGaining = false;
+		plugin.repeatSeconds = 0;
+		// Index 10 is fishing, 0 is attack - see jagex2.client.Stats.
+		plugin.onStatChanged(new jagex2.client.plugin.event.StatChanged(10, 50, 5000, 100));
+		pause();
+		before = messages();
+		for (int i = 0; i < 10; i++) {
+			plugin.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+			if (i % 2 == 0) {
+				// Attack xp arriving throughout, which the filter must ignore.
+				plugin.onStatChanged(
+					new jagex2.client.plugin.event.StatChanged(0, 50, 6000 + i, 50));
+			}
+		}
+		check(messages() > before,
+			"with a fishing filter, attack experience does not keep the clock from running out");
+
+		// ...and the filtered skill's own experience does.
+		plugin.onStatChanged(new jagex2.client.plugin.event.StatChanged(10, 50, 7000, 100));
+		plugin.idleSeconds = 3;
+		pause();
+		before = messages();
+		for (int i = 0; i < 10; i++) {
+			plugin.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+			if (i % 2 == 0) {
+				plugin.onStatChanged(
+					new jagex2.client.plugin.event.StatChanged(10, 50, 7000 + i, 50));
+			}
+		}
+		check(messages() == before, "...while fishing experience does");
+		plugin.skills = "";
+		plugin.idleSeconds = 1;
+
+		// ---- WARN WITHOUT HAVING TRAINED. Off, the plugin waits for a first gain; on, it is a
+		// plain "you are not training" timer from the moment you log in.
+		IdleNotifierPlugin fresh = freshIdle();
+		fresh.idleSeconds = 1;
+		pause();
+		before = messages();
+		for (int i = 0; i < 10; i++) {
+			fresh.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+		}
+		check(messages() == before, "a session with no gain yet still says nothing");
+		fresh.warnWithoutGaining = true;
+		pause();
+		before = messages();
+		for (int i = 0; i < 10; i++) {
+			fresh.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+		}
+		check(messages() > before, "...until a player asks for the plain timer");
+
+		// ---- REPEATING, which is a wind-back of the one counter rather than a second timer.
+		check(IdleNotifierPlugin.repeatFrom(3, 0) == IdleNotifierPlugin.ticksFor(3),
+			"with no repeat the counter is left at the threshold, so only disarming stops it");
+		check(IdleNotifierPlugin.repeatFrom(10, 3)
+				== IdleNotifierPlugin.ticksFor(10) - IdleNotifierPlugin.ticksFor(3),
+			"with a repeat it winds back by the repeat interval");
+		check(IdleNotifierPlugin.repeatFrom(1, 10) == 0,
+			"a repeat longer than the threshold winds back to zero rather than past it");
+		check(IdleNotifierPlugin.repeatFrom(3, -5) == IdleNotifierPlugin.ticksFor(3),
+			"and a negative repeat is no repeat");
+
+		// Driven: with a repeat set it speaks more than once without another gain.
+		IdleNotifierPlugin repeater = freshIdle();
+		repeater.idleSeconds = 1;
+		repeater.repeatSeconds = 1;
+		repeater.onStatChanged(new jagex2.client.plugin.event.StatChanged(0, 50, 9000, 100));
+		int said = 0;
+		for (int round = 0; round < 3; round++) {
+			pause();
+			before = messages();
+			for (int i = 0; i < 6; i++) {
+				repeater.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+			}
+			if (messages() > before) {
+				said++;
+			}
+		}
+		check(said >= 2,
+			"with a repeat set it says it again while still idle, without another gain ("
+				+ said + " of 3 rounds)");
+
+		// And with no repeat, the same drive says it once. The pause between rounds is what
+		// makes this mean something: the notification limiter would hide a second warning
+		// anyway, so without waiting it out both settings would look identical.
+		IdleNotifierPlugin once = freshIdle();
+		once.idleSeconds = 1;
+		once.repeatSeconds = 0;
+		once.onStatChanged(new jagex2.client.plugin.event.StatChanged(0, 50, 9500, 100));
+		said = 0;
+		for (int round = 0; round < 3; round++) {
+			pause();
+			before = messages();
+			for (int i = 0; i < 6; i++) {
+				once.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+			}
+			if (messages() > before) {
+				said++;
+			}
+		}
+		check(said == 1, "with no repeat it says it exactly once (" + said + " of 3 rounds)");
+
 		manager.setEnabled(entry, false);
+	}
+
+	/**
+	 * A second Idle notifier, attached but not registered on the bus.
+	 *
+	 * Needed because `armed` and the tick counter are per plugin and there is no way to reset
+	 * them from outside - which is right, they are not settings. A fresh instance is the honest
+	 * way to test a fresh session, and driving its handlers directly is what the checks above
+	 * already do to the real one.
+	 */
+	static IdleNotifierPlugin freshIdle() {
+		IdleNotifierPlugin made = new IdleNotifierPlugin();
+		try {
+			java.lang.reflect.Method attach = jagex2.client.plugin.Plugin.class
+				.getDeclaredMethod("attach", jagex2.client.plugin.PluginContext.class,
+					jagex2.client.plugin.PluginConfig.class);
+			attach.setAccessible(true);
+			java.lang.reflect.Field ctx = PluginManager.class.getDeclaredField("ctx");
+			ctx.setAccessible(true);
+			attach.invoke(made, ctx.get(manager), null);
+		} catch (Throwable error) {
+			check(false, "cannot attach a fresh Idle notifier (" + error + ")");
+		}
+		return made;
 	}
 
 	// ---------------------------------------------------------------- the plumbing

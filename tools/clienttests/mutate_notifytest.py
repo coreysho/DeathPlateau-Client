@@ -15,12 +15,13 @@ import os
 import subprocess
 import sys
 
-# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
-# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
-# the tree where the next commit would have shipped it. mutate_guard also has the standalone
-# check that every pattern still matches its source exactly once.
+# THE WORKING TREE IS NEVER WRITTEN. Mutations go into a throwaway copy of the repository, so
+# the tree stays clean and committable for the whole run and a kill at the worst moment leaves a
+# broken file in a temp directory nobody builds from. It is a snapshot too: an edit to the tree
+# mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
+# standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -28,6 +29,7 @@ CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.j
 IDLE = os.path.join(ROOT,
                     'src/main/java/jagex2/client/plugin/builtin/IdleNotifierPlugin.java')
 NOTIFIER = os.path.join(ROOT, 'src/main/java/jagex2/client/Notifier.java')
+FILTER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/SkillFilter.java')
 RUNNER = os.path.join(HERE, 'run_notifytest.py')
 
 MUTS = [
@@ -104,15 +106,14 @@ MUTS = [
      '\t\tthis.armed = false;\n\t\tthis.sinceGain = 0;',
      '\t\tthis.armed = true;\n\t\tthis.sinceGain = 0;'),
     (IDLE, 'the notifier left armed after firing, so it repeats every tick',
-     '''		this.armed = false;
-	}
-
-	/** How many game ticks a number of seconds is''',
-     '''	}
-
-	/** How many game ticks a number of seconds is'''),
+     '''		this.sinceGain = repeatFrom(this.idleSeconds, this.repeatSeconds);
+		this.armed = false;
+	}''',
+     '''		this.sinceGain = repeatFrom(this.idleSeconds, this.repeatSeconds);
+	}'''),
     (IDLE, 'the clock not reset by a gain, so it fires in the middle of training',
-     '''		if (event.gained > 0) {
+     '''		if (event.gained > 0
+				&& SkillFilter.allows(this.ctx.getSkillName(event.skill), this.skills)) {
 			this.sinceGain = 0;
 			this.armed = true;
 		}''',
@@ -120,8 +121,8 @@ MUTS = [
 			this.armed = true;
 		}'''),
     (IDLE, 'zero seconds not turning it off',
-     'if (!this.ctx.isLoggedIn() || this.idleSeconds <= 0 || !this.armed) {',
-     'if (!this.ctx.isLoggedIn() || !this.armed) {'),
+     'if (!this.ctx.isLoggedIn() || this.idleSeconds <= 0) {',
+     'if (!this.ctx.isLoggedIn()) {'),
     (IDLE, 'seconds read as ticks, so every wait is most of a minute short',
      'return (seconds * 1000 + TICK_MS - 1) / TICK_MS;',
      'return seconds;'),
@@ -131,16 +132,48 @@ MUTS = [
     (IDLE, 'the wait compared the wrong way, so it fires on the next tick',
      'if (this.sinceGain < ticksFor(this.idleSeconds)) {',
      'if (this.sinceGain > ticksFor(this.idleSeconds)) {'),
+    # ---- TRANCHE FOUR: the skill filter, the plain timer, and the repeat - which is a wind-back
+    # of the one counter this plugin keeps rather than a second timer.
+    (IDLE, '''the skill filter not applied, so any experience re-arms the clock''',
+     '''		if (event.gained > 0
+				&& SkillFilter.allows(this.ctx.getSkillName(event.skill), this.skills)) {''',
+     '''		if (event.gained > 0) {'''),
+    (IDLE, '''the warning given before a player has trained at all''',
+     '''		if (!this.armed && !this.warnWithoutGaining && this.repeatSeconds <= 0) {''',
+     '''		if (false) {'''),
+    (IDLE, '''the plain timer never reached, so the setting does nothing''',
+     '''		if (!this.armed && !this.warnWithoutGaining && this.repeatSeconds <= 0) {''',
+     '''		if (!this.armed) {'''),
+    (IDLE, '''the repeat never reached, so it only ever says it once''',
+     '''		if (!this.armed && !this.warnWithoutGaining && this.repeatSeconds <= 0) {''',
+     '''		if (!this.armed && !this.warnWithoutGaining) {'''),
+    (IDLE, '''the counter not wound back, so a repeat fires every tick''',
+     '''		this.sinceGain = repeatFrom(this.idleSeconds, this.repeatSeconds);''',
+     '''		this.sinceGain = 0;'''),
+    (IDLE, '''the counter left short of the threshold with no repeat, so it fires again anyway''',
+     '''		if (repeatSeconds <= 0) {
+			return threshold;
+		}
+''',
+     ''''''),
+    (IDLE, '''a repeat longer than the threshold winding back past zero''',
+     '''		return back < 0 ? 0 : back;''',
+     '''		return back;'''),
+    (IDLE, '''the repeat interval ignored, so it repeats at the idle threshold instead''',
+     '''		int back = threshold - ticksFor(repeatSeconds);''',
+     '''		int back = 0;'''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (CONTEXT, IDLE, NOTIFIER):
+    for path in (CONTEXT, IDLE, NOTIFIER, FILTER):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
-    guard(orig)
+    # Written into a copy, never into the working tree - see mutate_guard.workspace.
+    _work, inside = workspace('notifytest')
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
@@ -152,16 +185,16 @@ def main():
             bad += 1
             continue
         try:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path].replace(find, repl))
-            r = subprocess.run([sys.executable, RUNNER], capture_output=True, text=True,
+            r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True,
                                timeout=900)
         except subprocess.TimeoutExpired:
             print('  %-5s %-74s %s' % ('HUNG', why, 'the suite never finished - not a catch'))
             loose += 1
             continue
         finally:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path])
         fired = [l.strip()[5:].strip() for l in r.stdout.split('\n') if l.startswith('FAIL')]
         if r.returncode == 0:

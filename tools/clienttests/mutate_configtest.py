@@ -15,12 +15,13 @@ import os
 import subprocess
 import sys
 
-# THE SOURCE GOES BACK EVEN IF THIS PROCESS IS KILLED. The `finally` below covers a run that
-# fails or times out; a SIGTERM skips it entirely, and a kill once left a mutation sitting in
-# the tree where the next commit would have shipped it. mutate_guard also has the standalone
-# check that every pattern still matches its source exactly once.
+# THE WORKING TREE IS NEVER WRITTEN. Mutations go into a throwaway copy of the repository, so
+# the tree stays clean and committable for the whole run and a kill at the worst moment leaves a
+# broken file in a temp directory nobody builds from. It is a snapshot too: an edit to the tree
+# mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
+# standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import guard  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -143,18 +144,12 @@ MUTS = [
      ''),
 
     # ---- ONE IMPLEMENTATION. The swatch and the drawing have to agree.
-    (MOUSE, 'the built-in keeping its own colour parse again, free to drift from the swatch',
-     'return PluginConfig.parseColour(text);',
-     '''if (text == null || text.trim().length() != 6) {
-			return 0xFFFF00;
-		}
-		try {
-			return Integer.parseInt(text.trim(), 16);
-		} catch (RuntimeException notHex) {
-			return 0xFFFF00;
-		}'''),
-
-    # ---- WHAT THE DROP-DOWN DRIVES.
+    # "the built-in keeping its own colour parse again" lived here and is gone with the
+    # delegate it mutated: MouseHighlightPlugin.parseColour was a one-line call through to
+    # PluginConfig's, and an uncalled indirection is a place for a second implementation to
+    # appear. Both callers say PluginConfig.parseColour themselves now. The promise - that no
+    # built-in grows its own parse - is kept by the source check in ConfigTest, which can state
+    # it for EVERY built-in rather than for the one that happened to have a delegate.
     (PLUGIN, 'an unknown tag position putting the tag on the ground rather than defaulting',
      '''		if (AT_FEET.equals(position)) {
 			return 0;
@@ -188,7 +183,8 @@ def main():
     for path in (CONFIG, PANEL, PLUGIN, MOUSE):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
-    guard(orig)
+    # Written into a copy, never into the working tree - see mutate_guard.workspace.
+    _work, inside = workspace('configtest')
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
@@ -200,16 +196,16 @@ def main():
             bad += 1
             continue
         try:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path].replace(find, repl))
-            r = subprocess.run([sys.executable, RUNNER], capture_output=True, text=True,
+            r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True,
                                timeout=600)
         except subprocess.TimeoutExpired:
             print('  %-5s %-76s %s' % ('HUNG', why, 'the suite never finished - not a catch'))
             loose += 1
             continue
         finally:
-            with open(path, 'w', encoding='utf-8', newline='') as f:
+            with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path])
         fired = [l.strip()[5:].strip() for l in r.stdout.split('\n') if l.startswith('FAIL')]
         if r.returncode == 0:

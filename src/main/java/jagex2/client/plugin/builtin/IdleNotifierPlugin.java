@@ -56,6 +56,33 @@ public final class IdleNotifierPlugin extends Plugin {
 		description = "-1 for silence. Use the Test row to find one this cache has")
 	public int soundId = -1;
 
+	@ConfigItem(keyName = "skills", name = "Only count these skills, comma separated",
+		description = "Part of a name is enough. Blank is any experience at all")
+	public String skills = "";
+
+	/**
+	 * Say it again every this many seconds while still idle. 0 says it once.
+	 *
+	 * ZERO BY DEFAULT, because a warning that repeats while a condition holds is a warning
+	 * nobody reads - which is the argument the rest of this plugin is built on and is not
+	 * weakened by offering the choice. It is here for the case the one-shot does not cover: a
+	 * player who alt-tabbed away and wants telling again when they look back.
+	 */
+	@ConfigItem(keyName = "repeatSeconds", name = "Repeat every this many seconds",
+		description = "0 says it once and waits for the next gain")
+	public int repeatSeconds = 0;
+
+	/**
+	 * Warn even if no experience has been gained this session.
+	 *
+	 * Off, because standing in a bank having gained nothing all session is not having STOPPED
+	 * training, and a notifier that cannot tell the difference tells you the moment you log in.
+	 * On, it is a plain "you are not training" timer, which is what someone who logs in to do one
+	 * thing may actually want.
+	 */
+	@ConfigItem(keyName = "warnWithoutGaining", name = "Warn without having trained first")
+	public boolean warnWithoutGaining = false;
+
 	/**
 	 * False until experience has been gained at least once.
 	 *
@@ -80,7 +107,10 @@ public final class IdleNotifierPlugin extends Plugin {
 
 	@Subscribe
 	public void onStatChanged(StatChanged event) {
-		if (event.gained > 0) {
+		// Filtered, so "warn me when I stop fishing" is not re-armed by the combat experience
+		// from whatever is attacking you while you fish.
+		if (event.gained > 0
+				&& SkillFilter.allows(this.ctx.getSkillName(event.skill), this.skills)) {
 			this.sinceGain = 0;
 			this.armed = true;
 		}
@@ -88,7 +118,13 @@ public final class IdleNotifierPlugin extends Plugin {
 
 	@Subscribe
 	public void onGameTick(GameTick event) {
-		if (!this.ctx.isLoggedIn() || this.idleSeconds <= 0 || !this.armed) {
+		if (!this.ctx.isLoggedIn() || this.idleSeconds <= 0) {
+			return;
+		}
+		// ARMED, or asked to warn without having trained, or already warned once and asked to
+		// repeat. The third is why this is not simply `armed`: a warning sets it false, and a
+		// repeat has to survive that.
+		if (!this.armed && !this.warnWithoutGaining && this.repeatSeconds <= 0) {
 			return;
 		}
 		this.sinceGain++;
@@ -100,7 +136,29 @@ public final class IdleNotifierPlugin extends Plugin {
 		if (this.soundId >= 0) {
 			this.ctx.playSound(this.soundId);
 		}
+		// REPEATING IS A WIND-BACK, not a second timer. Setting the counter to the repeat
+		// interval short of the threshold means the next warning is repeatSeconds away and
+		// nothing else has to be tracked - and with a 0 repeat the counter stays past the
+		// threshold, so disarming is what stops it rather than the arithmetic.
+		this.sinceGain = repeatFrom(this.idleSeconds, this.repeatSeconds);
 		this.armed = false;
+	}
+
+	/**
+	 * What the tick counter becomes after a warning.
+	 *
+	 * With no repeat, the counter is left at the threshold: it has already fired and `armed` is
+	 * what stops it firing again, so the number only has to not go backwards. With a repeat, it
+	 * winds back to repeatSeconds short of the threshold, which is the next warning's due time
+	 * expressed in the one counter this plugin keeps.
+	 */
+	static int repeatFrom(int idleSeconds, int repeatSeconds) {
+		int threshold = ticksFor(idleSeconds);
+		if (repeatSeconds <= 0) {
+			return threshold;
+		}
+		int back = threshold - ticksFor(repeatSeconds);
+		return back < 0 ? 0 : back;
 	}
 
 	/** How many game ticks a number of seconds is, rounded up so "5 seconds" is never four. */

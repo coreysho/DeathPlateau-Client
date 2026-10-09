@@ -319,6 +319,18 @@ public final class PluginContext {
 
 	// ------------------------------------------------------------------ the right-click menu
 
+	/**
+	 * Whether the right-click menu is open on screen.
+	 *
+	 * Not "is there a menu" - there is always a menu, rebuilt every frame as the list of options
+	 * a click would produce. This is whether the player has one OPEN in front of them, which is
+	 * the question an overlay near the cursor has to ask: while a menu is open, the thing a LEFT
+	 * click would do is not the thing the player is about to do.
+	 */
+	public boolean isMenuOpen() {
+		return this.client.menuVisible;
+	}
+
 	/** Number of entries, including "Cancel" at index 0. */
 	public int getMenuSize() {
 		return this.client.menuSize;

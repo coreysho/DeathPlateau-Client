@@ -5,6 +5,7 @@ import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
 import jagex2.client.plugin.event.ClientTick;
+import jagex2.client.plugin.event.KeyPressed;
 
 /**
  * An item only starts dragging once you have held it down for a moment.
@@ -33,7 +34,8 @@ import jagex2.client.plugin.event.ClientTick;
 	description = "An item only drags once you have held it down for a moment",
 	key = "anti-drag",
 	enabledByDefault = true,
-	legacySetting = "anti_drag"
+	legacySetting = "anti_drag",
+	apiLevel = 2
 )
 public final class AntiDragPlugin extends Plugin {
 
@@ -50,8 +52,48 @@ public final class AntiDragPlugin extends Plugin {
 	)
 	public int holdMillis = 200;
 
+	/**
+	 * Hold shift and the client's own hold time is back for as long as you hold it.
+	 *
+	 * SHIFT BECAUSE SHIFT ALREADY MEANS "the quick way" here: shift-click drops, and
+	 * shift-right-click is the settings menu. Someone laying out an inventory wants the delay;
+	 * someone mid-shift-drop wants it out of the way, and their hand is already on the key.
+	 */
+	@ConfigItem(keyName = "resetOnShift", name = "Hold shift for the normal hold time")
+	public boolean resetOnShift = true;
+
+	/**
+	 * A key that turns the whole thing off until pressed again.
+	 *
+	 * For the session, not the settings file: a key pressed once by accident should not be a
+	 * change to what a player saved. Same reasoning as the Ground items label hotkey, and the
+	 * same parse - see Hotkey.
+	 */
+	@ConfigItem(keyName = "suspendKey", name = "Key that suspends it",
+		description = "One character, or F1 to F12. Blank for none")
+	public String suspendKey = "";
+
+	/**
+	 * Say in chat when that key is pressed.
+	 *
+	 * ON, unlike the Ground items hotkey, because this feature has no visible state. Hiding the
+	 * ground labels is its own feedback - they disappear - whereas a suspended drag delay looks
+	 * exactly like a live one until you try to drag something, by which point you have already
+	 * dropped it in the wrong slot.
+	 */
+	@ConfigItem(keyName = "announce", name = "Say so in chat when it is suspended")
+	public boolean announce = true;
+
+	/** Suspended by the key, for this session only. NOT a setting - see suspendKey. */
+	private boolean suspended;
+
+	// NO isSuspended() ACCESSOR. There was one, "package-visible for the test", and the test
+	// does not need it: what the client drags by is client.pluginDragCycles, which the next
+	// frame sets from this - so the question can be asked of the thing that answers it. An
+	// accessor existing only to be read by a test is API nobody asked for.
+
 	/** What the client does on its own, and what it goes back to when this is turned off. */
-	private static final int CLIENT_DEFAULT_CYCLES = 5;
+	static final int CLIENT_DEFAULT_CYCLES = 5;
 
 	private static final int MILLIS_PER_CYCLE = 20;
 
@@ -80,8 +122,34 @@ public final class AntiDragPlugin extends Plugin {
 		this.apply();
 	}
 
+	@Subscribe
+	public void onKeyPressed(KeyPressed event) {
+		if (!Hotkey.pressed(this.suspendKey, event.key)) {
+			return;
+		}
+		event.consume();
+		this.suspended = !this.suspended;
+		if (this.announce) {
+			this.ctx.addChatMessage(this.suspended
+				? "Anti-drag is off until you press that again."
+				: "Anti-drag is back on.");
+		}
+	}
+
 	private void apply() {
-		this.ctx.setDragDelay(cyclesFor(this.holdMillis));
+		this.ctx.setDragDelay(delayFor(this.holdMillis, this.suspended,
+			this.resetOnShift && this.ctx.isShiftHeld()));
+	}
+
+	/**
+	 * The hold time to hand the client, in cycles.
+	 *
+	 * Pure, because this is the whole feature: three ways to end up at the client's own figure
+	 * and one to end up at the player's, and getting the precedence wrong gives a plugin that
+	 * looks on and does nothing.
+	 */
+	static int delayFor(int millis, boolean suspended, boolean shiftHeld) {
+		return suspended || shiftHeld ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);
 	}
 
 	/** The hold time in client cycles, clamped so a nonsense value cannot wedge dragging. */

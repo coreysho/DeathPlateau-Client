@@ -35,6 +35,36 @@ public final class OverlayGraphics {
 	public static final int FONT_NORMAL = 1;  // plain 12
 	public static final int FONT_BOLD = 2;    // bold 12
 
+	/**
+	 * The three sizes as a player picks them, for {@code @ConfigItem(choices = FONT_CHOICES)}.
+	 *
+	 * HERE RATHER THAN IN EACH PLUGIN, because a drop-down whose entries no branch matches is a
+	 * control that silently does nothing and the compiler cannot see it - both sides are strings.
+	 * Two plugins had their own copy of these three words and their own parse of them; one list
+	 * and one parse cannot disagree.
+	 */
+	public static final String FONT_CHOICE_NORMAL = "Normal";
+	public static final String FONT_CHOICE_BOLD = "Bold";
+	public static final String FONT_CHOICE_SMALL = "Small";
+
+	public static final String[] FONT_CHOICES = {
+		FONT_CHOICE_NORMAL, FONT_CHOICE_BOLD, FONT_CHOICE_SMALL
+	};
+
+	/**
+	 * One of {@link #FONT_CHOICES} as a font constant, falling back to plain 12.
+	 *
+	 * Anything unreadable is the fallback rather than an exception: this is called from render,
+	 * per frame, and a setting left behind by a release that offered a fourth size must not throw
+	 * out of a draw.
+	 */
+	public static int fontFor(String choice) {
+		if (FONT_CHOICE_BOLD.equals(choice)) {
+			return FONT_BOLD;
+		}
+		return FONT_CHOICE_SMALL.equals(choice) ? FONT_SMALL : FONT_NORMAL;
+	}
+
 	private final PixFont small;
 	private final PixFont normal;
 	private final PixFont bold;

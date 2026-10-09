@@ -22,6 +22,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import jagex2.client.Client;
+import jagex2.client.plugin.OverlayGraphics;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
 import jagex2.dash3d.ClientPlayer;
 import jagex2.graphics.PixFont;
@@ -65,10 +67,16 @@ public class SkillPluginsTest {
 		boostTests();
 		System.out.println();
 		System.out.println("2. Skills: the experience curve, past where the client's table ends");
+		System.out.println("1b. only these skills");
+		filterTests();
+		System.out.println();
 		curveTests();
 		System.out.println();
 		System.out.println("3. Skills: the combat level, and the page");
 		skillsPageTests();
+		System.out.println();
+		System.out.println("3b. the order the page is in");
+		sortTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
@@ -172,8 +180,228 @@ public class SkillPluginsTest {
 		check(drawnText().isEmpty(), "logged out, the panel is gone rather than frozen");
 		client.ingame = true;
 
+		// ---- WHAT THIS PANEL ALREADY REPORTS, established rather than assumed.
+		//
+		// In 377 the server sends a skill's CURRENT level in UPDATE_STAT, and for hitpoints that
+		// is current health - so a damaged player's hitpoints read below their base the same way
+		// a drained stat does. This check exists to record what the panel does today, because
+		// plugins/README.md says this server reports no health, prayer or special attack and
+		// "the tests check for their absence". Whether a drained-looking Hitpoints row is within
+		// that rule or outside it is a decision, not a bug to quietly fix, so the behaviour is
+		// pinned here and named for what it is.
+		levelAll(50);
+		client.skillLevel[3] = 35;        // hitpoints: damaged, in the client's own terms
+		rows = drawnText();
+		boolean healthShown = find(rows, "Hitpoints 35/50") != null;
+		check(healthShown,
+			"TODAY the panel lists a damaged Hitpoints like any other drained stat ("
+				+ texts(rows) + ")");
+		levelAll(50);
+
+		// ...and the one thing that is NOT a decision: the new notice never speaks about them.
+		check(BoostsPlugin.isVital("hitpoints") && BoostsPlugin.isVital("prayer"),
+			"hitpoints and prayer are the two the expiry notice never mentions");
+		check(BoostsPlugin.isVital("HITPOINTS"), "...whatever case the cache names them in");
+		check(!BoostsPlugin.isVital("attack") && !BoostsPlugin.isVital("strength")
+				&& !BoostsPlugin.isVital("magic"),
+			"...and nothing else is excluded, because everything else is a potion wearing off");
+		check(!BoostsPlugin.isVital(null), "...and a missing name is not a vital");
+
+        // ---- THE SIX NEW SETTINGS. Defaults first, before anything writes them: they are the
+		// values that were hardcoded, so a player who upgrades sees what they saw.
+		check(text(boosts, "boostedColour").equals(BoostsPlugin.DEFAULT_BOOSTED)
+				&& text(boosts, "drainedColour").equals(BoostsPlugin.DEFAULT_DRAINED),
+			"both colours start as the ones that were hardcoded");
+		check(text(boosts, "font").equals(OverlayGraphics.FONT_CHOICE_SMALL),
+			"the panel starts at the small font it always used");
+		check(bool(boosts, "showTitle"), "the heading is on");
+		check(text(boosts, "skills").length() == 0, "no skill filter");
+		check(!bool(boosts, "notifyExpired"), "and the expiry notice off");
+		check(setting(boosts, "boostedColour").isColour()
+				&& setting(boosts, "drainedColour").isColour(),
+			"both colours are edited as colours");
+
+		// ---- THE COLOURS, which were hardcoded and had only "the two differ" on them.
+		client.skillLevel[0] = 54;
+		client.skillLevel[1] = 46;
+		setText(boosts, "boostedColour", "00FF00");
+		setText(boosts, "drainedColour", "FF0000");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50").colour == 0x00FF00,
+			"a boost is drawn in the colour a player picked");
+		check(find(rows, "Defence 46/50").colour == 0xFF0000, "...and a drain in theirs");
+		setText(boosts, "boostedColour", BoostsPlugin.DEFAULT_BOOSTED);
+		setText(boosts, "drainedColour", BoostsPlugin.DEFAULT_DRAINED);
+
+		// ---- THE HEADING, which costs a row.
+		rows = drawnText();
+		check(find(rows, "Boosts") != null, "the heading is drawn");
+		setBoolean(boosts, "showTitle", false);
+		rows = drawnText();
+		check(find(rows, "Boosts") == null, "turning it off removes it");
+		check(find(rows, "Attack 54/50") != null, "...and leaves the rows");
+		setBoolean(boosts, "showTitle", true);
+
+		// ---- THE FILTER. One list, shared with the Idle notifier.
+		setText(boosts, "skills", "attack");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") == null,
+			"a filter of \"attack\" shows attack and not defence: " + texts(rows));
+		setText(boosts, "skills", "att, def");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") != null,
+			"...and part of a name is enough, for each of several");
+		setText(boosts, "skills", "mining");
+		check(drawnText().isEmpty(),
+			"a filter naming nothing boosted draws nothing, not an empty box");
+		setText(boosts, "skills", "");
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null && find(rows, "Defence 46/50") != null,
+			"AN EMPTY FILTER IS EVERY SKILL, not no skills: the filter narrows something already "
+				+ "useful, so no filter has to mean do not narrow it");
+
+		levelAll(50);
 		manager.setEnabled(boosts, false);
 		levelAll(50);
+	}
+
+	// ---------------------------------------------------------------- 3b
+
+	/**
+	 * The order the Skills page is in.
+	 *
+	 * A STABLE INSERTION SORT over at most twenty-three rows, which is why it is written out
+	 * rather than handed to Collections.sort with a comparator per order: "closest to a level"
+	 * is very nearly not a consistent comparator - two skills both 0 away is a real case - and a
+	 * page that reshuffles its ties every tick is unreadable.
+	 */
+	static void sortTests() {
+		// name, level, virtualLevel, experience, toNext, percent
+		SkillsPlugin.Skill a = skill("Attack", 50, 50, 100_000, 5_000);
+		SkillsPlugin.Skill b = skill("Bravery", 70, 70, 800_000, 1_000);
+		SkillsPlugin.Skill c = skill("Cooking", 60, 60, 300_000, 0);
+
+		check(order(SkillsPlugin.BY_SKILL, a, b, c).equals("Attack,Bravery,Cooking"),
+			"skill order is the list as it came, which is the client's own");
+		check(order(null, a, b, c).equals("Attack,Bravery,Cooking"),
+			"...and so is an order nobody recognises, rather than an empty page");
+
+		check(order(SkillsPlugin.BY_LEVEL, a, b, c).equals("Bravery,Cooking,Attack"),
+			"by level is highest first");
+		check(order(SkillsPlugin.BY_EXPERIENCE, a, b, c).equals("Bravery,Cooking,Attack"),
+			"by experience is most first");
+
+		// CLOSEST TO A LEVEL, where a maxed skill has to go LAST. It has 0 left to reach, which
+		// a plain comparison puts first - the one place this order needs thought.
+		check(order(SkillsPlugin.BY_CLOSEST, a, b, c).equals("Bravery,Attack,Cooking"),
+			"closest to a level is nearest first, with nothing-left-to-reach LAST");
+
+		// STABLE. Three skills with the same level stay in the order they arrived, or the page
+		// reshuffles itself every tick for no reason a player can see.
+		SkillsPlugin.Skill x = skill("Xerxes", 50, 50, 1, 1);
+		SkillsPlugin.Skill y = skill("Yvonne", 50, 50, 1, 1);
+		SkillsPlugin.Skill z = skill("Zebedee", 50, 50, 1, 1);
+		check(order(SkillsPlugin.BY_LEVEL, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"ties keep the order they came in, by level");
+		check(order(SkillsPlugin.BY_CLOSEST, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"...and by how close they are");
+		check(order(SkillsPlugin.BY_EXPERIENCE, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"...and by experience");
+
+		// Two maxed skills are both "nothing left", which is the tie that would make a careless
+		// comparator inconsistent rather than merely unstable.
+		SkillsPlugin.Skill m1 = skill("Maxed one", 99, 99, 13_034_431, 0);
+		SkillsPlugin.Skill m2 = skill("Maxed two", 99, 99, 13_034_431, 0);
+		check(order(SkillsPlugin.BY_CLOSEST, m1, m2, a).equals("Attack,Maxed one,Maxed two"),
+			"two maxed skills tie with each other and both sit behind one still training");
+
+		// An empty page and a page of one sort without incident, which an insertion sort written
+		// by hand is exactly where an off-by-one lives.
+		check(order(SkillsPlugin.BY_LEVEL).length() == 0, "an empty page sorts to nothing");
+		check(order(SkillsPlugin.BY_LEVEL, a).equals("Attack"), "and a page of one to itself");
+	}
+
+	static SkillsPlugin.Skill skill(String name, int level, int virtual, int xp, int toNext) {
+		return new SkillsPlugin.Skill(name, level, virtual, xp, toNext, 50);
+	}
+
+	/** The names, in the order this sort leaves them. */
+	static String order(String by, SkillsPlugin.Skill... rows) {
+		List<SkillsPlugin.Skill> list = new ArrayList<SkillsPlugin.Skill>();
+		for (int i = 0; i < rows.length; i++) {
+			list.add(rows[i]);
+		}
+		SkillsPlugin.sort(list, by);
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < list.size(); i++) {
+			if (i > 0) {
+				out.append(',');
+			}
+			out.append(list.get(i).name);
+		}
+		return out.toString();
+	}
+
+	// ---------------------------------------------------------------- 1b
+
+	/**
+	 * "Only these skills", which Boosts and the Idle notifier both ask.
+	 *
+	 * ONE IMPLEMENTATION, because two walks of the same list would eventually disagree about
+	 * whether "wood" matches Woodcutting - and a filter that silently excludes what a player
+	 * meant to include is read as the plugin being broken rather than as a filter being strict.
+	 */
+	static void filterTests() {
+		check(SkillFilter.allows("attack", "attack"), "a whole name matches");
+		check(SkillFilter.allows("attack", "att"), "a prefix matches, which is what people type");
+		check(SkillFilter.allows("woodcutting", "wood"), "...including the obvious short ones");
+		check(SkillFilter.allows("runecraft", "runecraft"), "and a long name is its own prefix");
+		check(SkillFilter.allows("ATTACK", "attack") && SkillFilter.allows("attack", "ATTACK"),
+			"case does not matter either way round");
+		check(SkillFilter.allows("attack", " att , def "), "spaces round the terms are forgiven");
+		check(SkillFilter.allows("defence", "att, def"), "any term in the list matches");
+
+		// PREFIX, NOT SUBSTRING. "tack" is inside "attack" and matches nothing anyone means by
+		// it; a substring rule also makes a one-letter term match half the list.
+		check(!SkillFilter.allows("attack", "tack"),
+			"a term that is only INSIDE a name does not match: prefix, not substring");
+		check(!SkillFilter.allows("attack", "defence"), "a different skill does not match");
+		check(!SkillFilter.allows("attack", "attacking"),
+			"and a term longer than the name does not");
+
+		// AN EMPTY LIST IS EVERY SKILL. The opposite of the rule in Npc indicators, and right in
+		// both: there an empty list is a plugin not set up yet, here it is a filter not applied.
+		check(SkillFilter.allows("attack", ""), "an empty list allows everything");
+		check(SkillFilter.allows("attack", "   "), "...and a blank one");
+		check(SkillFilter.allows("attack", null), "...and none at all");
+		check(SkillFilter.allows("attack", ",,,"),
+			"...and one that is nothing but commas, which is not a filter either");
+		check(!SkillFilter.isFiltering("") && !SkillFilter.isFiltering(null)
+				&& !SkillFilter.isFiltering(",, ,"),
+			"none of those counts as filtering");
+		check(SkillFilter.isFiltering("attack") && SkillFilter.isFiltering(" , attack"),
+			"and a list with a term in it does");
+
+		// The two answers cannot disagree: the first version of this had allows() reject every
+		// skill for ",,," while isFiltering() said there was no filter.
+		String[] odd = { "", "   ", null, ",,,", ", ,", "attack", " , attack, " };
+		for (int i = 0; i < odd.length; i++) {
+			if (!SkillFilter.isFiltering(odd[i])) {
+				check(SkillFilter.allows("attack", odd[i]) && SkillFilter.allows("mining", odd[i]),
+					"\"" + odd[i] + "\" is not filtering, so it allows every skill");
+			}
+		}
+
+		check(!SkillFilter.allows(null, "attack"), "a missing skill name matches no filter");
+		check(!SkillFilter.allows("", "attack"), "...nor an empty one");
+		boolean threw = false;
+		try {
+			SkillFilter.allows(null, null);
+			SkillFilter.allows("attack", "a,,b,");
+		} catch (Throwable error) {
+			threw = true;
+		}
+		check(!threw, "and nothing here throws, because both callers ask it per skill per tick");
 	}
 
 	// ---------------------------------------------------------------- 2
@@ -319,6 +547,58 @@ public class SkillPluginsTest {
 		check(left >= 1, "...and leaves the combat level, which is not a skill to hide");
 		setBoolean(entry, "hideMaxed", false);
 
+		// ---- THE FOUR NEW SETTINGS. Defaults first, so a player who upgrades sees the page
+		// they had: everything on, in the client's own order.
+		baseAll(50);
+		levelAll(50);
+		tick();
+		check(bool(entry, "showCombat") && bool(entry, "showExperience"),
+			"the combat row and the experience line are both on");
+		check(text(entry, "sortBy").equals(SkillsPlugin.BY_SKILL),
+			"and the page starts in the client's own skill order");
+		check(text(entry, "skills").length() == 0, "with no filter");
+		check(setting(entry, "sortBy").choices().length == 4, "the order is a drop-down of four");
+
+		// EVERY ORDER THE DROP-DOWN OFFERS HAS TO BE ONE THE CODE BRANCHES ON. A value no branch
+		// matches falls through to "leave it alone" and looks exactly like the default working.
+		String[] orders = setting(entry, "sortBy").choices();
+		for (int i = 0; i < orders.length; i++) {
+			check(orders[i].equals(SkillsPlugin.BY_SKILL) || orders[i].equals(SkillsPlugin.BY_LEVEL)
+					|| orders[i].equals(SkillsPlugin.BY_EXPERIENCE)
+					|| orders[i].equals(SkillsPlugin.BY_CLOSEST),
+				"\"" + orders[i] + "\" is an order the code knows");
+		}
+
+		// ---- THE COMBAT ROW.
+		check(pageText().indexOf("Combat level") >= 0, "the combat row is on the page");
+		setBoolean(entry, "showCombat", false);
+		tick();
+		check(pageText().indexOf("Combat level") < 0, "turning it off takes it away");
+		check(pageRows() > 20, "...and leaves every skill");
+		setBoolean(entry, "showCombat", true);
+		tick();
+
+		// ---- THE EXPERIENCE LINE, which is the row's detail rather than its value.
+		client.skillExperience[0] = 120_000;
+		tick();
+		check(pageDetail().indexOf("xp") >= 0, "a row says how much experience it has");
+		setBoolean(entry, "showExperience", false);
+		tick();
+		check(pageDetail().indexOf("xp") < 0, "turning it off leaves the rows without it");
+		check(pageRows() > 20, "...and the rows themselves are still there");
+		setBoolean(entry, "showExperience", true);
+		tick();
+
+		// ---- THE FILTER, the same one Boosts uses.
+		setText(entry, "skills", "attack");
+		tick();
+		check(pageRows() == 2,
+			"a filter of \"attack\" leaves the combat row and one skill (" + pageRows() + ")");
+		check(pageText().indexOf("Attack") >= 0, "...which is Attack");
+		setText(entry, "skills", "");
+		tick();
+		check(pageRows() > 20, "and clearing it brings them all back");
+
 		manager.setEnabled(entry, false);
 	}
 
@@ -375,7 +655,23 @@ public class SkillPluginsTest {
 		return out.toString();
 	}
 
-	/** How many rows of the given pixel column are exactly this colour. */
+	/** Every row's detail line joined, which is where the experience figures go. */
+	static String pageDetail() {
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < panels.size(); i++) {
+			if (!"Skills".equals(panels.get(i).title)) {
+				continue;
+			}
+			List<jagex2.client.plugin.ConfigList.Row> rows = panels.get(i).rows;
+			for (int r = 0; r < rows.size(); r++) {
+				out.append(rows.get(r).detail).append(';');
+			}
+		}
+		return out.toString();
+	}
+
+	/** How many rows the Skills page has. */
 	static int pageRows() {
 		tick();
 		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
@@ -484,6 +780,50 @@ public class SkillPluginsTest {
 	/** The same, named for the tests that are about base levels rather than boosted ones. */
 	static void baseAll(int level) {
 		levelAll(level);
+	}
+
+	/**
+	 * A String setting, written through the real config path.
+	 *
+	 * Through PluginConfig rather than the reflected field the older helpers here use, because
+	 * the config path is what the sidebar does and it is what persists - a field written directly
+	 * would be a setting that works in the test and not in the game.
+	 */
+	static void setText(PluginManager.Entry entry, String key, String value) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				check(entry.getConfig().set(items.get(i), value),
+					"setting " + entry.key + "." + key + " to \"" + value + "\" is accepted");
+				return;
+			}
+		}
+		check(false, entry.key + " has a setting called " + key);
+	}
+
+	static PluginConfig.Item setting(PluginManager.Entry entry, String key) {
+		List<PluginConfig.Item> items = entry.getConfig().getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (items.get(i).key.equals(key)) {
+				return items.get(i);
+			}
+		}
+		return null;
+	}
+
+	static String text(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item == null ? "" : item.stringValue();
+	}
+
+	static boolean bool(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item != null && item.booleanValue();
+	}
+
+	static int number(PluginManager.Entry entry, String key) {
+		PluginConfig.Item item = setting(entry, key);
+		return item == null ? -1 : item.intValue();
 	}
 
 	static PluginManager.Entry entry(String key) {

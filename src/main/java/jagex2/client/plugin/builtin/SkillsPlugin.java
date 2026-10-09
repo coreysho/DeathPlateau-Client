@@ -75,6 +75,29 @@ public final class SkillsPlugin extends Plugin {
 		description = "Keeps the page to what is still being trained")
 	public boolean hideMaxed = false;
 
+	/** The four orders {@link #sortBy} takes. Constants, so the choices and the code agree. */
+	static final String BY_SKILL = "Skill order";
+	static final String BY_LEVEL = "Level";
+	static final String BY_EXPERIENCE = "Experience";
+	static final String BY_CLOSEST = "Closest to a level";
+
+	@ConfigItem(keyName = "skills", name = "Only these skills, comma separated",
+		description = "Part of a name is enough. Blank is all of them")
+	public String skills = "";
+
+	@ConfigItem(keyName = "showCombat", name = "Show the combat level row")
+	public boolean showCombat = true;
+
+	@ConfigItem(keyName = "showExperience", name = "Show experience under each skill",
+		description = "Off is a shorter page")
+	public boolean showExperience = true;
+
+	// Inline, because an annotation's array value cannot be a reference to a constant array.
+	@ConfigItem(keyName = "sortBy", name = "Order the page by", choices = {
+		BY_SKILL, BY_LEVEL, BY_EXPERIENCE, BY_CLOSEST
+	})
+	public String sortBy = BY_SKILL;
+
 	/** One row of the page: a skill, and everything the page says about it. */
 	static final class Skill {
 
@@ -112,7 +135,7 @@ public final class SkillsPlugin extends Plugin {
 
 				public String detail(int index) {
 					Skill skill = SkillsPlugin.this.row(index);
-					if (skill == null) {
+					if (skill == null || !SkillsPlugin.this.showExperience) {
 						return "";
 					}
 					return skill.toNext > 0
@@ -171,12 +194,17 @@ public final class SkillsPlugin extends Plugin {
 			return rows;
 		}
 		// The combat level first, as its own row, because it is the number people quote and it
-		// belongs to no single skill.
-		int combat = this.combatLevel();
-		rows.add(new Skill("Combat level", combat, combat, 0, 0, -1));
+		// belongs to no single skill. It is not sorted with the others for the same reason - a
+		// page ordered by level with "Combat level" somewhere in the middle reads as a skill.
+		if (this.showCombat) {
+			int combat = this.combatLevel();
+			rows.add(new Skill("Combat level", combat, combat, 0, 0, -1));
+		}
+		List<Skill> listed = new ArrayList<Skill>();
 		for (int skill = 0; skill < this.ctx.getSkillCount(); skill++) {
 			String name = this.ctx.getSkillName(skill);
-			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER) {
+			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER
+					|| !SkillFilter.allows(name, this.skills)) {
 				continue;
 			}
 			int level = this.ctx.getBaseLevel(skill);
@@ -185,11 +213,60 @@ public final class SkillsPlugin extends Plugin {
 			}
 			int experience = this.ctx.getExperience(skill);
 			int shown = this.virtual ? this.virtualLevel(experience, level) : level;
-			rows.add(new Skill(BoostsPlugin.name(name), level, shown, experience,
+			listed.add(new Skill(BoostsPlugin.name(name), level, shown, experience,
 				this.experienceToNext(experience, shown), this.percentThrough(experience, shown)));
 		}
+		sort(listed, this.sortBy);
+		rows.addAll(listed);
 		this.cached = rows;
 		return rows;
+	}
+
+	/**
+	 * Orders the skill rows in place.
+	 *
+	 * AN INSERTION SORT, not Collections.sort with a Comparator: twenty-three rows once a tick
+	 * is nothing either way, and this keeps the plugin free of a comparator class per order and
+	 * of the question of whether the comparator is consistent - which for "closest to a level"
+	 * it very nearly is not, two skills both 0 away being a real case.
+	 *
+	 * STABLE, so skills that tie stay in the client's own order rather than in whatever order a
+	 * sort happens to leave them. A page that reshuffles its ties every tick is unreadable.
+	 */
+	static void sort(List<Skill> rows, String by) {
+		if (BY_SKILL.equals(by) || by == null) {
+			return;                                      // the client's order, which is the list
+		}
+		for (int i = 1; i < rows.size(); i++) {
+			Skill moving = rows.get(i);
+			int at = i;
+			while (at > 0 && after(rows.get(at - 1), moving, by)) {
+				rows.set(at, rows.get(at - 1));
+				at--;
+			}
+			rows.set(at, moving);
+		}
+	}
+
+	/**
+	 * Whether `first` belongs after `second` in this order. Strictly after, which is what keeps
+	 * the sort stable: a tie answers false and nothing moves.
+	 */
+	static boolean after(Skill first, Skill second, String by) {
+		if (BY_LEVEL.equals(by)) {
+			return first.virtualLevel < second.virtualLevel;      // highest first
+		}
+		if (BY_EXPERIENCE.equals(by)) {
+			return first.experience < second.experience;
+		}
+		if (BY_CLOSEST.equals(by)) {
+			// Nearest to a level first, and a maxed skill - nothing left to reach - last rather
+			// than first, which is where a plain comparison on 0 would put it.
+			long left = first.toNext > 0 ? first.toNext : Long.MAX_VALUE;
+			long other = second.toNext > 0 ? second.toNext : Long.MAX_VALUE;
+			return left > other;
+		}
+		return false;
 	}
 
 	Skill row(int index) {

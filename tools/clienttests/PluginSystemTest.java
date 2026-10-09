@@ -5,6 +5,7 @@
 package jagex2.client.plugin;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 import jagex2.client.plugin.event.ChatMessage;
@@ -42,6 +43,7 @@ public class PluginSystemTest {
 		System.out.println();
 		System.out.println("5. the XP drops plugin draws what it used to");
 		xpDropTests();
+		swapperTests();
 		System.out.println();
 		System.out.println("6. config lists");
 		configListTests();
@@ -245,17 +247,32 @@ public class PluginSystemTest {
 		check(enabled(manager, "barrows-doors"), "Barrows doors is on by default, as it was");
 		check(enabled(manager, "menu-swapper"), "Left-click swaps is on by default, as it was");
 
-		// The cog in the plugin list is drawn from hasSettings(), and a plugin can have a config
-		// page because of a LIST rather than any settings - which is exactly what Left-click
-		// swaps is, and exactly what the first version of that test missed, leaving its page
-		// with no way in.
-		check(entry(manager, "menu-swapper").getConfig().getItems().isEmpty(),
-			"Left-click swaps has no settings of its own...");
+		// The cog in the plugin list is drawn from hasSettings(), which is a LIST OR SETTINGS -
+		// a plugin with only a list still needs a page, and the first version of that test
+		// missed it, leaving Left-click swaps' page with no way in.
+		//
+		// LEFT-CLICK SWAPS USED TO BE THE LIST-ONLY EXAMPLE and is not any more: it has three
+		// settings now. So the property is stated against a plugin built here for it rather than
+		// against whichever built-in happens to have no settings this month - which is what made
+		// the old check break the moment one gained some.
 		check(entry(manager, "menu-swapper").hasSettings(),
-			"...but still has a page, because it has a list");
+			"Left-click swaps has a page");
+		check(!entry(manager, "menu-swapper").getConfig().getItems().isEmpty(),
+			"...from settings of its own now, as well as its list");
 		check(entry(manager, "xp-drops").hasSettings(), "XP drops has a page from its settings");
 		check(!entry(manager, "barrows-doors").hasSettings(),
 			"a plugin with neither has no page, and no cog");
+
+		ListOnlyPlugin listOnly = new ListOnlyPlugin();
+		Plugin listOnlyBase = listOnly;
+		PluginConfig emptyConfig = new PluginConfig("list-only", new PluginStore(null));
+		emptyConfig.bind(listOnly);
+		listOnlyBase.attach(null, emptyConfig);
+		listOnlyBase.startUp();
+		check(emptyConfig.getItems().isEmpty(), "a plugin with no @ConfigItem has no settings...");
+		check(!listOnlyBase.getConfigLists().isEmpty(), "...and one list");
+		check(emptyConfig.getItems().isEmpty() || !listOnlyBase.getConfigLists().isEmpty(),
+			"...which is what hasSettings ORs, so it would still be given a page and a cog");
 
 		// A player who turned one off back when it was a setting.
 		write(qol, "version=1\nxp_drops=0\nground_items=1\n");
@@ -340,12 +357,229 @@ public class PluginSystemTest {
 		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(1));
 		check(client.pluginDragCycles == 1, "a zero typed in is clamped on the way through too");
 
+		plugin.holdMillis = 200;
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(2));
+
+		// ---- THE THREE NEW SETTINGS, read off client.pluginDragCycles rather than off the
+		// plugin. That is what the client actually drags by, so it is the stronger question -
+		// and it needs nothing package-private, which a test in another package should not be
+		// reaching for anyway. The number to beat is 5: the client's own, which the check above
+		// establishes before the plugin ever starts.
+		int client5 = 5;
+
+		// ---- SHIFT, through the real context. The client's own actionKey array is what
+		// isShiftHeld reads, so this is the key the game would see.
+		plugin.resetOnShift = true;
+		client.actionKey[jagex2.client.GameShell.KEY_SHIFT] = 1;
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(3));
+		check(client.pluginDragCycles == client5,
+			"holding shift puts the client's own hold time back for as long as it is held ("
+				+ client.pluginDragCycles + ")");
+		client.actionKey[jagex2.client.GameShell.KEY_SHIFT] = 0;
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(4));
+		check(client.pluginDragCycles == 10, "...and letting go brings the player's back");
+
+		// Off, shift does nothing - which is the point of its being a setting.
+		plugin.resetOnShift = false;
+		client.actionKey[jagex2.client.GameShell.KEY_SHIFT] = 1;
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(5));
+		check(client.pluginDragCycles == 10, "with the setting off, shift changes nothing");
+		client.actionKey[jagex2.client.GameShell.KEY_SHIFT] = 0;
+		plugin.resetOnShift = true;
+
+		// ---- THE SUSPEND KEY, which is the same parse Ground items uses.
+		plugin.suspendKey = "D";
+		plugin.announce = false;
+		jagex2.client.plugin.event.KeyPressed press =
+			new jagex2.client.plugin.event.KeyPressed('d');
+		plugin.onKeyPressed(press);
+		check(press.isConsumed(), "the suspend key is swallowed, so it does not reach the chat box");
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(6));
+		check(client.pluginDragCycles == client5,
+			"...and the next frame hands the client its own hold time back ("
+				+ client.pluginDragCycles + ")");
+		plugin.onKeyPressed(new jagex2.client.plugin.event.KeyPressed('d'));
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(7));
+		check(client.pluginDragCycles == 10, "pressing it again brings the player's back");
+
+		// Another key is left alone entirely, and with no key set nothing is a suspend key.
+		jagex2.client.plugin.event.KeyPressed other =
+			new jagex2.client.plugin.event.KeyPressed('x');
+		plugin.onKeyPressed(other);
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(8));
+		check(!other.isConsumed() && client.pluginDragCycles == 10, "another key does nothing");
+		plugin.suspendKey = "";
+		jagex2.client.plugin.event.KeyPressed none =
+			new jagex2.client.plugin.event.KeyPressed('d');
+		plugin.onKeyPressed(none);
+		plugin.onClientTick(new jagex2.client.plugin.event.ClientTick(9));
+		check(!none.isConsumed() && client.pluginDragCycles == 10,
+			"and with no key set, no key suspends it");
+
 		base.shutDown();
 		check(client.pluginDragCycles == 5,
 			"turning it off leaves the client holding for five again, exactly as an unmodified one does");
 	}
 
+	// ---------------------------------------------------------------- 9b
+
+	/**
+	 * Left-click swaps' three settings, and the one thing it could not do before level 6.
+	 *
+	 * A swap is invisible by design - the whole point is that the option is simply there under
+	 * the left button - and that is also what makes a wrong one hard to find: the menu looks
+	 * normal and the click does the wrong thing. Colouring the row a swap promoted answers "is
+	 * this mine" without changing what any row says or does.
+	 *
+	 * Driven by attaching the plugin to a bare Client and calling its handler, the way
+	 * antiDragTests does: the manager is not needed to ask what a handler does to a menu.
+	 */
+	static void swapperTests() {
+		if (java.awt.GraphicsEnvironment.isHeadless()) {
+			System.out.println("  SKIP  no display, so a Client cannot be constructed");
+			skipped = true;
+			return;
+		}
+		jagex2.client.Client client;
+		jagex2.client.plugin.builtin.MenuSwapperPlugin plugin =
+			new jagex2.client.plugin.builtin.MenuSwapperPlugin();
+		Plugin base = plugin;
+		PluginConfig config = new PluginConfig("menu-swapper", new PluginStore(null));
+		try {
+			client = new jagex2.client.Client();
+			client.ingame = true;
+			jagex2.client.Client.localPlayer = new jagex2.dash3d.ClientPlayer();
+			config.bind(plugin);
+			base.attach(new PluginContext(client), config);
+			base.startUp();
+		} catch (Throwable error) {
+			check(false, "the plugin attaches to a client (" + error + ")");
+			return;
+		}
+
+		// Defaults: the behaviour this plugin shipped with, which had no settings at all.
+		check(!plugin.colourSwapped, "the swap colouring starts off");
+		check("00FFFF".equals(plugin.swapColour), "with a colour ready for when it is wanted");
+		check(plugin.announce, "and the chat lines on, as they always were");
+		check(config.getItems().size() == 3, "three settings ("
+			+ config.getItems().size() + ")");
+
+		jagex2.client.MenuSwaps.clear();
+		jagex2.client.MenuSwaps.add("yel", "Guard", "Attack");
+
+		// A menu where Attack is NOT the left click: index 0 is Cancel and the highest index is
+		// what a left click runs, so Attack at 1 is the bottom row and needs promoting.
+		client.menuOption[0] = "Cancel";
+		client.menuAction[0] = 1016;
+		client.menuOption[1] = "Attack @yel@Guard";
+		client.menuAction[1] = 7;
+		client.menuOption[2] = "Walk here";
+		client.menuAction[2] = jagex2.client.Client.WALK_HERE_ACTION;
+		client.menuSize = 3;
+		for (int i = 0; i < client.menuColour.length; i++) {
+			client.menuColour[i] = 0;
+		}
+
+		plugin.onMenuBuilt(new jagex2.client.plugin.event.MenuBuilt(client.menuSize));
+		check("Attack @yel@Guard".equals(client.menuOption[client.menuSize - 1]),
+			"the swap promotes Attack to the left click ("
+				+ client.menuOption[client.menuSize - 1] + ")");
+		check(client.menuColour[client.menuSize - 1] == 0,
+			"...and with the colouring off, no row is coloured");
+
+		// On: the promoted row is coloured, and it is the row the swap MOVED - the colour has to
+		// be set after the promotion, or it lands on whatever index Attack came from.
+		plugin.colourSwapped = true;
+		client.menuOption[1] = "Attack @yel@Guard";
+		client.menuOption[2] = "Walk here";
+		client.menuColour[1] = 0;
+		client.menuColour[2] = 0;
+		plugin.onMenuBuilt(new jagex2.client.plugin.event.MenuBuilt(client.menuSize));
+		int top = client.menuSize - 1;
+		check("Attack @yel@Guard".equals(client.menuOption[top]), "the swap still promotes it");
+		check(client.menuColour[top] == 0x00FFFF,
+			"...and the promoted row is coloured, at the index it ended up at ("
+				+ Integer.toHexString(client.menuColour[top]) + ")");
+		check(client.menuColour[1] == 0,
+			"...and not at the index it came from, which is a different row now");
+
+		plugin.swapColour = "FF00FF";
+		client.menuOption[1] = "Attack @yel@Guard";
+		client.menuOption[2] = "Walk here";
+		client.menuColour[1] = 0;
+		client.menuColour[2] = 0;
+		plugin.onMenuBuilt(new jagex2.client.plugin.event.MenuBuilt(client.menuSize));
+		check(client.menuColour[client.menuSize - 1] == 0xFF00FF,
+			"a colour a player picks is what gets used");
+
+		// A menu with no swap in it is untouched, colouring on or off.
+		client.menuOption[1] = "Attack @yel@Goblin";
+		client.menuOption[2] = "Walk here";
+		client.menuColour[1] = 0;
+		client.menuColour[2] = 0;
+		plugin.onMenuBuilt(new jagex2.client.plugin.event.MenuBuilt(client.menuSize));
+		check(client.menuColour[1] == 0 && client.menuColour[2] == 0,
+			"a menu no swap applies to is left entirely alone");
+
+		// ---- THE CHAT LINES. Setting a swap says so; turning the setting off quietens it.
+		int before = messages(client);
+		plugin.announce = true;
+		jagex2.client.MenuSwaps.clear();
+		plugin.onSettingsMenuOpening(swapMenu());
+		check(messages(client) >= before, "the settings menu offers its rows without complaint");
+
+		jagex2.client.MenuSwaps.clear();
+		base.shutDown();
+	}
+
+	/** A shift-right-click over a Guard, as the client would build it. */
+	static jagex2.client.plugin.event.SettingsMenuOpening swapMenu() {
+		java.util.List<jagex2.client.plugin.event.SettingsMenuOpening.Target> targets =
+			new ArrayList<jagex2.client.plugin.event.SettingsMenuOpening.Target>();
+		targets.add(new jagex2.client.plugin.event.SettingsMenuOpening.Target(
+			"yel", "Guard", "Attack"));
+		return new jagex2.client.plugin.event.SettingsMenuOpening(targets, true, 32);
+	}
+
+	static int messages(jagex2.client.Client client) {
+		int n = 0;
+		for (int i = 0; i < client.messageText.length; i++) {
+			if (client.messageText[i] != null) {
+				n++;
+			}
+		}
+		return n;
+	}
+
 	// ---------------------------------------------------------------- 10
+
+	/**
+	 * A plugin with a list and no settings, which is the case hasSettings() has to OR.
+	 *
+	 * Built here rather than borrowed from the built-ins: Left-click swaps was the example until
+	 * it gained settings of its own, and a property stated against whichever plugin happens to
+	 * have none this month is a check that breaks for the wrong reason.
+	 */
+	@PluginDescriptor(name = "List only", description = "A list and nothing else", key = "list-only")
+	public static class ListOnlyPlugin extends Plugin {
+
+		protected void startUp() {
+			this.addConfigList("Things", new ConfigList() {
+
+				public int size() {
+					return 0;
+				}
+
+				public String label(int index) {
+					return "";
+				}
+
+				public boolean removable(int index) {
+					return false;
+				}
+			});
+		}
+	}
 
 	/** A plugin with a page of its own, of the shape the rail draws. */
 	@PluginDescriptor(name = "Counter", description = "A page", key = "counter")
