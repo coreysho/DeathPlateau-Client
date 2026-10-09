@@ -453,16 +453,21 @@ public class MouseTest {
 	 * thing is the only structural defence there is.
 	 */
 	static void fontChoiceTests() {
-		// THE EXACT LEVEL LIVES IN THE NEWEST SUITE, which is this one: isMenuOpen and fontFor
-		// are what level 7 added. Every older suite asks only that its own level is supported,
-		// so this pin is the single place that has to move when the next addition lands.
-		check(jagex2.client.plugin.PluginApi.LEVEL == 7,
-			"this client is API level 7 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
-		check(jagex2.client.plugin.PluginApi.supports(7), "a plugin asking for 7 runs here");
-		check(!jagex2.client.plugin.PluginApi.supports(8), "one asking for 8 does not");
+		// THE EXACT LEVEL LIVES IN THE NEWEST SUITE, which is still this one: 7 added isMenuOpen
+		// and fontFor, and 8 added the true tile - both landed here. Every older suite asks only
+		// that its own level is supported, so this pin is the single place that moves when the
+		// next addition does.
+		check(jagex2.client.plugin.PluginApi.LEVEL == 8,
+			"this client is API level 8 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
+		check(jagex2.client.plugin.PluginApi.supports(8), "a plugin asking for 8 runs here");
+		check(jagex2.client.plugin.PluginApi.supports(7), "...and one asking for 7 still does");
+		check(!jagex2.client.plugin.PluginApi.supports(9), "one asking for 9 does not");
 		check(read("src/main/java/jagex2/client/plugin/builtin/MouseHighlightPlugin.java")
 				.indexOf("apiLevel = 7") >= 0,
-			"and Mouse highlight declares the level it needs");
+			"Mouse highlight declares the level it needs, which is still 7");
+		check(read("src/main/java/jagex2/client/plugin/builtin/TileIndicatorsPlugin.java")
+				.indexOf("apiLevel = 8") >= 0,
+			"and Tile indicators declares 8, now that it reads the server's tile");
 
 		check(OverlayGraphics.FONT_CHOICES.length == 3, "three sizes are offered");
 		check(OverlayGraphics.fontFor(OverlayGraphics.FONT_CHOICE_BOLD)
@@ -746,6 +751,85 @@ public class MouseTest {
 		clearPixels();
 		sceneFrame();
 		check(countPixels(0x00FFFF) == 0, "and turning the tile off leaves nothing");
+
+		// ---- THE SERVER'S TILE, which is the whole point of the addition.
+		//
+		// The client keeps two positions: field1157/field1158 is the fine coordinate the renderer
+		// interpolates between tiles, and routeTileX[0]/routeTileZ[0] is the newest tile the
+		// server sent. Standing still they describe the same square. MID-STEP THEY DO NOT, and a
+		// marker on each is what makes that visible - so the check has to put the player
+		// mid-step, which means setting the two apart by hand the way a walk does.
+		set(entry, "current", "true");
+		set(entry, "currentColour", "00FFFF");
+		set(entry, "currentFill", "false");
+		set(entry, "trueTile", "true");
+		set(entry, "trueTileColour", "FFFF00");
+		set(entry, "trueTileFill", "false");
+
+		// Standing still: both read the same tile, so the two outlines land on each other.
+		Client.localPlayer.field1157 = 64 * 128 + 64;
+		Client.localPlayer.field1158 = 64 * 128 + 64;
+		Client.localPlayer.routeTileX[0] = 64;
+		Client.localPlayer.routeTileZ[0] = 64;
+		clearPixels();
+		sceneFrame();
+		int still = countPixels(0x00FFFF);
+		check(still > 0, "standing still, your own tile is outlined (" + still + " pixels)");
+		check(countPixels(0xFFFF00) == 0,
+			"...and the server's outline is underneath it, not beside it - the same square, with "
+				+ "the one that tracks your feet on top");
+
+		// MID-STEP: the renderer is a tile behind what the server sent. Both outlines are drawn,
+		// on different squares, in their own colours.
+		Client.localPlayer.routeTileX[0] = 65;
+		clearPixels();
+		sceneFrame();
+		check(countPixels(0x00FFFF) > 0, "mid-step, your rendered tile is still outlined");
+		check(countPixels(0xFFFF00) > 0,
+			"...AND the server's tile is outlined separately, which is the whole point ("
+				+ countPixels(0xFFFF00) + " pixels)");
+
+		// The accessor itself: world coordinates, the same convention getWorldX uses.
+		check(context().getTrueTileX() == 65 + client.sceneBaseTileX,
+			"the true tile is reported in world coordinates, like getWorldX ("
+				+ context().getTrueTileX() + ")");
+		check(context().getWorldX() == 64 + client.sceneBaseTileX,
+			"...and the rendered one is still the tile the renderer is on ("
+				+ context().getWorldX() + ")");
+		check(context().getTrueTileX() != context().getWorldX(),
+			"...so mid-step the two genuinely differ, which nothing else here could establish");
+		check(context().getTrueTileZ() == 64 + client.sceneBaseTileZ,
+			"and z is read from its own route entry rather than from x");
+
+		// Each switch alone.
+		set(entry, "current", "false");
+		clearPixels();
+		sceneFrame();
+		check(countPixels(0x00FFFF) == 0 && countPixels(0xFFFF00) > 0,
+			"the server's tile can be shown on its own");
+		set(entry, "trueTile", "false");
+		set(entry, "current", "true");
+		clearPixels();
+		sceneFrame();
+		check(countPixels(0x00FFFF) > 0 && countPixels(0xFFFF00) == 0,
+			"...and so can yours");
+
+		// Filled, like the other two.
+		set(entry, "trueTile", "true");
+		set(entry, "current", "false");
+		clearPixels();
+		sceneFrame();
+		int outlineOnly = countPainted();
+		set(entry, "trueTileFill", "true");
+		clearPixels();
+		sceneFrame();
+		check(countPainted() > outlineOnly,
+			"the server's tile fills like the other two (" + outlineOnly + " -> "
+				+ countPainted() + ")");
+		set(entry, "trueTileFill", "false");
+		set(entry, "trueTile", "false");
+		set(entry, "current", "false");
+		Client.localPlayer.routeTileX[0] = 64;
 
 		// ---- A TILE THAT CANNOT BE PLACED. projectFromGround refuses anything under 128 scene
 		// units, so tile 0 is inside the scene by isInScene and still unprojectable - which is

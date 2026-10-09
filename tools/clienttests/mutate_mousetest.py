@@ -308,6 +308,38 @@ MUTS = [
      '''		corners(ctx, sceneTileX, sceneTileZ, xs, ys);
 		int rows = rowSpan(ys);'''),
 
+    # ---- THE SERVER'S TILE, level 8. Standing still it is the same square as the rendered one;
+    # mid-step it is the tile being walked onto, which is where the server will act from.
+    (TILES, '''the server's tile outlined whether the player asked for it or not''',
+     '''		if (this.trueTile) {''',
+     '''		if (true) {'''),
+    (TILES, '''the server's tile never outlined, so the switch does nothing''',
+     '''		if (this.trueTile) {''',
+     '''		if (false) {'''),
+    (TILES, '''the server's tile read from the rendered position, so it is never a different tile''',
+     '''			int tx = this.ctx.worldToSceneX(this.ctx.getTrueTileX());
+			int tz = this.ctx.worldToSceneZ(this.ctx.getTrueTileZ());''',
+     '''			int tx = this.ctx.worldToSceneX(this.ctx.getWorldX());
+			int tz = this.ctx.worldToSceneZ(this.ctx.getWorldZ());'''),
+    (TILES, '''the server's tile colour left hardcoded, so the swatch does nothing''',
+     '''			int colour = PluginConfig.parseColour(this.trueTileColour);''',
+     '''			int colour = 0xFFFF00;'''),
+    (TILES, '''the server's tile filled whether the player asked for it or not''',
+     '''			if (this.trueTileFill) {''',
+     '''			if (true) {'''),
+    (TILES, '''the server's tile never filled''',
+     '''			if (this.trueTileFill) {''',
+     '''			if (false) {'''),
+    (CONTEXT, '''the true tile z read from the x route, so a step north reports no movement''',
+     '''		return self == null ? 0 : self.routeTileZ[0] + this.client.sceneBaseTileZ;''',
+     '''		return self == null ? 0 : self.routeTileX[0] + this.client.sceneBaseTileZ;'''),
+    (CONTEXT, '''the true tile read from the far end of the route queue rather than the newest''',
+     '''		return self == null ? 0 : self.routeTileX[0] + this.client.sceneBaseTileX;''',
+     '''		return self == null ? 0 : self.routeTileX[9] + this.client.sceneBaseTileX;'''),
+    (CONTEXT, '''the true tile returned in scene coordinates rather than world ones''',
+     '''		return self == null ? 0 : self.routeTileX[0] + this.client.sceneBaseTileX;''',
+     '''		return self == null ? 0 : self.routeTileX[0];'''),
+
 ]
 
 

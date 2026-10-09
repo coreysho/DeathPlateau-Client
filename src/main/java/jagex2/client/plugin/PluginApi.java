@@ -58,6 +58,8 @@ package jagex2.client.plugin;
  * <dt>7</dt><dd>{@code ctx.isMenuOpen}, for an overlay near the cursor that should stand aside
  *     while a menu is open, and {@code OverlayGraphics.fontFor} with {@code FONT_CHOICES} - one
  *     list of the three sizes and one parse of it, rather than a copy in each plugin.</dd>
+ * <dt>8</dt><dd>{@code ctx.getTrueTileX} / {@code getTrueTileZ}: the tile the SERVER has the
+ *     player on, which during a walk is ahead of the one they appear to stand on.</dd>
  *     <p>
  *     STILL NO TEXT AND NO ACTION. A row's words and what it does are not writable, and that is
  *     the point rather than an omission: a plugin that could relabel a row could put "Bank"
@@ -72,7 +74,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 7;
+	public static final int LEVEL = 8;
 
 	private PluginApi() {
 	}

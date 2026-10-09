@@ -9,7 +9,15 @@ import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginDescriptor;
 
 /**
- * Outlines the tile under the cursor, and the one you are standing on.
+ * Outlines the tile under the cursor, the one you are standing on, and the one the server has
+ * you on.
+ *
+ * THE LAST TWO ARE NOT THE SAME TILE WHILE YOU MOVE. "Your tile" is the rendered one, which the
+ * client interpolates between tiles so it tracks your feet; the TRUE tile is what the server
+ * sent, which during a step is already the tile you are walking onto. Standing still they are
+ * the same square and the two outlines sit on top of each other. Tick-perfect movement is read
+ * off the true one - it is where the server will act from - which is why RuneLite offers both
+ * and why they want different colours.
  *
  * The hovered tile is the useful half: at a distance, with the camera low, "which square am I
  * about to click" is genuinely ambiguous, and a 2006 client gives you no feedback at all until
@@ -27,7 +35,7 @@ import jagex2.client.plugin.PluginDescriptor;
 	name = "Tile indicators",
 	description = "Outlines the tile under the cursor and the one you are on",
 	key = "tile-indicators",
-	apiLevel = 3
+	apiLevel = 8
 )
 public final class TileIndicatorsPlugin extends Plugin {
 
@@ -69,6 +77,16 @@ public final class TileIndicatorsPlugin extends Plugin {
 	@ConfigItem(keyName = "currentFill", name = "Fill your own tile")
 	public boolean currentFill = false;
 
+	@ConfigItem(keyName = "trueTile", name = "Outline the tile the server has you on",
+		description = "Ahead of your own while you walk; the same square standing still")
+	public boolean trueTile = false;
+
+	@ConfigItem(keyName = "trueTileColour", name = "Server tile colour", colour = true)
+	public String trueTileColour = "FFFF00";
+
+	@ConfigItem(keyName = "trueTileFill", name = "Fill the server's tile")
+	public boolean trueTileFill = false;
+
 	@ConfigItem(keyName = "fillOpacity", name = "How solid a fill is",
 		description = "0 is invisible, 255 is opaque")
 	public int fillOpacity = DEFAULT_FILL;
@@ -92,6 +110,19 @@ public final class TileIndicatorsPlugin extends Plugin {
 		}
 		int width = borderFor(this.borderWidth);
 		int alpha = fillFor(this.fillOpacity);
+		// DRAWN BEFORE "your tile", so that where the two coincide - which is whenever you are
+		// standing still - the one that tracks your feet is the one on top. The alternative
+		// leaves a stationary player looking at the server's colour and wondering why their own
+		// setting does nothing.
+		if (this.trueTile) {
+			int tx = this.ctx.worldToSceneX(this.ctx.getTrueTileX());
+			int tz = this.ctx.worldToSceneZ(this.ctx.getTrueTileZ());
+			int colour = PluginConfig.parseColour(this.trueTileColour);
+			if (this.trueTileFill) {
+				fillTile(this.ctx, g, tx, tz, colour, alpha);
+			}
+			outlineTile(this.ctx, g, tx, tz, colour, width);
+		}
 		if (this.current) {
 			int tx = this.ctx.worldToSceneX(this.ctx.getWorldX());
 			int tz = this.ctx.worldToSceneZ(this.ctx.getWorldZ());

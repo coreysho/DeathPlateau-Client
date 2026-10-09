@@ -274,6 +274,7 @@ public class MyToolPlugin extends Plugin {
 | 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
 | 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
+| 8 | `ctx.getTrueTileX` / `getTrueTileZ`: the tile the server has the player on, which during a walk is ahead of the one they appear to stand on. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -466,8 +467,20 @@ report a vital upward.
 
 ### Tile indicators, in detail
 
-Eight settings: the two tiles, a colour each, outline thickness, a fill for each, and how solid a
-fill is.
+Eleven settings: three tiles, a colour and a fill each, outline thickness, and how solid a fill is.
+
+**Three tiles, and two of them are not the same square while you move.** The cursor's tile is the
+cursor's. "Your tile" is the *rendered* one: the client keeps a fine coordinate it interpolates
+between tiles, so a marker drawn from it tracks your feet. **The true tile is what the server
+sent** — `routeTileX[0]`, the newest entry in the step queue, which the renderer is still catching
+up to. Mid-step it is the tile you are walking *onto*; standing still the two describe the same
+square and the outlines sit on top of each other. Tick-perfect movement is read off the true one,
+because that is where the server will act from, which is why RuneLite offers both and why they want
+different colours.
+
+The true tile is drawn **first**, so where the two coincide the one that tracks your feet is on top
+— otherwise a stationary player sees the server's colour and concludes their own setting does
+nothing.
 
 **A tile is not a rectangle.** It is a quadrilateral whose four edges run at four different angles,
 which is why two things here are built the way they are. The outline is drawn from four projected
@@ -800,7 +813,7 @@ are small enough that a jar of their own would be more ceremony than code:
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level, in the order you choose. |
 | Idle notifier | no | Says when you stop gaining experience, optionally in one skill only, once or repeating. |
 | Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
-| Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |
+| Tile indicators | no | Outlines and optionally fills the cursor's tile, your own, and the one the server has you on, at a thickness you choose. |
 | Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |
 
 The first five were client features and are on because turning them off would change what
