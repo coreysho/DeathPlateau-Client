@@ -450,16 +450,19 @@ warning the tick count is set to the repeat interval short of the threshold, so 
 due exactly then and nothing else is tracked. With no repeat the counter is left *at* the threshold,
 so disarming is what stops it rather than the arithmetic.
 
-**Hitpoints and prayer are never named by the boost-expiry notice.** Everything else wearing off is
-a potion to drink again, which is about what you are doing; those two are how close to death you
-are, and a notification is only a quieter way of reporting a vital. They are excluded by name
-rather than by index, because a `3` in a condition tells nobody why.
+**Hitpoints and prayer are not in this plugin at all** — not as a row, not as a notification. In
+377 the server sends a skill's *current* level in `UPDATE_STAT`, so for hitpoints that is current
+health and for prayer it is points left: a drained row read `Hitpoints 35/50`, which is a health
+reading in a panel. The panel listed them until that was noticed and ruled on; it does not now.
+Everything else wearing off is a potion to drink again, which is about what you are doing rather
+than how close to death you are — and that distinction is the whole reason this half of the old
+Status bars work survived when the rest was taken out.
 
-**One thing worth knowing about the Boosts panel as it stands.** In 377 the server sends a skill's
-*current* level in `UPDATE_STAT`, and for hitpoints that is current health — so a damaged player's
-Hitpoints row appears in the panel like any other drained stat, e.g. `Hitpoints 35/50`. That
-predates this round and has not been changed; it is pinned by a test that says what it is, so the
-behaviour is a decision somebody can make rather than something that drifts.
+One method, `isVital`, is what both the panel and the notice ask, by name rather than by index
+because a `3` in a condition tells nobody why. Two separate exclusions could come to disagree about
+which skills they covered, and the one that stayed would be the leak. The exclusion is on the
+**skill**, not on the direction: a *boosted* hitpoints is left out too, or a hitpoints potion would
+report a vital upward.
 
 ### Tile indicators, in detail
 
@@ -818,6 +821,12 @@ Two things RuneLite has that this deliberately does not:
   player's vitals in front of them - not as an orb, not as a bar, and not as a popup either,
   since a notification is only a quieter way of doing the same thing. The tests check for their
   absence, so none of it can quietly come back.
+
+  **Boosts was leaking one and no longer does.** Hitpoints and prayer are skills as far as the
+  client is concerned, and the panel listed a damaged Hitpoints like any other drained stat -
+  which nobody had noticed because it reads as a boost display rather than as a health one. The
+  test for it is driven through damage rather than asked of the exclusion directly, because the
+  claim is that the exclusion is in the right place.
 - **A regen meter.** RuneLite counts down to the next hitpoint. The regen schedule lives on the
   server and the client is never told it, so the only clock a plugin could use would be one it
   made up - and a countdown that is wrong is worse than none, because a player would trust it.

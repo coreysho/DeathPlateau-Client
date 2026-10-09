@@ -23,6 +23,14 @@ import jagex2.client.plugin.PluginDescriptor;
  * NOTHING IS SHOWN WHEN NOTHING IS BOOSTED, by default. An overlay that is always there stops
  * being read; one that appears exactly when a potion is active is information. {@link #always}
  * is there for anyone who would rather have it pinned.
+ *
+ * HITPOINTS AND PRAYER ARE NOT LISTED AT ALL - see {@link #isVital(String)}. They are skills as
+ * far as the client is concerned, and in 377 the server sends a skill's CURRENT level, so for
+ * hitpoints that is current health: a damaged player's row read "Hitpoints 35/50" and a drained
+ * prayer read the same way. That is a vital reported in a panel, which this server does not do -
+ * not as an orb, not as a bar, and not as a row in something else either. Everything else here
+ * is a potion wearing off, which is about what you are doing rather than how close to death you
+ * are, and that distinction is the whole reason this half of the old Status bars work stayed.
  */
 @PluginDescriptor(
 	name = "Boosts",
@@ -165,7 +173,7 @@ public final class BoostsPlugin extends Plugin {
 		int boosted = PluginConfig.parseColour(this.boostedColour);
 		int drained = PluginConfig.parseColour(this.drainedColour);
 		for (int skill = 0; skill < this.ctx.getSkillCount(); skill++) {
-			if (!this.isRealSkill(skill)
+			if (!this.isRealSkill(skill) || isVital(this.ctx.getSkillName(skill))
 					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {
 				continue;
 			}
@@ -238,9 +246,14 @@ public final class BoostsPlugin extends Plugin {
 	 * Whether a skill is one this server does not report on.
 	 *
 	 * Hitpoints and prayer, by name rather than by index: the indices are a cache detail and
-	 * reading "3" in a condition tells nobody why. A boost to either wearing off is a vital
-	 * going down, which is the thing the Status bars plugin was taken out for - and a
-	 * notification is only a quieter way of saying it.
+	 * reading "3" in a condition tells nobody why.
+	 *
+	 * USED IN BOTH PLACES, which is the point of it being one method. The panel does not list
+	 * them, because 377 sends current health as the hitpoints level and a drained row is
+	 * therefore a health reading. The expiry notice does not name them either, because a
+	 * notification is only a quieter way of reporting the same thing. Two separate exclusions
+	 * could come to disagree about which skills they covered, and the one that stayed would be
+	 * the leak.
 	 */
 	static boolean isVital(String skillName) {
 		if (skillName == null) {

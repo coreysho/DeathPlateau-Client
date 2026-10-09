@@ -49,11 +49,16 @@ MUTS = [
      'lines.add(new Line(text, delta > 0 ? boosted : drained));',
      'lines.add(new Line(text, boosted));'),
     (BOOSTS, 'the cache\'s unused skill slots offered as skills',
-     '''			if (!this.isRealSkill(skill)
+     '''			if (!this.isRealSkill(skill) || isVital(this.ctx.getSkillName(skill))
 					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {
 				continue;
 			}
 ''', ''),
+    (BOOSTS, '''HITPOINTS AND PRAYER LISTED IN THE PANEL, which is a vital read off a drained row''',
+     '''			if (!this.isRealSkill(skill) || isVital(this.ctx.getSkillName(skill))
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {''',
+     '''			if (!this.isRealSkill(skill)
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {'''),
     # The login check. The skill arrays keep their last values after a logout, so a plugin that
     # does not ask draws the panel it had over the login screen.
     (BOOSTS, 'the panel drawn while logged out, over the login screen',
@@ -257,9 +262,15 @@ MUTS = [
      '''		int drained = PluginConfig.parseColour(this.drainedColour);''',
      '''		int drained = 0xFF4444;'''),
     (BOOSTS, '''the filter not applied, so the skills box does nothing''',
-     '''			if (!this.isRealSkill(skill)
-					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {''',
-     '''			if (!this.isRealSkill(skill)) {'''),
+     '''			if (!this.isRealSkill(skill) || isVital(this.ctx.getSkillName(skill))
+					|| !SkillFilter.allows(this.ctx.getSkillName(skill), this.skills)) {
+				continue;
+			}
+			int now''',
+     '''			if (!this.isRealSkill(skill) || isVital(this.ctx.getSkillName(skill))) {
+				continue;
+			}
+			int now'''),
     (BOOSTS, '''the heading drawn whether the player asked for it or not''',
      '''		if (this.showTitle) {
 			g.textFlat(''',

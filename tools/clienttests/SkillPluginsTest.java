@@ -180,25 +180,68 @@ public class SkillPluginsTest {
 		check(drawnText().isEmpty(), "logged out, the panel is gone rather than frozen");
 		client.ingame = true;
 
-		// ---- WHAT THIS PANEL ALREADY REPORTS, established rather than assumed.
+		// ---- NO VITALS IN THE PANEL.
 		//
-		// In 377 the server sends a skill's CURRENT level in UPDATE_STAT, and for hitpoints that
-		// is current health - so a damaged player's hitpoints read below their base the same way
-		// a drained stat does. This check exists to record what the panel does today, because
-		// plugins/README.md says this server reports no health, prayer or special attack and
-		// "the tests check for their absence". Whether a drained-looking Hitpoints row is within
-		// that rule or outside it is a decision, not a bug to quietly fix, so the behaviour is
-		// pinned here and named for what it is.
+		// In 377 the server sends a skill's CURRENT level in UPDATE_STAT, so for hitpoints that
+		// is current health and for prayer it is prayer points left. A drained row therefore WAS
+		// a health reading: the panel listed "Hitpoints 35/50" like any other drained stat until
+		// Corey ruled on it. plugins/README.md says this server reports no health, prayer or
+		// special attack and that the tests check for their absence - this is that check, and it
+		// has to be driven through damage rather than asked of isVital, because the exclusion
+		// being in the right place is the whole claim.
 		levelAll(50);
 		client.skillLevel[3] = 35;        // hitpoints: damaged, in the client's own terms
+		client.skillLevel[5] = 20;        // prayer: partly spent
 		rows = drawnText();
-		boolean healthShown = find(rows, "Hitpoints 35/50") != null;
-		check(healthShown,
-			"TODAY the panel lists a damaged Hitpoints like any other drained stat ("
+		check(find(rows, "Hitpoints 35/50") == null,
+			"a damaged Hitpoints is not listed, because that row is a health reading ("
 				+ texts(rows) + ")");
+		check(find(rows, "Prayer 20/50") == null, "...and nor is a spent Prayer");
+		check(drawnText().isEmpty(),
+			"...and with nothing else boosted the panel does not appear at all, rather than "
+				+ "appearing empty");
+
+		// A real boost alongside them still shows, which is what stops this being a blanket
+		// "hide the panel while damaged".
+		client.skillLevel[0] = 54;
+		rows = drawnText();
+		check(find(rows, "Attack 54/50") != null, "a real boost is still listed beside them");
+		check(find(rows, "Hitpoints 35/50") == null && find(rows, "Prayer 20/50") == null,
+			"...and they are still not");
 		levelAll(50);
 
-		// ...and the one thing that is NOT a decision: the new notice never speaks about them.
+		// A BOOSTED hitpoints is excluded too, not just a drained one. Dialling the exclusion in
+		// on "below base" would leave a hitpoints potion reporting a vital upward.
+		client.skillLevel[3] = 60;
+		check(drawnText().isEmpty(),
+			"a BOOSTED Hitpoints is not listed either, so the exclusion is the skill and not "
+				+ "the direction");
+		levelAll(50);
+
+		// AND NOTHING ELSE READS A CURRENT LEVEL AT ALL, which is the broader guarantee.
+		// getSkillLevel is the boosted-or-drained figure - current health for hitpoints, points
+		// left for prayer - and getBaseLevel and getExperience are not. Boosts is the only
+		// built-in that needs the current one, and it is the only one that had the leak; stated
+		// across all eleven so the next plugin to reach for it has to come past this check.
+		String[] builtins = {
+			"AntiDragPlugin", "BarrowsDoorsPlugin", "GroundItemsPlugin", "IdleNotifierPlugin",
+			"MenuSwapperPlugin", "MouseHighlightPlugin", "NpcIndicatorsPlugin", "SkillsPlugin",
+			"TileIndicatorsPlugin", "XpDropsPlugin"
+		};
+		for (int i = 0; i < builtins.length; i++) {
+			String source = read("src/main/java/jagex2/client/plugin/builtin/"
+				+ builtins[i] + ".java");
+			check(source.length() > 0 && source.indexOf("getSkillLevel(") < 0,
+				builtins[i] + " never reads a current level, so it cannot report a vital");
+		}
+		String boostsSource =
+			read("src/main/java/jagex2/client/plugin/builtin/BoostsPlugin.java");
+		check(boostsSource.indexOf("getSkillLevel(") >= 0,
+			"Boosts is the one that does, which is what it is for");
+		check(boostsSource.indexOf("isVital(this.ctx.getSkillName(skill))") >= 0,
+			"...and the panel it feeds excludes the two it may not show");
+
+		// ...and the notice never speaks about them either.
 		check(BoostsPlugin.isVital("hitpoints") && BoostsPlugin.isVital("prayer"),
 			"hitpoints and prayer are the two the expiry notice never mentions");
 		check(BoostsPlugin.isVital("HITPOINTS"), "...whatever case the cache names them in");
@@ -824,6 +867,17 @@ public class SkillPluginsTest {
 	static int number(PluginManager.Entry entry, String key) {
 		PluginConfig.Item item = setting(entry, key);
 		return item == null ? -1 : item.intValue();
+	}
+
+	/** A source file, for the guarantees no run can state. dp.root is set by the runner. */
+	static String read(String path) {
+		try {
+			return new String(java.nio.file.Files.readAllBytes(
+				new java.io.File(System.getProperty("dp.root", "."), path).toPath()), "UTF-8");
+		} catch (Throwable missing) {
+			check(false, "cannot read " + path + " (" + missing + ")");
+			return "";
+		}
 	}
 
 	static PluginManager.Entry entry(String key) {

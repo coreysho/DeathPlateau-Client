@@ -89,6 +89,7 @@ def main():
         r = subprocess.run(launcher + [java,
                                        '-Dlostcity.cachedir=' + cache,
                                        '-Duser.home=' + home,
+                                       '-Ddp.root=' + ROOT,
                                        '-cp', classes + os.pathsep + work,
                                        'jagex2.client.plugin.builtin.SkillPluginsTest'],
                            capture_output=True, text=True, cwd=work)
