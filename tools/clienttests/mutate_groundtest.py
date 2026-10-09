@@ -28,6 +28,7 @@ ARRIVALS = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Ground
 ITEM = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/GroundItem.java')
 PREFS = os.path.join(ROOT, 'src/main/java/jagex2/client/GroundItemPrefs.java')
 CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
+HOTKEY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Hotkey.java')
 RUNNER = os.path.join(HERE, 'run_groundtest.py')
 
 MUTS = [
@@ -296,22 +297,22 @@ MUTS = [
 		}
 		boolean wantNotify'''),
 
-    (PLUGIN, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
+    (HOTKEY, '''an uppercase hotkey setting no longer matching the lowercase key the client sends''',
      '''		return Character.toLowerCase(text.charAt(0));''',
      '''		return text.charAt(0);'''),
-    (PLUGIN, '''F1 off by one, so every function key is the wrong one''',
-     '''					return 1007 + n;''',
-     '''					return 1008 + n;'''),
-    (PLUGIN, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
-     '''				if (n >= 1 && n <= 12) {''',
+    (HOTKEY, '''F1 off by one, so every function key is the wrong one''',
+     '''					return F1 - 1 + n;''',
+     '''					return F1 + n;'''),
+    (HOTKEY, '''F-key numbers unbounded, so F99 is a key code out of the blue''',
+     '''				if (n >= 1 && n <= FUNCTION_KEYS) {''',
      '''				if (n >= 1) {'''),
     # The 'blank hotkey setting' mutation is gone with the guard it deleted: a length-0
     # check was redundant - a blank setting already fails the "exactly one character"
     # test - and the audit finding it deletable with nothing noticing is how a redundant
     # check announces itself. The guard went rather than the mutation gaining a test.
-    (PLUGIN, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
+    (HOTKEY, '''a multi-character setting taking its first letter, so "Ctrl" becomes c''',
      '''		if (text.length() != 1) {
-			return -1;
+			return NONE;
 		}
 ''',
      ''''''),
@@ -489,7 +490,7 @@ def main():
     # EVERY FILE ANY MUTATION TARGETS. A target missing from this tuple is not a skipped
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
-    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT):
+    for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT, HOTKEY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     # Written into a copy, never into the working tree - see mutate_guard.workspace.

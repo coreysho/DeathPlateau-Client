@@ -689,29 +689,29 @@ public class GroundItemsTest {
 		// ONE CHARACTER, EITHER CASE EITHER WAY ROUND. The client delivers a lowercase g when
 		// nobody is holding shift, so a setting of "G" has to answer to it or a hotkey typed in
 		// capitals would simply never fire.
-		check(GroundItemsPlugin.hotkeyCode("g") == 'g', "a lowercase key is itself");
-		check(GroundItemsPlugin.hotkeyCode("G") == 'g', "and an uppercase one is the same key");
-		check(GroundItemsPlugin.hotkeyCode(" g ") == 'g', "whitespace round it is forgiven");
-		check(GroundItemsPlugin.hotkeyCode("4") == '4', "a digit is a key too");
+		check(Hotkey.code("g") == 'g', "a lowercase key is itself");
+		check(Hotkey.code("G") == 'g', "and an uppercase one is the same key");
+		check(Hotkey.code(" g ") == 'g', "whitespace round it is forgiven");
+		check(Hotkey.code("4") == '4', "a digit is a key too");
 
 		// F-keys are the client's own range, 1008 for F1, as KeyPressed documents.
-		check(GroundItemsPlugin.hotkeyCode("F1") == 1008, "F1 is the client's 1008");
-		check(GroundItemsPlugin.hotkeyCode("f12") == 1019, "and F12 its 1019, in either case");
-		check(GroundItemsPlugin.hotkeyCode("F13") == -1, "there is no F13");
-		check(GroundItemsPlugin.hotkeyCode("F0") == -1, "nor an F0");
+		check(Hotkey.code("F1") == 1008, "F1 is the client's 1008");
+		check(Hotkey.code("f12") == 1019, "and F12 its 1019, in either case");
+		check(Hotkey.code("F13") == -1, "there is no F13");
+		check(Hotkey.code("F0") == -1, "nor an F0");
 
 		// No hotkey is the default, and anything unreadable is no hotkey rather than a throw.
 		// "F" ON ITS OWN IS THE LETTER F, not a malformed function key - a player typing one
 		// character means that character, and only F1 to F12 are the function keys. Asserted
 		// because it is the ambiguous case, and because my first version of this list had it
 		// down as unreadable.
-		check(GroundItemsPlugin.hotkeyCode("F") == 'f', "F on its own is the letter F");
+		check(Hotkey.code("F") == 'f', "F on its own is the letter F");
 		String[] none = { null, "", "   ", "Ctrl", "shift", "Fx", "F-1", "gg", "++" };
 		for (int i = 0; i < none.length; i++) {
 			boolean threw = false;
 			int got = 0;
 			try {
-				got = GroundItemsPlugin.hotkeyCode(none[i]);
+				got = Hotkey.code(none[i]);
 			} catch (Throwable broke) {
 				threw = true;
 			}

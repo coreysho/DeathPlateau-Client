@@ -344,7 +344,7 @@ public final class GroundItemsPlugin extends Plugin {
 
 	@Subscribe
 	public void onKeyPressed(KeyPressed event) {
-		int wanted = hotkeyCode(this.hotkey);
+		int wanted = Hotkey.code(this.hotkey);
 		if (wanted < 0 || event.key != wanted) {
 			return;
 		}
@@ -354,41 +354,7 @@ public final class GroundItemsPlugin extends Plugin {
 		event.consume();
 	}
 
-	/**
-	 * The client key code a hotkey setting names, or -1 for none.
-	 *
-	 * One printable character, matched whichever case the player typed into the setting and
-	 * whichever case they press - a setting of "G" has to answer to a lowercase g, because that
-	 * is what the client delivers when nobody is holding shift. F1 to F12 are the client's own
-	 * 1008 upward, as KeyPressed documents.
-	 *
-	 * Pure, so the whole rule is tested as one, and tolerant: a setting this does not understand
-	 * is no hotkey rather than an exception out of a key press.
-	 */
-	static int hotkeyCode(String setting) {
-		if (setting == null) {
-			return -1;
-		}
-		String text = setting.trim();
-		// No length-0 check: a blank setting falls through to the "exactly one character" test
-		// below and comes back as no hotkey. The audit found the guard could be deleted with
-		// nothing noticing, which is how a redundant check announces itself.
-		if (text.length() >= 2 && (text.charAt(0) == 'F' || text.charAt(0) == 'f')) {
-			try {
-				int n = Integer.parseInt(text.substring(1));
-				if (n >= 1 && n <= 12) {
-					return 1007 + n;
-				}
-			} catch (RuntimeException notANumber) {
-				return -1;
-			}
-			return -1;
-		}
-		if (text.length() != 1) {
-			return -1;
-		}
-		return Character.toLowerCase(text.charAt(0));
-	}
+
 
 	/**
 	 * Whether two Alt presses this close together are a double-tap.

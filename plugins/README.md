@@ -376,6 +376,47 @@ is deliberately not part of that key: taking one coin off a stack is not a drop,
 kill adding to a stack already there. The first scan after a login reports nothing, so walking up
 to a loot pile is silent.
 
+### Skills, Anti-drag and Left-click swaps, in detail
+
+Six settings, four and three. The last of the eleven, and each gained the thing it was actually
+missing rather than a set of options for the sake of a number.
+
+**Skills** gets the skill filter, a switch for the combat row, a switch for the experience line,
+and an order for the page: skill order, level, experience, or closest to a level. The combat row is
+never sorted with the others — a page ordered by level with "Combat level" somewhere in the middle
+reads as a skill. The sort is a **stable insertion sort** written out rather than handed to
+`Collections.sort` with a comparator per order: twenty-three rows once a tick is nothing either way,
+and "closest to a level" is very nearly not a consistent comparator, two skills both 0 away being a
+real case. Stability matters because a page that reshuffles its ties every tick is unreadable. A
+maxed skill has nothing left to reach, which a plain comparison on 0 puts *first* — it goes last.
+
+**Anti-drag** gets shift, a suspend key, and a chat line. Hold shift and the client's own hold time
+is back for as long as you hold it — shift already means "the quick way" here, since shift-click
+drops and shift-right-click is the settings menu, so the hand is already on the key. The suspend
+key is for the session, not the settings file: a key pressed once by accident should not be a change
+to what a player saved. **The chat line is on by default**, unlike the Ground items hotkey, because
+this feature has no visible state: hiding the ground labels is its own feedback, whereas a suspended
+drag delay looks exactly like a live one until you try to drag something — by which point you have
+already dropped it in the wrong slot.
+
+**Left-click swaps** gets the one thing it could not do before level 6: **colour the row a swap
+promoted**. A swap is invisible by design — the point is that the option is simply there under the
+left button — and that is also what makes a wrong one hard to find, because the menu looks normal
+and the click does the wrong thing. The colour is set *after* the promotion, or it lands on whatever
+index the row came from. Its chat lines can be turned off, with one exception: "you can only have
+128 swaps" always speaks, because that one is the answer to a row that did nothing, and a silent
+failure is the one thing worse than a chatty success.
+
+**One hotkey parse, shared.** Ground items and Anti-drag both read a key out of a settings box, and
+two readings of `F3` would eventually differ by one — which is a hotkey that fires the wrong key,
+indistinguishable from one that does nothing. It lives in `Hotkey` now, with no delegate left behind
+in either plugin.
+
+**Barrows doors has no settings, and that is the answer.** The green is the cache's own data that
+377 threw away — the unlocked form of each door ships with a recolour and a little extra light — so
+there is no drawn highlight to configure and no colour to expose. A setting there would be invented
+rather than configurable.
+
 ### Boosts and the Idle notifier, in detail
 
 Boosts has eight settings, the Idle notifier five, and they share one piece of code: **"only these
@@ -747,13 +788,13 @@ are small enough that a jar of their own would be more ceremony than code:
 
 | Plugin | On by default | What it does |
 | --- | --- | --- |
-| Anti-drag | yes | How long a click is held before an item starts dragging. |
+| Anti-drag | yes | How long a click is held before an item drags, with shift and a key to suspend it. |
 | Ground items | yes | Names and values over what is on the floor, with rules per item, value tiers you colour, notifications and beams. |
-| Left-click swaps | yes | Which option a left click performs. |
+| Left-click swaps | yes | Which option a left click performs, optionally colouring the row it promoted. |
 | XP drops | yes | Experience gained, in the top-right corner, with the colour, the motion, grouping, experience per hour and a level-up notification. |
 | Barrows doors | yes | Highlights the door that opens. |
 | Boosts | no | Which stats are boosted or drained, by how much, in your colours, with a notice when one wears off. |
-| Skills | no | Levels, true levels past 99, combat level, experience to the next level. |
+| Skills | no | Levels, true levels past 99, combat level, experience to the next level, in the order you choose. |
 | Idle notifier | no | Says when you stop gaining experience, optionally in one skill only, once or repeating. |
 | Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
 | Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |

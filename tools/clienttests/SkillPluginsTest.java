@@ -74,6 +74,9 @@ public class SkillPluginsTest {
 		System.out.println();
 		System.out.println("3. Skills: the combat level, and the page");
 		skillsPageTests();
+		System.out.println();
+		System.out.println("3b. the order the page is in");
+		sortTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
@@ -260,6 +263,83 @@ public class SkillPluginsTest {
 		levelAll(50);
 		manager.setEnabled(boosts, false);
 		levelAll(50);
+	}
+
+	// ---------------------------------------------------------------- 3b
+
+	/**
+	 * The order the Skills page is in.
+	 *
+	 * A STABLE INSERTION SORT over at most twenty-three rows, which is why it is written out
+	 * rather than handed to Collections.sort with a comparator per order: "closest to a level"
+	 * is very nearly not a consistent comparator - two skills both 0 away is a real case - and a
+	 * page that reshuffles its ties every tick is unreadable.
+	 */
+	static void sortTests() {
+		// name, level, virtualLevel, experience, toNext, percent
+		SkillsPlugin.Skill a = skill("Attack", 50, 50, 100_000, 5_000);
+		SkillsPlugin.Skill b = skill("Bravery", 70, 70, 800_000, 1_000);
+		SkillsPlugin.Skill c = skill("Cooking", 60, 60, 300_000, 0);
+
+		check(order(SkillsPlugin.BY_SKILL, a, b, c).equals("Attack,Bravery,Cooking"),
+			"skill order is the list as it came, which is the client's own");
+		check(order(null, a, b, c).equals("Attack,Bravery,Cooking"),
+			"...and so is an order nobody recognises, rather than an empty page");
+
+		check(order(SkillsPlugin.BY_LEVEL, a, b, c).equals("Bravery,Cooking,Attack"),
+			"by level is highest first");
+		check(order(SkillsPlugin.BY_EXPERIENCE, a, b, c).equals("Bravery,Cooking,Attack"),
+			"by experience is most first");
+
+		// CLOSEST TO A LEVEL, where a maxed skill has to go LAST. It has 0 left to reach, which
+		// a plain comparison puts first - the one place this order needs thought.
+		check(order(SkillsPlugin.BY_CLOSEST, a, b, c).equals("Bravery,Attack,Cooking"),
+			"closest to a level is nearest first, with nothing-left-to-reach LAST");
+
+		// STABLE. Three skills with the same level stay in the order they arrived, or the page
+		// reshuffles itself every tick for no reason a player can see.
+		SkillsPlugin.Skill x = skill("Xerxes", 50, 50, 1, 1);
+		SkillsPlugin.Skill y = skill("Yvonne", 50, 50, 1, 1);
+		SkillsPlugin.Skill z = skill("Zebedee", 50, 50, 1, 1);
+		check(order(SkillsPlugin.BY_LEVEL, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"ties keep the order they came in, by level");
+		check(order(SkillsPlugin.BY_CLOSEST, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"...and by how close they are");
+		check(order(SkillsPlugin.BY_EXPERIENCE, x, y, z).equals("Xerxes,Yvonne,Zebedee"),
+			"...and by experience");
+
+		// Two maxed skills are both "nothing left", which is the tie that would make a careless
+		// comparator inconsistent rather than merely unstable.
+		SkillsPlugin.Skill m1 = skill("Maxed one", 99, 99, 13_034_431, 0);
+		SkillsPlugin.Skill m2 = skill("Maxed two", 99, 99, 13_034_431, 0);
+		check(order(SkillsPlugin.BY_CLOSEST, m1, m2, a).equals("Attack,Maxed one,Maxed two"),
+			"two maxed skills tie with each other and both sit behind one still training");
+
+		// An empty page and a page of one sort without incident, which an insertion sort written
+		// by hand is exactly where an off-by-one lives.
+		check(order(SkillsPlugin.BY_LEVEL).length() == 0, "an empty page sorts to nothing");
+		check(order(SkillsPlugin.BY_LEVEL, a).equals("Attack"), "and a page of one to itself");
+	}
+
+	static SkillsPlugin.Skill skill(String name, int level, int virtual, int xp, int toNext) {
+		return new SkillsPlugin.Skill(name, level, virtual, xp, toNext, 50);
+	}
+
+	/** The names, in the order this sort leaves them. */
+	static String order(String by, SkillsPlugin.Skill... rows) {
+		List<SkillsPlugin.Skill> list = new ArrayList<SkillsPlugin.Skill>();
+		for (int i = 0; i < rows.length; i++) {
+			list.add(rows[i]);
+		}
+		SkillsPlugin.sort(list, by);
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < list.size(); i++) {
+			if (i > 0) {
+				out.append(',');
+			}
+			out.append(list.get(i).name);
+		}
+		return out.toString();
 	}
 
 	// ---------------------------------------------------------------- 1b
@@ -467,6 +547,58 @@ public class SkillPluginsTest {
 		check(left >= 1, "...and leaves the combat level, which is not a skill to hide");
 		setBoolean(entry, "hideMaxed", false);
 
+		// ---- THE FOUR NEW SETTINGS. Defaults first, so a player who upgrades sees the page
+		// they had: everything on, in the client's own order.
+		baseAll(50);
+		levelAll(50);
+		tick();
+		check(bool(entry, "showCombat") && bool(entry, "showExperience"),
+			"the combat row and the experience line are both on");
+		check(text(entry, "sortBy").equals(SkillsPlugin.BY_SKILL),
+			"and the page starts in the client's own skill order");
+		check(text(entry, "skills").length() == 0, "with no filter");
+		check(setting(entry, "sortBy").choices().length == 4, "the order is a drop-down of four");
+
+		// EVERY ORDER THE DROP-DOWN OFFERS HAS TO BE ONE THE CODE BRANCHES ON. A value no branch
+		// matches falls through to "leave it alone" and looks exactly like the default working.
+		String[] orders = setting(entry, "sortBy").choices();
+		for (int i = 0; i < orders.length; i++) {
+			check(orders[i].equals(SkillsPlugin.BY_SKILL) || orders[i].equals(SkillsPlugin.BY_LEVEL)
+					|| orders[i].equals(SkillsPlugin.BY_EXPERIENCE)
+					|| orders[i].equals(SkillsPlugin.BY_CLOSEST),
+				"\"" + orders[i] + "\" is an order the code knows");
+		}
+
+		// ---- THE COMBAT ROW.
+		check(pageText().indexOf("Combat level") >= 0, "the combat row is on the page");
+		setBoolean(entry, "showCombat", false);
+		tick();
+		check(pageText().indexOf("Combat level") < 0, "turning it off takes it away");
+		check(pageRows() > 20, "...and leaves every skill");
+		setBoolean(entry, "showCombat", true);
+		tick();
+
+		// ---- THE EXPERIENCE LINE, which is the row's detail rather than its value.
+		client.skillExperience[0] = 120_000;
+		tick();
+		check(pageDetail().indexOf("xp") >= 0, "a row says how much experience it has");
+		setBoolean(entry, "showExperience", false);
+		tick();
+		check(pageDetail().indexOf("xp") < 0, "turning it off leaves the rows without it");
+		check(pageRows() > 20, "...and the rows themselves are still there");
+		setBoolean(entry, "showExperience", true);
+		tick();
+
+		// ---- THE FILTER, the same one Boosts uses.
+		setText(entry, "skills", "attack");
+		tick();
+		check(pageRows() == 2,
+			"a filter of \"attack\" leaves the combat row and one skill (" + pageRows() + ")");
+		check(pageText().indexOf("Attack") >= 0, "...which is Attack");
+		setText(entry, "skills", "");
+		tick();
+		check(pageRows() > 20, "and clearing it brings them all back");
+
 		manager.setEnabled(entry, false);
 	}
 
@@ -523,7 +655,23 @@ public class SkillPluginsTest {
 		return out.toString();
 	}
 
-	/** How many rows of the given pixel column are exactly this colour. */
+	/** Every row's detail line joined, which is where the experience figures go. */
+	static String pageDetail() {
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < panels.size(); i++) {
+			if (!"Skills".equals(panels.get(i).title)) {
+				continue;
+			}
+			List<jagex2.client.plugin.ConfigList.Row> rows = panels.get(i).rows;
+			for (int r = 0; r < rows.size(); r++) {
+				out.append(rows.get(r).detail).append(';');
+			}
+		}
+		return out.toString();
+	}
+
+	/** How many rows the Skills page has. */
 	static int pageRows() {
 		tick();
 		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
