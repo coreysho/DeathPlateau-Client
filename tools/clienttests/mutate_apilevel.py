@@ -29,6 +29,9 @@ SRC = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin')
 API = os.path.join(SRC, 'PluginApi.java')
 MANAGER = os.path.join(SRC, 'PluginManager.java')
 ENTRY = os.path.join(SRC, 'hub/HubEntry.java')
+HOTKEY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Hotkey.java')
+SWAPPER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/MenuSwapperPlugin.java')
+DRAG = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/AntiDragPlugin.java')
 PLUGIN_RUNNER = os.path.join(HERE, 'run_plugintest.py')
 HUB_RUNNER = os.path.join(HERE, 'run_hubtest.py')
 
@@ -176,13 +179,68 @@ MUTS = [
      'return isSafeId(this.id) && this.name.length() > 0 && isHttpUrl(this.url);',
      'return isSafeId(this.id) && this.name.length() > 0 && isHttpUrl(this.url)\n'
      '\t\t\t&& !this.needsNewerClient();'),
+    # ---- TRANCHE FIVE: Anti-drag's three new settings, the shared hotkey parse, and the
+    # swapper's menu colour - which is the one thing it could not do before level 6.
+    (DRAG, PLUGIN_RUNNER, '''the suspend key ignored, so the key does nothing''',
+     '''		return suspended || shiftHeld ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);''',
+     '''		return shiftHeld ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);'''),
+    (DRAG, PLUGIN_RUNNER, '''shift ignored, so holding it no longer gives the quick drag back''',
+     '''		return suspended || shiftHeld ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);''',
+     '''		return suspended ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);'''),
+    (DRAG, PLUGIN_RUNNER, '''the precedence inverted, so the plugin looks on and does nothing''',
+     '''		return suspended || shiftHeld ? CLIENT_DEFAULT_CYCLES : cyclesFor(millis);''',
+     '''		return suspended || shiftHeld ? cyclesFor(millis) : CLIENT_DEFAULT_CYCLES;'''),
+    (DRAG, PLUGIN_RUNNER, '''the shift setting not read, so shift always resets it''',
+     '''			this.resetOnShift && this.ctx.isShiftHeld()));''',
+     '''			this.ctx.isShiftHeld()));'''),
+    (DRAG, PLUGIN_RUNNER, '''the suspend key not toggling, so once off it never comes back''',
+     '''		this.suspended = !this.suspended;''',
+     '''		this.suspended = true;'''),
+    (DRAG, PLUGIN_RUNNER, '''the suspend key not consumed, so it also lands in the chat box''',
+     '''		event.consume();
+		this.suspended = !this.suspended;''',
+     '''		this.suspended = !this.suspended;'''),
+    (DRAG, PLUGIN_RUNNER, '''every key suspending it, not the one a player named''',
+     '''		if (!Hotkey.pressed(this.suspendKey, event.key)) {''',
+     '''		if (false) {'''),
+    (HOTKEY, PLUGIN_RUNNER, '''a blank setting reading as a real key, so nothing can turn the feature off''',
+     '''		return want != NONE && keyCode == want;''',
+     '''		return keyCode == want;'''),
+    (SWAPPER, PLUGIN_RUNNER, '''the promoted row coloured whether the player asked for it or not''',
+     '''		if (this.colourSwapped) {''',
+     '''		if (true) {'''),
+    (SWAPPER, PLUGIN_RUNNER, '''the promoted row never coloured, so the switch does nothing''',
+     '''		if (this.colourSwapped) {''',
+     '''		if (false) {'''),
+    (SWAPPER, PLUGIN_RUNNER, '''the swap colour left hardcoded, so the swatch does nothing''',
+     '''				PluginConfig.parseColour(this.swapColour));''',
+     '''				PluginConfig.parseColour("00FFFF"));'''),
+    (SWAPPER, PLUGIN_RUNNER, '''the colour set on the index the row came from rather than where it went''',
+     '''		this.ctx.setLeftClick(best);
+		// COLOURED AFTER THE SWAP, not before: setLeftClick moves the row to the top, and a
+		// colour set on the index it came from would land on whatever took its place. The index
+		// a left click runs is where it is now.
+		if (this.colourSwapped) {
+			this.ctx.setMenuColour(this.ctx.getLeftClickIndex(),
+				PluginConfig.parseColour(this.swapColour));
+		}''',
+     '''		if (this.colourSwapped) {
+			this.ctx.setMenuColour(best, PluginConfig.parseColour(this.swapColour));
+		}
+		this.ctx.setLeftClick(best);'''),
+    (SWAPPER, PLUGIN_RUNNER, '''the chat lines silenced whatever the setting says''',
+     '''		if (this.announce) {
+			this.ctx.addChatMessage(message);
+		}''',
+     ''''''),
+
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (API, MANAGER, ENTRY):
+    for path in (API, MANAGER, ENTRY, DRAG, SWAPPER, HOTKEY):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     # Written into a copy, never into the working tree - see mutate_guard.workspace.

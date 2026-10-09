@@ -153,10 +153,53 @@ MUTS = [
      '		rows.add(new Skill("Combat level", combat, combat, 0, 0, -1));',
      ''),
     (SKILLS, 'the placeholder slots listed as skills',
-     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER) {
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER
+					|| !SkillFilter.allows(name, this.skills)) {
 				continue;
 			}
 ''', ''),
+    (SKILLS, 'the skill filter not applied to the page, so the skills box does nothing',
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER
+					|| !SkillFilter.allows(name, this.skills)) {''',
+     '''			if (name.length() == 0 || name.charAt(0) == UNUSED_MARKER) {'''),
+    (SKILLS, 'the combat row shown whether the player asked for it or not',
+     '\t\tif (this.showCombat) {',
+     '\t\tif (true) {'),
+    (SKILLS, 'the combat row never shown',
+     '\t\tif (this.showCombat) {',
+     '\t\tif (false) {'),
+    (SKILLS, 'the experience line shown whether the player asked for it or not',
+     'if (skill == null || !SkillsPlugin.this.showExperience) {',
+     'if (skill == null) {'),
+    (SKILLS, 'the sort never applied, so the order drop-down does nothing',
+     '\t\tsort(listed, this.sortBy);',
+     ''),
+    (SKILLS, 'skill order sorting anyway, so the default is not the client\'s order',
+     '''		if (BY_SKILL.equals(by) || by == null) {
+			return;                                      // the client's order, which is the list
+		}
+''',
+     ''),
+    (SKILLS, 'by level sorted lowest first',
+     '\t\t\treturn first.virtualLevel < second.virtualLevel;      // highest first',
+     '\t\t\treturn first.virtualLevel > second.virtualLevel;'),
+    (SKILLS, 'by experience sorted least first',
+     '\t\t\treturn first.experience < second.experience;',
+     '\t\t\treturn first.experience > second.experience;'),
+    (SKILLS, 'a maxed skill counted as nearest to a level, so it sorts to the top',
+     '''			long left = first.toNext > 0 ? first.toNext : Long.MAX_VALUE;
+			long other = second.toNext > 0 ? second.toNext : Long.MAX_VALUE;''',
+     '''			long left = first.toNext;
+			long other = second.toNext;'''),
+    (SKILLS, 'closest to a level sorted furthest first',
+     '\t\t\treturn left > other;',
+     '\t\t\treturn left < other;'),
+    (SKILLS, 'the sort made unstable, so ties reshuffle every tick',
+     '\t\t\twhile (at > 0 && after(rows.get(at - 1), moving, by)) {',
+     '\t\t\twhile (at > 0 && !after(moving, rows.get(at - 1), by)) {'),
+    (SKILLS, 'an order nobody recognises sorting by level rather than being left alone',
+     '\t\treturn false;\n\t}\n\n\tSkill row(int index) {',
+     '\t\treturn first.virtualLevel < second.virtualLevel;\n\t}\n\n\tSkill row(int index) {'),
     (SKILLS, 'the progress bar reported as a fraction rather than a percentage',
      'return through >= end - start ? 100 : through * 100 / (end - start);',
      'return through >= end - start ? 100 : through / (end - start);'),
