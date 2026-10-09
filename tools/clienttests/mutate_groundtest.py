@@ -347,7 +347,7 @@ MUTS = [
      '''		return width;'''),
     (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
      '''		} else {
-			width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+			width = BEAM_W - segment * BEAM_W / (segments + 1);
 		}''',
      '''		} else {
 			width = 0;
@@ -480,6 +480,92 @@ MUTS = [
 )''',
      '''	apiLevel = 0
 )'''),
+
+    # ---- THE BEAM AS LIGHT. It was a stack of boxes at one flat alpha; it fades, has a brighter
+    # core than its edges, lights the ground under it, and can pulse. Each of those is a property
+    # of light, and each of these breaks one of them.
+    (PLUGIN, '''the fade removed, so a beam is a slab of one brightness again''',
+     '''		if (!fade || segments <= 1) {
+			return base;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the fade inverted, so a beam is brightest where nobody is looking''',
+     '''		int left = segments - segment;''',
+     '''		int left = segment + 1;'''),
+    (PLUGIN, '''the ramp over the segments exactly, so the top segment is invisible''',
+     '''		int alpha = base * left / (segments + 1);''',
+     '''		int alpha = base * (left - 1) / segments;'''),
+    (PLUGIN, '''a segment allowed to reach nothing, which is a beam one segment shorter''',
+     '''		return alpha < 1 ? 1 : alpha;''',
+     '''		return alpha;'''),
+    (PLUGIN, '''a one-segment beam dividing its brightness away''',
+     '''		if (!fade || segments <= 1) {''',
+     '''		if (!fade) {'''),
+    (PLUGIN, '''the core as wide as the beam, so there is no core''',
+     '''		return width / BEAM_CORE_DIVISOR;''',
+     '''		return width;'''),
+    (PLUGIN, '''the core drawn whether the player asked for it or not''',
+     '''			if (this.beamCore) {''',
+     '''			if (true) {'''),
+    (PLUGIN, '''the core never drawn, so the switch does nothing''',
+     '''			if (this.beamCore) {''',
+     '''			if (false) {'''),
+    (PLUGIN, '''a zero-width core still filled, which fillAlpha makes what it likes of''',
+     '''				if (core > 0) {''',
+     '''				if (true) {'''),
+    (PLUGIN, '''the ground glow drawn whether the player asked for it or not''',
+     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
+     '''		if (this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+    (PLUGIN, '''the ground glow never drawn''',
+     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
+     '''		if (false && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+    (PLUGIN, '''the height left at the old constant, so the setting is decoration''',
+     '''		int segments = beamSegmentsFor(this.beamSegments);''',
+     '''		int segments = DEFAULT_BEAM_SEGMENTS;'''),
+    (PLUGIN, '''the opacity left at the old constant''',
+     '''		int base = pulsed(beamAlphaFor(this.beamOpacity), System.currentTimeMillis(),
+			this.beamPulse);''',
+     '''		int base = DEFAULT_BEAM_ALPHA;'''),
+    (PLUGIN, '''the height floor removed, so a zero is no beam at all''',
+     '''		if (segments < MIN_BEAM_SEGMENTS) {
+			return MIN_BEAM_SEGMENTS;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the height ceiling removed, so a beam can be a column into the sky''',
+     '''		return segments > MAX_BEAM_SEGMENTS ? MAX_BEAM_SEGMENTS : segments;''',
+     '''		return segments;'''),
+    (PLUGIN, '''the opacity floor removed, so a 0 turns the beam off from a box that cannot say so''',
+     '''		if (alpha < MIN_BEAM_ALPHA) {
+			return MIN_BEAM_ALPHA;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the pulse live whether the player asked for it or not''',
+     '''		if (!pulse) {
+			return alpha;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the pulse peaking above the brightness a player set''',
+     '''		return capAlpha(dimmed + (int) (swing * up / BEAM_PULSE_MS));''',
+     '''		return capAlpha(dimmed + (int) (swing * 2L * up / BEAM_PULSE_MS));'''),
+    (PLUGIN, '''the pulse a sawtooth rather than a triangle, so it jumps every cycle''',
+     '''		long up = phase <= BEAM_PULSE_MS ? phase : BEAM_PULSE_MS * 2L - phase;''',
+     '''		long up = phase;'''),
+    (PLUGIN, '''the pulse never dimming, so it is a constant with extra arithmetic''',
+     '''		int swing = alpha * BEAM_PULSE_PERCENT / 100;''',
+     '''		int swing = 0;'''),
+    (PLUGIN, '''the doubled alpha uncapped, so a bright beam wraps past opaque''',
+     '''		if (alpha < 1) {
+			return 1;
+		}
+		return alpha > MAX_BEAM_ALPHA ? MAX_BEAM_ALPHA : alpha;''',
+     '''		return alpha;'''),
+    (PLUGIN, '''the taper computed over a fixed height, so a tall beam is a needle halfway up''',
+     '''			width = BEAM_W - segment * BEAM_W / (segments + 1);''',
+     '''			width = BEAM_W - segment * BEAM_W / (DEFAULT_BEAM_SEGMENTS + 1);'''),
 
 ]
 

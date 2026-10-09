@@ -742,17 +742,25 @@ public class GroundItemsTest {
 		check(!GroundItemsPlugin.isDoubleTap(100L, 0L, 250),
 			"...and a first tap 100ms after startup is not one either, inside any window");
 
-		// The beam's shapes have to differ, or the drop-down is decoration.
-		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0);
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8) < base,
+		// The beam's shapes have to differ, or the drop-down is decoration. The taper is over
+		// the beam's own height now, so the height it is tapering across is a parameter.
+		int tall = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
+		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, tall);
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8, tall) < base,
 			"a tapered beam narrows as it rises");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8)
-				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0),
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8, tall)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall),
 			"a straight one does not");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0) < base,
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0, tall) < base,
 			"and a narrow one is thinner from the floor up");
-		check(GroundItemsPlugin.beamWidth("Enormous", 0) == base,
+		check(GroundItemsPlugin.beamWidth("Enormous", 0, tall) == base,
 			"a shape from a release that offered something else draws the default");
+
+		// THE TAPER FOLLOWS THE HEIGHT. A taper computed over a fixed fourteen would make a
+		// forty-segment beam a needle halfway up and a four-segment one barely narrow at all.
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 4)
+				< GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 40),
+			"the same segment is narrower in a short beam than in a tall one");
 
 		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
 		// negative one is whatever fillAlpha makes of it.
@@ -761,13 +769,105 @@ public class GroundItemsTest {
 			GroundItemsPlugin.BEAM_NARROW, null, "" };
 		for (int st = 0; st < styles.length && !tooThin; st++) {
 			for (int segment = 0; segment < 200; segment++) {
-				if (GroundItemsPlugin.beamWidth(styles[st], segment) < 1) {
+				if (GroundItemsPlugin.beamWidth(styles[st], segment, tall) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 2) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 40) < 1) {
 					tooThin = true;
 					break;
 				}
 			}
 		}
-		check(!tooThin, "every shape stays at least a pixel wide, at any height");
+		check(!tooThin, "every shape stays at least a pixel wide, at any height, in any beam");
+
+		// ---- WHAT MAKES IT READ AS LIGHT RATHER THAN AS A SLAB.
+		//
+		// The beam was fourteen segments at one flat alpha. Four things change that, and each is
+		// a property of light rather than a number off a wiki: it fades as it rises, it has a
+		// brighter core than its edges, it lights the ground under it, and it can pulse.
+		int alpha = GroundItemsPlugin.DEFAULT_BEAM_ALPHA;
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, true)
+				> GroundItemsPlugin.beamAlpha(13, 14, alpha, true),
+			"a beam is brighter at the item than at the top");
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, true)
+				> GroundItemsPlugin.beamAlpha(7, 14, alpha, true)
+				&& GroundItemsPlugin.beamAlpha(7, 14, alpha, true)
+					> GroundItemsPlugin.beamAlpha(13, 14, alpha, true),
+			"...and falls off the whole way up rather than in one step");
+		check(GroundItemsPlugin.beamAlpha(13, 14, alpha, true) >= 1,
+			"THE TOP SEGMENT IS STILL DRAWN: a beam whose last segment is invisible is a beam "
+				+ "one segment shorter, and the height setting would lose its last notch");
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, false)
+				== GroundItemsPlugin.beamAlpha(13, 14, alpha, false),
+			"with the fade off every segment is the same, which is what it used to be");
+		check(GroundItemsPlugin.beamAlpha(0, 1, alpha, true) == alpha,
+			"a beam of one segment is its own base, not a divide by something near zero");
+		boolean overBright = false;
+		for (int segs = 1; segs <= 40; segs++) {
+			for (int seg = 0; seg < segs; seg++) {
+				int a = GroundItemsPlugin.beamAlpha(seg, segs, alpha, true);
+				if (a < 1 || a > alpha) {
+					overBright = true;
+				}
+			}
+		}
+		check(!overBright,
+			"no segment of any beam is invisible or brighter than the beam's own setting");
+
+		// The core, which is narrower than the column it sits in.
+		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W)
+				< GroundItemsPlugin.BEAM_W,
+			"the bright core is narrower than the beam around it");
+		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W) > 0,
+			"...and wide enough to see");
+		check(GroundItemsPlugin.coreWidth(1) == 0,
+			"a beam too narrow to hold a core does not get one, rather than a zero-width fill");
+		check(GroundItemsPlugin.coreWidth(0) == 0, "...nor does a beam of no width");
+
+		// The caps, because every alpha here is multiplied by something.
+		check(GroundItemsPlugin.capAlpha(300) == GroundItemsPlugin.MAX_BEAM_ALPHA,
+			"a doubled alpha cannot leave the range Pix2D blends over");
+		check(GroundItemsPlugin.capAlpha(0) == 1 && GroundItemsPlugin.capAlpha(-5) == 1,
+			"...and cannot reach nothing either");
+		check(GroundItemsPlugin.beamAlphaFor(96) == 96, "an opacity in range is kept");
+		check(GroundItemsPlugin.beamAlphaFor(0) == GroundItemsPlugin.MIN_BEAM_ALPHA,
+			"A ZERO IS NOT HOW THE BEAM IS TURNED OFF: two switches already do that honestly, "
+				+ "and a box that silently disables a feature is worse than either");
+		check(GroundItemsPlugin.beamAlphaFor(999) == 255, "and nothing is more than opaque");
+		check(GroundItemsPlugin.beamSegmentsFor(14) == 14, "a height in range is kept");
+		check(GroundItemsPlugin.beamSegmentsFor(0) == GroundItemsPlugin.MIN_BEAM_SEGMENTS,
+			"a beam of no segments is not a beam");
+		check(GroundItemsPlugin.beamSegmentsFor(500) == GroundItemsPlugin.MAX_BEAM_SEGMENTS,
+			"and one into the sky is bounded");
+		check(GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS == 14
+				&& GroundItemsPlugin.DEFAULT_BEAM_ALPHA == 96,
+			"the defaults are the constants the beam had before either was a setting");
+
+		// THE PULSE, which takes the time rather than reading the clock so its curve can be
+		// checked: the shape of a pulse is exactly the sort of thing that is wrong by a factor
+		// and invisible in review.
+		check(GroundItemsPlugin.pulsed(alpha, 0L, false) == alpha,
+			"with the pulse off the time does not matter");
+		check(GroundItemsPlugin.pulsed(alpha, 900L, false) == alpha, "...at any point in it");
+		int atStart = GroundItemsPlugin.pulsed(alpha, 0L, true);
+		int atPeak = GroundItemsPlugin.pulsed(alpha, GroundItemsPlugin.BEAM_PULSE_MS / 2, true);
+		int atEnd = GroundItemsPlugin.pulsed(alpha, GroundItemsPlugin.BEAM_PULSE_MS - 1, true);
+		check(atPeak > atStart, "the pulse brightens from the start of its cycle to the middle");
+		check(atEnd < atPeak, "...and dims again by the end");
+		check(Math.abs(atEnd - atStart) <= 2,
+			"...arriving back where it began, so the cycle does not jump (" + atStart + " -> "
+				+ atEnd + ")");
+		check(atPeak <= alpha,
+			"the pulse never exceeds the brightness a player set (" + atPeak + " of " + alpha + ")");
+		check(atStart >= 1, "...and never goes out entirely (" + atStart + ")");
+		// Across two whole cycles, so the modulo is exercised rather than assumed.
+		boolean pulseOut = false;
+		for (long t = 0; t < GroundItemsPlugin.BEAM_PULSE_MS * 2; t += 37) {
+			int a = GroundItemsPlugin.pulsed(alpha, t, true);
+			if (a < 1 || a > alpha) {
+				pulseOut = true;
+			}
+		}
+		check(!pulseOut, "and stays in range across two full cycles");
 
 		// THE KEY PRESS ITSELF. onKeyPressed touches no client state, so it can be driven on a
 		// bare plugin: the audit found that dropping event.consume() changed nothing any check

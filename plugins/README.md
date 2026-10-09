@@ -334,7 +334,7 @@ Longer lists - rules per item, things a player adds and removes - are a `ConfigL
 
 ### Ground items, in detail
 
-The most configured plugin here, and the one to copy from. 28 settings:
+The most configured plugin here, and the one to copy from. 34 settings:
 
 | | |
 | --- | --- |
@@ -343,7 +343,7 @@ The most configured plugin here, and the one to copy from. 28 settings:
 | Shown | How far away, hide under value, show hidden, only highlighted, outline tiles |
 | Rows | Name only / Name and value / Name, value and each |
 | Notify | On a highlighted drop, and from a tier up |
-| Beams | Over highlighted items, from a tier up, and the shape of them |
+| Beams | Over highlighted items, from a tier up, the shape, how tall, how solid, a fade, a core, a ground glow and a pulse |
 | Reading | Outlined text instead of a drop shadow |
 | Input | A key that hides and shows the labels, and double-tap Alt to do the same |
 | Menu | Colour the Take rows for highlighted and for hidden items, and move hidden ones to the bottom |
@@ -369,6 +369,34 @@ would otherwise give an item the wrong tier's colour silently. A consequence wor
 "Top tier from" to 0 and the 0 sorts to the bottom, so "Top tier" in the notify and beam
 drop-downs becomes the next price down. Zeroing a price turns off that **colour** tier; turning a
 notification off means choosing **Off**.
+
+**A beam is light, not a translucent slab.** The first version was a stack of boxes at one flat
+alpha, which reads as a block standing on a tile. Four things make the difference, and each is a
+property of light rather than a number off anybody's palette:
+
+- **It fades as it rises** — brightest at the item, faint at the top. This is the single biggest
+  one. The ramp runs over `segments + 1` so the last segment is faint rather than *absent*: a beam
+  whose top segment is invisible is a beam one segment shorter, and the height setting would quietly
+  lose its last notch.
+- **It has a brighter core** than its edges, because light is dense in the middle. Two passes per
+  segment — a wide soft one and a narrow bright one — is the cheapest thing that reads that way.
+- **It lights the ground under it**, drawn first and beneath everything, which roots the beam to the
+  tile instead of leaving it hovering over one.
+- **It can pulse**, off by default, because motion catches the eye hardest and a beam is already
+  doing its job standing still.
+
+Height and opacity are settings now; both were constants. **The opacity setting is the beam's
+brightest**, and the pulse dims below it — the first version swung symmetrically about it and peaked
+a third over, 129 where the player asked for 96, which is a setting that does not mean what its
+label says. The taper is computed over the beam's own height, so a forty-segment beam is not a
+needle halfway up and a four-segment one is not barely narrowed.
+
+The pulse takes the time as an argument rather than reading the clock, so its curve can be checked
+across two whole cycles. It is a triangle rather than a sine: `Math.sin` in a per-frame draw for a
+35% wobble is not a trade anybody would make, and at this speed the two are indistinguishable.
+
+**The tier thresholds and colours are the player's**, four of each, so matching another game's
+palette is a change of values rather than of code.
 
 **A new drop is a difference between two ticks**, which no pile can tell you - a pile is what is
 on a tile now. `GroundItemArrivals` remembers the last scan and answers the difference, keyed on
