@@ -389,25 +389,46 @@ Height and opacity are settings now; both were constants. **The opacity setting 
 brightest**, and the pulse dims below it — the first version swung symmetrically about it and peaked
 a third over, 129 where the player asked for 96, which is a setting that does not mean what its
 label says. The taper is computed over the beam's own height, so a forty-segment beam is not a
-needle halfway up and a four-segment one is not barely narrowed.
+needle halfway up and a four-segment one is not barely narrowed. A segment is 24 scene units, so
+the default of 24 segments stands about four and a half tiles tall - the proportion the sprite has.
+The setting used to say 14 units was "about one and a half tiles"; a tile is 128 units, so that was
+wrong by a factor of thirteen and the beam stood at well under half the height it should have.
 
 The pulse takes the time as an argument rather than reading the clock, so its curve can be checked
 across two whole cycles. It is a triangle rather than a sine: `Math.sin` in a per-frame draw for a
 35% wobble is not a trade anybody would make, and at this speed the two are indistinguishable.
 
-**The shape is measured off Jagex's own sprite, not guessed.** The asset is 383x1586 - four times
-taller than it is wide - and its width profile is not a cone. Normalised against its widest point it
-is 2% of full width a tenth of the way below the tip, 7% at three tenths and **12% at the halfway
-mark**, then it flares hard through the bottom third. Cubing the distance below the tip gives 12.5%
-at halfway, which is the figure that decides how the shape reads; squaring gives 25% and a linear
-taper 50%, and both of those still read as cones. That is the `Loot beam` style, and it is the
+**The shape is measured off Jagex's own sprite, not guessed** - and the first attempt measured the
+wrong thing. The asset is 383x1586. Taking the OUTER EXTENT of each row gives 12% of full width at
+the halfway mark, and the beam was built by cubing the distance below the tip to fit that one
+figure. It shipped as a dotted hairline, because both steps were wrong.
+
+The outer extent at halfway is 35.7%, not 12%, and nearly all of that is the pair of HELICAL
+RIBBONS wound round the beam - which this does not draw. Measuring the widest *contiguous* run per
+row instead, which is the body on its own, gives:
+
+| below the tip | 0.05 | 0.10 | 0.20 | 0.30 | 0.40 | 0.50 | 0.60 | 0.70 | 0.80 | 0.90 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| body width | 1.1% | 2.2% | 4.4% | 6.9% | 9.2% | 11.4% | 13.9% | 15.8% | 23.9% | 39.7% |
+
+which is **a straight line at 22.6% per unit** through the top seven tenths, and a flare over the
+last three into the disc on the ground. A cube gives 0.1% a tenth below the tip where the sprite has
+2.2%, so the whole top half came out one pixel wide. That is the `Loot beam` style, and it is the
 default.
 
-Two things in the sprite are deliberately **not** drawn: the pair of helical ribbons wound round its
-lower half, and the sparkles floating near its base. They are separate animated elements rather than
-part of the beam's body, which is why the measured width jumps from 12% to 42% just below halfway -
-that jump is the ribbons, not the beam. Drawing them with `fillAlpha` rectangles would cost more
-than they are worth at the size a beam is actually seen.
+**Every width is a share of the tile the beam stands on, not a count of pixels.** The first version
+used pixel constants - 22 across, 14 tall a segment, a 44x6 pool on the ground - and a beam drawn in
+pixels over a scene measured in units is wrong at every distance but one. It stayed 22 across
+whether the drop was underfoot or across the square. The segment height was the same mistake twice:
+`BEAM_SEGMENT_H` is 24 *scene units*, and the draw loop used it as a count of *pixels*, so the
+segments overlapped up close and left visible gaps further off, which is what made the beam look
+dashed. Each segment now spans the gap its own two ends project to, so it cannot gap or overlap at
+any distance, and the pool of light is simply the tile's own projected box.
+
+Two things in the sprite are deliberately **not** drawn: the helical ribbons, and the sparkles
+floating near its base. They are separate animated elements rather than part of the beam's body.
+Drawing them with `fillAlpha` rectangles would cost more than they are worth at the size a beam is
+actually seen.
 
 **The four colours Jagex ships, sampled from the assets**, for anyone setting their tiers to match:
 

@@ -212,7 +212,8 @@ public final class GroundItemsPlugin extends Plugin {
 	public boolean beamPulse = false;
 
 	@ConfigItem(keyName = "beamSegments", name = "How tall a beam is",
-		description = "In segments of 14 scene units, so 14 is about one and a half tiles")
+		description = "In segments of 24 scene units, so 24 segments stand about four and a "
+			+ "half tiles tall - the proportion Jagex's own beam has")
 	public int beamSegments = DEFAULT_BEAM_SEGMENTS;
 
 	@ConfigItem(keyName = "beamOpacity", name = "How solid a beam is",
@@ -290,8 +291,45 @@ public final class GroundItemsPlugin extends Plugin {
 	private final GroundItemArrivals arrivals = new GroundItemArrivals();
 
 	/** The beam: how many boxes, how tall each is, how wide at the base, and how solid. */
-	static final int BEAM_SEGMENT_H = 14;
-	static final int BEAM_W = 22;
+	/**
+	 * How tall one segment is, IN SCENE UNITS. A tile is 128 of them.
+	 *
+	 * It was 14, described in the setting as "about one and a half tiles" - which is wrong by a
+	 * factor of thirteen, 14 units being a ninth of a tile. The default of 24 segments
+	 * therefore stood 2.6 tiles tall where the sprite's own proportions want about 4.4, and the
+	 * same 14 was separately used as a count of PIXELS when drawing, which is what left gaps
+	 * between the segments at any distance where the two did not happen to agree.
+	 */
+	static final int BEAM_SEGMENT_H = 24;
+	/**
+	 * THE COLUMN'S WIDTHS ARE PERMILLE OF THE TILE IT STANDS ON, not pixels.
+	 *
+	 * The first version used pixel constants - 22 across, 14 tall a segment - and a beam drawn
+	 * in pixels over a scene measured in units is wrong at every distance but one. It stayed 22
+	 * pixels wide whether the drop was at your feet or across the square, and its segments
+	 * overlapped up close and left visible gaps further off, because the drawn height was a
+	 * constant and the gap the projection leaves is not. A share of the tile's own projected
+	 * box is the same share at every distance, the perspective having already been done.
+	 *
+	 * The numbers are measured off Jagex's sprite as a share of its widest point, which is the
+	 * disc on the ground - and the disc is about a tile across in game. See lootBeamWidth.
+	 */
+	static final int BEAM_SLOPE_PERMILLE = 226;
+
+	/** Where the straight part ends and the flare begins, in tenths of the beam's height. */
+	static final int BEAM_FLARE_FROM = 7;
+
+	/** The column where it meets the ground, in permille of a tile. */
+	static final int BEAM_FOOT_PERMILLE = 400;
+
+	/** ...and where the flare starts, which is the straight part's widest. */
+	static final int BEAM_FLARE_PERMILLE = 158;
+
+	static final int BEAM_STRAIGHT_PERMILLE = 300;
+
+	static final int BEAM_NARROW_PERMILLE = 100;
+
+	static final int BEAM_TAPER_TIP_PERMILLE = 20;
 
 	/** What the beam was before any of it was a setting, kept as the defaults it still is. */
 	/**
@@ -316,9 +354,15 @@ public final class GroundItemsPlugin extends Plugin {
 	static final int BEAM_CORE_DIVISOR = 3;
 	static final int BEAM_CORE_BOOST = 2;
 
-	/** The pool of light on the tile, which is what roots the beam to the ground. */
-	static final int BEAM_GLOW_W = BEAM_W * 2;
-	static final int BEAM_GLOW_H = 6;
+	/**
+	 * The pool of light on the ground is THE TILE'S OWN BOX, so it needs no constant.
+	 *
+	 * It was 44 by 6 pixels: a fifth of a tile at arm's length and three tiles wide across the
+	 * square. The sprite's disc is its widest part and about a tile across, so the tile's
+	 * projected bounding box is the right size and the right shape at every distance and every
+	 * camera angle, for nothing.
+	 */
+	static final int BEAM_GLOW_BRIGHTER = 2;
 
 	/** One full brighten-and-dim of the pulse, in milliseconds. */
 	static final long BEAM_PULSE_MS = 1800L;
@@ -443,16 +487,20 @@ public final class GroundItemsPlugin extends Plugin {
 	 * easier to see at a distance. Narrow is a thin line for somebody who wants to know a drop
 	 * landed without a pillar over half the screen.
 	 */
-	static int beamWidth(String style, int segment, int segments) {
+	static int beamWidth(String style, int segment, int segments, int tileWidth) {
 		int width;
 		if (BEAM_LOOT.equals(style)) {
-			width = lootBeamWidth(segment, segments);
+			width = lootBeamWidth(segment, segments, tileWidth);
 		} else if (BEAM_STRAIGHT.equals(style)) {
-			width = BEAM_W;
+			width = tileWidth * BEAM_STRAIGHT_PERMILLE / 1000;
 		} else if (BEAM_NARROW.equals(style)) {
-			width = BEAM_W / 4;
+			width = tileWidth * BEAM_NARROW_PERMILLE / 1000;
 		} else {
-			width = BEAM_W - segment * BEAM_W / (segments + 1);
+			// Linear from its foot to a tip that is still visible, which is what Tapered was.
+			int down = segments - segment;
+			int permille = BEAM_TAPER_TIP_PERMILLE
+				+ (BEAM_STRAIGHT_PERMILLE - BEAM_TAPER_TIP_PERMILLE) * down / segments;
+			width = tileWidth * permille / 1000;
 		}
 		return width < 1 ? 1 : width;
 	}
@@ -864,71 +912,148 @@ public final class GroundItemsPlugin extends Plugin {
 		int base = pulsed(beamAlphaFor(this.beamOpacity), System.currentTimeMillis(),
 			this.beamPulse);
 
-		// THE POOL ON THE GROUND FIRST, under everything: it is what roots the beam to the tile
-		// rather than leaving it hovering over one. Drawn at the item's own height, wider than
-		// the beam and brighter, because that is where the light is densest.
-		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {
-			int glow = capAlpha(base * BEAM_CORE_BOOST);
-			g.fillAlpha(this.ctx.getProjectedX() - BEAM_GLOW_W / 2,
-				this.ctx.getProjectedY() - BEAM_GLOW_H / 2, BEAM_GLOW_W, BEAM_GLOW_H,
-				colour, glow);
+		// HOW BIG THIS TILE IS ON SCREEN, which every width below is a share of. One
+		// measurement, four projections, and the perspective is done for the whole beam.
+		int[] box = new int[4];
+		if (!tileBox(this.ctx, pile.sceneTileX, pile.sceneTileZ, box)) {
+			return;                                      // cannot be placed, so cannot be drawn
+		}
+		int tileWidth = box[2] - box[0];
+		if (tileWidth < 1) {
+			return;
 		}
 
+		// THE POOL ON THE GROUND FIRST, under everything: it is what roots the beam to the tile
+		// rather than leaving it hovering over one. It IS the tile - its own projected box - so
+		// it is a tile across at every distance rather than a fixed 44 pixels, and it leans
+		// with the camera because the box does.
+		if (this.beamGlow) {
+			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);
+			g.fillAlpha(box[0], box[1], tileWidth, box[3] - box[1] + 1, colour, glow);
+		}
+
+		// THE COLUMN, segment by segment, each one spanning the gap the projection actually
+		// leaves between its own two ends.
+		//
+		// The first version projected the segment's foot and then drew a rectangle
+		// BEAM_SEGMENT_H PIXELS tall - but BEAM_SEGMENT_H is scene units, and what 14 scene
+		// units comes to in pixels is the whole question perspective answers. Up close it came
+		// to about seven and the segments drew over each other twice; further off it came to
+		// more than fourteen and the beam was a dotted line. Worse, the rectangle was drawn
+		// DOWNWARD from its own foot, so every segment hung below the height it was projected
+		// at. Projecting both ends and filling between them cannot have either bug.
+		if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {
+			return;
+		}
+		int footY = this.ctx.getProjectedY();
 		for (int segment = 0; segment < segments; segment++) {
-			int height = segment * BEAM_SEGMENT_H;
-			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, height)) {
+			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ,
+					(segment + 1) * BEAM_SEGMENT_H)) {
 				return;                                  // left the screen: the rest would too
+			}
+			int headX = this.ctx.getProjectedX();
+			int headY = this.ctx.getProjectedY();
+			int height = footY - headY;
+			if (height < 1) {
+				height = 1;                              // never nothing, however flat the view
 			}
 			// Narrowing with height, so the thing reads as going away from you rather than as a
 			// rectangle standing on a tile.
-			int width = beamWidth(this.beamStyle, segment, segments);
+			int width = beamWidth(this.beamStyle, segment, segments, tileWidth);
 			// FAINTER AS IT RISES. A column of one alpha from bottom to top is a translucent
 			// slab; light falls off, and this is the single thing that makes the difference
 			// between the two readings.
 			int alpha = beamAlpha(segment, segments, base, this.beamFade);
-			int x = this.ctx.getProjectedX();
-			int y = this.ctx.getProjectedY();
-			g.fillAlpha(x - width / 2, y, width, BEAM_SEGMENT_H, colour, alpha);
+			g.fillAlpha(headX - width / 2, headY, width, height, colour, alpha);
 			// ...and a brighter core inside it, because a beam is dense in the middle and soft
 			// at its edges. Two passes rather than one is the whole of it.
 			if (this.beamCore) {
 				int core = coreWidth(width);
 				if (core > 0) {
-					g.fillAlpha(x - core / 2, y, core, BEAM_SEGMENT_H, colour,
+					g.fillAlpha(headX - core / 2, headY, core, height, colour,
 						capAlpha(alpha * BEAM_CORE_BOOST));
 				}
 			}
+			footY = headY;
 		}
+	}
+
+	/**
+	 * A tile's projected bounding box on screen, as {minX, minY, maxX, maxY}. False if it cannot
+	 * be placed.
+	 *
+	 * All four corners rather than two, because the camera can be at any yaw: the screen width
+	 * of a tile is the spread of its corners, and along one axis alone it collapses to nothing
+	 * at 45 degrees.
+	 */
+	static boolean tileBox(jagex2.client.plugin.PluginContext ctx, int sceneTileX, int sceneTileZ, int[] out) {
+		int[] xs = new int[4];
+		int[] ys = new int[4];
+		// TILE INDICATORS' OWN CORNER WALK, not a second copy of it. Two plugins that disagree
+		// by half a pixel about where a tile is would show, and the beam stands on the same
+		// square the tile outline draws.
+		if (!TileIndicatorsPlugin.corners(ctx, sceneTileX, sceneTileZ, xs, ys)) {
+			return false;
+		}
+		int minX = xs[0];
+		int minY = ys[0];
+		int maxX = xs[0];
+		int maxY = ys[0];
+		for (int i = 1; i < 4; i++) {
+			minX = Math.min(minX, xs[i]);
+			minY = Math.min(minY, ys[i]);
+			maxX = Math.max(maxX, xs[i]);
+			maxY = Math.max(maxY, ys[i]);
+		}
+		out[0] = minX;
+		out[1] = minY;
+		out[2] = maxX;
+		out[3] = maxY;
+		return true;
 	}
 
 	/**
 	 * The width of one segment of a loot beam, following the measured profile of Jagex's sprite.
 	 *
-	 * CUBED, NOT LINEAR. The asset was measured at nine heights and normalised against its
-	 * widest: 2% of full width a tenth of the way down from the tip, 7% at three tenths, 12% at
-	 * the halfway mark. Cubing the distance below the tip gives 0.1%, 2.7% and 12.5% - the last
-	 * of which is the one that matters, because halfway is where the eye reads the shape.
-	 * Squaring was tried first and gives 25% there, twice the real thing, which still reads as
-	 * a cone. A linear taper gives 50% and reads as a wedge.
+	 * LINEAR, NOT CUBED. The asset is 383x1586, and the first version of this measured its OUTER
+	 * EXTENT per row - 12% of full width at the halfway mark - and cubed the distance below the
+	 * tip to fit that one number. Both halves of that were wrong. The outer extent at halfway is
+	 * dominated by the two HELICAL RIBBONS wound round the beam, which this does not draw;
+	 * measuring instead the widest CONTIGUOUS run per row, which is the body alone, gives:
 	 *
-	 * The sprite is wider still below the halfway mark than cubing predicts - 42% where this
-	 * says 22% - but that is its two helical ribbons, which are a separate thing wound round the
-	 * beam rather than part of its body, and which this does not draw. See the README.
+	 *     below the tip   0.05  0.10  0.20  0.30  0.40  0.50  0.60  0.70  0.80  0.90
+	 *     body width       1.1   2.2   4.4   6.9   9.2  11.4  13.9  15.8  23.9  39.7
 	 *
-	 * Flat-topped at one pixel rather than nought, like every other shape here: a width of 0
-	 * draws nothing and a negative one is whatever fillAlpha makes of it.
+	 * which is a straight line at 22.6% per unit for the top seven tenths, and a flare over the
+	 * last three into the disc on the ground. A cube fitted to the wrong number gave 0.1% where
+	 * the sprite has 2.2%, so the top half of the beam came out one pixel wide and read as a
+	 * dotted line rather than as light.
+	 *
+	 * The percentages are of the sprite's widest point, which is that ground disc - about a tile
+	 * across in game. So they are percentages of a tile, which is what tileWidth is.
+	 *
+	 * Flat-topped at one pixel rather than nought: a width of 0 draws nothing and a negative one
+	 * is whatever fillAlpha makes of it.
 	 */
-	static int lootBeamWidth(int segment, int segments) {
-		if (segments <= 1) {
-			return BEAM_W;
+	static int lootBeamWidth(int segment, int segments, int tileWidth) {
+		if (segments < 1) {
+			return 1;
 		}
-		// How far below the tip this segment is, as a share of the beam. The top segment is the
-		// tip, so it is the far end of the loop rather than segment 0.
-		int below = segments - 1 - segment;
-		// Cubed, in integer arithmetic, scaled by the full width at the base. The largest this
-		// reaches is BEAM_W * 39^3, which is a comfortable million short of overflowing.
-		int span = segments - 1;
-		int width = BEAM_W * below * below * below / (span * span * span);
+		// How far below the TIP this segment is, in tenths. Segment 0 sits on the ground, so it
+		// is the far end of the loop: down runs from segments at the foot to 1 at the tip.
+		int down = segments - segment;
+		int permille;
+		if (down * 10 <= segments * BEAM_FLARE_FROM) {
+			// The straight part: a line through the origin at the sprite's own slope.
+			permille = BEAM_SLOPE_PERMILLE * down / segments;
+		} else {
+			// The flare, interpolated from where the straight part ends to the foot.
+			int into = down * 10 - segments * BEAM_FLARE_FROM;
+			int across = segments * (10 - BEAM_FLARE_FROM);
+			permille = BEAM_FLARE_PERMILLE
+				+ (BEAM_FOOT_PERMILLE - BEAM_FLARE_PERMILLE) * into / across;
+		}
+		int width = tileWidth * permille / 1000;
 		return width < 1 ? 1 : width;
 	}
 
