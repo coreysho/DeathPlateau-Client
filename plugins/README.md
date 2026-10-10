@@ -274,6 +274,7 @@ public class MyToolPlugin extends Plugin {
 | 5 | Richer editors for a String setting: `@ConfigItem(colour = true)` and `@ConfigItem(choices = {...})`, plus `PluginConfig.parseColour` / `toHex`. |
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
 | 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
+| 8 | `ctx.getTrueTileX` / `getTrueTileZ`: the tile the server has the player on, which during a walk is ahead of the one they appear to stand on. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -333,7 +334,7 @@ Longer lists - rules per item, things a player adds and removes - are a `ConfigL
 
 ### Ground items, in detail
 
-The most configured plugin here, and the one to copy from. 28 settings:
+The most configured plugin here, and the one to copy from. 34 settings:
 
 | | |
 | --- | --- |
@@ -342,7 +343,7 @@ The most configured plugin here, and the one to copy from. 28 settings:
 | Shown | How far away, hide under value, show hidden, only highlighted, outline tiles |
 | Rows | Name only / Name and value / Name, value and each |
 | Notify | On a highlighted drop, and from a tier up |
-| Beams | Over highlighted items, from a tier up, and the shape of them |
+| Beams | Over highlighted items, from a tier up, the shape, how tall, how solid, a fade, a core, a ground glow and a pulse |
 | Reading | Outlined text instead of a drop shadow |
 | Input | A key that hides and shows the labels, and double-tap Alt to do the same |
 | Menu | Colour the Take rows for highlighted and for hidden items, and move hidden ones to the bottom |
@@ -368,6 +369,60 @@ would otherwise give an item the wrong tier's colour silently. A consequence wor
 "Top tier from" to 0 and the 0 sorts to the bottom, so "Top tier" in the notify and beam
 drop-downs becomes the next price down. Zeroing a price turns off that **colour** tier; turning a
 notification off means choosing **Off**.
+
+**A beam is light, not a translucent slab.** The first version was a stack of boxes at one flat
+alpha, which reads as a block standing on a tile. Four things make the difference, and each is a
+property of light rather than a number off anybody's palette:
+
+- **It fades as it rises** — brightest at the item, faint at the top. This is the single biggest
+  one. The ramp runs over `segments + 1` so the last segment is faint rather than *absent*: a beam
+  whose top segment is invisible is a beam one segment shorter, and the height setting would quietly
+  lose its last notch.
+- **It has a brighter core** than its edges, because light is dense in the middle. Two passes per
+  segment — a wide soft one and a narrow bright one — is the cheapest thing that reads that way.
+- **It lights the ground under it**, drawn first and beneath everything, which roots the beam to the
+  tile instead of leaving it hovering over one.
+- **It can pulse**, off by default, because motion catches the eye hardest and a beam is already
+  doing its job standing still.
+
+Height and opacity are settings now; both were constants. **The opacity setting is the beam's
+brightest**, and the pulse dims below it — the first version swung symmetrically about it and peaked
+a third over, 129 where the player asked for 96, which is a setting that does not mean what its
+label says. The taper is computed over the beam's own height, so a forty-segment beam is not a
+needle halfway up and a four-segment one is not barely narrowed.
+
+The pulse takes the time as an argument rather than reading the clock, so its curve can be checked
+across two whole cycles. It is a triangle rather than a sine: `Math.sin` in a per-frame draw for a
+35% wobble is not a trade anybody would make, and at this speed the two are indistinguishable.
+
+**The shape is measured off Jagex's own sprite, not guessed.** The asset is 383x1586 - four times
+taller than it is wide - and its width profile is not a cone. Normalised against its widest point it
+is 2% of full width a tenth of the way below the tip, 7% at three tenths and **12% at the halfway
+mark**, then it flares hard through the bottom third. Cubing the distance below the tip gives 12.5%
+at halfway, which is the figure that decides how the shape reads; squaring gives 25% and a linear
+taper 50%, and both of those still read as cones. That is the `Loot beam` style, and it is the
+default.
+
+Two things in the sprite are deliberately **not** drawn: the pair of helical ribbons wound round its
+lower half, and the sparkles floating near its base. They are separate animated elements rather than
+part of the beam's body, which is why the measured width jumps from 12% to 42% just below halfway -
+that jump is the ribbons, not the beam. Drawing them with `fillAlpha` rectangles would cost more
+than they are worth at the size a beam is actually seen.
+
+**The four colours Jagex ships, sampled from the assets**, for anyone setting their tiers to match:
+
+| | Body | Bright core |
+| --- | --- | --- |
+| Green | `3EEE95` | `B9FDD5` |
+| Red | `EE4D3E` | `FDBDB9` |
+| Purple | `AF3EEE` | `E1B9FD` |
+| Yellow | `EEBA3E` | `FDEAB9` |
+
+The plugin takes the body colour and brightens its own core, so the body column is the one to type
+in. The wiki is explicit that these four are what the game ships and that **which value gets which
+colour is the player's**, which is how this plugin already works: four thresholds, four colours. The
+defaults here are unchanged, because those same colours also draw the item labels and nobody asked
+for those to move.
 
 **A new drop is a difference between two ticks**, which no pile can tell you - a pile is what is
 on a tile now. `GroundItemArrivals` remembers the last scan and answers the difference, keyed on
@@ -466,8 +521,20 @@ report a vital upward.
 
 ### Tile indicators, in detail
 
-Eight settings: the two tiles, a colour each, outline thickness, a fill for each, and how solid a
-fill is.
+Eleven settings: three tiles, a colour and a fill each, outline thickness, and how solid a fill is.
+
+**Three tiles, and two of them are not the same square while you move.** The cursor's tile is the
+cursor's. "Your tile" is the *rendered* one: the client keeps a fine coordinate it interpolates
+between tiles, so a marker drawn from it tracks your feet. **The true tile is what the server
+sent** — `routeTileX[0]`, the newest entry in the step queue, which the renderer is still catching
+up to. Mid-step it is the tile you are walking *onto*; standing still the two describe the same
+square and the outlines sit on top of each other. Tick-perfect movement is read off the true one,
+because that is where the server will act from, which is why RuneLite offers both and why they want
+different colours.
+
+The true tile is drawn **first**, so where the two coincide the one that tracks your feet is on top
+— otherwise a stationary player sees the server's colour and concludes their own setting does
+nothing.
 
 **A tile is not a rectangle.** It is a quadrilateral whose four edges run at four different angles,
 which is why two things here are built the way they are. The outline is drawn from four projected
@@ -800,7 +867,7 @@ are small enough that a jar of their own would be more ceremony than code:
 | Skills | no | Levels, true levels past 99, combat level, experience to the next level, in the order you choose. |
 | Idle notifier | no | Says when you stop gaining experience, optionally in one skill only, once or repeating. |
 | Mouse highlight | no | What a left click would do, next to the cursor - its colour, size, outline and box, and it stands aside for a menu. |
-| Tile indicators | no | Outlines and optionally fills the tile under the cursor and the one you are on, at a thickness you choose. |
+| Tile indicators | no | Outlines and optionally fills the cursor's tile, your own, and the one the server has you on, at a thickness you choose. |
 | Npc indicators | no | Marks the npcs you name - tiles, name tags, a colour per name, their menu options - and shift-right-click to tag one. |
 
 The first five were client features and are on because turning them off would change what

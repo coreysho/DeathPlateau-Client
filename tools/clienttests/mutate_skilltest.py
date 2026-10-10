@@ -179,12 +179,13 @@ MUTS = [
     (SKILLS, 'the sort never applied, so the order drop-down does nothing',
      '\t\tsort(listed, this.sortBy);',
      ''),
-    (SKILLS, 'skill order sorting anyway, so the default is not the client\'s order',
-     '''		if (BY_SKILL.equals(by) || by == null) {
-			return;                                      // the client's order, which is the list
-		}
-''',
-     ''),
+    # NOT MUTATED: deleting sort()'s early return for BY_SKILL and null changes no answer, so
+    # it is not a mutation. after() has no case for either - it tests BY_LEVEL, BY_EXPERIENCE
+    # and BY_CLOSEST and then returns false - so with the early return gone the insertion sort
+    # runs its full pass, finds every comparison false, and puts every row back where it was.
+    # The list comes out identical; only the cost changes, from O(1) to O(n^2) on twenty-three
+    # rows once a tick. The early return stays because it states the intent and does not lean
+    # on after()'s fallthrough, which is mutated and caught separately.
     (SKILLS, 'by level sorted lowest first',
      '\t\t\treturn first.virtualLevel < second.virtualLevel;      // highest first',
      '\t\t\treturn first.virtualLevel > second.virtualLevel;'),
@@ -312,9 +313,12 @@ MUTS = [
     (BOOSTS, '''a drain notified as a boost wearing off, which is a stat coming back''',
      '''			if (this.ctx.getSkillLevel(skill) > this.ctx.getBaseLevel(skill)) {''',
      '''			if (this.ctx.getSkillLevel(skill) != this.ctx.getBaseLevel(skill)) {'''),
-    (BOOSTS, '''the first tick announcing every boost already running''',
-     '''			} else if (this.scanned && this.wasBoosted.indexOf(key) >= 0) {''',
-     '''			} else if (this.wasBoosted.indexOf(key) >= 0) {'''),
+    # NOT MUTATED: `this.scanned &&` cannot be observed, so removing it is not a mutation.
+    # scanned is set false in exactly one place - the early return when the switch is off or the
+    # player is logged out - and that same branch sets wasBoosted to "". So scanned == false
+    # implies wasBoosted is empty, which makes indexOf(key) >= 0 already false and the guard
+    # redundant. The reverse is not true and is mutated: deleting `this.scanned = true` leaves
+    # scanned false forever and no expiry is ever reported, which the chatbox checks catch.
     (BOOSTS, '''nothing ever counting as a first tick, so no expiry is ever reported''',
      '''		this.scanned = true;''',
      ''''''),

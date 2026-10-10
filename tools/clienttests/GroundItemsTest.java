@@ -114,6 +114,7 @@ public class GroundItemsTest {
 		altTests();
 		settingsMenuTests();
 		configTests();
+		beamRenderTests();
 		lootPageTests();
 		formatTests();
 		menuTests();
@@ -706,6 +707,19 @@ public class GroundItemsTest {
 		// because it is the ambiguous case, and because my first version of this list had it
 		// down as unreadable.
 		check(Hotkey.code("F") == 'f', "F on its own is the letter F");
+
+		// A BLANK SETTING IS NOT A KEY, which is the whole of how a hotkey is turned off.
+		// Hotkey.code("") is NONE, and without the `want != NONE` test in pressed() that NONE
+		// is compared against the delivered key code like any other number - so the blank
+		// setting becomes a hotkey bound to whatever -1 is. Nothing here pressed a blank one,
+		// and the audit deleted the test with every check in this list green.
+		check(!Hotkey.pressed("", Hotkey.NONE),
+			"a blank hotkey is pressed by nothing, not even by the code that means no key");
+		check(!Hotkey.pressed("   ", Hotkey.NONE), "...however it was left blank");
+		check(!Hotkey.pressed(null, Hotkey.NONE), "...or left unset altogether");
+		check(Hotkey.pressed("g", Hotkey.code("g")) && Hotkey.pressed("F1", 1008),
+			"...while a hotkey that is set is pressed by its own key, so this is not a hotkey "
+				+ "that stopped working");
 		String[] none = { null, "", "   ", "Ctrl", "shift", "Fx", "F-1", "gg", "++" };
 		for (int i = 0; i < none.length; i++) {
 			boolean threw = false;
@@ -742,32 +756,214 @@ public class GroundItemsTest {
 		check(!GroundItemsPlugin.isDoubleTap(100L, 0L, 250),
 			"...and a first tap 100ms after startup is not one either, inside any window");
 
-		// The beam's shapes have to differ, or the drop-down is decoration.
-		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0);
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8) < base,
+		// The beam's shapes have to differ, or the drop-down is decoration. The taper is over
+		// the beam's own height now, so the height it is tapering across is a parameter.
+		int tall = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
+		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, tall);
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8, tall) < base,
 			"a tapered beam narrows as it rises");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8)
-				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0),
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8, tall)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall),
 			"a straight one does not");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0) < base,
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0, tall) < base,
 			"and a narrow one is thinner from the floor up");
-		check(GroundItemsPlugin.beamWidth("Enormous", 0) == base,
+		check(GroundItemsPlugin.beamWidth("Enormous", 0, tall) == base,
 			"a shape from a release that offered something else draws the default");
+
+		// THE TAPER FOLLOWS THE HEIGHT. A taper computed over a fixed fourteen would make a
+		// forty-segment beam a needle halfway up and a four-segment one barely narrow at all.
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 4)
+				< GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 40),
+			"the same segment is narrower in a short beam than in a tall one");
 
 		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
 		// negative one is whatever fillAlpha makes of it.
 		boolean tooThin = false;
-		String[] styles = { GroundItemsPlugin.BEAM_TAPERED, GroundItemsPlugin.BEAM_STRAIGHT,
-			GroundItemsPlugin.BEAM_NARROW, null, "" };
+		String[] styles = { GroundItemsPlugin.BEAM_LOOT, GroundItemsPlugin.BEAM_TAPERED,
+			GroundItemsPlugin.BEAM_STRAIGHT, GroundItemsPlugin.BEAM_NARROW, null, "" };
 		for (int st = 0; st < styles.length && !tooThin; st++) {
 			for (int segment = 0; segment < 200; segment++) {
-				if (GroundItemsPlugin.beamWidth(styles[st], segment) < 1) {
+				if (GroundItemsPlugin.beamWidth(styles[st], segment, tall) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 2) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 40) < 1) {
 					tooThin = true;
 					break;
 				}
 			}
 		}
-		check(!tooThin, "every shape stays at least a pixel wide, at any height");
+		check(!tooThin, "every shape stays at least a pixel wide, at any height, in any beam");
+
+		// ---- WHAT MAKES IT READ AS LIGHT RATHER THAN AS A SLAB.
+		//
+		// The beam was fourteen segments at one flat alpha. Four things change that, and each is
+		// a property of light rather than a number off a wiki: it fades as it rises, it has a
+		// brighter core than its edges, it lights the ground under it, and it can pulse.
+		int alpha = GroundItemsPlugin.DEFAULT_BEAM_ALPHA;
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, true)
+				> GroundItemsPlugin.beamAlpha(13, 14, alpha, true),
+			"a beam is brighter at the item than at the top");
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, true)
+				> GroundItemsPlugin.beamAlpha(7, 14, alpha, true)
+				&& GroundItemsPlugin.beamAlpha(7, 14, alpha, true)
+					> GroundItemsPlugin.beamAlpha(13, 14, alpha, true),
+			"...and falls off the whole way up rather than in one step");
+		check(GroundItemsPlugin.beamAlpha(13, 14, alpha, true) >= 1,
+			"THE TOP SEGMENT IS STILL DRAWN: a beam whose last segment is invisible is a beam "
+				+ "one segment shorter, and the height setting would lose its last notch");
+		// ...AND IT IS DRAWN BY THE RAMP, not by the floor underneath it. A ramp that divides by
+		// the segment count rather than one more than it reaches zero on the last segment and
+		// lands on the floor, so the top segment comes out at 1 whatever the player set the
+		// opacity to - the floor stops it vanishing and hides that the ramp was wrong. Measured
+		// as a share of the base so it is a property of the curve rather than a restatement of it.
+		int top = GroundItemsPlugin.beamAlpha(13, 14, alpha, true);
+		check(top * 100 / alpha >= 4,
+			"...and its faintness comes from the ramp rather than from the floor: the top segment "
+				+ "keeps " + (top * 100 / alpha) + "% of the beam's brightness, not the floor's 1");
+		check(GroundItemsPlugin.beamAlpha(0, 14, alpha, false)
+				== GroundItemsPlugin.beamAlpha(13, 14, alpha, false),
+			"with the fade off every segment is the same, which is what it used to be");
+		check(GroundItemsPlugin.beamAlpha(0, 1, alpha, true) == alpha,
+			"a beam of one segment is its own base, not a divide by something near zero");
+		boolean overBright = false;
+		for (int segs = 1; segs <= 40; segs++) {
+			for (int seg = 0; seg < segs; seg++) {
+				int a = GroundItemsPlugin.beamAlpha(seg, segs, alpha, true);
+				if (a < 1 || a > alpha) {
+					overBright = true;
+				}
+			}
+		}
+		check(!overBright,
+			"no segment of any beam is invisible or brighter than the beam's own setting");
+		// THE FLOOR IS LOAD-BEARING AT THE EXTREMES. At the default opacity the ramp never
+		// reaches zero on its own, so removing the floor changes nothing and the loop above
+		// passes either way. It bites at the dimmest opacity a player can set over the tallest
+		// beam they can set, where the ramp genuinely divides the brightness away.
+		check(GroundItemsPlugin.beamAlpha(GroundItemsPlugin.MAX_BEAM_SEGMENTS - 1,
+				GroundItemsPlugin.MAX_BEAM_SEGMENTS, GroundItemsPlugin.MIN_BEAM_ALPHA, true) >= 1,
+			"the faintest beam a player can set is still drawn at its top, where the ramp would "
+				+ "otherwise divide it away to nothing");
+
+		// The core, which is narrower than the column it sits in.
+		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W)
+				< GroundItemsPlugin.BEAM_W,
+			"the bright core is narrower than the beam around it");
+		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W) > 0,
+			"...and wide enough to see");
+		check(GroundItemsPlugin.coreWidth(1) == 0,
+			"a beam too narrow to hold a core does not get one, rather than a zero-width fill");
+		check(GroundItemsPlugin.coreWidth(0) == 0, "...nor does a beam of no width");
+
+		// The caps, because every alpha here is multiplied by something.
+		check(GroundItemsPlugin.capAlpha(300) == GroundItemsPlugin.MAX_BEAM_ALPHA,
+			"a doubled alpha cannot leave the range Pix2D blends over");
+		check(GroundItemsPlugin.capAlpha(0) == 1 && GroundItemsPlugin.capAlpha(-5) == 1,
+			"...and cannot reach nothing either");
+		check(GroundItemsPlugin.beamAlphaFor(96) == 96, "an opacity in range is kept");
+		check(GroundItemsPlugin.beamAlphaFor(0) == GroundItemsPlugin.MIN_BEAM_ALPHA,
+			"A ZERO IS NOT HOW THE BEAM IS TURNED OFF: two switches already do that honestly, "
+				+ "and a box that silently disables a feature is worse than either");
+		check(GroundItemsPlugin.beamAlphaFor(999) == 255, "and nothing is more than opaque");
+		check(GroundItemsPlugin.beamSegmentsFor(14) == 14, "a height in range is kept");
+		check(GroundItemsPlugin.beamSegmentsFor(0) == GroundItemsPlugin.MIN_BEAM_SEGMENTS,
+			"a beam of no segments is not a beam");
+		check(GroundItemsPlugin.beamSegmentsFor(500) == GroundItemsPlugin.MAX_BEAM_SEGMENTS,
+			"and one into the sky is bounded");
+		check(GroundItemsPlugin.DEFAULT_BEAM_ALPHA == 96,
+			"the opacity default is the constant the beam had before it was a setting");
+		check(GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS == 24,
+			"and the height is taller than the fourteen it was, because the sprite this is "
+				+ "modelled on is four times taller than it is wide");
+
+		// ---- THE SHAPE, AGAINST THE SPRITE IT IS MODELLED ON.
+		//
+		// Jagex's loot beam asset is 383x1586 and its width profile is not a cone: measured at
+		// nine heights and normalised against its widest, it is 2% of full width a tenth of the
+		// way below the tip, 7% at three tenths and 12% at the halfway mark. Cubing the distance
+		// below the tip gives 12.5% at the halfway mark, which is the figure that matters
+		// because halfway is where the eye reads the shape. These checks are that curve, not a
+		// restatement of the code: they are percentages taken off the image.
+		int segs = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
+		int span = segs - 1;
+		int full = GroundItemsPlugin.lootBeamWidth(0, segs);
+		check(full == GroundItemsPlugin.BEAM_W,
+			"the base of a loot beam is the full width (" + full + ")");
+		check(GroundItemsPlugin.lootBeamWidth(span, segs) == 1,
+			"and its tip is a point");
+		int half = GroundItemsPlugin.lootBeamWidth(span / 2, segs);
+		check(half * 100 / full >= 9 && half * 100 / full <= 16,
+			"halfway up it is about an eighth of its base, as the sprite is: " + (half * 100 / full)
+				+ "% against the sprite's 12%");
+		// A LINEAR TAPER WOULD BE 50% THERE and a squared one 25%, and both read as cones. This
+		// is the check that says which curve, rather than merely that it narrows.
+		check(half * 100 / full < 20,
+			"...which a linear taper (50%) and a squared one (25%) both fail");
+		int quarter = GroundItemsPlugin.lootBeamWidth(span / 4, segs);
+		check(quarter > half && quarter < full,
+			"a quarter of the way up it is wider than halfway and narrower than the base");
+
+		// Monotonic, and never thinner than a pixel, at any height a player can set.
+		boolean wrong = false;
+		for (int n = GroundItemsPlugin.MIN_BEAM_SEGMENTS; n <= GroundItemsPlugin.MAX_BEAM_SEGMENTS;
+				n++) {
+			int last = Integer.MAX_VALUE;
+			for (int seg = 0; seg < n; seg++) {
+				int w = GroundItemsPlugin.lootBeamWidth(seg, n);
+				if (w < 1 || w > last) {
+					wrong = true;
+				}
+				last = w;
+			}
+		}
+		check(!wrong,
+			"a loot beam only ever narrows as it rises, and never below a pixel, at every height");
+		// CAUGHT, NOT THROWN. A one-segment beam has a span of zero, and without the guard in
+		// lootBeamWidth that span is a divisor - so this is the one check here that can be
+		// reached by an exception rather than a wrong answer. Unwrapped it ended the run with no
+		// failure named, which the mutation runner reports as a crash, and a crash is not a catch.
+		boolean oneSegment;
+		try {
+			oneSegment = GroundItemsPlugin.lootBeamWidth(0, 1) == GroundItemsPlugin.BEAM_W;
+		} catch (RuntimeException ex) {
+			oneSegment = false;
+		}
+		check(oneSegment, "a beam of one segment is its base rather than a divide by zero");
+
+		// And it is the default shape, because it is the one this was asked to look like. Read
+		// off a bare instance rather than through setting(): this section runs in the headless
+		// half, before any Client exists, and reaching for the config here threw and ended the
+		// run with no failure named - which the mutation runner would have reported as a crash.
+		check(GroundItemsPlugin.BEAM_LOOT.equals(new GroundItemsPlugin().beamStyle),
+			"the loot beam shape is what a player gets without choosing one");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, span / 2, segs) == half,
+			"...and the drop-down's value reaches it");
+
+		// THE PULSE, which takes the time rather than reading the clock so its curve can be
+		// checked: the shape of a pulse is exactly the sort of thing that is wrong by a factor
+		// and invisible in review.
+		check(GroundItemsPlugin.pulsed(alpha, 0L, false) == alpha,
+			"with the pulse off the time does not matter");
+		check(GroundItemsPlugin.pulsed(alpha, 900L, false) == alpha, "...at any point in it");
+		int atStart = GroundItemsPlugin.pulsed(alpha, 0L, true);
+		int atPeak = GroundItemsPlugin.pulsed(alpha, GroundItemsPlugin.BEAM_PULSE_MS / 2, true);
+		int atEnd = GroundItemsPlugin.pulsed(alpha, GroundItemsPlugin.BEAM_PULSE_MS - 1, true);
+		check(atPeak > atStart, "the pulse brightens from the start of its cycle to the middle");
+		check(atEnd < atPeak, "...and dims again by the end");
+		check(Math.abs(atEnd - atStart) <= 2,
+			"...arriving back where it began, so the cycle does not jump (" + atStart + " -> "
+				+ atEnd + ")");
+		check(atPeak <= alpha,
+			"the pulse never exceeds the brightness a player set (" + atPeak + " of " + alpha + ")");
+		check(atStart >= 1, "...and never goes out entirely (" + atStart + ")");
+		// Across two whole cycles, so the modulo is exercised rather than assumed.
+		boolean pulseOut = false;
+		for (long t = 0; t < GroundItemsPlugin.BEAM_PULSE_MS * 2; t += 37) {
+			int a = GroundItemsPlugin.pulsed(alpha, t, true);
+			if (a < 1 || a > alpha) {
+				pulseOut = true;
+			}
+		}
+		check(!pulseOut, "and stays in range across two full cycles");
 
 		// THE KEY PRESS ITSELF. onKeyPressed touches no client state, so it can be driven on a
 		// bare plugin: the audit found that dropping event.consume() changed nothing any check
@@ -1558,6 +1754,120 @@ public class GroundItemsTest {
 	 * argument for the test: an aggregate that silently under-reports looks exactly like one
 	 * that does not.
 	 */
+	// ---------------------------------------------------------------- the beam, drawn
+
+	/**
+	 * The beam as pixels, which is the half of it the arithmetic checks cannot see.
+	 *
+	 * Every helper above is pure and was checked as one, and all of them passed while four of
+	 * the beam's settings did nothing at all: the audit broke drawBeam so the core was always
+	 * drawn, never drawn, the glow always drawn, never drawn, the height pinned to its old
+	 * constant and the opacity to its, and not one check noticed. A pure function tested in
+	 * isolation says what it computes, never that anybody calls it.
+	 *
+	 * So this section drives the real settings through the real config and counts pixels. The
+	 * beam is reached by HIGHLIGHTING an item rather than by price: a highlighted item gets a
+	 * beam whatever it is worth, which keeps the price table out of a test about drawing.
+	 */
+	static void beamRenderTests() {
+		reset();
+		pile(MID_X, MID_Z, 1, 1);
+		GroundItemPrefs.set("Thing 0", GroundItemPrefs.HIGHLIGHT);
+		// The pulse reads the wall clock, so with it on no two frames here are comparable.
+		setSetting("beamPulse", "0");
+		setSetting("beamStyle", GroundItemsPlugin.BEAM_LOOT);
+		setSetting("beamSegments", "24");
+		setSetting("beamOpacity", "96");
+		setSetting("beamCore", "1");
+		setSetting("beamGlow", "1");
+
+		setSetting("beamHighlighted", "0");
+		frame();
+		int unbeamed = countPainted();
+		setSetting("beamHighlighted", "1");
+		frame();
+		int beamed = countPainted();
+		check(beamed > unbeamed,
+			"a highlighted item with beams on paints pixels a highlighted item without them "
+				+ "does not (" + unbeamed + " -> " + beamed + ")");
+		check(beamed - unbeamed > GroundItemsPlugin.BEAM_W,
+			"...and enough of them to be a column rather than a stray fill");
+
+		// ---- THE GROUND GLOW. Twice the beam's width, so the only pixels it can account for
+		// are the ones out past the column's own edge.
+		setSetting("beamGlow", "1");
+		frame();
+		int withGlow = countOutsideColumn();
+		setSetting("beamGlow", "0");
+		frame();
+		int withoutGlow = countOutsideColumn();
+		check(withGlow > withoutGlow,
+			"the pool of light on the ground is wider than the beam standing in it ("
+				+ withoutGlow + " -> " + withGlow + ")");
+		check(withoutGlow == 0,
+			"...and with it switched off nothing is painted out there at all, so the switch is "
+				+ "the only thing that draws it");
+
+		// ---- THE BRIGHT CORE. Drawn inside the column at twice the alpha, over pixels the soft
+		// outer already covered - so it adds no pixels and the count cannot see it. What it adds
+		// is light, which is what the eye reads and what this measures.
+		setSetting("beamGlow", "0");
+		setSetting("beamCore", "0");
+		frame();
+		int soft = countPainted();
+		long softLight = totalLight();
+		setSetting("beamCore", "1");
+		frame();
+		int cored = countPainted();
+		long coredLight = totalLight();
+		check(coredLight > softLight,
+			"a beam with a core is brighter than the same beam without one ("
+				+ softLight + " -> " + coredLight + ")");
+		check(cored == soft,
+			"...and no wider, because the core sits inside the column rather than beside it");
+
+		// ---- THE HEIGHT. A taller beam is more pixels; the setting is the only thing that says
+		// how many, and pinning it to the old constant is a drop-down that does nothing.
+		setSetting("beamCore", "0");
+		setSetting("beamSegments", "6");
+		frame();
+		int shortBeam = countPainted();
+		setSetting("beamSegments", "30");
+		frame();
+		int tallBeam = countPainted();
+		check(tallBeam > shortBeam,
+			"a beam set tall is drawn taller than one set short (" + shortBeam + " -> "
+				+ tallBeam + ")");
+		check(shortBeam > unbeamed,
+			"...and the short one is still a beam, so this is a height rather than an off switch");
+
+		// ---- THE OPACITY. Same pixels, more light, for the same reason the core is measured
+		// this way rather than counted.
+		setSetting("beamSegments", "24");
+		setSetting("beamOpacity", "16");
+		frame();
+		long faint = totalLight();
+		int faintWidth = widestRow();
+		setSetting("beamOpacity", "255");
+		frame();
+		long solid = totalLight();
+		int solidWidth = widestRow();
+		check(solid > faint,
+			"a beam set solid puts down more light than one set faint (" + faint + " -> "
+				+ solid + ")");
+		// NOT "the same pixels": Pix2D blends (channel * alpha) >> 8, so over a cleared buffer
+		// the faintest segments of a dim beam round to literal zero and read as unpainted. A
+		// dim beam really does paint fewer pixels, and the first version of this check called
+		// that a failure. Its width at the base is the measure that holds - that is the one
+		// place every beam is BEAM_W whatever its opacity.
+		check(solidWidth == faintWidth && solidWidth == GroundItemsPlugin.BEAM_W,
+			"...and no wider at its base, so it is an opacity rather than a size ("
+				+ faintWidth + " and " + solidWidth + ")");
+
+		GroundItemPrefs.clear();
+		reset();
+	}
+
 	static void lootPageTests() {
 		reset();
 		// Three tiles: bones underfoot, two lots of dragon bones at different distances, and a
@@ -1776,6 +2086,78 @@ public class GroundItemsTest {
 		// the next frame clears and refills the same object - so the day one does, "it changed"
 		// could never be false. XpDropsTest lost a check to exactly that.
 		return new ArrayList<Drawn>(font.rows);
+	}
+
+	/** Pixels the last frame wrote, which is how a fill is told apart from nothing. */
+	static int countPainted() {
+		int n = 0;
+		for (int i = 0; i < pixels.length; i++) {
+			if (pixels[i] != 0) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/**
+	 * How much light the last frame put down: the brightest channel of every pixel, summed.
+	 *
+	 * The core and the opacity both draw over pixels something already covered, so neither
+	 * changes how many are painted - only how bright they are. Counting cannot see either.
+	 */
+	static long totalLight() {
+		long sum = 0;
+		for (int i = 0; i < pixels.length; i++) {
+			int p = pixels[i];
+			int r = p >> 16 & 0xFF;
+			int g = p >> 8 & 0xFF;
+			int b = p & 0xFF;
+			int max = r > g ? r : g;
+			sum += max > b ? max : b;
+		}
+		return sum;
+	}
+
+	/**
+	 * The widest single row the last frame painted, which is a beam's width at its base.
+	 *
+	 * Counting whole frames cannot separate "brighter" from "bigger", because a dim beam's top
+	 * segments blend to zero and drop out of the count. Its base does not.
+	 */
+	static int widestRow() {
+		int widest = 0;
+		for (int y = 0; y < H; y++) {
+			int n = 0;
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] != 0) {
+					n++;
+				}
+			}
+			if (n > widest) {
+				widest = n;
+			}
+		}
+		return widest;
+	}
+
+	/**
+	 * Painted pixels out past the beam column's own edge, where only the ground glow reaches.
+	 *
+	 * The beam is BEAM_W wide at its base and narrower above; the glow is twice that. So a
+	 * pixel more than half the beam's width from the centre line came from the glow or from
+	 * nothing, which is what makes the glow switch observable at all.
+	 */
+	static int countOutsideColumn() {
+		int cx = originX();
+		int n = 0;
+		for (int y = 0; y < H; y++) {
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] != 0 && Math.abs(x - cx) > GroundItemsPlugin.BEAM_W / 2 + 1) {
+					n++;
+				}
+			}
+		}
+		return n;
 	}
 
 	static GroundItem item(String name, int count, int price) {

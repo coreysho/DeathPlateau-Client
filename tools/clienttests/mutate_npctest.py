@@ -167,9 +167,14 @@ MUTS = [
 		}
 ''',
      ''),
-    (PLUGIN, 'the field not updated, so a tag does nothing until the plugin is restarted',
-     '\t\tthis.names = value;',
-     ''),
+    # NOT MUTATED: `this.names = value;` in saveNames cannot be observed, so deleting it is
+    # not a mutation. The next statements write the value through PluginConfig.set, and
+    # PluginConfig.Item.set assigns the plugin's own field by reflection - the same field - so
+    # the direct assignment is redundant whenever config is non-null, which is the whole life of
+    # a started plugin and the only state in which a Tag row exists to run. It stays in the
+    # source because it is the statement of intent and because the `config == null` guard below
+    # it would otherwise be a silent no-op; what IS observable - the write reaching the store -
+    # is mutated and now caught by the reload check in NpcIndicatorsTest.
     (PLUGIN, 'tagging silent, which is how a player decides a menu row is broken',
      '''		this.ctx.addChatMessage(hasTerm(after, name)
 			? "Now marking " + name + "."
@@ -205,9 +210,11 @@ MUTS = [
      '\t\t\tif (false) {'),
 
     # ---- THE DECLARED LEVEL.
-    (PLUGIN, 'the declared API level left behind, so an older client loads this and breaks',
-     '\tapiLevel = 6\n)',
-     '\tapiLevel = 0\n)'),
+    # NOT MUTATED HERE: this is ActorTest's claim, not this suite's. ActorTest checks
+    # NpcIndicatorsPlugin's source for "apiLevel = 6" and says why it is 6, and
+    # mutate_actortest.py mutates it there and catches it. Declaring the same mutation in two
+    # suites means one of them reports a survivor for a thing the other pins, which reads as a
+    # coverage gap and is not one.
 ]
 
 

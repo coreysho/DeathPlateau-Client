@@ -302,7 +302,12 @@ public class NotifyTest {
 
 		// ---- ONLY THESE SKILLS. "Warn me when I stop fishing" must not be re-armed by the
 		// combat experience from whatever is attacking you while you fish.
-		plugin.idleSeconds = 1;
+		// THREE SECONDS, NOT ONE. At idleSeconds = 1 the threshold is two ticks and the
+		// interfering xp arrives every two, so the clock ran out between gains whether the
+		// filter was applied or not - the audit deleted the filter from the handler and this
+		// check stayed green. The threshold has to outlast the gap for the filter to be the
+		// thing that decides.
+		plugin.idleSeconds = 3;
 		plugin.skills = "fishing";
 		plugin.warnWithoutGaining = false;
 		plugin.repeatSeconds = 0;
@@ -405,6 +410,41 @@ public class NotifyTest {
 			}
 		}
 		check(said == 1, "with no repeat it says it exactly once (" + said + " of 3 rounds)");
+
+		// ---- AND THE WIND-BACK IS TO THE REPEAT INTERVAL, NOT TO ZERO.
+		//
+		// The repeater above runs at idleSeconds = 1 and repeatSeconds = 1, where repeatFrom
+		// winds back to 0 - so "wound back by the repeat" and "reset to zero" are the same
+		// number, and the audit swapped one for the other with every check here green. Only a
+		// threshold well above the repeat tells them apart: at six seconds against one, the
+		// counter lands at eight of its ten ticks and the next warning is two ticks away rather
+		// than ten.
+		IdleNotifierPlugin wound = freshIdle();
+		wound.idleSeconds = 6;
+		wound.repeatSeconds = 1;
+		wound.onStatChanged(new jagex2.client.plugin.event.StatChanged(0, 50, 9800, 100));
+		pause();
+		before = messages();
+		for (int i = 0; i < IdleNotifierPlugin.ticksFor(6); i++) {
+			wound.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+		}
+		check(messages() > before,
+			"a six-second timer runs out after its own ten ticks");
+		int repeats = 0;
+		for (int round = 0; round < 3; round++) {
+			pause();
+			before = messages();
+			for (int i = 0; i < IdleNotifierPlugin.ticksFor(1); i++) {
+				wound.onGameTick(new jagex2.client.plugin.event.GameTick(i));
+			}
+			if (messages() > before) {
+				repeats++;
+			}
+		}
+		check(repeats == 3,
+			"...and repeats every two ticks from then on, because the counter is wound back to "
+				+ "the repeat interval rather than to zero - wound back to zero it would be ten "
+				+ "ticks each time (" + repeats + " of 3)");
 
 		manager.setEnabled(entry, false);
 	}

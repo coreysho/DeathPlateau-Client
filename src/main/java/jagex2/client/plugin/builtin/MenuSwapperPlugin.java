@@ -255,9 +255,16 @@ public final class MenuSwapperPlugin extends Plugin {
 			return;
 		}
 		this.ctx.setLeftClick(best);
-		// COLOURED AFTER THE SWAP, not before: setLeftClick moves the row to the top, and a
-		// colour set on the index it came from would land on whatever took its place. The index
-		// a left click runs is where it is now.
+		// COLOURED AFTER THE SWAP, because that is the order it reads in: set the left click,
+		// then say which row it is.
+		//
+		// NOT BECAUSE THE OTHER ORDER WOULD BE WRONG. An earlier version of this comment said a
+		// colour set before the swap "would land on whatever took its place", and that is not
+		// true: setLeftClick is swapMenuEntries(best, getLeftClickIndex()), and that swaps
+		// menuColour along with the option, the action and the three params - so a colour set on
+		// best travels to the top with its row, and the top's old colour travels back. Both
+		// orders leave the same two entries. The audit swapped them and no check moved, which is
+		// how the claim came to be checked at all.
 		if (this.colourSwapped) {
 			this.ctx.setMenuColour(this.ctx.getLeftClickIndex(),
 				PluginConfig.parseColour(this.swapColour));

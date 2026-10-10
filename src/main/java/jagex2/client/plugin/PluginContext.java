@@ -85,6 +85,35 @@ public final class PluginContext {
 		return self == null ? 0 : (self.field1158 >> 7) + this.client.sceneBaseTileZ;
 	}
 
+	/**
+	 * Absolute world x of the tile the SERVER has the player on, which is not always the tile
+	 * they appear to be standing on.
+	 *
+	 * TWO POSITIONS, AND THE DIFFERENCE IS THE POINT. getWorldX above reads field1157, the fine
+	 * coordinate the renderer interpolates between tiles - so during a walk it slides, and a
+	 * marker drawn from it tracks the player's feet. This reads routeTileX[0], the newest tile
+	 * the server sent, which the renderer is still catching up to: mid-step it is the tile being
+	 * moved ONTO, and standing still the two agree exactly.
+	 *
+	 * ClientEntity keeps a queue of up to ten pending steps. The newest is pushed at index 0 and
+	 * Client.updateMovement chases routeTileX[field1180 - 1], the OLDEST unconsumed one, popping
+	 * it on arrival - so index 0 is the far end of what the server has said, which is the
+	 * server's idea of where the player is.
+	 *
+	 * This is what RuneLite calls the true tile, and what makes tick-perfect movement readable:
+	 * the rendered tile tells you where you look, this tells you where the server will act from.
+	 */
+	public int getTrueTileX() {
+		ClientPlayer self = Client.localPlayer;
+		return self == null ? 0 : self.routeTileX[0] + this.client.sceneBaseTileX;
+	}
+
+	/** Absolute world z of the tile the server has the player on. See {@link #getTrueTileX()}. */
+	public int getTrueTileZ() {
+		ClientPlayer self = Client.localPlayer;
+		return self == null ? 0 : self.routeTileZ[0] + this.client.sceneBaseTileZ;
+	}
+
 	/** The plane the player is on, 0 to 3. */
 	public int getPlane() {
 		return this.client.currentLevel;

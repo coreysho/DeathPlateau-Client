@@ -522,11 +522,38 @@ public class PluginSystemTest {
 			"a menu no swap applies to is left entirely alone");
 
 		// ---- THE CHAT LINES. Setting a swap says so; turning the setting off quietens it.
-		int before = messages(client);
-		plugin.announce = true;
+		//
+		// THE ROW HAS TO BE RUN. The previous version of this compared messages() with ">=",
+		// which is true of every pair of numbers - so deleting the chat line from say()
+		// altogether passed it, and the audit found exactly that. Opening the menu says nothing
+		// by design; it is setting the swap that speaks.
 		jagex2.client.MenuSwaps.clear();
-		plugin.onSettingsMenuOpening(swapMenu());
-		check(messages(client) >= before, "the settings menu offers its rows without complaint");
+		plugin.announce = true;
+		jagex2.client.plugin.event.SettingsMenuOpening opening = swapMenu();
+		plugin.onSettingsMenuOpening(opening);
+		java.util.List<jagex2.client.plugin.event.SettingsMenuOpening.Row> swapRows =
+			opening.getRows();
+		check(!swapRows.isEmpty(),
+			"a shift-right-click over a Guard offers a swap row (" + swapRows.size() + ")");
+		int before = messages(client);
+		swapRows.get(0).action.run();
+		check(messages(client) > before,
+			"...and running it says so in chat, because a setting that changes what a click "
+				+ "does and says nothing is indistinguishable from one that did not work ("
+				+ before + " -> " + messages(client) + ")");
+
+		jagex2.client.MenuSwaps.clear();
+		plugin.announce = false;
+		opening = swapMenu();
+		plugin.onSettingsMenuOpening(opening);
+		swapRows = opening.getRows();
+		check(!swapRows.isEmpty(), "the row is still offered with the chat lines off");
+		before = messages(client);
+		swapRows.get(0).action.run();
+		check(messages(client) == before,
+			"...and running it is silent, which is what the setting is for (" + before + " -> "
+				+ messages(client) + ")");
+		plugin.announce = true;
 
 		jagex2.client.MenuSwaps.clear();
 		base.shutDown();

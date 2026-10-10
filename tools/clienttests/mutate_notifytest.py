@@ -150,12 +150,13 @@ MUTS = [
     (IDLE, '''the counter not wound back, so a repeat fires every tick''',
      '''		this.sinceGain = repeatFrom(this.idleSeconds, this.repeatSeconds);''',
      '''		this.sinceGain = 0;'''),
-    (IDLE, '''the counter left short of the threshold with no repeat, so it fires again anyway''',
-     '''		if (repeatSeconds <= 0) {
-			return threshold;
-		}
-''',
-     ''''''),
+    # NOT MUTATED: repeatFrom's `if (repeatSeconds <= 0) return threshold;` has no observable
+    # effect, so deleting it is not a mutation. ticksFor() already returns 0 for any
+    # non-positive seconds, so without the guard the fallthrough computes
+    # `threshold - ticksFor(repeatSeconds)` = `threshold - 0` = threshold, and the `back < 0`
+    # clamp cannot fire because threshold is never negative. Every input gives the same answer
+    # either way. The guard stays because it says what no-repeat means without making the
+    # reader chase ticksFor, and ticksFor's own clamp is mutated and caught separately.
     (IDLE, '''a repeat longer than the threshold winding back past zero''',
      '''		return back < 0 ? 0 : back;''',
      '''		return back;'''),

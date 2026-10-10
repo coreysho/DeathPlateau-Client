@@ -177,13 +177,51 @@ public final class GroundItemsPlugin extends Plugin {
 	public String beamTier = TIER_OFF;
 
 	/** The beam shapes {@link #beamStyle} takes. Constants, so the choices and code agree. */
+	/**
+	 * The shape Jagex's own loot beam sprite has, measured off it rather than guessed.
+	 *
+	 * The asset is 383x1586 - four times taller than it is wide - and its width profile is not a
+	 * cone. From the tip down it stays narrow for the whole top half, reaching only 41px of its
+	 * eventual 349 at the halfway mark, and then flares hard through the bottom third into a
+	 * bell standing on a disc. The SOLID CORE inside it tapers linearly over the same height;
+	 * it is the soft outer that flares.
+	 *
+	 * That difference is the whole reason the old shapes read as cones: a linear taper spends
+	 * its width evenly, and the real thing spends almost none of it until the last third.
+	 */
+	static final String BEAM_LOOT = "Loot beam";
+
 	static final String BEAM_TAPERED = "Tapered";
 	static final String BEAM_STRAIGHT = "Straight";
 	static final String BEAM_NARROW = "Narrow";
 
+	@ConfigItem(keyName = "beamFade", name = "Beams fade as they rise",
+		description = "Brightest at the item, fading out at the top, the way light does")
+	public boolean beamFade = true;
+
+	@ConfigItem(keyName = "beamCore", name = "Beams have a bright core",
+		description = "A narrow bright column inside the soft one")
+	public boolean beamCore = true;
+
+	@ConfigItem(keyName = "beamGlow", name = "Beams light the ground",
+		description = "A pool of light on the tile, which roots the beam to it")
+	public boolean beamGlow = true;
+
+	@ConfigItem(keyName = "beamPulse", name = "Beams pulse",
+		description = "A slow brighten and dim. Off by default: motion catches the eye hardest")
+	public boolean beamPulse = false;
+
+	@ConfigItem(keyName = "beamSegments", name = "How tall a beam is",
+		description = "In segments of 14 scene units, so 14 is about one and a half tiles")
+	public int beamSegments = DEFAULT_BEAM_SEGMENTS;
+
+	@ConfigItem(keyName = "beamOpacity", name = "How solid a beam is",
+		description = "8 is barely there, 255 is opaque")
+	public int beamOpacity = DEFAULT_BEAM_ALPHA;
+
 	@ConfigItem(keyName = "beamStyle", name = "Beam shape",
-		choices = { BEAM_TAPERED, BEAM_STRAIGHT, BEAM_NARROW })
-	public String beamStyle = BEAM_TAPERED;
+		choices = { BEAM_LOOT, BEAM_TAPERED, BEAM_STRAIGHT, BEAM_NARROW })
+	public String beamStyle = BEAM_LOOT;
 
 	// ---- reading it
 
@@ -252,10 +290,41 @@ public final class GroundItemsPlugin extends Plugin {
 	private final GroundItemArrivals arrivals = new GroundItemArrivals();
 
 	/** The beam: how many boxes, how tall each is, how wide at the base, and how solid. */
-	private static final int BEAM_SEGMENTS = 14;
-	private static final int BEAM_SEGMENT_H = 14;
-	private static final int BEAM_W = 22;
-	private static final int BEAM_ALPHA = 96;
+	static final int BEAM_SEGMENT_H = 14;
+	static final int BEAM_W = 22;
+
+	/** What the beam was before any of it was a setting, kept as the defaults it still is. */
+	/**
+	 * Taller than the fourteen it was, because the real sprite is four times taller than wide
+	 * and fourteen segments of a twenty-two-wide beam is barely two to one.
+	 */
+	static final int DEFAULT_BEAM_SEGMENTS = 24;
+	static final int DEFAULT_BEAM_ALPHA = 96;
+
+	static final int MIN_BEAM_SEGMENTS = 2;
+	static final int MAX_BEAM_SEGMENTS = 40;
+	static final int MIN_BEAM_ALPHA = 8;
+	static final int MAX_BEAM_ALPHA = 255;
+
+	/**
+	 * How much brighter the core is than the column around it, and how wide it is.
+	 *
+	 * A beam of light is not one translucent slab: it is bright where the light is dense and
+	 * faint at its edges. Two passes - a wide soft one and a narrow bright one - is the cheapest
+	 * thing that reads that way, and it is what the old single pass was missing.
+	 */
+	static final int BEAM_CORE_DIVISOR = 3;
+	static final int BEAM_CORE_BOOST = 2;
+
+	/** The pool of light on the tile, which is what roots the beam to the ground. */
+	static final int BEAM_GLOW_W = BEAM_W * 2;
+	static final int BEAM_GLOW_H = 6;
+
+	/** One full brighten-and-dim of the pulse, in milliseconds. */
+	static final long BEAM_PULSE_MS = 1800L;
+
+	/** How far the pulse moves the brightness, as a share of it. */
+	static final int BEAM_PULSE_PERCENT = 35;
 
 	/** The [-] and [+] under Alt, and the scroll bar beside a pile too tall to show. */
 	private static final int CONTROL_W = 10;
@@ -374,14 +443,16 @@ public final class GroundItemsPlugin extends Plugin {
 	 * easier to see at a distance. Narrow is a thin line for somebody who wants to know a drop
 	 * landed without a pillar over half the screen.
 	 */
-	static int beamWidth(String style, int segment) {
+	static int beamWidth(String style, int segment, int segments) {
 		int width;
-		if (BEAM_STRAIGHT.equals(style)) {
+		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {
 			width = BEAM_W;
 		} else if (BEAM_NARROW.equals(style)) {
 			width = BEAM_W / 4;
 		} else {
-			width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+			width = BEAM_W - segment * BEAM_W / (segments + 1);
 		}
 		return width < 1 ? 1 : width;
 	}
@@ -789,17 +860,153 @@ public final class GroundItemsPlugin extends Plugin {
 		if (colour == 0) {
 			return;
 		}
-		for (int segment = 0; segment < BEAM_SEGMENTS; segment++) {
+		int segments = beamSegmentsFor(this.beamSegments);
+		int base = pulsed(beamAlphaFor(this.beamOpacity), System.currentTimeMillis(),
+			this.beamPulse);
+
+		// THE POOL ON THE GROUND FIRST, under everything: it is what roots the beam to the tile
+		// rather than leaving it hovering over one. Drawn at the item's own height, wider than
+		// the beam and brighter, because that is where the light is densest.
+		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {
+			int glow = capAlpha(base * BEAM_CORE_BOOST);
+			g.fillAlpha(this.ctx.getProjectedX() - BEAM_GLOW_W / 2,
+				this.ctx.getProjectedY() - BEAM_GLOW_H / 2, BEAM_GLOW_W, BEAM_GLOW_H,
+				colour, glow);
+		}
+
+		for (int segment = 0; segment < segments; segment++) {
 			int height = segment * BEAM_SEGMENT_H;
 			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, height)) {
 				return;                                  // left the screen: the rest would too
 			}
 			// Narrowing with height, so the thing reads as going away from you rather than as a
 			// rectangle standing on a tile.
-			int width = beamWidth(this.beamStyle, segment);
-			g.fillAlpha(this.ctx.getProjectedX() - width / 2, this.ctx.getProjectedY(),
-				width, BEAM_SEGMENT_H, colour, BEAM_ALPHA);
+			int width = beamWidth(this.beamStyle, segment, segments);
+			// FAINTER AS IT RISES. A column of one alpha from bottom to top is a translucent
+			// slab; light falls off, and this is the single thing that makes the difference
+			// between the two readings.
+			int alpha = beamAlpha(segment, segments, base, this.beamFade);
+			int x = this.ctx.getProjectedX();
+			int y = this.ctx.getProjectedY();
+			g.fillAlpha(x - width / 2, y, width, BEAM_SEGMENT_H, colour, alpha);
+			// ...and a brighter core inside it, because a beam is dense in the middle and soft
+			// at its edges. Two passes rather than one is the whole of it.
+			if (this.beamCore) {
+				int core = coreWidth(width);
+				if (core > 0) {
+					g.fillAlpha(x - core / 2, y, core, BEAM_SEGMENT_H, colour,
+						capAlpha(alpha * BEAM_CORE_BOOST));
+				}
+			}
 		}
+	}
+
+	/**
+	 * The width of one segment of a loot beam, following the measured profile of Jagex's sprite.
+	 *
+	 * CUBED, NOT LINEAR. The asset was measured at nine heights and normalised against its
+	 * widest: 2% of full width a tenth of the way down from the tip, 7% at three tenths, 12% at
+	 * the halfway mark. Cubing the distance below the tip gives 0.1%, 2.7% and 12.5% - the last
+	 * of which is the one that matters, because halfway is where the eye reads the shape.
+	 * Squaring was tried first and gives 25% there, twice the real thing, which still reads as
+	 * a cone. A linear taper gives 50% and reads as a wedge.
+	 *
+	 * The sprite is wider still below the halfway mark than cubing predicts - 42% where this
+	 * says 22% - but that is its two helical ribbons, which are a separate thing wound round the
+	 * beam rather than part of its body, and which this does not draw. See the README.
+	 *
+	 * Flat-topped at one pixel rather than nought, like every other shape here: a width of 0
+	 * draws nothing and a negative one is whatever fillAlpha makes of it.
+	 */
+	static int lootBeamWidth(int segment, int segments) {
+		if (segments <= 1) {
+			return BEAM_W;
+		}
+		// How far below the tip this segment is, as a share of the beam. The top segment is the
+		// tip, so it is the far end of the loop rather than segment 0.
+		int below = segments - 1 - segment;
+		// Cubed, in integer arithmetic, scaled by the full width at the base. The largest this
+		// reaches is BEAM_W * 39^3, which is a comfortable million short of overflowing.
+		int span = segments - 1;
+		int width = BEAM_W * below * below * below / (span * span * span);
+		return width < 1 ? 1 : width;
+	}
+
+	/** How tall a beam a player asked for, within what is a beam rather than a wall. */
+	static int beamSegmentsFor(int segments) {
+		if (segments < MIN_BEAM_SEGMENTS) {
+			return MIN_BEAM_SEGMENTS;
+		}
+		return segments > MAX_BEAM_SEGMENTS ? MAX_BEAM_SEGMENTS : segments;
+	}
+
+	/**
+	 * How solid a beam is at its base.
+	 *
+	 * The floor is 8 rather than 0: a beam at 0 is a setting that turns the feature off from a
+	 * box that does not say so, and the two switches above it already do that honestly.
+	 */
+	static int beamAlphaFor(int alpha) {
+		if (alpha < MIN_BEAM_ALPHA) {
+			return MIN_BEAM_ALPHA;
+		}
+		return alpha > MAX_BEAM_ALPHA ? MAX_BEAM_ALPHA : alpha;
+	}
+
+	/**
+	 * The alpha of one segment: full at the bottom, fading to nothing at the top.
+	 *
+	 * LINEAR, and deliberately not quite reaching zero at the last segment - a beam whose top
+	 * segment is invisible is a beam one segment shorter, and a player setting the height would
+	 * find the last one did nothing. The ramp runs over segments + 1 so the top is faint rather
+	 * than absent.
+	 */
+	static int beamAlpha(int segment, int segments, int base, boolean fade) {
+		if (!fade || segments <= 1) {
+			return base;
+		}
+		int left = segments - segment;
+		int alpha = base * left / (segments + 1);
+		return alpha < 1 ? 1 : alpha;
+	}
+
+	/** The bright inner column's width, or 0 when the beam is too narrow to have one. */
+	static int coreWidth(int width) {
+		return width / BEAM_CORE_DIVISOR;
+	}
+
+	/**
+	 * A slow brighten and dim, as a share of the beam's own brightness.
+	 *
+	 * Takes the time rather than reading the clock, so the curve is testable: the shape of a
+	 * pulse is exactly the sort of thing that is wrong by a factor and invisible in review.
+	 * A triangle rather than a sine - Math.sin in a per-frame draw for a 35% wobble is not a
+	 * trade anybody would make, and at this speed the two are indistinguishable.
+	 */
+	static int pulsed(int alpha, long nowMs, boolean pulse) {
+		if (!pulse) {
+			return alpha;
+		}
+		// nowMs % period is already under the period, so doubling it cannot reach twice the
+		// period and the second modulo the first version of this had never fired once.
+		long phase = (nowMs % BEAM_PULSE_MS) * 2L;
+		// 0 at the start of the cycle, 1 at the middle, 0 again at the end.
+		long up = phase <= BEAM_PULSE_MS ? phase : BEAM_PULSE_MS * 2L - phase;
+		// THE SETTING IS THE BRIGHTEST, and the pulse dims BELOW it. The first version swung
+		// symmetrically about it and peaked a third over - 129 where the player asked for 96 -
+		// which is a setting that does not mean what its label says. Caught by the check that
+		// the pulse never exceeds the brightness a player set.
+		int swing = alpha * BEAM_PULSE_PERCENT / 100;
+		int dimmed = alpha - swing;
+		return capAlpha(dimmed + (int) (swing * up / BEAM_PULSE_MS));
+	}
+
+	/** An alpha that cannot leave the range Pix2D blends over. */
+	static int capAlpha(int alpha) {
+		if (alpha < 1) {
+			return 1;
+		}
+		return alpha > MAX_BEAM_ALPHA ? MAX_BEAM_ALPHA : alpha;
 	}
 
 	/**

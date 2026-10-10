@@ -39,7 +39,14 @@ public class SkillPluginsTest {
 
 	static Client client;
 	static PluginManager manager;
+	/** The grey the panel outlines itself in, drawn opaque so it can be matched exactly. */
+	static final int BOX_BORDER = 0x5A5A5A;
+
 	static RecordingFont font;
+
+	static RecordingFont normalFont;
+
+	static RecordingFont boldFont;
 
 	/** What Pix2D draws into, kept so the test can read back what was painted where. */
 	static int[] pixels;
@@ -65,6 +72,12 @@ public class SkillPluginsTest {
 		System.out.println();
 		System.out.println("1. Boosts: which stats are up and which are down");
 		boostTests();
+		System.out.println();
+		System.out.println("1c. the notice when a boost wears off");
+		expiryNoticeTests();
+		System.out.println();
+		System.out.println("1d. the panel's own box, in pixels");
+		panelBoxTests();
 		System.out.println();
 		System.out.println("2. Skills: the experience curve, past where the client's table ends");
 		System.out.println("1b. only these skills");
@@ -100,7 +113,11 @@ public class SkillPluginsTest {
 		pixels = new int[W * H];
 		jagex2.graphics.Pix2D.bind(W, H, pixels);
 		font = new RecordingFont();
-		manager = new PluginManager(client, font, font, font);
+		// All three share font.rows, so every check that reads it is unchanged - but each counts
+		// its own calls, which is the only way to ask which size a panel asked for.
+		normalFont = new RecordingFont(font.rows, "normal");
+		boldFont = new RecordingFont(font.rows, "bold");
+		manager = new PluginManager(client, font, normalFont, boldFont);
 		manager.reload();
 
 		// Everything off to begin with, so a line of drawn text can only have come from the
@@ -123,6 +140,244 @@ public class SkillPluginsTest {
 			&& entry("skills") != null && !entry("skills").isEnabled(),
 			"...and neither turns itself on");
 		return entry("boosts") != null && entry("skills") != null;
+	}
+
+	// ---------------------------------------------------------------- 1d
+
+	/**
+	 * The box the panel draws itself in, and the font it asks for.
+	 *
+	 * Both are pixels, and the text-recording checks above cannot see either: a box an extra row
+	 * tall draws no text at all, and a font drop-down that never leaves the small font records
+	 * exactly the same rows. The audit broke both with every text check green.
+	 */
+	static void panelBoxTests() {
+		PluginManager.Entry boosts = entry("boosts");
+		manager.setEnabled(boosts, true);
+		client.ingame = true;
+		levelAll(50);
+		setText(boosts, "skills", "");
+		setText(boosts, "font", OverlayGraphics.FONT_CHOICE_SMALL);
+		client.skillLevel[0] = 54;                 // two rows, so there is a row gap to measure
+		client.skillLevel[1] = 46;
+
+		setBoolean(boosts, "showTitle", true);
+		panelFrame();
+		int withTitle = boxHeight();
+		int gap = rowGap();
+		check(withTitle > 0, "the panel draws a box around itself (" + withTitle + " pixels tall)");
+		check(gap > 0, "...and its rows are a measurable distance apart (" + gap + ")");
+
+		setBoolean(boosts, "showTitle", false);
+		panelFrame();
+		int withoutTitle = boxHeight();
+		check(withoutTitle > 0, "with the heading off the box is still drawn");
+		check(withTitle - withoutTitle == gap,
+			"...and is exactly one row shorter, rather than keeping an empty row where the "
+				+ "heading was (" + withTitle + " -> " + withoutTitle + ", one row is " + gap
+				+ ")");
+		setBoolean(boosts, "showTitle", true);
+
+		// ---- THE FONT DROP-DOWN. Three recording fonts share one list, so the rows read the
+		// same whichever draws them - the counts are what say which one the panel asked for.
+		setText(boosts, "font", OverlayGraphics.FONT_CHOICE_SMALL);
+		panelFrame();
+		check(font.calls > 0 && boldFont.calls == 0 && normalFont.calls == 0,
+			"at the small setting the panel draws in the small font (" + font.calls + " small, "
+				+ normalFont.calls + " normal, " + boldFont.calls + " bold)");
+
+		setText(boosts, "font", OverlayGraphics.FONT_CHOICE_BOLD);
+		panelFrame();
+		check(boldFont.calls > 0 && font.calls == 0,
+			"...and at the bold setting it draws in the bold one, so the drop-down is not "
+				+ "decoration (" + font.calls + " small, " + boldFont.calls + " bold)");
+
+		setText(boosts, "font", OverlayGraphics.FONT_CHOICE_NORMAL);
+		panelFrame();
+		check(normalFont.calls > 0 && font.calls == 0 && boldFont.calls == 0,
+			"...and the third choice reaches the third font (" + normalFont.calls + " normal)");
+
+		setText(boosts, "font", OverlayGraphics.FONT_CHOICE_SMALL);
+		levelAll(50);
+		manager.setEnabled(boosts, false);
+	}
+
+	/**
+	 * One frame into a cleared buffer, with the three fonts' call counts cleared too.
+	 *
+	 * drawnText() leaves the pixels alone, because every check that came before it was about
+	 * text. A box is not text.
+	 */
+	static void panelFrame() {
+		font.rows.clear();
+		font.calls = 0;
+		normalFont.calls = 0;
+		boldFont.calls = 0;
+		java.util.Arrays.fill(pixels, 0);
+		jagex2.graphics.Pix2D.bind(W, H, pixels);
+		manager.renderOverlays(W, H, jagex2.client.plugin.Overlay.LAYER_SCREEN);
+	}
+
+	/** How tall the panel's own border is, which is the box it sized for its rows. */
+	static int boxHeight() {
+		int top = -1;
+		int bottom = -1;
+		for (int y = 0; y < H; y++) {
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] == BOX_BORDER) {
+					if (top < 0) {
+						top = y;
+					}
+					bottom = y;
+				}
+			}
+		}
+		return top < 0 ? 0 : bottom - top + 1;
+	}
+
+	/** The distance between two drawn baselines, which is one row of the box. */
+	static int rowGap() {
+		List<Drawn> rows = new ArrayList<Drawn>(font.rows);
+		for (int i = 1; i < rows.size(); i++) {
+			int gap = rows.get(i).y - rows.get(i - 1).y;
+			if (gap > 0) {
+				return gap;
+			}
+		}
+		return 0;
+	}
+
+	// ---------------------------------------------------------------- 1c
+
+	/**
+	 * The expiry notice, driven through onGameTick and read off the chatbox.
+	 *
+	 * EVERY CHECK ABOVE IS ABOUT THE PANEL, and the notice shares almost none of its code. The
+	 * audit broke the notice path seven ways - the switch forced on, forced off, the vital
+	 * exclusion deleted from it, a drain reported as an expiry, the first-tick guard removed,
+	 * `scanned` never set and `wasBoosted` never written - and all seven passed, because the
+	 * strongest thing said about the notice was that isVital() returns true for hitpoints.
+	 * A predicate that answers correctly is not a predicate anybody calls.
+	 *
+	 * So this drives real ticks and reads client.messageText, the way NotifyTest does. The
+	 * notifier shares one rate limit across every plugin, so each check waits it out first -
+	 * otherwise a notice the code really did emit is swallowed and the check passes for the
+	 * wrong reason, which is the failure mode this whole section exists to avoid.
+	 */
+	static void expiryNoticeTests() {
+		PluginManager.Entry boosts = entry("boosts");
+		manager.setEnabled(boosts, true);
+		client.ingame = true;
+		levelAll(50);
+		setText(boosts, "skills", "");
+		setBoolean(boosts, "notifyExpired", true);
+
+		// ---- A BOOST THAT WEARS OFF IS NAMED.
+		quiet();
+		client.skillLevel[0] = 54;                 // attack, boosted
+		tick();
+		int before = messages();
+		client.skillLevel[0] = 50;                 // and back to base: the potion ran out
+		tick();
+		check(messages() > before,
+			"a boost wearing off puts a line in the chatbox (" + before + " -> "
+				+ messages() + ")");
+		String said = lastMessage();
+		check(said != null && said.indexOf("Attack") >= 0,
+			"...which names the skill it was (\"" + said + "\")");
+		check(said != null && said.indexOf("worn off") >= 0,
+			"...and says what happened to it");
+
+		// ---- ONCE, NOT EVERY TICK. wasBoosted has to be rewritten each tick or the skill that
+		// expired stays in it and is announced again on the next one, for as long as the player
+		// is logged in.
+		quiet();
+		int after = messages();
+		tick();
+		tick();
+		check(messages() == after,
+			"...and said once rather than on every tick afterwards (" + after + " -> "
+				+ messages() + ")");
+
+		// ---- AND NOT AT ALL WITH THE SWITCH OFF, which is how it ships.
+		setBoolean(boosts, "notifyExpired", false);
+		quiet();
+		client.skillLevel[1] = 54;                 // defence, boosted
+		tick();
+		int silent = messages();
+		client.skillLevel[1] = 50;
+		tick();
+		check(messages() == silent,
+			"with the notice switched off a boost wearing off says nothing (" + silent + " -> "
+				+ messages() + ")");
+		setBoolean(boosts, "notifyExpired", true);
+
+		// ---- HITPOINTS AND PRAYER ARE NOT NAMED BY IT EITHER.
+		//
+		// Corey's ruling was that this server does not put a vital in front of a player, and the
+		// panel checks above pin that for the panel. The notice reads the same two levels and
+		// has its own call to isVital, which nothing exercised: in 377 the server sends a
+		// CURRENT level, so healing from 35 back to 50 looks exactly like a potion running out,
+		// and "Your Hitpoints boost has worn off." is a health reading read aloud.
+		quiet();
+		levelAll(50);
+		client.skillLevel[3] = 60;                 // hitpoints, "boosted" - a potion, or a cape
+		client.skillLevel[5] = 60;                 // prayer, the same
+		tick();
+		int beforeVitals = messages();
+		client.skillLevel[3] = 50;                 // and back down, which is damage
+		client.skillLevel[5] = 50;                 // and prayer being spent
+		tick();
+		check(messages() == beforeVitals,
+			"hitpoints and prayer coming back to base say nothing, because that is health and "
+				+ "prayer points rather than a boost (" + beforeVitals + " -> " + messages()
+				+ ")");
+
+		// ...and a real boost alongside them is still announced, so this is the two skills
+		// rather than a notice that stopped working.
+		quiet();
+		levelAll(50);
+		client.skillLevel[2] = 54;                 // strength
+		tick();
+		int beside = messages();
+		client.skillLevel[2] = 50;
+		tick();
+		check(messages() > beside,
+			"...while a real boost beside them still is (" + beside + " -> " + messages() + ")");
+
+		// ---- A DRAIN COMING BACK IS NOT A BOOST WEARING OFF.
+		//
+		// "current != base" catches a drained skill as readily as a boosted one, and then the
+		// stat recovering reads as an expiry. A drain recovering is good news and the player did
+		// not ask to hear about it.
+		quiet();
+		levelAll(50);
+		client.skillLevel[1] = 46;                 // defence, drained
+		tick();
+		int drained = messages();
+		client.skillLevel[1] = 50;                 // and restored
+		tick();
+		check(messages() == drained,
+			"a drained stat coming back to base is not announced as a boost wearing off ("
+				+ drained + " -> " + messages() + ")");
+
+		// ---- AND THE FILTER APPLIES TO THE NOTICE, not just to the panel.
+		quiet();
+		levelAll(50);
+		setText(boosts, "skills", "magic");
+		client.skillLevel[0] = 54;                 // attack, which the filter excludes
+		tick();
+		int filtered = messages();
+		client.skillLevel[0] = 50;
+		tick();
+		check(messages() == filtered,
+			"a skill the filter excludes is not announced either (" + filtered + " -> "
+				+ messages() + ")");
+		setText(boosts, "skills", "");
+
+		setBoolean(boosts, "notifyExpired", false);
+		levelAll(50);
+		manager.setEnabled(boosts, false);
 	}
 
 	// ---------------------------------------------------------------- 1
@@ -327,7 +582,13 @@ public class SkillPluginsTest {
 		check(order(SkillsPlugin.BY_SKILL, a, b, c).equals("Attack,Bravery,Cooking"),
 			"skill order is the list as it came, which is the client's own");
 		check(order(null, a, b, c).equals("Attack,Bravery,Cooking"),
-			"...and so is an order nobody recognises, rather than an empty page");
+			"...and so is a missing one, rather than an empty page");
+		// AN ORDER NOBODY RECOGNISES is the one input that reaches the end of after(), and
+		// nothing here sent one: BY_SKILL and null both take the early return in sort(), so
+		// turning that fallthrough into a level comparison changed no answer. A setting read
+		// back from an older config, or a renamed choice, arrives here.
+		check(order("Nonsense", a, b, c).equals("Attack,Bravery,Cooking"),
+			"...and so is an order nobody recognises, which by level would be Bravery first");
 
 		check(order(SkillsPlugin.BY_LEVEL, a, b, c).equals("Bravery,Cooking,Attack"),
 			"by level is highest first");
@@ -362,6 +623,78 @@ public class SkillPluginsTest {
 		// by hand is exactly where an off-by-one lives.
 		check(order(SkillsPlugin.BY_LEVEL).length() == 0, "an empty page sorts to nothing");
 		check(order(SkillsPlugin.BY_LEVEL, a).equals("Attack"), "and a page of one to itself");
+
+		// ---- AND THE CHOSEN ORDER REACHES THE PAGE.
+		//
+		// Every check above calls sort() directly, which says what it computes and nothing about
+		// who calls it: deleting the plugin's one call to it left the drop-down doing nothing
+		// with all of them green. Read as levels rather than names, so the check does not depend
+		// on what the cache happens to call skill 9.
+		PluginManager.Entry skills = entry("skills");
+		manager.setEnabled(skills, true);
+		setText(skills, "skills", "");
+		setBoolean(skills, "virtual", false);
+		// ASCENDING IN THE CLIENT'S OWN ORDER, so "the client's order" and "highest first" are
+		// opposites and no single page can satisfy both.
+		for (int i = 0; i < client.skillLevel.length; i++) {
+			setLevel(i, 30 + i % 40);
+		}
+		setText(skills, "sortBy", SkillsPlugin.BY_SKILL);
+		String asListed = pageLevels();
+		setText(skills, "sortBy", SkillsPlugin.BY_LEVEL);
+		String byLevel = pageLevels();
+		check(!byLevel.equals(asListed),
+			"the order drop-down changes the page (" + asListed + " -> " + byLevel + ")");
+		check(descending(byLevel),
+			"...and by level the page runs highest first (" + byLevel + ")");
+		check(!descending(asListed),
+			"...while skill order leaves it in the client's own, which these levels make the "
+				+ "other way round (" + asListed + ")");
+		setText(skills, "sortBy", SkillsPlugin.BY_SKILL);
+		levelAll(50);
+		manager.setEnabled(skills, false);
+	}
+
+	/** The Skills page's levels, in the order the page has them, skipping the combat row. */
+	static String pageLevels() {
+		tick();
+		StringBuilder out = new StringBuilder();
+		List<PluginManager.PanelSnapshot> panels = manager.snapshotPanels();
+		for (int i = 0; i < panels.size(); i++) {
+			if (!"Skills".equals(panels.get(i).title)) {
+				continue;
+			}
+			List<jagex2.client.plugin.ConfigList.Row> rows = panels.get(i).rows;
+			for (int r = 0; r < rows.size(); r++) {
+				if ("Combat level".equals(rows.get(r).label)) {
+					continue;
+				}
+				if (out.length() > 0) {
+					out.append(',');
+				}
+				out.append(rows.get(r).value);
+			}
+		}
+		return out.toString();
+	}
+
+	/** True when a comma-separated list of levels never rises as it is read. */
+	static boolean descending(String levels) {
+		String[] parts = levels.split(",");
+		int last = Integer.MAX_VALUE;
+		for (int i = 0; i < parts.length; i++) {
+			int value;
+			try {
+				value = Integer.parseInt(parts[i].trim());
+			} catch (RuntimeException notANumber) {
+				continue;
+			}
+			if (value > last) {
+				return false;
+			}
+			last = value;
+		}
+		return true;
 	}
 
 	static SkillsPlugin.Skill skill(String name, int level, int virtual, int xp, int toNext) {
@@ -419,6 +752,16 @@ public class SkillPluginsTest {
 		check(SkillFilter.allows("attack", null), "...and none at all");
 		check(SkillFilter.allows("attack", ",,,"),
 			"...and one that is nothing but commas, which is not a filter either");
+		// A TRAILING COMMA IS THE COMMON TYPO, and the blank term it leaves behind starts every
+		// skill name there is. Dropping the length test turns "defence," into a filter that
+		// allows everything - a panel that quietly stops filtering, which looks like it works.
+		check(!SkillFilter.allows("attack", "defence,"),
+			"a trailing comma does not open the filter up: the blank term it leaves behind "
+				+ "matches nothing rather than everything");
+		check(!SkillFilter.allows("attack", "defence, , mining"),
+			"...nor does a blank term in the middle of a real list");
+		check(SkillFilter.allows("defence", "defence,"),
+			"...and the real term beside it still matches, so this is not a filter that broke");
 		check(!SkillFilter.isFiltering("") && !SkillFilter.isFiltering(null)
 				&& !SkillFilter.isFiltering(",, ,"),
 			"none of those counts as filtering");
@@ -435,8 +778,23 @@ public class SkillPluginsTest {
 			}
 		}
 
-		check(!SkillFilter.allows(null, "attack"), "a missing skill name matches no filter");
-		check(!SkillFilter.allows("", "attack"), "...nor an empty one");
+		// CAUGHT, NOT THROWN. Without the guard in allows() a null name reaches toLowerCase()
+		// and the whole run ends on the exception with no failure named, which the mutation
+		// runner reports as a crash - and a crash is not a catch.
+		boolean missingName;
+		boolean emptyName;
+		try {
+			missingName = !SkillFilter.allows(null, "attack");
+		} catch (RuntimeException threwOnNull) {
+			missingName = false;
+		}
+		try {
+			emptyName = !SkillFilter.allows("", "attack");
+		} catch (RuntimeException threwOnEmpty) {
+			emptyName = false;
+		}
+		check(missingName, "a missing skill name matches no filter");
+		check(emptyName, "...nor an empty one");
 		boolean threw = false;
 		try {
 			SkillFilter.allows(null, null);
@@ -659,6 +1017,38 @@ public class SkillPluginsTest {
 		manager.onGameTick();
 	}
 
+	/** How many lines the chatbox holds, which is how a notification is counted. */
+	static int messages() {
+		int count = 0;
+		for (int i = 0; i < client.messageText.length; i++) {
+			if (client.messageText[i] != null) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/** The newest line, which pushMessage puts at index 0. */
+	static String lastMessage() {
+		return client.messageText[0];
+	}
+
+	/**
+	 * Waits out the notifier's shared rate limit.
+	 *
+	 * PluginContext allows one notification every NOTIFY_EVERY_MS across every plugin, so two
+	 * checks in a row that each expect a notice would see only the first - and, worse, a check
+	 * expecting SILENCE would pass while the code really did try to speak. Every check here
+	 * calls this first, which is what makes "nothing was said" mean anything.
+	 */
+	static void quiet() {
+		try {
+			Thread.sleep(1600L);
+		} catch (InterruptedException stop) {
+			Thread.currentThread().interrupt();
+		}
+	}
+
 	/** The combat level as the page reports it, which is the number a player would read. */
 	static int combatRow() {
 		tick();
@@ -811,13 +1201,18 @@ public class SkillPluginsTest {
 	 * says nothing. Halfway to the next level is what a real account mostly looks like.
 	 */
 	static void levelAll(int level) {
+		for (int i = 0; i < client.skillLevel.length; i++) {
+			setLevel(i, level);
+		}
+	}
+
+	/** One skill at a level, with the experience that level implies. See {@link #levelAll}. */
+	static void setLevel(int skill, int level) {
 		int start = formula(level);
 		int next = formula(level + 1);
-		for (int i = 0; i < client.skillLevel.length; i++) {
-			client.skillLevel[i] = level;
-			client.skillBaseLevel[i] = level;
-			client.skillExperience[i] = start + (next - start) / 2;
-		}
+		client.skillLevel[skill] = level;
+		client.skillBaseLevel[skill] = level;
+		client.skillExperience[skill] = start + (next - start) / 2;
 	}
 
 	/** The same, named for the tests that are about base levels rather than boosted ones. */
@@ -935,9 +1330,28 @@ public class SkillPluginsTest {
 
 		static final int ADVANCE = 4;
 
-		final List<Drawn> rows = new ArrayList<Drawn>();
+		/**
+		 * THE SAME LIST FOR ALL THREE FONTS, and a count each.
+		 *
+		 * The fixture used to hand PluginManager one font object three times, which makes "which
+		 * size drew this row" a question with no answer - and left the Boosts panel's font
+		 * drop-down pinned to the small font with every check green. Three objects sharing one
+		 * list keeps every assertion about WHAT was drawn working unchanged, and adds the one
+		 * about WHICH font drew it.
+		 */
+		final List<Drawn> rows;
+
+		final String name;
+
+		int calls;
 
 		RecordingFont() {
+			this(new ArrayList<Drawn>(), "small");
+		}
+
+		RecordingFont(List<Drawn> shared, String name) {
+			this.rows = shared;
+			this.name = name;
 			this.height = ROW_H;
 			java.util.Arrays.fill(this.charAdvance, ADVANCE);
 		}
@@ -955,10 +1369,12 @@ public class SkillPluginsTest {
 		}
 
 		public void drawStringTag(int colour, int x, int y, boolean shadow, String text) {
+			this.calls++;
 			this.rows.add(new Drawn(x, y, colour, text));
 		}
 
 		public void drawString(int x, int colour, int y, String text) {
+			this.calls++;
 			this.rows.add(new Drawn(x, y, colour, text));
 		}
 	}

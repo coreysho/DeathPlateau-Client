@@ -232,6 +232,33 @@ public class NpcIndicatorsTest {
 		set("borderWidth", "1");
 		check(countPixels(GREEN) == thin, "...and back to one is back to where it was");
 
+		// AND THE INSET ITSELF, as arithmetic. "Thicker draws more" is true of several wrong
+		// insets: the audit removed toward()'s clamp and its by == 0 shortcut and the pixel
+		// counts above did not move, because at this camera the tile is wide enough that
+		// neither case arises. Both are about a tile only a few pixels across, which is most of
+		// them once a player is looking at anything but their own feet.
+		check(TileIndicatorsPlugin.toward(10, 20, 0) == 10,
+			"a ring with no inset sits on the tile's own corner ("
+				+ TileIndicatorsPlugin.toward(10, 20, 0) + ")");
+		check(TileIndicatorsPlugin.toward(10, 12, 5) == 12,
+			"...and an inset bigger than the tile stops at its centre rather than crossing it ("
+				+ TileIndicatorsPlugin.toward(10, 12, 5) + ")");
+		check(TileIndicatorsPlugin.toward(20, 12, 5) == 15,
+			"...while an inset that fits moves by exactly itself, from either side ("
+				+ TileIndicatorsPlugin.toward(20, 12, 5) + ")");
+		check(TileIndicatorsPlugin.toward(14, 12, 5) == 12,
+			"...and overshooting from the far side stops at the centre too");
+
+		// A BORDER OF NOUGHT IS STILL A BORDER. outlineTile is a static the other plugins call,
+		// so it cannot assume its caller clamped the width: a loop bounded by the raw width
+		// draws nothing at all, which is a marked npc with no mark.
+		clearPixels();
+		TileIndicatorsPlugin.outlineTile(context(), graphics(), MID_X, MID_Z, GREEN, 0);
+		int ringAtZero = painted(GREEN);
+		check(ringAtZero > 0,
+			"a border width of nought still draws one ring rather than none ("
+				+ ringAtZero + " pixels)");
+
 		// THE CAP. A term matching a crowd is bounded, and the nearest are the ones kept, since
 		// getNpcs sorts by distance and they are what a player is looking for.
 		clearNpcs();
@@ -300,6 +327,41 @@ public class NpcIndicatorsTest {
 		manager.onMenuBuilt(client.menuSize);
 		check(colourAt(1) == GREEN, "a row carrying a combat level still matches its term");
 
+		// ONLY ROWS ABOUT NPCS. The kind tag in a menu option says what the row is about -
+		// @yel@ for an npc, @lre@ for an item - and a term is a term for npcs. "bones" as a
+		// term must not colour the row that takes bones off the floor, which is Ground items'
+		// business and may be wearing its own colour already.
+		set("names", "goblin, bones");
+		menu(new String[] { "Attack @yel@Goblin", "Take @lre@Bones" }, new int[] { 7, 684 });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == GREEN, "the npc row is coloured");
+		check(colourAt(2) == 0,
+			"...and a ground item whose name is a term is left alone, because a term is about "
+				+ "npcs (" + Integer.toHexString(colourAt(2)) + ")");
+		set("names", "goblin");
+
+		// THE MARKED ONES, NOT EVERY ONE. Two npc rows in one menu, one named and one not: with
+		// a single unnamed row the fallback colour is the only thing on screen and "nothing is
+		// coloured" and "everything is" look alike from the one index being checked.
+		menu(new String[] { "Attack @yel@Goblin", "Attack @yel@Cow" }, new int[] { 7, 7 });
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(1) == GREEN && colourAt(2) == 0,
+			"of two npc rows side by side, the marked one is coloured and the other is not ("
+				+ Integer.toHexString(colourAt(1)) + " and "
+				+ Integer.toHexString(colourAt(2)) + ")");
+
+		// AND THE WALK NEVER TOUCHES INDEX 0. In 377 index 0 is Cancel - the client builds every
+		// menu that way - so the loop starts at 1. Written as a row that WOULD be coloured if
+		// anything read it, because an index nothing looks at cannot be checked any other way.
+		menu(new String[] { "Walk here" }, new int[] { Client.WALK_HERE_ACTION });
+		client.menuOption[0] = "Attack @yel@Goblin";
+		client.menuAction[0] = 7;
+		client.menuColour[0] = 0;
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(0) == 0,
+			"index 0 is Cancel and is never read as an npc row, however it reads ("
+				+ Integer.toHexString(colourAt(0)) + ")");
+
 		// NOTHING IS MOVED. Level 6 offers order as well as colour, and this uses only the
 		// colour: moving an npc's Attack row changes what a click does.
 		menu(new String[] { "Walk here", "Attack @yel@Goblin" },
@@ -330,11 +392,22 @@ public class NpcIndicatorsTest {
 			"running it adds the npc to the list");
 		check(text("names").equals("Goblin"), "...as the whole list, there being nothing else");
 
-		// AND IT PERSISTS. The row writes through the plugin's own config, so the setting the
-		// sidebar shows and the one the plugin reads are the same thing - a tag that only lived
-		// in the field would be gone on the next restart.
+		// AND IT PERSISTS - ACROSS A RESTART, not merely in the field.
+		//
+		// PluginConfig.Item.stringValue() reads the plugin's own field by reflection, so this
+		// check and text() above see the same in-memory string whether or not anything reached
+		// the store. The audit deleted the write to the store and every one of them stayed
+		// green. A reload is the restart: the manager builds the plugins again and bind() fills
+		// their fields from what was saved.
 		check(setting("names").stringValue().equals("Goblin"),
-			"...and the config box shows it, so a tag survives a restart");
+			"...and the config box shows it");
+		manager.reload();
+		refindEntry();
+		check(text("names").equals("Goblin"),
+			"...and it is still there after the manager restarts the plugins, which is what "
+				+ "surviving a restart means (\"" + text("names") + "\")");
+		restore();
+		settingsMenu(target("yel", "Goblin")).get(0).action.run();
 
 		// The same npc now offers to untag.
 		event = settingsMenu(target("yel", "Goblin"));
@@ -589,6 +662,76 @@ public class NpcIndicatorsTest {
 			}
 		}
 		return n;
+	}
+
+	/** The scene's own context, for the statics this plugin shares with Tile indicators. */
+	static jagex2.client.plugin.PluginContext context() {
+		try {
+			java.lang.reflect.Field field = PluginManager.class.getDeclaredField("ctx");
+			field.setAccessible(true);
+			return (jagex2.client.plugin.PluginContext) field.get(manager);
+		} catch (Throwable error) {
+			throw new IllegalStateException("cannot reach the context: " + error);
+		}
+	}
+
+	/** The manager's own OverlayGraphics, reset to a full-screen clip. */
+	static jagex2.client.plugin.OverlayGraphics graphics() {
+		try {
+			java.lang.reflect.Field field = PluginManager.class.getDeclaredField("graphics");
+			field.setAccessible(true);
+			jagex2.client.plugin.OverlayGraphics g = (jagex2.client.plugin.OverlayGraphics) field.get(manager);
+			java.lang.reflect.Method reset = jagex2.client.plugin.OverlayGraphics.class.getDeclaredMethod("reset",
+				int.class, int.class, jagex2.client.plugin.InteractiveRegions.class,
+				jagex2.client.plugin.Plugin.class, int.class, int.class);
+			reset.setAccessible(true);
+			reset.invoke(g, Integer.valueOf(W), Integer.valueOf(H), null, null,
+				Integer.valueOf(0), Integer.valueOf(0));
+			return g;
+		} catch (Throwable error) {
+			throw new IllegalStateException("cannot reach the overlay graphics: " + error);
+		}
+	}
+
+	static void clearPixels() {
+		java.util.Arrays.fill(pixels, 0);
+		Pix2D.bind(W, H, pixels);
+	}
+
+	/**
+	 * Pixels of one colour in the buffer AS IT STANDS.
+	 *
+	 * countPixels() draws a frame first, which is right for every check about what the plugin
+	 * renders and wrong for one that called a static by hand - the frame would wipe it.
+	 */
+	static int painted(int colour) {
+		int n = 0;
+		for (int i = 0; i < pixels.length; i++) {
+			if (pixels[i] == colour) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/**
+	 * Finds this plugin's entry again, with everything else off, after a reload.
+	 *
+	 * manager.reload() builds new Entry objects, so the one the fixture held is stale - and a
+	 * check reading a setting off a stale entry reads the state from before the restart, which
+	 * is exactly the thing a restart check is trying to disprove.
+	 */
+	static void refindEntry() {
+		List<PluginManager.Entry> entries = manager.getPlugins();
+		for (int i = 0; i < entries.size(); i++) {
+			PluginManager.Entry e = entries.get(i);
+			if ("npc-indicators".equals(e.key)) {
+				entry = e;
+				manager.setEnabled(e, true);
+			} else if (e.isEnabled()) {
+				manager.setEnabled(e, false);
+			}
+		}
 	}
 
 	static int countPixels(int colour) {

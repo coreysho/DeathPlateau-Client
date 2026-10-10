@@ -332,22 +332,32 @@ MUTS = [
      '''		if (alt && !this.altWasDown) {''',
      '''		if (alt) {'''),
     (PLUGIN, '''every beam shape drawing the same width, so the choice does nothing''',
-     '''		if (BEAM_STRAIGHT.equals(style)) {
+     '''		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {
 			width = BEAM_W;
 		} else if (BEAM_NARROW.equals(style)) {
 			width = BEAM_W / 4;
 		} else {''',
      '''		if (false) {
+			width = lootBeamWidth(segment, segments);
+		} else if (false) {
 			width = BEAM_W;
 		} else if (false) {
 			width = BEAM_W / 4;
 		} else {'''),
     (PLUGIN, '''a tall beam allowed to reach zero width and draw nothing''',
-     '''		return width < 1 ? 1 : width;''',
-     '''		return width;'''),
+     '''		return width < 1 ? 1 : width;
+	}
+
+	@Subscribe''',
+     '''		return width;
+	}
+
+	@Subscribe'''),
     (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
      '''		} else {
-			width = BEAM_W - segment * BEAM_W / (BEAM_SEGMENTS + 1);
+			width = BEAM_W - segment * BEAM_W / (segments + 1);
 		}''',
      '''		} else {
 			width = 0;
@@ -480,6 +490,135 @@ MUTS = [
 )''',
      '''	apiLevel = 0
 )'''),
+
+    # ---- THE BEAM AS LIGHT. It was a stack of boxes at one flat alpha; it fades, has a brighter
+    # core than its edges, lights the ground under it, and can pulse. Each of those is a property
+    # of light, and each of these breaks one of them.
+    (PLUGIN, '''the fade removed, so a beam is a slab of one brightness again''',
+     '''		if (!fade || segments <= 1) {
+			return base;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the fade inverted, so a beam is brightest where nobody is looking''',
+     '''		int left = segments - segment;''',
+     '''		int left = segment + 1;'''),
+    (PLUGIN, '''the ramp over the segments exactly, so the top segment is invisible''',
+     '''		int alpha = base * left / (segments + 1);''',
+     '''		int alpha = base * (left - 1) / segments;'''),
+    (PLUGIN, '''a segment allowed to reach nothing, which is a beam one segment shorter''',
+     '''		return alpha < 1 ? 1 : alpha;''',
+     '''		return alpha;'''),
+    (PLUGIN, '''a one-segment beam dividing its brightness away''',
+     '''		if (!fade || segments <= 1) {''',
+     '''		if (!fade) {'''),
+    (PLUGIN, '''the core as wide as the beam, so there is no core''',
+     '''		return width / BEAM_CORE_DIVISOR;''',
+     '''		return width;'''),
+    (PLUGIN, '''the core drawn whether the player asked for it or not''',
+     '''			if (this.beamCore) {''',
+     '''			if (true) {'''),
+    (PLUGIN, '''the core never drawn, so the switch does nothing''',
+     '''			if (this.beamCore) {''',
+     '''			if (false) {'''),
+    # NOT MUTATED: `if (core > 0)` has no observable effect, so breaking it is not a mutation.
+    # coreWidth() is width/3 and beamWidth() floors every style at 1, so core is never negative,
+    # and at core == 0 the fillAlpha it guards is a no-op twice over: OverlayGraphics.mark()
+    # returns on `width <= 0`, and Pix2D.fillRectTrans's inner loop is `for (j = -width; j < 0;
+    # j++)`, which does not run. Nothing is painted and nothing is marked either way. The guard
+    # stays in the source because it states the intent and does not lean on that loop bound, but
+    # a mutation nothing can distinguish is a survivor by construction rather than a gap.
+    (PLUGIN, '''the ground glow drawn whether the player asked for it or not''',
+     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
+     '''		if (this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+    (PLUGIN, '''the ground glow never drawn''',
+     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
+     '''		if (false && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+    (PLUGIN, '''the height left at the old constant, so the setting is decoration''',
+     '''		int segments = beamSegmentsFor(this.beamSegments);''',
+     '''		int segments = DEFAULT_BEAM_SEGMENTS;'''),
+    (PLUGIN, '''the opacity left at the old constant''',
+     '''		int base = pulsed(beamAlphaFor(this.beamOpacity), System.currentTimeMillis(),
+			this.beamPulse);''',
+     '''		int base = DEFAULT_BEAM_ALPHA;'''),
+    (PLUGIN, '''the height floor removed, so a zero is no beam at all''',
+     '''		if (segments < MIN_BEAM_SEGMENTS) {
+			return MIN_BEAM_SEGMENTS;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the height ceiling removed, so a beam can be a column into the sky''',
+     '''		return segments > MAX_BEAM_SEGMENTS ? MAX_BEAM_SEGMENTS : segments;''',
+     '''		return segments;'''),
+    (PLUGIN, '''the opacity floor removed, so a 0 turns the beam off from a box that cannot say so''',
+     '''		if (alpha < MIN_BEAM_ALPHA) {
+			return MIN_BEAM_ALPHA;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the pulse live whether the player asked for it or not''',
+     '''		if (!pulse) {
+			return alpha;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the pulse peaking above the brightness a player set''',
+     '''		return capAlpha(dimmed + (int) (swing * up / BEAM_PULSE_MS));''',
+     '''		return capAlpha(dimmed + (int) (swing * 2L * up / BEAM_PULSE_MS));'''),
+    (PLUGIN, '''the pulse a sawtooth rather than a triangle, so it jumps every cycle''',
+     '''		long up = phase <= BEAM_PULSE_MS ? phase : BEAM_PULSE_MS * 2L - phase;''',
+     '''		long up = phase;'''),
+    (PLUGIN, '''the pulse never dimming, so it is a constant with extra arithmetic''',
+     '''		int swing = alpha * BEAM_PULSE_PERCENT / 100;''',
+     '''		int swing = 0;'''),
+    (PLUGIN, '''the doubled alpha uncapped, so a bright beam wraps past opaque''',
+     '''		if (alpha < 1) {
+			return 1;
+		}
+		return alpha > MAX_BEAM_ALPHA ? MAX_BEAM_ALPHA : alpha;''',
+     '''		return alpha;'''),
+    (PLUGIN, '''the taper computed over a fixed height, so a tall beam is a needle halfway up''',
+     '''			width = BEAM_W - segment * BEAM_W / (segments + 1);''',
+     '''			width = BEAM_W - segment * BEAM_W / (DEFAULT_BEAM_SEGMENTS + 1);'''),
+
+    # ---- THE MEASURED SHAPE. Jagex's sprite is 12% of its full width at the halfway mark;
+    # cubing gives 12.5%, squaring 25% and a linear taper 50%. Two of these mutations are those
+    # wrong curves, because "it narrows" is true of all three and says nothing.
+    (PLUGIN, '''the loot beam tapering linearly, which is the cone shape it was built to replace''',
+     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
+     '''		int width = BEAM_W * below / span;'''),
+    (PLUGIN, '''the loot beam tapering by a square, which is still twice the sprite at halfway''',
+     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
+     '''		int width = BEAM_W * below * below / (span * span);'''),
+    (PLUGIN, '''the loot beam taper upside down, so it is widest at the tip''',
+     '''		int below = segments - 1 - segment;''',
+     '''		int below = segment;'''),
+    (PLUGIN, '''a loot beam segment allowed to vanish, so its top half is not drawn''',
+     '''		return width < 1 ? 1 : width;
+	}
+
+	/** How tall a beam''',
+     '''		return width;
+	}
+
+	/** How tall a beam'''),
+    (PLUGIN, '''a one-segment loot beam dividing by zero in a render loop''',
+     '''		if (segments <= 1) {
+			return BEAM_W;
+		}
+''',
+     ''''''),
+    (PLUGIN, '''the loot beam shape not reached by its own drop-down value''',
+     '''		if (BEAM_LOOT.equals(style)) {
+			width = lootBeamWidth(segment, segments);
+		} else if (BEAM_STRAIGHT.equals(style)) {''',
+     '''		if (BEAM_STRAIGHT.equals(style)) {'''),
+    (PLUGIN, '''the default shape back to the cone, so nobody sees the one this was asked for''',
+     '''	public String beamStyle = BEAM_LOOT;''',
+     '''	public String beamStyle = BEAM_TAPERED;'''),
+    (PLUGIN, '''the default height back to fourteen, which is barely two to one''',
+     '''	static final int DEFAULT_BEAM_SEGMENTS = 24;''',
+     '''	static final int DEFAULT_BEAM_SEGMENTS = 14;'''),
 
 ]
 
