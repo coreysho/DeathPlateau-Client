@@ -334,7 +334,7 @@ Longer lists - rules per item, things a player adds and removes - are a `ConfigL
 
 ### Ground items, in detail
 
-The most configured plugin here, and the one to copy from. 34 settings:
+The most configured plugin here, and the one to copy from. 35 settings:
 
 | | |
 | --- | --- |
@@ -425,10 +425,32 @@ segments overlapped up close and left visible gaps further off, which is what ma
 dashed. Each segment now spans the gap its own two ends project to, so it cannot gap or overlap at
 any distance, and the pool of light is simply the tile's own projected box.
 
-Two things in the sprite are deliberately **not** drawn: the helical ribbons, and the sparkles
-floating near its base. They are separate animated elements rather than part of the beam's body.
-Drawing them with `fillAlpha` rectangles would cost more than they are worth at the size a beam is
-actually seen.
+**The flare is squared, not straight.** The last three tenths go 15.8%, 23.9%, 39.7% - the gaps
+roughly double each step - so interpolating straight from the end of the line to the foot gives a
+cone, which is the one shape the sprite is not. Squaring it gives the bell.
+
+**Drawn a screen row at a time, in three passes.** One rectangle per segment is twenty-four visible
+steps down each edge of a thing that is meant to be light, and it makes the height setting a
+resolution as well as a height. A row at a time is a smooth outline for the same arithmetic. The
+three passes are a soft halo at twice the body's width and a third of its alpha, the body, and a
+bright narrow core - that layering, rather than the silhouette, is most of why the reference reads
+as light and a single translucent wedge reads as a slab. The loop is clamped to `Pix2D`'s clip
+bounds, because the tip of a nearby beam projects thousands of pixels above the viewport and
+`fillAlpha` clips the drawing but not the loop around it.
+
+**The pool of light is the tile's own quad, as nested rings.** It was the tile's BOUNDING BOX,
+which is axis-aligned where a tile is a diamond, so it painted a hard-edged rectangle with corners
+sticking out past the tile on four sides - a sticker on the floor. Filling the real quad once is
+still a sharp lozenge, so it is filled five times, each ring pulled in toward the centre at a fifth
+of the alpha: the middle is covered by every ring and the rim by one, which is a falloff for
+nothing. The spans come from Tile indicators, where the scanline fill already lives.
+
+**The helical ribbons are drawn after all.** They were left out on the grounds that they are a
+separate element from the body - which is true, and is why the body is measured without them, and
+was still the wrong call: they are most of what the eye picks out as "a loot beam" rather than "a
+green cone". Two strands half a turn apart, wound twice round the lower 45%, swinging out to about
+the body's own width. The sparkles near the base are still not drawn; they are animated, and at the
+size a beam is actually seen they are a few pixels.
 
 **The four colours Jagex ships, sampled from the assets**, for anyone setting their tiers to match:
 

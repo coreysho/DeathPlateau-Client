@@ -10,6 +10,7 @@ import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
+import jagex2.graphics.Pix2D;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
@@ -207,6 +208,10 @@ public final class GroundItemsPlugin extends Plugin {
 		description = "A pool of light on the tile, which roots the beam to it")
 	public boolean beamGlow = true;
 
+	@ConfigItem(keyName = "beamRibbons", name = "Beams have ribbons",
+		description = "The two strands wound round the lower half, as Jagex's beam has")
+	public boolean beamRibbons = true;
+
 	@ConfigItem(keyName = "beamPulse", name = "Beams pulse",
 		description = "A slow brighten and dim. Off by default: motion catches the eye hardest")
 	public boolean beamPulse = false;
@@ -320,7 +325,7 @@ public final class GroundItemsPlugin extends Plugin {
 	static final int BEAM_FLARE_FROM = 7;
 
 	/** The column where it meets the ground, in permille of a tile. */
-	static final int BEAM_FOOT_PERMILLE = 400;
+	static final int BEAM_FOOT_PERMILLE = 620;
 
 	/** ...and where the flare starts, which is the straight part's widest. */
 	static final int BEAM_FLARE_PERMILLE = 158;
@@ -363,6 +368,31 @@ public final class GroundItemsPlugin extends Plugin {
 	 * camera angle, for nothing.
 	 */
 	static final int BEAM_GLOW_BRIGHTER = 2;
+
+	/**
+	 * The soft outer, as a percentage of the body's width, and how much of its alpha it keeps.
+	 *
+	 * A beam of one width at one alpha is a translucent wedge. The sprite is a bright narrow
+	 * core inside a soft halo about twice the body's width, and drawing those as separate
+	 * passes is the whole difference between reading as light and reading as a slab.
+	 */
+	static final int BEAM_HALO_PERCENT = 210;
+
+	static final int BEAM_HALO_ALPHA = 30;
+
+	/** Where up the beam the ribbons start, as a percentage of its height below the tip. */
+	static final int BEAM_RIBBON_FROM = 55;
+
+	/** How far round they wind over the rest of it. */
+	static final int BEAM_RIBBON_TURNS = 2;
+
+	/** How far out they swing, as a percentage of the body's width at that height. */
+	static final int BEAM_RIBBON_SPREAD = 95;
+
+	static final int BEAM_RIBBON_ALPHA = 75;
+
+	/** How many nested quads the ground pool is built from, which is its softness. */
+	static final int BEAM_POOL_RINGS = 5;
 
 	/** One full brighten-and-dim of the pulse, in milliseconds. */
 	static final long BEAM_PULSE_MS = 1800L;
@@ -924,57 +954,144 @@ public final class GroundItemsPlugin extends Plugin {
 		}
 
 		// THE POOL ON THE GROUND FIRST, under everything: it is what roots the beam to the tile
-		// rather than leaving it hovering over one. It IS the tile - its own projected box - so
-		// it is a tile across at every distance rather than a fixed 44 pixels, and it leans
-		// with the camera because the box does.
+		// rather than leaving it hovering over one.
+		//
+		// THE TILE'S OWN QUAD, not its bounding box. A box is axis-aligned and the tile is a
+		// diamond, so the first version painted a hard-edged rectangle on the floor with
+		// corners sticking out past the tile on all four sides - it read as a sticker rather
+		// than as light. fillTile is Tile indicators' scanline fill of the real quad.
 		if (this.beamGlow) {
-			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);
-			g.fillAlpha(box[0], box[1], tileWidth, box[3] - box[1] + 1, colour, glow);
+			pool(this.ctx, g, pile.sceneTileX, pile.sceneTileZ, colour,
+				capAlpha(base * BEAM_GLOW_BRIGHTER));
 		}
 
-		// THE COLUMN, segment by segment, each one spanning the gap the projection actually
-		// leaves between its own two ends.
+		// THE COLUMN, ONE SCREEN ROW AT A TIME.
 		//
-		// The first version projected the segment's foot and then drew a rectangle
-		// BEAM_SEGMENT_H PIXELS tall - but BEAM_SEGMENT_H is scene units, and what 14 scene
-		// units comes to in pixels is the whole question perspective answers. Up close it came
-		// to about seven and the segments drew over each other twice; further off it came to
-		// more than fourteen and the beam was a dotted line. Worse, the rectangle was drawn
-		// DOWNWARD from its own foot, so every segment hung below the height it was projected
-		// at. Projecting both ends and filling between them cannot have either bug.
+		// Not one rectangle per segment: twenty-four rectangles is twenty-four visible steps
+		// down each edge of a thing that is supposed to be light, and the width within a
+		// segment is constant, so the taper comes out as a staircase. A row at a time is a
+		// smooth outline for the same arithmetic, and it is what makes the segment count a
+		// height rather than a resolution.
+		//
+		// THREE PASSES, because a beam is not one flat colour. Jagex's is a bright narrow core
+		// inside a soft wide halo, and that layering - not the silhouette - is most of why the
+		// reference reads as light and a single translucent wedge reads as a slab.
 		if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {
 			return;
 		}
+		int footX = this.ctx.getProjectedX();
 		int footY = this.ctx.getProjectedY();
-		for (int segment = 0; segment < segments; segment++) {
-			if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ,
-					(segment + 1) * BEAM_SEGMENT_H)) {
-				return;                                  // left the screen: the rest would too
-			}
-			int headX = this.ctx.getProjectedX();
-			int headY = this.ctx.getProjectedY();
-			int height = footY - headY;
-			if (height < 1) {
-				height = 1;                              // never nothing, however flat the view
-			}
-			// Narrowing with height, so the thing reads as going away from you rather than as a
-			// rectangle standing on a tile.
-			int width = beamWidth(this.beamStyle, segment, segments, tileWidth);
-			// FAINTER AS IT RISES. A column of one alpha from bottom to top is a translucent
-			// slab; light falls off, and this is the single thing that makes the difference
-			// between the two readings.
-			int alpha = beamAlpha(segment, segments, base, this.beamFade);
-			g.fillAlpha(headX - width / 2, headY, width, height, colour, alpha);
-			// ...and a brighter core inside it, because a beam is dense in the middle and soft
-			// at its edges. Two passes rather than one is the whole of it.
+		if (!this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ,
+				segments * BEAM_SEGMENT_H)) {
+			return;                                      // the tip left the screen
+		}
+		int tipX = this.ctx.getProjectedX();
+		int tipY = this.ctx.getProjectedY();
+		int rise = footY - tipY;
+		if (rise < 1) {
+			return;                                      // edge on, so there is no beam to draw
+		}
+		// ONLY THE ROWS THAT CAN BE SEEN. The tip is projected, not clipped, so a beam viewed
+		// from close up has its tip thousands of pixels above the viewport - and the loop would
+		// run every one of those rows, calling fillAlpha each time, for a beam that is mostly
+		// off screen. fillAlpha clips the drawing but not the loop around it. Pix2D's own clip
+		// bounds are what the fills would be clipped to anyway.
+		int firstRow = tipY < Pix2D.top ? Pix2D.top : tipY;
+		int lastRow = footY > Pix2D.bottom ? Pix2D.bottom : footY;
+		for (int y = firstRow; y <= lastRow; y++) {
+			// Rows count down from the tip; the width and fade helpers count up from the foot,
+			// so the row's "segment" is the far end of that.
+			int down = y - tipY;
+			int segment = rise - down;
+			int x = tipX + (footX - tipX) * down / rise;
+			int width = beamWidth(this.beamStyle, segment, rise, tileWidth);
+			int alpha = beamAlpha(segment, rise, base, this.beamFade);
+			int halo = width * BEAM_HALO_PERCENT / 100;
+			g.fillAlpha(x - halo / 2, y, halo, 1, colour, capAlpha(alpha * BEAM_HALO_ALPHA / 100));
+			g.fillAlpha(x - width / 2, y, width, 1, colour, alpha);
 			if (this.beamCore) {
 				int core = coreWidth(width);
 				if (core > 0) {
-					g.fillAlpha(headX - core / 2, headY, core, height, colour,
+					g.fillAlpha(x - core / 2, y, core, 1, colour,
 						capAlpha(alpha * BEAM_CORE_BOOST));
 				}
 			}
-			footY = headY;
+			// THE TWO HELICAL RIBBONS, wound round the lower half.
+			//
+			// These were left out on the grounds that they are a separate element from the
+			// beam's body - which is true, and is why the body is measured without them, and
+			// was still the wrong call: they are most of what the eye picks out as "a loot
+			// beam" rather than "a green cone". They only exist below the point where the
+			// sprite's rows stop being one contiguous run, which is where the body ends and
+			// they begin.
+			if (this.beamRibbons && down * 100 >= rise * BEAM_RIBBON_FROM) {
+				int into = down * 100 - rise * BEAM_RIBBON_FROM;
+				int over = rise * (100 - BEAM_RIBBON_FROM);
+				// How far round the two strands have wound by this row, as a table index.
+				int turn = BEAM_RIBBON_TURNS * 2048 * into / over;
+				int swing = width * BEAM_RIBBON_SPREAD / 100;
+				int strand = width / 6 < 1 ? 1 : width / 6;
+				int ribbon = capAlpha(alpha * BEAM_RIBBON_ALPHA / 100);
+				for (int side = 0; side < 2; side++) {
+					int at = turn + side * 1024;
+					int off = swing * jagex2.graphics.Pix3D.sinTable[at & 2047] >> 16;
+					g.fillAlpha(x + off - strand / 2, y, strand, 1, colour, ribbon);
+				}
+			}
+		}
+	}
+
+	/**
+	 * The pool of light on the ground: the tile's own quad, filled as nested rings.
+	 *
+	 * ONE FLAT FILL IS A SLAB. A tile quad has hard edges and a single alpha, so filling it
+	 * once paints a sharp-edged lozenge on the floor that reads as a sticker - which is what
+	 * the first version did with the tile's BOUNDING BOX, hard corners sticking out past the
+	 * tile on four sides. The reference disc is bright in the middle and fades to nothing.
+	 *
+	 * Rings give that for nothing: each is the same quad pulled in toward the centre and filled
+	 * at a share of the alpha, so the middle is covered by every ring and the rim by one. The
+	 * spans come from Tile indicators, which is where the scanline fill already lives.
+	 */
+	static void pool(jagex2.client.plugin.PluginContext ctx, OverlayGraphics g, int sceneTileX,
+			int sceneTileZ, int colour, int alpha) {
+		int[] xs = new int[4];
+		int[] ys = new int[4];
+		if (!TileIndicatorsPlugin.corners(ctx, sceneTileX, sceneTileZ, xs, ys)) {
+			return;
+		}
+		int midX = (xs[0] + xs[1] + xs[2] + xs[3]) / 4;
+		int midY = (ys[0] + ys[1] + ys[2] + ys[3]) / 4;
+		int each = alpha / BEAM_POOL_RINGS;
+		if (each < 1) {
+			each = 1;
+		}
+		int[] rx = new int[4];
+		int[] ry = new int[4];
+		for (int ring = 0; ring < BEAM_POOL_RINGS; ring++) {
+			int of = BEAM_POOL_RINGS - ring;
+			for (int i = 0; i < 4; i++) {
+				rx[i] = midX + (xs[i] - midX) * of / BEAM_POOL_RINGS;
+				ry[i] = midY + (ys[i] - midY) * of / BEAM_POOL_RINGS;
+			}
+			fillQuad(g, rx, ry, colour, each);
+		}
+	}
+
+	/** One projected quad, filled a screen row at a time. See TileIndicatorsPlugin.fillTile. */
+	private static void fillQuad(OverlayGraphics g, int[] xs, int[] ys, int colour, int alpha) {
+		int top = ys[0];
+		int bottom = ys[0];
+		for (int i = 1; i < 4; i++) {
+			top = Math.min(top, ys[i]);
+			bottom = Math.max(bottom, ys[i]);
+		}
+		for (int y = top; y <= bottom; y++) {
+			int left = TileIndicatorsPlugin.spanLeft(xs, ys, y);
+			int right = TileIndicatorsPlugin.spanRight(xs, ys, y);
+			if (left <= right) {
+				g.fillAlpha(left, y, right - left + 1, 1, colour, alpha);
+			}
 		}
 	}
 
@@ -1048,10 +1165,18 @@ public final class GroundItemsPlugin extends Plugin {
 			permille = BEAM_SLOPE_PERMILLE * down / segments;
 		} else {
 			// The flare, interpolated from where the straight part ends to the foot.
+			// SQUARED, so the flare accelerates into a bell rather than opening as a cone.
+			// The measured widths over the last three tenths are 15.8, 23.9 and 39.7 - the
+			// gaps are 8 and 16, so the curve roughly doubles its rate each step. A straight
+			// interpolation between the ends gives a cone, which is the one shape the whole
+			// sprite is not.
+			//
+			// Divided twice rather than squaring first: `into` runs to three times the beam's
+			// height in rows, so into * into * delta overflows an int on a tall beam.
 			int into = down * 10 - segments * BEAM_FLARE_FROM;
 			int across = segments * (10 - BEAM_FLARE_FROM);
-			permille = BEAM_FLARE_PERMILLE
-				+ (BEAM_FOOT_PERMILLE - BEAM_FLARE_PERMILLE) * into / across;
+			int delta = BEAM_FOOT_PERMILLE - BEAM_FLARE_PERMILLE;
+			permille = BEAM_FLARE_PERMILLE + delta * into / across * into / across;
 		}
 		int width = tileWidth * permille / 1000;
 		return width < 1 ? 1 : width;
