@@ -725,11 +725,17 @@ public class MouseTest {
 		check(filled > unfilled,
 			"filling the tile covers more of it than the outline alone ("
 				+ unfilled + " -> " + filled + ")");
-		// EXACTLY AS MANY OUTLINE PIXELS AS WITH NO FILL AT ALL. "Some pixel is still the
-		// outline colour" is not enough - the outline's corners fall outside the fill's spans
-		// and survive either way, which is why the audit found the draw order swappable with
-		// that check green. Drawn on top, the outline is untouched; drawn under, the translucent
-		// fill tints most of it and the exact count collapses.
+		// EXACTLY AS MANY OUTLINE PIXELS AS WITH NO FILL AT ALL: the fill covers its tile's
+		// edges as well as its middle, and a fill that ate the outline would be a tile with no
+		// border at the one opacity a player is most likely to pick.
+		//
+		// WHAT THIS DOES NOT PIN is the order the two are drawn in, and no check can. Pix2D
+		// blends (c * alpha + existing * (256 - alpha)) >> 8, and the fill carries the SAME
+		// colour as the outline, so over an outline pixel that is (c * 256) >> 8 - exactly c,
+		// for every alpha. A translucent fill over its own colour is the identity, which makes
+		// the two orderings produce identical frames. The order that is observable is the one
+		// BETWEEN the server's tile and your own, in different colours, and that is pinned
+		// further down.
 		check(countPixels(0x00FFFF) == thinOutline,
 			"...and the outline is drawn ON TOP of its own fill rather than under it ("
 				+ countPixels(0x00FFFF) + " outline pixels, " + thinOutline + " with no fill)");
@@ -800,6 +806,43 @@ public class MouseTest {
 			"...so mid-step the two genuinely differ, which nothing else here could establish");
 		check(context().getTrueTileZ() == 64 + client.sceneBaseTileZ,
 			"and z is read from its own route entry rather than from x");
+
+		// WORLD COORDINATES, WHICH NEEDS A SCENE BASE THAT IS NOT ZERO TO SAY ANYTHING. The
+		// fixture builds its scene at the world origin, so "+ sceneBaseTileX" and no term at
+		// all agree exactly and the three checks above pass either way - the audit dropped the
+		// term from getTrueTileX with all of them green. A scene based somewhere else is the
+		// only thing that tells a world coordinate from a scene one.
+		int baseX = client.sceneBaseTileX;
+		int baseZ = client.sceneBaseTileZ;
+		client.sceneBaseTileX = 40;
+		client.sceneBaseTileZ = 24;
+		check(context().getTrueTileX() == 65 + 40,
+			"on a scene based away from the origin the true tile is still reported in world "
+				+ "coordinates (" + context().getTrueTileX() + ", wanted 105)");
+		check(context().getTrueTileZ() == 64 + 24,
+			"...and so is its z (" + context().getTrueTileZ() + ", wanted 88)");
+		check(context().getWorldX() == 64 + 40 && context().getWorldZ() == 64 + 24,
+			"...and the rendered tile agrees about where the scene starts, or the two markers "
+				+ "would sit a scene apart");
+		check(context().worldToSceneX(context().getTrueTileX()) == 65,
+			"...and converting back gives the scene tile the renderer draws on");
+		client.sceneBaseTileX = baseX;
+		client.sceneBaseTileZ = baseZ;
+
+		// ---- IN THE COLOUR THE PLAYER PICKED, not the one the setting ships with.
+		//
+		// Every check above drives trueTileColour to FFFF00, which is also its default - so a
+		// draw that ignored the setting and hardcoded yellow passed all of them. The swatch is
+		// only worth anything if some other colour reaches the screen.
+		set(entry, "trueTileColour", "FF00FF");
+		clearPixels();
+		sceneFrame();
+		check(countPixels(0xFF00FF) > 0,
+			"the server's tile is drawn in the colour the swatch is set to ("
+				+ countPixels(0xFF00FF) + " pixels of FF00FF)");
+		check(countPixels(0xFFFF00) == 0,
+			"...and not in the one it defaults to, which is what a hardcoded colour would give");
+		set(entry, "trueTileColour", "FFFF00");
 
 		// Each switch alone.
 		set(entry, "current", "false");

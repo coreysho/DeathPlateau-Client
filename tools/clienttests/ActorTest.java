@@ -201,6 +201,42 @@ public class ActorTest {
 		// ---- exact terms, which is what tagging works on
 		check(NpcIndicatorsPlugin.hasTerm("goblin, cow", "Goblin"),
 			"a term is found whatever its case");
+		// ---- A TERM'S OWN COLOUR, AND WHAT IS NOT ONE.
+		//
+		// Each of these three is a guard whose absence either throws inside a per-npc, per-frame
+		// loop or invents a colour nobody wrote. The two that throw are wrapped: an exception
+		// ends the run with no failure named, which the mutation runner reports as a crash, and
+		// a crash is not a catch.
+		check(NpcIndicatorsPlugin.termOwnColour("goblin=FF0000") == 0xFF0000,
+			"a term's own colour is read off it");
+		check(NpcIndicatorsPlugin.termOwnColour("goblin") == 0,
+			"a term with no equals has no colour of its own");
+		// "decade" IS SIX HEX DIGITS. Without the equals guard the whole term is read as the
+		// colour, and a name that happens to spell hex becomes 0xDECADE - which is why this is
+		// checked with a word rather than with "goblin", where the length guard hides it.
+		check(NpcIndicatorsPlugin.termOwnColour("decade") == 0,
+			"...not even when the name itself spells six hex digits ("
+				+ Integer.toHexString(NpcIndicatorsPlugin.termOwnColour("decade")) + ")");
+		int shortColour;
+		try {
+			shortColour = NpcIndicatorsPlugin.termOwnColour("goblin=FFF");
+		} catch (RuntimeException threwOnShort) {
+			shortColour = -1;
+		}
+		check(shortColour == 0,
+			"a colour that is not six digits is no colour, rather than six digits read off the "
+				+ "end of a shorter string");
+		int notHex;
+		try {
+			notHex = NpcIndicatorsPlugin.termOwnColour("goblin=zzzzzz");
+		} catch (RuntimeException threwOnLetters) {
+			notHex = -1;
+		}
+		check(notHex == 0, "...and six characters that are not digits are no colour either");
+		check(NpcIndicatorsPlugin.termOwnColour("goblin=000000") == 0,
+			"and a hand-written black is read as no colour, because a marker drawn in the "
+				+ "colour that means not-drawn is an npc that silently stops being marked");
+
 		check(NpcIndicatorsPlugin.hasTerm("goblin=FF0000", "Goblin"),
 			"...and a coloured term is still that term");
 		check(!NpcIndicatorsPlugin.hasTerm("goblin", "Goblin Guard"),
@@ -209,6 +245,19 @@ public class ActorTest {
 		check(!NpcIndicatorsPlugin.hasTerm("", "Goblin") && !NpcIndicatorsPlugin.hasTerm(null, "Goblin"),
 			"an empty or missing list holds nothing");
 		check(!NpcIndicatorsPlugin.hasTerm("goblin", ""), "and no name is not a term");
+		// ...INCLUDING WHERE THE LIST HAS A BLANK TERM OF ITS OWN. Against "goblin" an empty
+		// name matches nothing anyway, so the check above passed with the length guard deleted.
+		// A trailing comma puts a blank term in the list, and then an empty name matches it -
+		// which makes every unnamed npc read as tagged.
+		check(!NpcIndicatorsPlugin.hasTerm("goblin,", ""),
+			"...even where a trailing comma has left a blank term in the list");
+		check(!NpcIndicatorsPlugin.hasTerm("", ""), "...and not in an empty list either");
+		// A TERM AFTER A COMMA HAS A SPACE IN FRONT OF IT, which is how anybody writes a list.
+		// Every check above asks about the first term, where there is nothing to trim.
+		check(NpcIndicatorsPlugin.hasTerm("goblin, cow", "cow"),
+			"a term written after a comma and a space is still that term");
+		check(NpcIndicatorsPlugin.hasTerm("goblin ,  cow  ", "Cow"),
+			"...however much space is around it");
 
 		// ---- adding
 		check(NpcIndicatorsPlugin.addTerm("", "Goblin").equals("Goblin"),

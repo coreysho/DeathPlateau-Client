@@ -33,6 +33,7 @@ HOTKEY = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/Hotkey.j
 SWAPPER = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/MenuSwapperPlugin.java')
 DRAG = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/AntiDragPlugin.java')
 PLUGIN_RUNNER = os.path.join(HERE, 'run_plugintest.py')
+GROUND_RUNNER = os.path.join(HERE, 'run_groundtest.py')
 HUB_RUNNER = os.path.join(HERE, 'run_hubtest.py')
 
 MUTS = [
@@ -203,7 +204,10 @@ MUTS = [
     (DRAG, PLUGIN_RUNNER, '''every key suspending it, not the one a player named''',
      '''		if (!Hotkey.pressed(this.suspendKey, event.key)) {''',
      '''		if (false) {'''),
-    (HOTKEY, PLUGIN_RUNNER, '''a blank setting reading as a real key, so nothing can turn the feature off''',
+    # GROUND_RUNNER, not PLUGIN_RUNNER: Hotkey is package-private in builtin and
+    # PluginSystemTest is in jagex2.client.plugin, so it cannot reach it. GroundItemsTest is in
+    # the same package and owns the rest of the hotkey's checks.
+    (HOTKEY, GROUND_RUNNER, '''a blank setting reading as a real key, so nothing can turn the feature off''',
      '''		return want != NONE && keyCode == want;''',
      '''		return keyCode == want;'''),
     (SWAPPER, PLUGIN_RUNNER, '''the promoted row coloured whether the player asked for it or not''',
@@ -215,19 +219,15 @@ MUTS = [
     (SWAPPER, PLUGIN_RUNNER, '''the swap colour left hardcoded, so the swatch does nothing''',
      '''				PluginConfig.parseColour(this.swapColour));''',
      '''				PluginConfig.parseColour("00FFFF"));'''),
-    (SWAPPER, PLUGIN_RUNNER, '''the colour set on the index the row came from rather than where it went''',
-     '''		this.ctx.setLeftClick(best);
-		// COLOURED AFTER THE SWAP, not before: setLeftClick moves the row to the top, and a
-		// colour set on the index it came from would land on whatever took its place. The index
-		// a left click runs is where it is now.
-		if (this.colourSwapped) {
-			this.ctx.setMenuColour(this.ctx.getLeftClickIndex(),
-				PluginConfig.parseColour(this.swapColour));
-		}''',
-     '''		if (this.colourSwapped) {
-			this.ctx.setMenuColour(best, PluginConfig.parseColour(this.swapColour));
-		}
-		this.ctx.setLeftClick(best);'''),
+    # NOT MUTATED: colouring before the swap instead of after has no observable effect, so
+    # swapping the two is not a mutation. setLeftClick(best) is
+    # swapMenuEntries(best, getLeftClickIndex()), and swapMenuEntries swaps menuColour alongside
+    # the option, the action and the three params. So setMenuColour(best, C) then swap leaves
+    # colour[top] = C and colour[best] = the top's old colour - which is exactly what swap then
+    # setMenuColour(getLeftClickIndex(), C) leaves. Where best is already the left click the
+    # swap is a no-op and both write the same index. Every case is identical. The source keeps
+    # the later order because it reads in the order it happens, and its comment now says so
+    # rather than claiming a bug that cannot occur.
     (SWAPPER, PLUGIN_RUNNER, '''the chat lines silenced whatever the setting says''',
      '''		if (this.announce) {
 			this.ctx.addChatMessage(message);

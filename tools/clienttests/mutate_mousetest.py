@@ -234,15 +234,15 @@ MUTS = [
     (TILES, '''your own tile never filled, so the switch does nothing''',
      '''			if (this.currentFill) {''',
      '''			if (false) {'''),
-    (TILES, '''the outline drawn under its own fill rather than on top of it''',
-     '''			if (this.currentFill) {
-				fillTile(this.ctx, g, tx, tz, colour, alpha);
-			}
-			outlineTile(this.ctx, g, tx, tz, colour, width);''',
-     '''			outlineTile(this.ctx, g, tx, tz, colour, width);
-			if (this.currentFill) {
-				fillTile(this.ctx, g, tx, tz, colour, alpha);
-			}'''),
+    # NOT MUTATED: the order of fillTile and outlineTile INSIDE one block has no observable
+    # effect, so swapping them is not a mutation. Pix2D.fillRectTrans blends
+    # (colour * alpha + existing * (256 - alpha)) >> 8, and both calls are handed the same
+    # `colour` - so over a pixel the outline already wrote, the fill computes (c * 256) >> 8,
+    # which is exactly c for every alpha. A translucent fill over its own colour is the
+    # identity and the two orderings render identical frames; measured at border widths 1 and
+    # 3, both give the same exact-colour count either way. The source keeps the order it has
+    # because it states the intent, and the ordering that IS observable - the server's tile
+    # under your own, in two different colours - is mutated and caught separately.
     # "a zero opacity drawing a fill anyway" is an EQUIVALENT MUTANT and is gone rather than
     # chased. fillAlpha with alpha 0 blends nothing - invAlpha is 256 and the source term is 0 -
     # so the guard saves the scanline walk and changes not one pixel. No check can tell the two

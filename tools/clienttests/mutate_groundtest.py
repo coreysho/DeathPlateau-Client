@@ -521,9 +521,13 @@ MUTS = [
     (PLUGIN, '''the core never drawn, so the switch does nothing''',
      '''			if (this.beamCore) {''',
      '''			if (false) {'''),
-    (PLUGIN, '''a zero-width core still filled, which fillAlpha makes what it likes of''',
-     '''				if (core > 0) {''',
-     '''				if (true) {'''),
+    # NOT MUTATED: `if (core > 0)` has no observable effect, so breaking it is not a mutation.
+    # coreWidth() is width/3 and beamWidth() floors every style at 1, so core is never negative,
+    # and at core == 0 the fillAlpha it guards is a no-op twice over: OverlayGraphics.mark()
+    # returns on `width <= 0`, and Pix2D.fillRectTrans's inner loop is `for (j = -width; j < 0;
+    # j++)`, which does not run. Nothing is painted and nothing is marked either way. The guard
+    # stays in the source because it states the intent and does not lean on that loop bound, but
+    # a mutation nothing can distinguish is a survivor by construction rather than a gap.
     (PLUGIN, '''the ground glow drawn whether the player asked for it or not''',
      '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
      '''		if (this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
