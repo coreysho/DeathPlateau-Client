@@ -530,14 +530,14 @@ MUTS = [
     # a mutation nothing can distinguish is a survivor by construction rather than a gap.
     (PLUGIN, '''the ground glow drawn whether the player asked for it or not''',
      '''		if (this.beamGlow) {
-			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);''',
+			pool(this.ctx, g, pile.sceneTileX, pile.sceneTileZ, colour,''',
      '''		if (true) {
-			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);'''),
+			pool(this.ctx, g, pile.sceneTileX, pile.sceneTileZ, colour,'''),
     (PLUGIN, '''the ground glow never drawn''',
      '''		if (this.beamGlow) {
-			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);''',
+			pool(this.ctx, g, pile.sceneTileX, pile.sceneTileZ, colour,''',
      '''		if (false) {
-			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);'''),
+			pool(this.ctx, g, pile.sceneTileX, pile.sceneTileZ, colour,'''),
     (PLUGIN, '''the height left at the old constant, so the setting is decoration''',
      '''		int segments = beamSegmentsFor(this.beamSegments);''',
      '''		int segments = DEFAULT_BEAM_SEGMENTS;'''),
@@ -598,6 +598,47 @@ MUTS = [
     (PLUGIN, '''the loot beam's slope off the sprite's, so the column is the wrong thickness''',
      '''	static final int BEAM_SLOPE_PERMILLE = 226;''',
      '''	static final int BEAM_SLOPE_PERMILLE = 90;'''),
+    # ---- THE REWRITE: a column drawn a row at a time, in layers, on a quad pool.
+    (PLUGIN, '''the pool drawn as the tile's bounding box again, so it is a sticker on the floor''',
+     '''			fillQuad(g, rx, ry, colour, each);''',
+     '''			fillQuad(g, xs, ys, colour, each);'''),
+    (PLUGIN, '''the pool a single flat fill, so its edge is hard''',
+     '''	static final int BEAM_POOL_RINGS = 5;''',
+     '''	static final int BEAM_POOL_RINGS = 1;'''),
+    (PLUGIN, '''the soft halo never drawn, so the beam is a flat wedge again''',
+     '''			int halo = width * BEAM_HALO_PERCENT / 100;''',
+     '''			int halo = 0;'''),
+    (PLUGIN, '''the halo as narrow as the body, so there is no halo''',
+     '''	static final int BEAM_HALO_PERCENT = 210;''',
+     '''	static final int BEAM_HALO_PERCENT = 100;'''),
+    (PLUGIN, '''the halo at the body's own alpha, so the beam is twice as solid''',
+     '''	static final int BEAM_HALO_ALPHA = 30;''',
+     '''	static final int BEAM_HALO_ALPHA = 100;'''),
+    (PLUGIN, '''the ribbons drawn whether the player asked for them or not''',
+     '''			if (this.beamRibbons && down * 100 >= rise * BEAM_RIBBON_FROM) {''',
+     '''			if (down * 100 >= rise * BEAM_RIBBON_FROM) {'''),
+    (PLUGIN, '''the ribbons never drawn, so the switch does nothing''',
+     '''			if (this.beamRibbons && down * 100 >= rise * BEAM_RIBBON_FROM) {''',
+     '''			if (false && down * 100 >= rise * BEAM_RIBBON_FROM) {'''),
+    (PLUGIN, '''the ribbons run the whole height, so they read as a second beam''',
+     '''	static final int BEAM_RIBBON_FROM = 55;''',
+     '''	static final int BEAM_RIBBON_FROM = 0;'''),
+    (PLUGIN, '''the ribbons not wound, so they are two straight lines''',
+     '''	static final int BEAM_RIBBON_TURNS = 2;''',
+     '''	static final int BEAM_RIBBON_TURNS = 0;'''),
+    (PLUGIN, '''the two strands wound together rather than opposite''',
+     '''				int at = turn + side * 1024;''',
+     '''				int at = turn;'''),
+    (PLUGIN, '''the column drawn downward from its tip rather than between its ends''',
+     '''			int x = tipX + (footX - tipX) * down / rise;''',
+     '''			int x = tipX;'''),
+    # NOT MUTATED: clamping the row loop to Pix2D's clip changes no pixel, so removing it is
+    # not a mutation. Every fill it skips is one fillAlpha would have clipped away anyway - the
+    # clamp exists so the LOOP does not run for rows that cannot be drawn, which for a beam
+    # seen from close up is thousands of iterations per frame. That is a cost, and cost is the
+    # one thing a check on the rendered image cannot see. Left in the source and recorded here
+    # rather than deleted, because deleting it is a silent frame-rate regression on exactly the
+    # drop a player is standing next to.
     (PLUGIN, '''the loot beam taper upside down, so it is widest at the tip''',
      '''		int down = segments - segment;
 		int permille;''',

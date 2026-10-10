@@ -931,9 +931,26 @@ public class GroundItemsTest {
 		int segs = 40;                                   // tenths land exactly at this height
 		int disc = 1000;                                 // a tile, in units this can divide
 		int foot = GroundItemsPlugin.lootBeamWidth(0, segs, disc);
-		check(foot * 100 / disc == 40,
-			"the foot of a loot beam is 40% of the tile it stands on, as the sprite's is ("
+		check(foot * 100 / disc == 62,
+			"the foot of a loot beam is 62% of the tile it stands on ("
 				+ (foot * 100 / disc) + "%)");
+		// WIDER THAN THE MEASURED 40%, on purpose, because the flare is squared rather than
+		// straight: the sprite's last three tenths go 15.8, 23.9, 39.7, roughly doubling their
+		// rate each step, and a curve that accelerates has to end higher than the straight line
+		// through the same ends to pass through the same middle. A straight interpolation to
+		// 40% gives 23.9 at eight tenths and 31.9 at nine, against the sprite's 23.9 and 39.7.
+		int atEighth = GroundItemsPlugin.lootBeamWidth(segs / 5, segs, disc) * 1000 / disc;
+		check(atEighth >= 180 && atEighth <= 290,
+			"...and two tenths below the foot it is about a quarter of a tile, as the sprite "
+				+ "is there: " + atEighth + " permille against the sprite's 239");
+		// A STRAIGHT INTERPOLATION ACROSS THE FLARE would be 239 at that height too, so this
+		// alone does not say which curve. What does is the three tenths mark, where a straight
+		// line from the sprite's 15.8 to the foot has already reached a third of the way and a
+		// squared one has reached a ninth.
+		int atThird = GroundItemsPlugin.lootBeamWidth(segs * 3 / 10, segs, disc) * 1000 / disc;
+		check(atThird < 180,
+			"...while three tenths below it the flare has barely begun, which is a bell rather "
+				+ "than the cone a straight interpolation would give (" + atThird + " permille)");
 		// THE STRAIGHT PART, at the three tenths the sprite was measured at. Within a point,
 		// which is tighter than the reading itself.
 		int[] tenth = { 1, 2, 3, 4, 5, 6, 7 };
@@ -1845,6 +1862,15 @@ public class GroundItemsTest {
 	 */
 	static void beamRenderTests() {
 		reset();
+		// A GAME-LIKE CAMERA FOR THIS SECTION ONLY.
+		//
+		// The fixture's camera is level and square on, which makes the projection predictable
+		// and is what every other check here wants. It is the wrong camera to judge a beam
+		// from: a tile seen edge-on projects to a box two pixels tall, so the pool of light
+		// has no shape and nothing about it can be checked - the first version of these checks
+		// passed with the pool drawn as the tile's bounding box, because at that camera a box
+		// and a diamond are the same two rows. Restored at the end.
+		beamCamera();
 		pile(MID_X, MID_Z, 1, 1);
 		GroundItemPrefs.set("Thing 0", GroundItemPrefs.HIGHLIGHT);
 		// The pulse reads the wall clock, so with it on no two frames here are comparable.
@@ -1868,20 +1894,33 @@ public class GroundItemsTest {
 			"...and enough of them to be a column rather than a stray fill ("
 				+ (beamed - unbeamed) + ")");
 
-		// ---- THE GROUND GLOW. Twice the beam's width, so the only pixels it can account for
-		// are the ones out past the column's own edge.
-		setSetting("beamGlow", "1");
-		frame();
-		int withGlow = countOutsideColumn();
+		// ---- THE GROUND GLOW, measured BELOW THE BEAM'S FOOT.
+		//
+		// Not "out past the column's edge" any more: the column has a halo twice its own width
+		// and ribbons that swing nearly as far, so almost nothing on the tile is outside it.
+		// The pool is the tile's quad, and a tile extends toward the camera past the point its
+		// centre projects to - so the rows under the foot are the pool's alone.
 		setSetting("beamGlow", "0");
 		frame();
-		int withoutGlow = countOutsideColumn();
-		check(withGlow > withoutGlow,
-			"the pool of light on the ground is wider than the beam standing in it ("
-				+ withoutGlow + " -> " + withGlow + ")");
-		check(withoutGlow == 0,
-			"...and with it switched off nothing is painted out there at all, so the switch is "
-				+ "the only thing that draws it");
+		int bareFoot = lowestPaintedRow();
+		setSetting("beamGlow", "1");
+		frame();
+		int pooledFoot = lowestPaintedRow();
+		check(pooledFoot > bareFoot,
+			"the pool of light reaches below the beam's foot, which is what roots it to the "
+				+ "tile rather than leaving it standing on a point (row " + bareFoot + " -> "
+				+ pooledFoot + ")");
+		// AND IT IS A DIAMOND, not a box. The tile's bounding box is wider than the tile at
+		// every row but the widest one, so a box-shaped pool paints its corners out past the
+		// tile on all four sides - which is what the first version did, and it read as a
+		// sticker on the floor rather than as light. On the pool's bottom row the quad is a
+		// point; on a box it is as wide as the whole tile.
+		int bottomRow = widthOfRow(pooledFoot);
+		int middleRow = widthOfRow((pooledFoot + bareFoot) / 2);
+		check(bottomRow < middleRow,
+			"...and it narrows to the tile's own corner at its bottom row rather than ending "
+				+ "square, so it is the tile's diamond and not its box (" + bottomRow
+				+ " against " + middleRow + " higher up)");
 
 		// ---- THE BRIGHT CORE. Drawn inside the column at twice the alpha, over pixels the soft
 		// outer already covered - so it adds no pixels and the count cannot see it. What it adds
@@ -1935,18 +1974,317 @@ public class GroundItemsTest {
 		// dim beam really does paint fewer pixels, and the first version of this check called
 		// that a failure. Its width at the base is the measure that holds - that is the one
 		// place every beam is BEAM_W whatever its opacity.
-		int[] opacityBox = new int[4];
-		GroundItemsPlugin.tileBox(context(), MID_X, MID_Z, opacityBox);
-		int opacityTile = opacityBox[2] - opacityBox[0];
-		check(solidWidth == faintWidth
-				&& solidWidth == GroundItemsPlugin.lootBeamWidth(0, 24, opacityTile),
+		check(solidWidth == faintWidth,
 			"...and no wider at its base, so it is an opacity rather than a size ("
-				+ faintWidth + " and " + solidWidth + ", against a foot of "
-				+ GroundItemsPlugin.lootBeamWidth(0, 24, opacityTile) + " on a tile "
-				+ opacityTile + " across)");
+				+ faintWidth + " and " + solidWidth + ")");
 
+		// ---- THE RIBBONS, which swing outside the column they are wound round.
+		setSetting("beamOpacity", "96");
+		setSetting("beamCore", "0");
+		setSetting("beamGlow", "0");
+		setSetting("beamRibbons", "0");
+		// WHERE THE RIBBONS START, FROM THE BEAM'S OWN GEOMETRY rather than from the painted
+		// rows. The tip is above this viewport, so "the top half of what was painted" is not
+		// the top half of the beam - it is the top half of the part that fit, which is below
+		// where the ribbons begin. Projecting the two ends is exact and does not depend on how
+		// the camera happens to be framed.
+		context().projectTile(MID_X, MID_Z, 0);
+		int beamFoot = context().getProjectedY();
+		context().projectTile(MID_X, MID_Z, 24 * GroundItemsPlugin.BEAM_SEGMENT_H);
+		int beamTip = context().getProjectedY();
+		int woundFrom = beamTip
+			+ (beamFoot - beamTip) * GroundItemsPlugin.BEAM_RIBBON_FROM / 100;
+		check(woundFrom > beamTip && woundFrom < beamFoot,
+			"the ribbons start partway up the beam (" + beamTip + " -> " + woundFrom + " -> "
+				+ beamFoot + ")");
+		frame();
+		long plainLow = lightBetween(woundFrom, beamFoot);
+		long plainHigh = lightBetween(beamTip, woundFrom - 1);
+		setSetting("beamRibbons", "1");
+		frame();
+		long woundLow = lightBetween(woundFrom, beamFoot);
+		long woundHigh = lightBetween(beamTip, woundFrom - 1);
+		// LIGHT, NOT PIXELS. The ribbons swing out to about the body's own width and the halo
+		// is twice that, so they land on pixels the halo already covers and a count of painted
+		// pixels cannot see them at all - which is how the first version of this check passed
+		// with them switched off.
+		check(woundLow > plainLow,
+			"the ribbons put light into the part of the beam they are wound round ("
+				+ plainLow + " -> " + woundLow + ")");
+		// ...AND ONLY THERE. They are wound round the bottom of the sprite, and a strand
+		// running the whole height would read as a second beam beside the first.
+		check(woundHigh == plainHigh,
+			"...and none above it, where the sprite has none either (" + plainHigh
+				+ " and " + woundHigh + ")");
+
+		// ...AND THEY ARE WOUND, which is the whole of what makes them ribbons. Two strands
+		// that never leave the centre line are a brighter core with extra arithmetic, and the
+		// check above passes for them: they still add light where the sprite's do.
+		int[] ribbonBox = new int[4];
+		GroundItemsPlugin.tileBox(context(), MID_X, MID_Z, ribbonBox);
+		int ribbonTile = ribbonBox[2] - ribbonBox[0];
+		int ribbonRow = (woundFrom + beamFoot) / 2;
+		int bodyHalf = GroundItemsPlugin.lootBeamWidth(beamFoot - ribbonRow,
+			beamFoot - beamTip, ribbonTile) / 2;
+		int centreX = rowCentre(ribbonRow);
+		long woundOut = lightOutside(woundFrom, beamFoot - 1, centreX, bodyHalf);
+		setSetting("beamRibbons", "0");
+		frame();
+		long plainOut = lightOutside(woundFrom, beamFoot - 1, centreX, bodyHalf);
+		setSetting("beamRibbons", "1");
+		check(woundOut > plainOut,
+			"the ribbons swing OUTSIDE the column they are wound round, rather than running up "
+				+ "its middle (" + plainOut + " -> " + woundOut + " of light past its edge)");
+
+		// AND HALF A TURN APART. Two strands wound together are one thick strand, and every
+		// check above passes for them. Opposite strands leave each row symmetric about the
+		// column; strands together put both on the same side of it.
+		// AND HALF A TURN APART, measured OUTSIDE THE BODY and against the beam without them.
+		// Across the whole row the two strands are a few percent of the light, so lopsided
+		// strands hide inside the halo's own total - the first version of this check compared
+		// the full row and passed with both strands wound together. Outside the body the
+		// ribbons are most of what is there.
+		frame();
+		long woundLean = leanOutside(woundFrom, beamFoot - 1, centreX, bodyHalf);
+		setSetting("beamRibbons", "0");
+		frame();
+		long plainLean = leanOutside(woundFrom, beamFoot - 1, centreX, bodyHalf);
+		setSetting("beamRibbons", "1");
+		// AGAINST THE LIGHT THEY ADD, not against a constant. Outside the body there is
+		// already some lopsidedness from the halo's own integer centring, so the question is
+		// not whether the rows are even but whether the RIBBONS made them less even. A pair
+		// half a turn apart puts the same light either side of the column and barely moves it;
+		// both strands on one side move it by most of what they draw.
+		long addedLean = woundLean - plainLean;
+		long addedLight = woundOut - plainOut;
+		check(addedLight > 0 && addedLean * 100 / addedLight < 10,
+			"...and half a turn apart, so the light they add falls either side of the column "
+				+ "rather than both strands hanging off one of them ("
+				+ (addedLight > 0 ? addedLean * 100 / addedLight : -1)
+				+ "% of it is lopsided, against 18% for two strands wound together)");
+
+		// ---- THE SOFT HALO. Wider than the body, and fainter: it is what the body is seen
+		// through, and without it the beam is the flat translucent wedge this replaced.
+		setSetting("beamGlow", "0");
+		setSetting("beamCore", "0");
+		setSetting("beamRibbons", "0");
+		setSetting("beamFade", "0");
+		frame();
+		int haloRow = beamTip + (beamFoot - beamTip) * 3 / 4;
+		int painted = widthOfRow(haloRow);
+		int body = GroundItemsPlugin.lootBeamWidth(beamFoot - haloRow, beamFoot - beamTip,
+			ribbonTile);
+		check(painted > body,
+			"the column is drawn wider than its own body, because the body sits inside a halo ("
+				+ painted + " painted against a body of " + body + ")");
+		check(painted >= body * 3 / 2,
+			"...half again as wide at least, or it is a rounding error rather than a halo");
+		// FAINTER, or it is simply a wider beam. Read at the rim against the middle of the
+		// same row, so nothing about the fade or the opacity can account for the difference.
+		int rim = brightest(centreX + painted / 2 - 1, haloRow);
+		int middle = brightest(centreX, haloRow);
+		check(rim < middle,
+			"...and fainter at its rim than at the middle of the same row (" + rim
+				+ " against " + middle + ")");
+		// MUCH fainter. The middle of the row is the halo and the body on top of each other,
+		// so it comes out brighter than the rim whatever alpha the halo is drawn at - the
+		// comparison above passes with the halo at the body's own alpha, which is a beam twice
+		// as solid as it should be. At a third of the body's alpha the rim is about a quarter
+		// of the middle; at the body's own it is about two thirds.
+		check(middle > 0 && rim * 100 / middle < 40,
+			"...and much fainter: the rim is " + (middle > 0 ? rim * 100 / middle : -1)
+				+ "% of the middle, which at the body's own alpha would be about 60%");
+		setSetting("beamFade", "1");
+		setSetting("beamCore", "1");
+		setSetting("beamRibbons", "1");
+		setSetting("beamGlow", "1");
+
+		// ---- THE POOL FADES OUT. One flat fill of the tile is a sharp lozenge however
+		// correct its shape; the rings are what make it light. Read on the rows BELOW the
+		// beam's foot, which are the pool's alone.
+		frame();
+		int poolRow = (beamFoot + lowestPaintedRow()) / 2;
+		int poolWidth = widthOfRow(poolRow);
+		int poolCentre = rowCentre(poolRow);
+		check(poolWidth > 4, "the pool has rows of its own below the beam (" + poolWidth + ")");
+		int poolRim = brightest(poolCentre + poolWidth / 2 - 1, poolRow);
+		int poolMid = brightest(poolCentre, poolRow);
+		check(poolRim < poolMid,
+			"...and it fades from its middle to its rim rather than ending in a hard edge ("
+				+ poolRim + " against " + poolMid + ")");
+
+		// ---- AND THE COLUMN LEANS WITH THE PERSPECTIVE. A beam over a tile off to one side
+		// does not rise straight up the screen: its tip and its foot project to different
+		// columns, and drawing every row at the tip's own x puts the beam beside the item.
+		reset();
+		beamCamera();
+		pile(MID_X + 4, MID_Z + 4, 1, 1);
+		GroundItemPrefs.set("Thing 0", GroundItemPrefs.HIGHLIGHT);
+		setSetting("beamHighlighted", "1");
+		// THE COLUMN ALONE. The pool is drawn on the tile wherever the column goes, so with it
+		// on the painted middle of a row near the foot sits over the item even when every row
+		// of the column was drawn at the tip's own x - which is the thing being checked.
+		setSetting("beamGlow", "0");
+		context().projectTile(MID_X + 4, MID_Z + 4, 0);
+		int offFootX = context().getProjectedX();
+		int offFootY = context().getProjectedY();
+		context().projectTile(MID_X + 4, MID_Z + 4, 24 * GroundItemsPlugin.BEAM_SEGMENT_H);
+		int offTipX = context().getProjectedX();
+		check(Math.abs(offFootX - offTipX) > 4,
+			"a beam on a tile off to one side leans across the screen (" + offTipX + " -> "
+				+ offFootX + ")");
+		frame();
+		int drawnFootX = rowCentre(offFootY - 2);
+		check(Math.abs(drawnFootX - offFootX) < Math.abs(drawnFootX - offTipX),
+			"...and its foot is drawn over the item rather than under its own tip (" + drawnFootX
+				+ ", with the foot at " + offFootX + " and the tip at " + offTipX + ")");
+		setSetting("beamGlow", "1");
+
+		levelCamera();
 		GroundItemPrefs.clear();
 		reset();
+	}
+
+	/**
+	 * A camera above and behind, looking down, the way a player's is.
+	 *
+	 * Used only by the beam section. Everything else here wants the level, square-on camera
+	 * the fixture sets up, because it makes "pile at tile 66" mean "128 pixels to the right".
+	 */
+	static void beamCamera() {
+		// Far enough back that a whole beam - four and a half tiles - fits in a 334-pixel
+		// viewport, and framed low so it has room to rise.
+		int yaw = 300;
+		int away = 1750;
+		double bearing = yaw * 2.0 * Math.PI / 2048.0;
+		client.cameraPitch = 320;
+		client.cameraYaw = yaw;
+		client.cameraX = MID_X * 128 + 64 + (int) (away * Math.sin(bearing));
+		client.cameraZ = MID_Z * 128 + 64 - (int) (away * Math.cos(bearing));
+		client.cameraY = -1290;
+		Pix3D.centerY = H * 4 / 5;
+	}
+
+	/** Back to the fixture's own camera. See {@link #setUp}. */
+	static void levelCamera() {
+		client.cameraPitch = 0;
+		client.cameraYaw = 0;
+		client.cameraX = MID_X * 128 + 64;
+		client.cameraZ = MID_Z * 128 + 64 - 1024;
+		client.cameraY = -24;
+		Pix3D.centerY = H / 2;
+	}
+
+	/** The lowest row the last frame painted anything on, or -1. */
+	static int lowestPaintedRow() {
+		for (int y = H - 1; y >= 0; y--) {
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] != 0) {
+					return y;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/** The highest row the last frame painted anything on, or -1. */
+	static int highestPaintedRow() {
+		for (int y = 0; y < H; y++) {
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] != 0) {
+					return y;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/** How much light the last frame put down between two rows, inclusive. */
+	static long lightBetween(int fromRow, int toRow) {
+		long sum = 0;
+		for (int y = Math.max(0, fromRow); y <= Math.min(H - 1, toRow); y++) {
+			for (int x = 0; x < W; x++) {
+				int p = pixels[y * W + x];
+				int r = p >> 16 & 0xFF;
+				int g = p >> 8 & 0xFF;
+				int b = p & 0xFF;
+				int max = r > g ? r : g;
+				sum += max > b ? max : b;
+			}
+		}
+		return sum;
+	}
+
+	/** The middle of what one row painted, by its extremes. */
+	static int rowCentre(int y) {
+		int lo = -1;
+		int hi = -1;
+		for (int x = 0; x < W; x++) {
+			if (y >= 0 && y < H && pixels[y * W + x] != 0) {
+				if (lo < 0) {
+					lo = x;
+				}
+				hi = x;
+			}
+		}
+		return lo < 0 ? W / 2 : (lo + hi) / 2;
+	}
+
+	/** The brightest channel of one pixel. */
+	static int brightest(int x, int y) {
+		if (x < 0 || x >= W || y < 0 || y >= H) {
+			return 0;
+		}
+		int p = pixels[y * W + x];
+		int r = p >> 16 & 0xFF;
+		int g = p >> 8 & 0xFF;
+		int b = p & 0xFF;
+		int max = r > g ? r : g;
+		return max > b ? max : b;
+	}
+
+	/** Light in one row between two columns, inclusive. */
+	static long lightInRow(int y, int fromX, int toX) {
+		long sum = 0;
+		for (int x = Math.max(0, fromX); x <= Math.min(W - 1, toX); x++) {
+			sum += brightest(x, y);
+		}
+		return sum;
+	}
+
+	/** Light outside a half-width of the centre line, over a range of rows. */
+	static long lightOutside(int fromRow, int toRow, int centreX, int halfWidth) {
+		long sum = 0;
+		for (int y = Math.max(0, fromRow); y <= Math.min(H - 1, toRow); y++) {
+			sum += lightInRow(y, 0, centreX - halfWidth - 1);
+			sum += lightInRow(y, centreX + halfWidth + 1, W - 1);
+		}
+		return sum;
+	}
+
+	/** How lopsided the light outside a half-width is, summed over a range of rows. */
+	static long leanOutside(int fromRow, int toRow, int centreX, int halfWidth) {
+		long sum = 0;
+		for (int y = Math.max(0, fromRow); y <= Math.min(H - 1, toRow); y++) {
+			long left = lightInRow(y, 0, centreX - halfWidth - 1);
+			long right = lightInRow(y, centreX + halfWidth + 1, W - 1);
+			sum += Math.abs(left - right);
+		}
+		return sum;
+	}
+
+	/** How many pixels one row holds. */
+	static int widthOfRow(int y) {
+		if (y < 0 || y >= H) {
+			return 0;
+		}
+		int n = 0;
+		for (int x = 0; x < W; x++) {
+			if (pixels[y * W + x] != 0) {
+				n++;
+			}
+		}
+		return n;
 	}
 
 	static jagex2.client.plugin.PluginContext context() {
@@ -2231,31 +2569,6 @@ public class GroundItemsTest {
 		return widest;
 	}
 
-	/**
-	 * Painted pixels out past the beam column's own edge, where only the ground glow reaches.
-	 *
-	 * The beam is BEAM_W wide at its base and narrower above; the glow is twice that. So a
-	 * pixel more than half the beam's width from the centre line came from the glow or from
-	 * nothing, which is what makes the glow switch observable at all.
-	 */
-	static int countOutsideColumn() {
-		int cx = originX();
-		// HALF THE BEAM'S OWN FOOT, worked out from the tile it stands on, because the widths
-		// are a share of that tile now rather than a pixel constant.
-		int[] box = new int[4];
-		int columnHalfWidth = GroundItemsPlugin.tileBox(context(), MID_X, MID_Z, box)
-			? GroundItemsPlugin.lootBeamWidth(0, 24, box[2] - box[0]) / 2
-			: 1;
-		int n = 0;
-		for (int y = 0; y < H; y++) {
-			for (int x = 0; x < W; x++) {
-				if (pixels[y * W + x] != 0 && Math.abs(x - cx) > columnHalfWidth + 1) {
-					n++;
-				}
-			}
-		}
-		return n;
-	}
 
 	static GroundItem item(String name, int count, int price) {
 		return new GroundItem(1, name, count, price, true);
