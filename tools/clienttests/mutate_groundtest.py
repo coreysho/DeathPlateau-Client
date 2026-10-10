@@ -333,18 +333,18 @@ MUTS = [
      '''		if (alt) {'''),
     (PLUGIN, '''every beam shape drawing the same width, so the choice does nothing''',
      '''		if (BEAM_LOOT.equals(style)) {
-			width = lootBeamWidth(segment, segments);
+			width = lootBeamWidth(segment, segments, tileWidth);
 		} else if (BEAM_STRAIGHT.equals(style)) {
-			width = BEAM_W;
+			width = tileWidth * BEAM_STRAIGHT_PERMILLE / 1000;
 		} else if (BEAM_NARROW.equals(style)) {
-			width = BEAM_W / 4;
+			width = tileWidth * BEAM_NARROW_PERMILLE / 1000;
 		} else {''',
      '''		if (false) {
-			width = lootBeamWidth(segment, segments);
+			width = lootBeamWidth(segment, segments, tileWidth);
 		} else if (false) {
-			width = BEAM_W;
+			width = tileWidth * BEAM_STRAIGHT_PERMILLE / 1000;
 		} else if (false) {
-			width = BEAM_W / 4;
+			width = tileWidth * BEAM_NARROW_PERMILLE / 1000;
 		} else {'''),
     (PLUGIN, '''a tall beam allowed to reach zero width and draw nothing''',
      '''		return width < 1 ? 1 : width;
@@ -356,12 +356,12 @@ MUTS = [
 
 	@Subscribe'''),
     (PLUGIN, '''an unknown shape drawing nothing rather than the default''',
-     '''		} else {
-			width = BEAM_W - segment * BEAM_W / (segments + 1);
-		}''',
-     '''		} else {
-			width = 0;
-		}'''),
+     '''			width = tileWidth * permille / 1000;
+		}
+		return width < 1 ? 1 : width;''',
+     '''			width = 0;
+		}
+		return width;'''),
     (OVERLAY, '''the outline drawn on one side only, which is the shadow it replaces''',
      '''		this.font.drawString(left + 1, 0, top, text);
 ''',
@@ -529,11 +529,15 @@ MUTS = [
     # stays in the source because it states the intent and does not lean on that loop bound, but
     # a mutation nothing can distinguish is a survivor by construction rather than a gap.
     (PLUGIN, '''the ground glow drawn whether the player asked for it or not''',
-     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
-     '''		if (this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+     '''		if (this.beamGlow) {
+			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);''',
+     '''		if (true) {
+			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);'''),
     (PLUGIN, '''the ground glow never drawn''',
-     '''		if (this.beamGlow && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {''',
-     '''		if (false && this.ctx.projectTile(pile.sceneTileX, pile.sceneTileZ, 0)) {'''),
+     '''		if (this.beamGlow) {
+			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);''',
+     '''		if (false) {
+			int glow = capAlpha(base * BEAM_GLOW_BRIGHTER);'''),
     (PLUGIN, '''the height left at the old constant, so the setting is decoration''',
      '''		int segments = beamSegmentsFor(this.beamSegments);''',
      '''		int segments = DEFAULT_BEAM_SEGMENTS;'''),
@@ -578,21 +582,27 @@ MUTS = [
 		return alpha > MAX_BEAM_ALPHA ? MAX_BEAM_ALPHA : alpha;''',
      '''		return alpha;'''),
     (PLUGIN, '''the taper computed over a fixed height, so a tall beam is a needle halfway up''',
-     '''			width = BEAM_W - segment * BEAM_W / (segments + 1);''',
-     '''			width = BEAM_W - segment * BEAM_W / (DEFAULT_BEAM_SEGMENTS + 1);'''),
+     '''			int permille = BEAM_TAPER_TIP_PERMILLE
+				+ (BEAM_STRAIGHT_PERMILLE - BEAM_TAPER_TIP_PERMILLE) * down / segments;''',
+     '''			int permille = BEAM_TAPER_TIP_PERMILLE
+				+ (BEAM_STRAIGHT_PERMILLE - BEAM_TAPER_TIP_PERMILLE) * down
+					/ DEFAULT_BEAM_SEGMENTS;'''),
 
     # ---- THE MEASURED SHAPE. Jagex's sprite is 12% of its full width at the halfway mark;
     # cubing gives 12.5%, squaring 25% and a linear taper 50%. Two of these mutations are those
     # wrong curves, because "it narrows" is true of all three and says nothing.
-    (PLUGIN, '''the loot beam tapering linearly, which is the cone shape it was built to replace''',
-     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
-     '''		int width = BEAM_W * below / span;'''),
-    (PLUGIN, '''the loot beam tapering by a square, which is still twice the sprite at halfway''',
-     '''		int width = BEAM_W * below * below * below / (span * span * span);''',
-     '''		int width = BEAM_W * below * below / (span * span);'''),
+    (PLUGIN, '''the loot beam's straight part cubed, which is the needle this replaced''',
+     '''			permille = BEAM_SLOPE_PERMILLE * down / segments;''',
+     '''			permille = BEAM_SLOPE_PERMILLE * down * down * down
+				/ (segments * segments * segments);'''),
+    (PLUGIN, '''the loot beam's slope off the sprite's, so the column is the wrong thickness''',
+     '''	static final int BEAM_SLOPE_PERMILLE = 226;''',
+     '''	static final int BEAM_SLOPE_PERMILLE = 90;'''),
     (PLUGIN, '''the loot beam taper upside down, so it is widest at the tip''',
-     '''		int below = segments - 1 - segment;''',
-     '''		int below = segment;'''),
+     '''		int down = segments - segment;
+		int permille;''',
+     '''		int down = segment;
+		int permille;'''),
     (PLUGIN, '''a loot beam segment allowed to vanish, so its top half is not drawn''',
      '''		return width < 1 ? 1 : width;
 	}
@@ -602,15 +612,15 @@ MUTS = [
 	}
 
 	/** How tall a beam'''),
-    (PLUGIN, '''a one-segment loot beam dividing by zero in a render loop''',
-     '''		if (segments <= 1) {
-			return BEAM_W;
+    (PLUGIN, '''a beam of no segments dividing by its own height in a render loop''',
+     '''		if (segments < 1) {
+			return 1;
 		}
 ''',
      ''''''),
     (PLUGIN, '''the loot beam shape not reached by its own drop-down value''',
      '''		if (BEAM_LOOT.equals(style)) {
-			width = lootBeamWidth(segment, segments);
+			width = lootBeamWidth(segment, segments, tileWidth);
 		} else if (BEAM_STRAIGHT.equals(style)) {''',
      '''		if (BEAM_STRAIGHT.equals(style)) {'''),
     (PLUGIN, '''the default shape back to the cone, so nobody sees the one this was asked for''',

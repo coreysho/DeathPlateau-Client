@@ -713,10 +713,24 @@ public class GroundItemsTest {
 		// is compared against the delivered key code like any other number - so the blank
 		// setting becomes a hotkey bound to whatever -1 is. Nothing here pressed a blank one,
 		// and the audit deleted the test with every check in this list green.
-		check(!Hotkey.pressed("", Hotkey.NONE),
-			"a blank hotkey is pressed by nothing, not even by the code that means no key");
-		check(!Hotkey.pressed("   ", Hotkey.NONE), "...however it was left blank");
-		check(!Hotkey.pressed(null, Hotkey.NONE), "...or left unset altogether");
+		// CAUGHT, NOT THROWN, all three. The "exactly one character" test in code() is also
+		// what stops a BLANK setting reaching charAt(0) - delete it and "" throws rather than
+		// answering NONE. Unwrapped, these ended the run on the exception with no failure
+		// named, which the mutation runner reports as a crash, and a crash is not a catch.
+		String[] blanks = { "", "   ", null };
+		boolean blankPresses = false;
+		for (int i = 0; i < blanks.length; i++) {
+			try {
+				if (Hotkey.pressed(blanks[i], Hotkey.NONE)) {
+					blankPresses = true;
+				}
+			} catch (RuntimeException threwOnBlank) {
+				blankPresses = true;
+			}
+		}
+		check(!blankPresses,
+			"a blank hotkey is pressed by nothing, not even by the code that means no key - "
+				+ "empty, all spaces, or never set");
 		check(Hotkey.pressed("g", Hotkey.code("g")) && Hotkey.pressed("F1", 1008),
 			"...while a hotkey that is set is pressed by its own key, so this is not a hotkey "
 				+ "that stopped working");
@@ -759,22 +773,46 @@ public class GroundItemsTest {
 		// The beam's shapes have to differ, or the drop-down is decoration. The taper is over
 		// the beam's own height now, so the height it is tapering across is a parameter.
 		int tall = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
-		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, tall);
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8, tall) < base,
+		// A TILE, IN PIXELS, is what every width is a share of now. 200 is about what a tile
+		// comes to under the camera this test uses; any number works, because the widths are
+		// permille of whatever it is handed.
+		int tile = 200;
+		int base = GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, tall, tile);
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 8, tall, tile) < base,
 			"a tapered beam narrows as it rises");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8, tall)
-				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall),
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 8, tall, tile)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall, tile),
 			"a straight one does not");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0, tall) < base,
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_NARROW, 0, tall, tile) < base,
 			"and a narrow one is thinner from the floor up");
-		check(GroundItemsPlugin.beamWidth("Enormous", 0, tall) == base,
+		check(GroundItemsPlugin.beamWidth("Enormous", 0, tall, tile) == base,
 			"a shape from a release that offered something else draws the default");
+
+		// AND EVERY WIDTH SCALES WITH THE TILE, which is the whole of how a beam keeps its
+		// proportions at any distance. Pixel constants were the first version's central bug:
+		// the beam stayed 22 across whether the drop was underfoot or across the square.
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, 0, tall, tile * 2)
+				> GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, 0, tall, tile),
+			"a beam on a tile twice as wide on screen is drawn twice as wide");
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall, tile * 2)
+				== 2 * GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_STRAIGHT, 0, tall, tile),
+			"...in proportion, rather than by some amount of its own");
 
 		// THE TAPER FOLLOWS THE HEIGHT. A taper computed over a fixed fourteen would make a
 		// forty-segment beam a needle halfway up and a four-segment one barely narrow at all.
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 4)
-				< GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 40),
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 4, tile)
+				< GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 3, 40, tile),
 			"the same segment is narrower in a short beam than in a tall one");
+		// AND EVERY BEAM IS THE SAME WIDTH AT ITS FOOT, whatever height it was set to - it is
+		// standing on the same tile. That is what a taper over the beam's OWN height means, and
+		// the check above does not say it: a taper divided by a fixed height still narrows with
+		// segment, it just starts from the wrong place. A four-segment beam would come out a
+		// sixth of the width of a forty-segment one at the ground.
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, 4, tile)
+				== GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, 40, tile),
+			"a tapered beam is the same width at its foot however tall it was set ("
+				+ GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, 4, tile) + " and "
+				+ GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_TAPERED, 0, 40, tile) + ")");
 
 		// NEVER ZERO OR NEGATIVE, at any height or any style: a width of 0 draws nothing and a
 		// negative one is whatever fillAlpha makes of it.
@@ -783,9 +821,9 @@ public class GroundItemsTest {
 			GroundItemsPlugin.BEAM_STRAIGHT, GroundItemsPlugin.BEAM_NARROW, null, "" };
 		for (int st = 0; st < styles.length && !tooThin; st++) {
 			for (int segment = 0; segment < 200; segment++) {
-				if (GroundItemsPlugin.beamWidth(styles[st], segment, tall) < 1
-						|| GroundItemsPlugin.beamWidth(styles[st], segment, 2) < 1
-						|| GroundItemsPlugin.beamWidth(styles[st], segment, 40) < 1) {
+				if (GroundItemsPlugin.beamWidth(styles[st], segment, tall, tile) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 2, tile) < 1
+						|| GroundItemsPlugin.beamWidth(styles[st], segment, 40, 1) < 1) {
 					tooThin = true;
 					break;
 				}
@@ -845,11 +883,9 @@ public class GroundItemsTest {
 				+ "otherwise divide it away to nothing");
 
 		// The core, which is narrower than the column it sits in.
-		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W)
-				< GroundItemsPlugin.BEAM_W,
+		check(GroundItemsPlugin.coreWidth(60) < 60,
 			"the bright core is narrower than the beam around it");
-		check(GroundItemsPlugin.coreWidth(GroundItemsPlugin.BEAM_W) > 0,
-			"...and wide enough to see");
+		check(GroundItemsPlugin.coreWidth(60) > 0, "...and wide enough to see");
 		check(GroundItemsPlugin.coreWidth(1) == 0,
 			"a beam too narrow to hold a core does not get one, rather than a zero-width fill");
 		check(GroundItemsPlugin.coreWidth(0) == 0, "...nor does a beam of no width");
@@ -877,30 +913,57 @@ public class GroundItemsTest {
 
 		// ---- THE SHAPE, AGAINST THE SPRITE IT IS MODELLED ON.
 		//
-		// Jagex's loot beam asset is 383x1586 and its width profile is not a cone: measured at
-		// nine heights and normalised against its widest, it is 2% of full width a tenth of the
-		// way below the tip, 7% at three tenths and 12% at the halfway mark. Cubing the distance
-		// below the tip gives 12.5% at the halfway mark, which is the figure that matters
-		// because halfway is where the eye reads the shape. These checks are that curve, not a
-		// restatement of the code: they are percentages taken off the image.
-		int segs = GroundItemsPlugin.DEFAULT_BEAM_SEGMENTS;
-		int span = segs - 1;
-		int full = GroundItemsPlugin.lootBeamWidth(0, segs);
-		check(full == GroundItemsPlugin.BEAM_W,
-			"the base of a loot beam is the full width (" + full + ")");
-		check(GroundItemsPlugin.lootBeamWidth(span, segs) == 1,
-			"and its tip is a point");
-		int half = GroundItemsPlugin.lootBeamWidth(span / 2, segs);
-		check(half * 100 / full >= 9 && half * 100 / full <= 16,
-			"halfway up it is about an eighth of its base, as the sprite is: " + (half * 100 / full)
-				+ "% against the sprite's 12%");
-		// A LINEAR TAPER WOULD BE 50% THERE and a squared one 25%, and both read as cones. This
-		// is the check that says which curve, rather than merely that it narrows.
-		check(half * 100 / full < 20,
-			"...which a linear taper (50%) and a squared one (25%) both fail");
-		int quarter = GroundItemsPlugin.lootBeamWidth(span / 4, segs);
-		check(quarter > half && quarter < full,
-			"a quarter of the way up it is wider than halfway and narrower than the base");
+		// Jagex's asset is 383x1586. The first version of these checks measured its OUTER
+		// EXTENT per row, got 12% of full width at the halfway mark, and cubed the distance
+		// below the tip to fit that one figure. Both steps were wrong, and the beam shipped as
+		// a dotted hairline because of it.
+		//
+		// The outer extent at halfway is 35.7%, not 12%, and almost all of that is the two
+		// HELICAL RIBBONS wound round the beam - which the plugin does not draw. Measuring the
+		// widest CONTIGUOUS run per row instead, which is the body on its own, gives:
+		//
+		//     below the tip   0.05  0.10  0.20  0.30  0.40  0.50  0.60  0.70  0.80  0.90
+		//     body width       1.1   2.2   4.4   6.9   9.2  11.4  13.9  15.8  23.9  39.7
+		//
+		// A straight line at 22.6% per unit through the top seven tenths, and a flare over the
+		// last three into the disc. These checks are those numbers, not a restatement of the
+		// code: the percentages come off the image.
+		int segs = 40;                                   // tenths land exactly at this height
+		int disc = 1000;                                 // a tile, in units this can divide
+		int foot = GroundItemsPlugin.lootBeamWidth(0, segs, disc);
+		check(foot * 100 / disc == 40,
+			"the foot of a loot beam is 40% of the tile it stands on, as the sprite's is ("
+				+ (foot * 100 / disc) + "%)");
+		// THE STRAIGHT PART, at the three tenths the sprite was measured at. Within a point,
+		// which is tighter than the reading itself.
+		int[] tenth = { 1, 2, 3, 4, 5, 6, 7 };
+		int[] want = { 22, 45, 68, 90, 113, 136, 158 };  // permille, 22.6 per tenth
+		boolean offCurve = false;
+		StringBuilder got = new StringBuilder();
+		for (int i = 0; i < tenth.length; i++) {
+			// segment counts up from the foot, so a tenth BELOW THE TIP is segments - tenth.
+			int w = GroundItemsPlugin.lootBeamWidth(segs - segs * tenth[i] / 10, segs, disc);
+			got.append(w).append(' ');
+			if (Math.abs(w - want[i]) > 12) {
+				offCurve = true;
+			}
+		}
+		check(!offCurve,
+			"and the straight part follows the sprite's own line, 22.6% of a tile per tenth of "
+				+ "its height: " + got + "against " + "22 45 68 90 113 136 158");
+		// A CUBE WOULD BE 0.1% A TENTH BELOW THE TIP where the sprite is 2.2%, which is the one
+		// pixel that made the top half of the beam read as a dotted line. This is the check
+		// that says which curve, rather than merely that it narrows.
+		int nearTip = GroundItemsPlugin.lootBeamWidth(segs - segs / 10, segs, disc);
+		check(nearTip * 1000 / disc >= 15,
+			"a tenth below the tip it is still 2% of a tile rather than the 0.1% a cube gives ("
+				+ (nearTip * 1000 / disc) + " permille)");
+		int half = GroundItemsPlugin.lootBeamWidth(segs / 2, segs, disc);
+		check(half * 1000 / disc >= 95 && half * 1000 / disc <= 135,
+			"halfway up it is about an eighth of a tile, as the sprite's body is ("
+				+ (half * 1000 / disc) + " permille against the sprite's 114)");
+		check(half < foot && nearTip < half,
+			"and it narrows the whole way up rather than in one step");
 
 		// Monotonic, and never thinner than a pixel, at any height a player can set.
 		boolean wrong = false;
@@ -908,7 +971,7 @@ public class GroundItemsTest {
 				n++) {
 			int last = Integer.MAX_VALUE;
 			for (int seg = 0; seg < n; seg++) {
-				int w = GroundItemsPlugin.lootBeamWidth(seg, n);
+				int w = GroundItemsPlugin.lootBeamWidth(seg, n, disc);
 				if (w < 1 || w > last) {
 					wrong = true;
 				}
@@ -917,17 +980,27 @@ public class GroundItemsTest {
 		}
 		check(!wrong,
 			"a loot beam only ever narrows as it rises, and never below a pixel, at every height");
-		// CAUGHT, NOT THROWN. A one-segment beam has a span of zero, and without the guard in
-		// lootBeamWidth that span is a divisor - so this is the one check here that can be
-		// reached by an exception rather than a wrong answer. Unwrapped it ended the run with no
-		// failure named, which the mutation runner reports as a crash, and a crash is not a catch.
-		boolean oneSegment;
+		// THE FLOOR BITES ON A DISTANT TILE, and nowhere else. On a tile a thousand units across
+		// every share of it is already several pixels, so removing the floor changes nothing and
+		// the loop above passes either way. On a tile ten pixels across - a drop most of the way
+		// to the horizon - the tip's 2% of it rounds to nought, and a beam whose top half is not
+		// drawn is the bug this whole rewrite was about.
+		check(GroundItemsPlugin.lootBeamWidth(39, 40, 10) >= 1,
+			"the tip of a beam on a far-off tile is still drawn, rather than rounding away ("
+				+ GroundItemsPlugin.lootBeamWidth(39, 40, 10) + ")");
+		check(GroundItemsPlugin.lootBeamWidth(39, 40, 1) >= 1, "...however far off it is");
+		// CAUGHT, NOT THROWN. A beam of no segments would divide by its own height, so this is
+		// the one check here reachable by an exception rather than a wrong answer. Unwrapped it
+		// ended the run with no failure named, which the mutation runner reports as a crash -
+		// and a crash is not a catch.
+		boolean degenerate;
 		try {
-			oneSegment = GroundItemsPlugin.lootBeamWidth(0, 1) == GroundItemsPlugin.BEAM_W;
+			degenerate = GroundItemsPlugin.lootBeamWidth(0, 0, disc) >= 1
+				&& GroundItemsPlugin.lootBeamWidth(0, 1, disc) >= 1;
 		} catch (RuntimeException ex) {
-			oneSegment = false;
+			degenerate = false;
 		}
-		check(oneSegment, "a beam of one segment is its base rather than a divide by zero");
+		check(degenerate, "a beam of one segment, or of none, is a width rather than a throw");
 
 		// And it is the default shape, because it is the one this was asked to look like. Read
 		// off a bare instance rather than through setting(): this section runs in the headless
@@ -935,7 +1008,8 @@ public class GroundItemsTest {
 		// run with no failure named - which the mutation runner would have reported as a crash.
 		check(GroundItemsPlugin.BEAM_LOOT.equals(new GroundItemsPlugin().beamStyle),
 			"the loot beam shape is what a player gets without choosing one");
-		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, span / 2, segs) == half,
+		check(GroundItemsPlugin.beamWidth(GroundItemsPlugin.BEAM_LOOT, segs / 2, segs, disc)
+				== half,
 			"...and the drop-down's value reaches it");
 
 		// THE PULSE, which takes the time rather than reading the clock so its curve can be
@@ -1790,8 +1864,9 @@ public class GroundItemsTest {
 		check(beamed > unbeamed,
 			"a highlighted item with beams on paints pixels a highlighted item without them "
 				+ "does not (" + unbeamed + " -> " + beamed + ")");
-		check(beamed - unbeamed > GroundItemsPlugin.BEAM_W,
-			"...and enough of them to be a column rather than a stray fill");
+		check(beamed - unbeamed > 100,
+			"...and enough of them to be a column rather than a stray fill ("
+				+ (beamed - unbeamed) + ")");
 
 		// ---- THE GROUND GLOW. Twice the beam's width, so the only pixels it can account for
 		// are the ones out past the column's own edge.
@@ -1860,12 +1935,28 @@ public class GroundItemsTest {
 		// dim beam really does paint fewer pixels, and the first version of this check called
 		// that a failure. Its width at the base is the measure that holds - that is the one
 		// place every beam is BEAM_W whatever its opacity.
-		check(solidWidth == faintWidth && solidWidth == GroundItemsPlugin.BEAM_W,
+		int[] opacityBox = new int[4];
+		GroundItemsPlugin.tileBox(context(), MID_X, MID_Z, opacityBox);
+		int opacityTile = opacityBox[2] - opacityBox[0];
+		check(solidWidth == faintWidth
+				&& solidWidth == GroundItemsPlugin.lootBeamWidth(0, 24, opacityTile),
 			"...and no wider at its base, so it is an opacity rather than a size ("
-				+ faintWidth + " and " + solidWidth + ")");
+				+ faintWidth + " and " + solidWidth + ", against a foot of "
+				+ GroundItemsPlugin.lootBeamWidth(0, 24, opacityTile) + " on a tile "
+				+ opacityTile + " across)");
 
 		GroundItemPrefs.clear();
 		reset();
+	}
+
+	static jagex2.client.plugin.PluginContext context() {
+		try {
+			java.lang.reflect.Field f = PluginManager.class.getDeclaredField("ctx");
+			f.setAccessible(true);
+			return (jagex2.client.plugin.PluginContext) f.get(manager);
+		} catch (Throwable error) {
+			throw new IllegalStateException("no context: " + error);
+		}
 	}
 
 	static void lootPageTests() {
@@ -2149,10 +2240,16 @@ public class GroundItemsTest {
 	 */
 	static int countOutsideColumn() {
 		int cx = originX();
+		// HALF THE BEAM'S OWN FOOT, worked out from the tile it stands on, because the widths
+		// are a share of that tile now rather than a pixel constant.
+		int[] box = new int[4];
+		int columnHalfWidth = GroundItemsPlugin.tileBox(context(), MID_X, MID_Z, box)
+			? GroundItemsPlugin.lootBeamWidth(0, 24, box[2] - box[0]) / 2
+			: 1;
 		int n = 0;
 		for (int y = 0; y < H; y++) {
 			for (int x = 0; x < W; x++) {
-				if (pixels[y * W + x] != 0 && Math.abs(x - cx) > GroundItemsPlugin.BEAM_W / 2 + 1) {
+				if (pixels[y * W + x] != 0 && Math.abs(x - cx) > columnHalfWidth + 1) {
 					n++;
 				}
 			}
