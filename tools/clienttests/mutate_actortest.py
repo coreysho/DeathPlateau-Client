@@ -94,11 +94,15 @@ MUTS = [
     (PLUGIN, 'matching made exact, so part of a name no longer works',
      'if (want.length() > 0 && lower.indexOf(want.toLowerCase()) >= 0) {',
      'if (want.length() > 0 && lower.equals(want.toLowerCase())) {'),
-    (PLUGIN, 'terms not trimmed, so a space after a comma breaks one',
-     '''			String term = (comma < 0 ? terms.substring(from) : terms.substring(from, comma)).trim();
-			String want = termName(term);''',
-     '''			String term = comma < 0 ? terms.substring(from) : terms.substring(from, comma);
-			String want = termName(term);'''),
+    # NOT MUTATED: the .trim() on the split term in termColour has no observable effect, so
+    # removing it is not a mutation. `term` is used for exactly two things, and both trim what
+    # they are handed: termName() returns `(equals < 0 ? term : term.substring(0, equals)).trim()`,
+    # and termOwnColour() takes `term.substring(equals + 1).trim()` as the hex and never looks at
+    # the name side. So " goblin = FF0000 " answers the same as "goblin=FF0000" either way, and a
+    # term of nothing but spaces comes out as an empty name either way. The trim stays because
+    # the local reads as the term and a term does not have spaces round it, but a mutation that
+    # no input can distinguish is a survivor by construction rather than a gap. The trim in
+    # indexOfTerm is the same case and is not mutated either.
     (PLUGIN, 'a null name thrown rather than declined, once per npc per frame',
      '''		if (name == null || terms == null || name.length() == 0) {
 			return 0;

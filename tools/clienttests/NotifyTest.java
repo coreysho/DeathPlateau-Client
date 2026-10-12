@@ -123,17 +123,51 @@ public class NotifyTest {
 				+ " report a synth error to the server (" + reached + " of " + nonsense.length
 				+ " got through)");
 
+		// ---- AND THE QUEUE HAS A FLOOR UNDER IT.
+		//
+		// playSound writes into the same fifty-slot array the server's own SYNTH_SOUND fills,
+		// and the guard on it is the only thing between a chatty plugin and an
+		// ArrayIndexOutOfBounds in the middle of a frame. Nothing here had ever queued more
+		// than one sound - the rate limit makes that awkward and the limit is not the cap -
+		// so the guard was deletable with every check above green.
+		check(quiet(), "the sound limit can be wound back, so a queue can actually be filled");
+		client.waveCount = 0;
+		int slots = client.waveIds.length;
+		boolean threwFilling = false;
+		for (int i = 0; i < slots + 10; i++) {
+			quiet();
+			try {
+				ctx.playSound(REAL_SOUND);
+			} catch (Throwable error) {
+				threwFilling = true;
+				check(false, "queueing sound " + i + " of " + (slots + 10) + " threw (" + error
+					+ ")");
+			}
+		}
+		check(!threwFilling,
+			"filling the sound queue past its " + slots + " slots does not throw");
+		check(client.waveCount == slots,
+			"...and it stops at the last slot rather than running past it (" + client.waveCount
+				+ " of " + slots + ")");
+		client.waveCount = 0;
+
 		// The player's own answer to this question wins.
 		client.waveCount = 0;
 		client.waveEnabled = false;
-		pause();
+		// quiet(), NOT pause(): these are the SOUND limiter's checks, and the two are separate
+		// now. They never had to be told apart while both were waited out by one 1.6-second
+		// sleep, and winding back the notification clock does nothing for the sound one - so
+		// each of these would have returned early at the rate limit and passed without ever
+		// reaching the thing it is about. The audit found exactly that: the queue cap below
+		// was deletable because playSound never got past the limiter to reach it.
+		quiet();
 		ctx.playSound(REAL_SOUND);
 		check(client.waveCount == 0, "sound effects turned off means a plugin plays nothing");
 		client.waveEnabled = true;
 
 		// Rate limited, or a plugin calling this every frame is a siren.
 		client.waveCount = 0;
-		pause();
+		quiet();
 		ctx.playSound(REAL_SOUND);
 		ctx.playSound(REAL_SOUND);
 		ctx.playSound(REAL_SOUND);
@@ -142,7 +176,7 @@ public class NotifyTest {
 
 		// And the client's own queue cap still applies on top.
 		client.waveCount = client.waveIds.length;
-		pause();
+		quiet();
 		boolean threw = false;
 		try {
 			ctx.playSound(REAL_SOUND);
@@ -496,11 +530,24 @@ public class NotifyTest {
 	}
 
 	/** Waits out the shorter sound limit. */
-	static void quiet() {
+	/** The same, for the SOUND limiter. See {@link #pause}. */
+	static boolean quiet() {
 		try {
-			Thread.sleep(300);
-		} catch (InterruptedException ignored) {
-			Thread.currentThread().interrupt();
+			java.lang.reflect.Field held = PluginManager.class.getDeclaredField("ctx");
+			held.setAccessible(true);
+			Object ctx = held.get(manager);
+			java.lang.reflect.Field last =
+				jagex2.client.plugin.PluginContext.class.getDeclaredField("lastSound");
+			last.setAccessible(true);
+			last.setLong(ctx, 0L);
+			return true;
+		} catch (Throwable renamed) {
+			try {
+				Thread.sleep(300);
+			} catch (InterruptedException stop) {
+				Thread.currentThread().interrupt();
+			}
+			return false;
 		}
 	}
 
