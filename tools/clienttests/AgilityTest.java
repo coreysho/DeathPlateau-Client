@@ -483,16 +483,30 @@ public final class AgilityTest {
 		// ID 0 IS NOT A LOC, it is what an empty square reads as. Without the guard on that,
 		// asking for 0 matches all ten thousand of them - which is the one id where "found
 		// nothing" and "found the whole scene" are a character apart.
-		check(context().findLocs(new int[] { 0 }).isEmpty(),
+		int zeroFound;
+		try {
+			zeroFound = context().findLocs(new int[] { 0 }).size();
+		} catch (RuntimeException threwOnZero) {
+			// Without the guard the scan asks LocType about every empty square in the scene,
+			// and an id nothing has decoded throws. Named rather than loose: unwrapped this
+			// ends the run with no failure reported.
+			zeroFound = -1;
+		}
+		check(zeroFound == 0,
 			"asking for id 0 finds nothing, rather than every empty square in the scene ("
-				+ context().findLocs(new int[] { 0 }).size() + ")");
+				+ zeroFound + ")");
 
 		// UNSORTED INPUT STILL WORKS, and comes back unchanged. The plugin happens to hand over
 		// a sorted array, so nothing about the sort or the copy shows through it - but the
 		// method takes any int[] and a caller is owed both: that it finds what it asked for,
 		// and that its own array is not reordered under it.
-		int[] jumbled = { CREVICE, NOT_AN_OBSTACLE, GNOME_LOG, DUNGEON_PIPE };
-		int[] before = { CREVICE, NOT_AN_OBSTACLE, GNOME_LOG, DUNGEON_PIPE };
+		// DESCENDING, not merely shuffled. A binary search over an unsorted array still finds
+		// some of what it looks for by luck - the first version of this check used an order
+		// that happened to find both, and the audit deleted the sort with it green. Descending
+		// is the order that reliably loses the smallest id, which here is the one that is in
+		// the scene.
+		int[] jumbled = { CREVICE, GNOME_LOG, DUNGEON_PIPE, NOT_AN_OBSTACLE };
+		int[] before = { CREVICE, GNOME_LOG, DUNGEON_PIPE, NOT_AN_OBSTACLE };
 		check(context().findLocs(jumbled).size() == 2,
 			"an unsorted list of ids finds what is in the scene ("
 				+ context().findLocs(jumbled).size() + " of 2)");
@@ -660,6 +674,14 @@ public final class AgilityTest {
 		check(countPainted() > oneTile,
 			"a three-tile obstacle is marked across all three (" + oneTile + " -> "
 				+ countPainted() + ")");
+		clearScene();
+		size(1, CREVICE, 1, 3);
+		putLoc(SceneLoc.LAYER_SCENERY, MID_X, MID_Z, CREVICE, 0);
+		manager.onGameTick();
+		frame();
+		check(countPainted() > oneTile,
+			"...and a one-by-three is marked across all three the other way, which is a "
+				+ "separate loop from the width (" + oneTile + " -> " + countPainted() + ")");
 		size(1, CREVICE, 1, 1);
 
 		// THE LABEL.
