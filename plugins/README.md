@@ -275,6 +275,7 @@ public class MyToolPlugin extends Plugin {
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
 | 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
 | 8 | `ctx.getTrueTileX` / `getTrueTileZ`: the tile the server has the player on, which during a walk is ahead of the one they appear to stand on. |
+| 9 | Where the scenery is: `ctx.findLocs`, and the `SceneLoc` it hands back. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -671,6 +672,48 @@ it: moving an npc's `Attack` row is a change to what a click does, which is the 
 A row is identified by its kind tag (`@yel@` is an npc), because that is the only thing separating
 `Attack @yel@Goblin` from `Take @lre@Bones` — without the check, a term like `bones` would colour
 rows about items.
+
+### Agility, in detail
+
+Marks every agility obstacle around you - all three courses, every shortcut, and the Yanille
+dungeon - in a colour that says which kind it is and whether your level can use it.
+
+**The obstacles come from this server's own content, not from OSRS.** There are three courses
+here, not eight, and a table of ids copied off a wiki would mark scenery that does nothing and
+miss the shortcuts that work. `AgilityObstacles` is generated from DeathPlateau-Content by
+reading every `[oploc*,name]` handler in the agility scripts, resolving each name through
+`pack/loc.pack` to its id, and taking the requirement from the `if(stat(agility) < n)` the
+handler opens with. The labels are the `name=` the cache ships, so a mark reads the same as the
+right-click menu. 53 obstacles: 9 on the gnome course, 6 on the barbarian, 8 on the wilderness,
+26 shortcuts and log balances, and 4 in the dungeon.
+
+**Five handlers in those scripts are deliberately not in the table.** Three of them -
+`_monkeybars`, `_island_rope_swing` and `_karamja_stepping_stone` - bind loc CATEGORIES, and no
+loc in this content belongs to any of them: they were ported ahead of the locs they are for, and
+are dead code until those land. The other two are `shuttwistedchest` and `trappedchaosaltar`, a
+locked chest and a prayer altar with a trapdoor under it, which are in the Yanille dungeon's
+script file only because that is where Yanille's scripts live. Marking them as agility obstacles
+would be the table believing its source too literally.
+
+**A shortcut you cannot use yet is drawn in a third colour rather than hidden.** Knowing a 70
+Agility crevice is there is most of why anyone trains the skill. The switch to hide them is for
+players who would rather not see what they cannot use, and it is off.
+
+**The level is read by NAME, not by a hardcoded index.** Agility is 16 in a stock 377 cache and
+this server is free to change that; a wrong constant would gate every shortcut by some other
+skill's level, which looks like the plugin working. If the cache has no Agility skill at all,
+nothing is locked - marking an obstacle a player cannot use is the lesser mistake.
+
+**Scanned once a tick, not once a frame.** The client keeps no list of locs: it keeps a 104x104
+grid of squares with four slots each, so finding obstacles is a walk of the whole grid. That is
+cheap once a tick and silly fifty times a second. It is rescanned every tick rather than cached
+against a scene-change event because obstacles are ordinary scenery - a gate the server opens is
+a different loc in the same square, and a cache would go on marking the old one.
+
+**All four layers are scanned**, because the obstacles alone span all of them: a gate is a wall,
+a stile is scenery, a strange floor is a ground decoration. A multi-tile obstacle is marked on
+every tile it stands on, with its size turned by its rotation - a three-by-one log laid
+north-south covers three tiles of z, and the loc type gives its size unrotated.
 
 ### XP drops, in detail
 

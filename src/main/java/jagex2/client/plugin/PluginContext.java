@@ -7,6 +7,7 @@ import jagex2.client.Client;
 import jagex2.client.DevLog;
 import jagex2.client.GameShell;
 import jagex2.client.Stats;
+import jagex2.config.LocType;
 import jagex2.config.ObjType;
 import jagex2.dash3d.ClientNpc;
 import jagex2.dash3d.ClientObj;
@@ -508,6 +509,80 @@ public final class PluginContext {
 	}
 
 	// ------------------------------------------------------------------ the scene
+
+	/** How many tiles the scene is across. The client's own grids are all 104 square. */
+	private static final int SCENE_TILES = 104;
+
+	/**
+	 * Every piece of scenery in the scene whose id is one of these, at most one entry per loc.
+	 *
+	 * THE SCENE IS THE ONLY PLACE THIS LIVES. The client does not keep a list of locs: it keeps
+	 * a 104x104 grid of squares, each with up to four slots - a wall, a wall decoration, a
+	 * scenery entry and a ground decoration - and the id is packed into the top of each slot's
+	 * bitfield. So "where are the obstacles" is a walk of the grid and nothing cheaper, which is
+	 * why this takes the whole set of ids at once rather than answering one id at a time.
+	 *
+	 * ONCE PER LOC, NOT ONCE PER TILE. A multi-tile loc is stored against every square it
+	 * covers; World3D.method302 only answers for the square it starts on, so a three-tile
+	 * obstacle comes back as one entry with width 3 rather than three entries.
+	 *
+	 * THE LOC TYPE IS READ ONLY FOR MATCHES. LocType.method561 decodes into a twenty-slot
+	 * cache, so asking it about every square in the scene would thrash that cache forty
+	 * thousand times a call and decode most of them twice. Matches are few - a handful in a
+	 * scene - so their sizes are cheap.
+	 *
+	 * COSTS A GRID WALK. Call it on a tick and keep the answer for the frames between; calling
+	 * it per frame is the same answer computed fifty times a second.
+	 *
+	 * The ids array is not modified: it is copied before being sorted to search.
+	 */
+	public List<SceneLoc> findLocs(int[] ids) {
+		List<SceneLoc> found = new ArrayList<SceneLoc>();
+		if (ids == null || ids.length == 0 || this.client.scene == null) {
+			return found;
+		}
+		int[] wanted = new int[ids.length];
+		System.arraycopy(ids, 0, wanted, 0, ids.length);
+		java.util.Arrays.sort(wanted);
+		int level = this.client.currentLevel;
+		for (int x = 0; x < SCENE_TILES; x++) {
+			for (int z = 0; z < SCENE_TILES; z++) {
+				this.keepLoc(found, wanted, level, x, z,
+					this.client.scene.method300(level, x, z), SceneLoc.LAYER_WALL);
+				this.keepLoc(found, wanted, level, x, z,
+					this.client.scene.method301(x, level, z), SceneLoc.LAYER_WALL_DECOR);
+				this.keepLoc(found, wanted, level, x, z,
+					this.client.scene.method302(level, x, z), SceneLoc.LAYER_SCENERY);
+				this.keepLoc(found, wanted, level, x, z,
+					this.client.scene.method303(level, x, z), SceneLoc.LAYER_GROUND_DECOR);
+			}
+		}
+		return found;
+	}
+
+	/** One slot of one square, kept if its id is wanted. See {@link #findLocs}. */
+	private void keepLoc(List<SceneLoc> found, int[] wanted, int level, int x, int z, int packed,
+			int layer) {
+		if (packed == 0) {
+			return;
+		}
+		// The id is the top of the bitfield, the same way Client.addLoc reads it.
+		int id = packed >> 14 & 0x7FFF;
+		if (java.util.Arrays.binarySearch(wanted, id) < 0) {
+			return;
+		}
+		LocType type = LocType.method561(id);
+		// TURNED WITH THE LOC. A three-by-one obstacle placed north-south covers three tiles of
+		// z and one of x, and the type's own width and length are given unrotated - so a drawer
+		// handed them raw outlines the wrong three tiles for half the obstacles in the game.
+		// The rotation is the top two bits of the square's info byte, as Client.addLoc reads it.
+		int info = this.client.scene.method304(level, x, z, packed);
+		int rotation = info < 0 ? 0 : info >> 6 & 0x3;
+		boolean turned = (rotation & 0x1) == 1;
+		int width = turned ? type.field1629 : type.field1655;
+		int length = turned ? type.field1655 : type.field1629;
+		found.add(new SceneLoc(id, x, z, level, layer, rotation, width, length));
+	}
 
 	/**
 	 * The npcs in the scene, nearest first.
