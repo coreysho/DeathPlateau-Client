@@ -78,10 +78,10 @@ MUTS = [
 
     # ---- THE TABLE'S OWN JUDGEMENTS, which are not transcriptions of the content.
     (TABLE, 'the locked chest put back in, which is not an obstacle',
-     '\t\tadd( 1947, "Crumbling wall", SHORTCUT, 5);',
-     '\t\tadd( 1947, "Crumbling wall", SHORTCUT, 5);\n\t\tadd(  377, "Closed chest", DUNGEON, 1);'),
+     '\t\tadd( 1947, "Crumbling wall", SHORTCUT,  5);',
+     '\t\tadd( 1947, "Crumbling wall", SHORTCUT,  5);\n\t\tadd(  377, "Closed chest", DUNGEON,  1);'),
     (TABLE, 'an obstacle dropped, so a course has a gap in it',
-     '\t\tadd( 2295, "Log balance", GNOME, 1);',
+     '\t\tadd( 2295, "Log balance", GNOME,  1);',
      ''),
     (TABLE, 'the ids handed out unsorted, which findLocs binary searches',
      '\t\tArrays.sort(IDS);',
@@ -95,8 +95,11 @@ MUTS = [
      '\t\t\tif (ALL.get(i).id == id) {',
      '\t\t\tif (true) {'),
     (TABLE, 'a shortcut counted as a course',
-     '\t\treturn course == GNOME || course == BARBARIAN || course == WILDERNESS;',
+     '\t\treturn course >= GNOME && course <= ARDOUGNE;',
      '\t\treturn course != DUNGEON;'),
+    (TABLE, 'the rooftop courses left out of isCourse, which is where they were missed before',
+     '\t\treturn course >= GNOME && course <= ARDOUGNE;',
+     '\t\treturn course <= WILDERNESS;'),
 
     # ---- WHICH OBSTACLES ARE MARKED.
     (PLUGIN, 'course obstacles marked whether the player asked or not',
