@@ -50,6 +50,9 @@ public final class AgilityTest {
 	/** An ordinary piece of scenery, for checking that the scan walks past it. */
 	static final int NOT_AN_OBSTACLE = 1;
 
+	/** What every skill that is NOT Agility is set to, so the two can never be confused. */
+	static final int OTHER_SKILLS = 7;
+
 	static int fails;
 
 	static Client client;
@@ -466,7 +469,40 @@ public final class AgilityTest {
 		check(context().findLocs(new int[] { NOT_AN_OBSTACLE }).size() == 1,
 			"...and is found when it is the thing being asked for");
 		check(context().findLocs(new int[0]).isEmpty(), "asking for nothing finds nothing");
-		check(context().findLocs(null).isEmpty(), "...and so does asking for null");
+		// CAUGHT, NOT THROWN. Without the guard, `ids.length` on a null is an exception out of
+		// a per-tick scan, and an unwrapped check here ends the run with no failure named -
+		// which the mutation runner reports as a crash, and a crash is not a catch.
+		boolean nullSafe;
+		try {
+			nullSafe = context().findLocs(null).isEmpty();
+		} catch (RuntimeException threw) {
+			nullSafe = false;
+		}
+		check(nullSafe, "...and so does asking for null");
+
+		// ID 0 IS NOT A LOC, it is what an empty square reads as. Without the guard on that,
+		// asking for 0 matches all ten thousand of them - which is the one id where "found
+		// nothing" and "found the whole scene" are a character apart.
+		check(context().findLocs(new int[] { 0 }).isEmpty(),
+			"asking for id 0 finds nothing, rather than every empty square in the scene ("
+				+ context().findLocs(new int[] { 0 }).size() + ")");
+
+		// UNSORTED INPUT STILL WORKS, and comes back unchanged. The plugin happens to hand over
+		// a sorted array, so nothing about the sort or the copy shows through it - but the
+		// method takes any int[] and a caller is owed both: that it finds what it asked for,
+		// and that its own array is not reordered under it.
+		int[] jumbled = { CREVICE, NOT_AN_OBSTACLE, GNOME_LOG, DUNGEON_PIPE };
+		int[] before = { CREVICE, NOT_AN_OBSTACLE, GNOME_LOG, DUNGEON_PIPE };
+		check(context().findLocs(jumbled).size() == 2,
+			"an unsorted list of ids finds what is in the scene ("
+				+ context().findLocs(jumbled).size() + " of 2)");
+		boolean untouched = true;
+		for (int i = 0; i < jumbled.length; i++) {
+			if (jumbled[i] != before[i]) {
+				untouched = false;
+			}
+		}
+		check(untouched, "...and the caller's own array comes back in the order it went in");
 
 		// ALL FOUR LAYERS. The obstacles alone include a gate (a wall), a stile (scenery) and a
 		// strange floor (a ground decoration), so a scan of one layer would miss most of them.
@@ -486,6 +522,14 @@ public final class AgilityTest {
 		List<SceneLoc> flat = context().findLocs(AgilityObstacles.ids());
 		check(flat.size() == 1 && flat.get(0).width == 3 && flat.get(0).length == 1,
 			"a three-by-one obstacle is three wide unrotated");
+		clearScene();
+		size(0, GNOME_LOG, 1, 3);
+		putLoc(SceneLoc.LAYER_SCENERY, MID_X, MID_Z, GNOME_LOG, 0);
+		List<SceneLoc> deep = context().findLocs(AgilityObstacles.ids());
+		check(deep.size() == 1 && deep.get(0).width == 1 && deep.get(0).length == 3,
+			"a one-by-three obstacle is three LONG, which is the other axis and a separate "
+				+ "number from the width");
+		size(0, GNOME_LOG, 3, 1);
 		clearScene();
 		putLoc(SceneLoc.LAYER_SCENERY, MID_X, MID_Z, GNOME_LOG, 1);
 		List<SceneLoc> turned = context().findLocs(AgilityObstacles.ids());
@@ -510,7 +554,7 @@ public final class AgilityTest {
 		set("label", AgilityPlugin.LABEL_NONE);
 		set("fill", "false");
 		set("borderWidth", "1");
-		levelAll(99);
+		agilityAt(99);
 
 		// NOTHING BEFORE A TICK. The scan runs on the tick, so a frame drawn before the first
 		// one has nothing to draw - and a plugin that scanned per frame would be walking the
@@ -532,12 +576,12 @@ public final class AgilityTest {
 			"a shortcut is drawn in the shortcut colour, not the course one");
 
 		// AND IN THE LOCKED COLOUR WHEN YOUR LEVEL CANNOT USE IT. The crevice asks for 81.
-		levelAll(80);
+		agilityAt(80);
 		manager.onGameTick();
 		frame();
 		check(countPixels(0xFF0000) > 0 && countPixels(0x00FFFF) == 0,
 			"one level short of a shortcut, it is drawn in the locked colour");
-		levelAll(81);
+		agilityAt(81);
 		manager.onGameTick();
 		frame();
 		check(countPixels(0x00FFFF) > 0 && countPixels(0xFF0000) == 0,
@@ -545,7 +589,7 @@ public final class AgilityTest {
 
 		// HIDDEN ONLY IF THE PLAYER ASKED. Knowing a shortcut is there is most of why anyone
 		// trains the skill, so the default is to show it greyed rather than to hide it.
-		levelAll(80);
+		agilityAt(80);
 		manager.onGameTick();
 		frame();
 		int shown = countPainted();
@@ -555,7 +599,26 @@ public final class AgilityTest {
 			"with hide-locked on, a shortcut above your level is not drawn (" + shown + " -> "
 				+ countPainted() + ")");
 		set("hideLocked", "false");
-		levelAll(99);
+		agilityAt(99);
+
+		// A CACHE WITH NO AGILITY SKILL LOCKS NOTHING, rather than everything. Level 0 would
+		// grey out every shortcut in the game and read as "this plugin is broken" rather than
+		// as "this client has no Agility" - and marking an obstacle a player cannot use is the
+		// lesser mistake of the two.
+		String[] realSkills = jagex2.client.Stats.field1504;
+		String[] noAgility = new String[realSkills.length];
+		for (int i = 0; i < realSkills.length; i++) {
+			noAgility[i] = "agility".equalsIgnoreCase(realSkills[i]) ? "nonesuch" : realSkills[i];
+		}
+		jagex2.client.Stats.field1504 = noAgility;
+		AgilityPlugin fresh = freshPlugin();
+		check(fresh != null && fresh.agilityLevel() == Integer.MAX_VALUE,
+			"with no Agility in the cache's skill list, nothing reads as above your level");
+		jagex2.client.Stats.field1504 = realSkills;
+		AgilityPlugin known = freshPlugin();
+		check(known != null && known.agilityLevel() == 99,
+			"...and with it there, the level is the one the player has ("
+				+ (known == null ? -1 : known.agilityLevel()) + ")");
 
 		// THE SWITCHES, each in the scene.
 		manager.onGameTick();
@@ -631,10 +694,56 @@ public final class AgilityTest {
 
 	// ---------------------------------------------------------------- helpers
 
-	static void levelAll(int level) {
+	/**
+	 * Agility at one level and EVERY OTHER SKILL AT ANOTHER.
+	 *
+	 * The first version of this set every skill to the same number, which makes "reads the
+	 * agility level" and "reads skill 0's level" the same answer - the audit swapped the
+	 * lookup for a hardcoded index and every gate check stayed green. A level nothing else
+	 * shares is what makes the lookup mean anything.
+	 */
+	static void agilityAt(int level) {
 		for (int i = 0; i < client.skillLevel.length; i++) {
-			client.skillLevel[i] = level;
-			client.skillBaseLevel[i] = level;
+			client.skillLevel[i] = OTHER_SKILLS;
+			client.skillBaseLevel[i] = OTHER_SKILLS;
+		}
+		int agility = agilityIndex();
+		if (agility >= 0) {
+			client.skillLevel[agility] = level;
+			client.skillBaseLevel[agility] = level;
+		}
+	}
+
+	/** Where Agility is in this cache's skill list, found the way the plugin finds it. */
+	static int agilityIndex() {
+		for (int i = 0; i < jagex2.client.Stats.field1504.length; i++) {
+			if ("agility".equalsIgnoreCase(jagex2.client.Stats.field1504[i])) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * A second Agility plugin, attached but not on the bus.
+	 *
+	 * The skill index is resolved once and remembered, which is right - the cache's skill list
+	 * does not change while the client runs - and means the live plugin cannot be asked the
+	 * question twice with two different lists. A fresh instance is the honest way to ask what
+	 * a plugin starting against this cache would find.
+	 */
+	static AgilityPlugin freshPlugin() {
+		try {
+			AgilityPlugin plugin = new AgilityPlugin();
+			java.lang.reflect.Method attach = jagex2.client.plugin.Plugin.class
+				.getDeclaredMethod("attach", jagex2.client.plugin.PluginContext.class,
+					PluginConfig.class);
+			attach.setAccessible(true);
+			attach.invoke(plugin, context(), entry.getConfig());
+			return plugin;
+		} catch (Throwable cannot) {
+			check(false, "a second Agility plugin can be built (" + cannot + ")");
+			return null;
 		}
 	}
 
