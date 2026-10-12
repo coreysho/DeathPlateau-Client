@@ -711,6 +711,15 @@ locked chest and a prayer altar with a trapdoor under it, which are in the Yanil
 script file only because that is where Yanille's scripts live. Marking them as agility obstacles
 would be the table believing its source too literally.
 
+**Twenty-three settings.** One switch per course, not one for "courses": there are twelve of them and a player trains
+one at a time, so a single switch is the wrong grain: it is on for the course you are running
+and on for the eleven you are not. Shortcuts and the dungeon keep a switch each, making
+fourteen. `wanted()` looks the switch up BY INDEX against a list in the courses' own order,
+which is compact and buys one risk - a list one out of step would map Falador's switch onto
+Seers' obstacles, and every switch would still appear to work. The check for it turns each
+course on alone and asserts only that course's obstacles answer, which is the only arrangement
+that catches a crossed mapping.
+
 **A shortcut you cannot use yet is drawn in a third colour rather than hidden.** Knowing a 70
 Agility crevice is there is most of why anyone trains the skill. The switch to hide them is for
 players who would rather not see what they cannot use, and it is off.

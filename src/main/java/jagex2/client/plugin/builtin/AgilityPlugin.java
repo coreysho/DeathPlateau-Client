@@ -74,9 +74,48 @@ public final class AgilityPlugin extends Plugin {
 	/** How high above an obstacle's tile its label sits, in scene units. */
 	static final int LABEL_HEIGHT = 40;
 
-	@ConfigItem(keyName = "courses", name = "Mark course obstacles",
-		description = "The gnome, barbarian and wilderness courses")
-	public boolean courses = true;
+	// ---- ONE SWITCH PER COURSE.
+	//
+	// There are twelve of them and a player trains one at a time, so a single "mark course
+	// obstacles" switch is the wrong grain: it is on for the course you are running and on for
+	// the eleven you are not. The order of these fields is the order AgilityObstacles numbers
+	// the courses, which switchFor() depends on and a check walks end to end.
+
+	@ConfigItem(keyName = "gnome", name = "Gnome course")
+	public boolean gnome = true;
+
+	@ConfigItem(keyName = "barbarian", name = "Barbarian course")
+	public boolean barbarian = true;
+
+	@ConfigItem(keyName = "wilderness", name = "Wilderness course")
+	public boolean wilderness = true;
+
+	@ConfigItem(keyName = "draynor", name = "Draynor rooftops", description = "Level 1")
+	public boolean draynor = true;
+
+	@ConfigItem(keyName = "alkharid", name = "Al Kharid rooftops", description = "Level 20")
+	public boolean alkharid = true;
+
+	@ConfigItem(keyName = "varrock", name = "Varrock rooftops", description = "Level 30")
+	public boolean varrock = true;
+
+	@ConfigItem(keyName = "canifis", name = "Canifis rooftops", description = "Level 40")
+	public boolean canifis = true;
+
+	@ConfigItem(keyName = "falador", name = "Falador rooftops", description = "Level 50")
+	public boolean falador = true;
+
+	@ConfigItem(keyName = "seers", name = "Seers rooftops", description = "Level 60")
+	public boolean seers = true;
+
+	@ConfigItem(keyName = "pollnivneach", name = "Pollnivneach rooftops", description = "Level 70")
+	public boolean pollnivneach = true;
+
+	@ConfigItem(keyName = "rellekka", name = "Rellekka rooftops", description = "Level 80")
+	public boolean rellekka = true;
+
+	@ConfigItem(keyName = "ardougne", name = "Ardougne rooftops", description = "Level 90")
+	public boolean ardougne = true;
 
 	@ConfigItem(keyName = "shortcuts", name = "Mark agility shortcuts",
 		description = "Walls, stiles, tunnels and crevices that need an Agility level")
@@ -234,15 +273,26 @@ public final class AgilityPlugin extends Plugin {
 		return this.ctx.getBaseLevel(this.agilitySkill);
 	}
 
-	/** Whether the player asked for this kind of obstacle. */
+	/**
+	 * Whether the player asked for this obstacle's course.
+	 *
+	 * BY INDEX, against a list in the courses' own order, rather than a switch with fourteen
+	 * arms. The risk that buys is a mis-ordered list silently mapping Falador's switch onto
+	 * Seers' obstacles, which is why the check for this walks every course end to end: each
+	 * one turned on alone, and only its own obstacles wanted.
+	 */
 	boolean wanted(AgilityObstacles.Obstacle obstacle) {
-		if (obstacle.course == AgilityObstacles.DUNGEON) {
-			return this.dungeon;
-		}
-		if (obstacle.course == AgilityObstacles.SHORTCUT) {
-			return this.shortcuts;
-		}
-		return this.courses;
+		boolean[] on = this.switchFor();
+		return obstacle.course >= 0 && obstacle.course < on.length && on[obstacle.course];
+	}
+
+	/** The switches, in the order AgilityObstacles numbers the courses. */
+	boolean[] switchFor() {
+		return new boolean[] {
+			this.gnome, this.barbarian, this.wilderness, this.draynor, this.alkharid,
+			this.varrock, this.canifis, this.falador, this.seers, this.pollnivneach,
+			this.rellekka, this.ardougne, this.shortcuts, this.dungeon
+		};
 	}
 
 	/** Which of the three colours a mark is drawn in. */

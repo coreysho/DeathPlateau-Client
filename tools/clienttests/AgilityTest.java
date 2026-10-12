@@ -310,23 +310,112 @@ public final class AgilityTest {
 		check("333333".equals(plugin.colourFor(gnome, true)),
 			"which beats the course colour too, rather than only applying to shortcuts");
 
-		// THE THREE SWITCHES, each against all three kinds.
-		plugin.courses = true;
-		plugin.shortcuts = true;
-		plugin.dungeon = true;
+		// ---- ONE SWITCH PER COURSE, WALKED END TO END.
+		//
+		// wanted() looks the switch up BY INDEX against a list in the courses' own order, so a
+		// list one short or one out of step would map Falador's switch onto Seers' obstacles -
+		// every switch would still "work", just on the wrong course. Nothing short of turning
+		// each on alone and checking only its own obstacles answer catches that.
+		check(plugin.switchFor().length == AgilityObstacles.COURSES.length,
+			"there is a switch for every course (" + plugin.switchFor().length + " of "
+				+ AgilityObstacles.COURSES.length + ")");
+		boolean everyCourseMapped = true;
+		StringBuilder wrong = new StringBuilder();
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			setEverySwitch(plugin, false);
+			setSwitch(plugin, course, true);
+			for (int other = 0; other < AgilityObstacles.COURSES.length; other++) {
+				AgilityObstacles.Obstacle sample = firstOf(other);
+				if (sample == null) {
+					continue;
+				}
+				boolean want = other == course;
+				if (plugin.wanted(sample) != want) {
+					everyCourseMapped = false;
+					wrong.append(AgilityObstacles.COURSES[course]).append("->")
+						.append(AgilityObstacles.COURSES[other]).append(' ');
+				}
+			}
+		}
+		check(everyCourseMapped,
+			"each course's switch marks that course's obstacles and no other's" + (wrong.length()
+				> 0 ? " (crossed: " + wrong + ")" : ""));
+		// A COURSE THE SWITCHES DO NOT COVER IS NOT MARKED, and does not throw.
+		//
+		// Nothing in the table has a course past the end of the list - a shape check above
+		// sees to that - so this guard is unreachable from the data as it stands. It is what
+		// happens the day a fifteenth course is added to the table and its switch is
+		// forgotten: a quiet "not marked" in the sidebar rather than an exception thrown out
+		// of a draw that runs fifty times a second.
+		AgilityObstacles.Obstacle offTheEnd =
+			new AgilityObstacles.Obstacle(1, "Nonesuch", AgilityObstacles.COURSES.length, 1);
+		boolean handled;
+		try {
+			handled = !plugin.wanted(offTheEnd);
+		} catch (RuntimeException threw) {
+			handled = false;
+		}
+		check(handled,
+			"an obstacle whose course has no switch is left unmarked rather than throwing");
+		AgilityObstacles.Obstacle negative =
+			new AgilityObstacles.Obstacle(1, "Nonesuch", -1, 1);
+		boolean negativeHandled;
+		try {
+			negativeHandled = !plugin.wanted(negative);
+		} catch (RuntimeException threw) {
+			negativeHandled = false;
+		}
+		check(negativeHandled, "...and so is one with no course at all");
+
+		setEverySwitch(plugin, true);
 		check(plugin.wanted(gnome) && plugin.wanted(crevice) && plugin.wanted(dungeon),
 			"with everything on, everything is wanted");
-		plugin.courses = false;
-		check(!plugin.wanted(gnome) && plugin.wanted(crevice) && plugin.wanted(dungeon),
-			"turning courses off leaves shortcuts and the dungeon");
-		plugin.courses = true;
-		plugin.shortcuts = false;
-		check(plugin.wanted(gnome) && !plugin.wanted(crevice) && plugin.wanted(dungeon),
-			"turning shortcuts off leaves courses and the dungeon");
-		plugin.shortcuts = true;
-		plugin.dungeon = false;
-		check(plugin.wanted(gnome) && plugin.wanted(crevice) && !plugin.wanted(dungeon),
-			"and turning the dungeon off leaves the other two");
+		setEverySwitch(plugin, false);
+		check(!plugin.wanted(gnome) && !plugin.wanted(crevice) && !plugin.wanted(dungeon),
+			"and with everything off, nothing is");
+		setEverySwitch(plugin, true);
+	}
+
+	/** The first obstacle of a course, or null if the table has none. */
+	static AgilityObstacles.Obstacle firstOf(int course) {
+		List<AgilityObstacles.Obstacle> all = AgilityObstacles.all();
+		for (int i = 0; i < all.size(); i++) {
+			if (all.get(i).course == course) {
+				return all.get(i);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Writes one course's switch by index, through the field the config binds.
+	 *
+	 * By reflection over the declared order rather than a fourteen-arm setter, so this helper
+	 * cannot drift from the plugin the way a hand-written copy of the mapping would - and so
+	 * that the check above is testing the plugin's own order rather than agreeing with a second
+	 * copy of it.
+	 */
+	static void setSwitch(AgilityPlugin plugin, int course, boolean on) {
+		String[] keys = {
+			"gnome", "barbarian", "wilderness", "draynor", "alkharid", "varrock", "canifis",
+			"falador", "seers", "pollnivneach", "rellekka", "ardougne", "shortcuts", "dungeon"
+		};
+		if (course < 0 || course >= keys.length) {
+			return;
+		}
+		try {
+			java.lang.reflect.Field f = AgilityPlugin.class.getDeclaredField(keys[course]);
+			f.setAccessible(true);
+			f.setBoolean(plugin, on);
+		} catch (Throwable missing) {
+			check(false, "AgilityPlugin has a switch called " + keys[course]);
+		}
+	}
+
+	static void setEverySwitch(AgilityPlugin plugin, boolean on) {
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			setSwitch(plugin, course, on);
+		}
 	}
 
 	// ---------------------------------------------------------------- the fixture
@@ -601,9 +690,9 @@ public final class AgilityTest {
 
 	static void drawTests() {
 		clearScene();
-		set("courses", "true");
-		set("shortcuts", "true");
-		set("dungeon", "true");
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			set(switchKey(course), "true");
+		}
 		set("courseColour", "00FF00");
 		set("shortcutColour", "00FFFF");
 		set("lockedColour", "FF0000");
@@ -843,6 +932,15 @@ public final class AgilityTest {
 			}
 		}
 		return n;
+	}
+
+	/** The config key for one course's switch, in the courses' own order. */
+	static String switchKey(int course) {
+		String[] keys = {
+			"gnome", "barbarian", "wilderness", "draynor", "alkharid", "varrock", "canifis",
+			"falador", "seers", "pollnivneach", "rellekka", "ardougne", "shortcuts", "dungeon"
+		};
+		return keys[course];
 	}
 
 	static void set(String key, String value) {
