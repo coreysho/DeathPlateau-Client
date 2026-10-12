@@ -238,7 +238,9 @@ public class NotifyTest {
 		// The pause is load-bearing: section 2 left the notification limit warm, and without
 		// waiting it out a notifier that DID fire here would be silenced by the limiter and the
 		// check would pass anyway.
-		pause();
+		check(pause(),
+			"the notifier's rate limit can be wound back, so every check below starts from an "
+				+ "unspent allowance rather than from a sleep");
 		int before = messages();
 		for (int i = 0; i < 20; i++) {
 			plugin.onGameTick(new jagex2.client.plugin.event.GameTick(i));
@@ -503,11 +505,36 @@ public class NotifyTest {
 	}
 
 	/** Waits out the rate limit, so the next call is measuring something else. */
-	static void pause() {
+	static boolean pause() {
+		// WIND THE LIMITER BACK rather than wait it out.
+		//
+		// PluginContext allows one notification every NOTIFY_EVERY_MS across every plugin, so
+		// a check that expects silence has to start from an unspent allowance or it passes for
+		// the wrong reason - the code really did try to speak and the limiter swallowed it.
+		// The first version of this slept 1.6 seconds to be sure, a dozen times a pass, which is most of
+		// what a mutation audit of this suite costs.
+		//
+		// Setting lastNotify back is the same guarantee without the wait, and a stronger one:
+		// a sleep is only as reliable as the scheduler, and on a loaded machine a 1.6-second
+		// sleep that takes 1.4 would hand the next check a limiter that is still warm.
 		try {
-			Thread.sleep(1600);
-		} catch (InterruptedException ignored) {
-			Thread.currentThread().interrupt();
+			java.lang.reflect.Field held = PluginManager.class.getDeclaredField("ctx");
+			held.setAccessible(true);
+			Object ctx = held.get(manager);
+			java.lang.reflect.Field last =
+				jagex2.client.plugin.PluginContext.class.getDeclaredField("lastNotify");
+			last.setAccessible(true);
+			last.setLong(ctx, 0L);
+			return true;
+		} catch (Throwable renamed) {
+			// Falling back rather than carrying on: without one of the two the checks that
+			// expect silence stop meaning anything. The caller says so out loud once.
+			try {
+				Thread.sleep(1600L);
+			} catch (InterruptedException stop) {
+				Thread.currentThread().interrupt();
+			}
+			return false;
 		}
 	}
 
