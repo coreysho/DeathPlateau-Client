@@ -106,8 +106,8 @@ public final class AgilityTest {
 	// ---------------------------------------------------------------- 1
 
 	static void tableTests() {
-		check(AgilityObstacles.count() == 53,
-			"the table holds every obstacle the agility scripts bind, which is 53 ("
+		check(AgilityObstacles.count() == 126,
+			"the table holds every obstacle the agility scripts bind, which is 126 ("
 				+ AgilityObstacles.count() + ")");
 
 		// ANCHORS A READER OF THE CONTENT CAN CONFIRM. One per course, picked where the script
@@ -189,6 +189,49 @@ public final class AgilityTest {
 		check(!AgilityObstacles.isCourse(AgilityObstacles.SHORTCUT)
 				&& !AgilityObstacles.isCourse(AgilityObstacles.DUNGEON),
 			"...and a shortcut and the dungeon are not");
+
+		// ---- THE ROOFTOP COURSES, which the first version of this table missed entirely.
+		//
+		// They were added to the content after the branch that table was generated from, and
+		// nothing here noticed - the plugin shipped marking the barbarian course and the
+		// shortcuts and silently ignoring nine courses. These anchors are one per course, at
+		// the level the course's own constant sets, so a table regenerated from a stale
+		// checkout fails rather than quietly shrinking.
+		int[] rooftops = {
+			AgilityObstacles.DRAYNOR, AgilityObstacles.ALKHARID, AgilityObstacles.VARROCK,
+			AgilityObstacles.CANIFIS, AgilityObstacles.FALADOR, AgilityObstacles.SEERS,
+			AgilityObstacles.POLLNIVNEACH, AgilityObstacles.RELLEKKA,
+			AgilityObstacles.ARDOUGNE
+		};
+		int[] wantLevels = { 1, 20, 30, 40, 50, 60, 70, 80, 90 };
+		for (int i = 0; i < rooftops.length; i++) {
+			int course = rooftops[i];
+			int found = 0;
+			boolean rightLevel = true;
+			for (int j = 0; j < all.size(); j++) {
+				if (all.get(j).course == course) {
+					found++;
+					if (all.get(j).level != wantLevels[i]) {
+						rightLevel = false;
+					}
+				}
+			}
+			check(found > 0 && rightLevel,
+				AgilityObstacles.COURSES[course] + " is in the table, at level " + wantLevels[i]
+					+ " (" + found + " obstacles)");
+			check(AgilityObstacles.isCourse(course),
+				"..." + AgilityObstacles.COURSES[course] + " counts as a course");
+		}
+
+		// A GRAFTED LOC CARRIES THIS CACHE'S ID, NOT OSRS'S. The rooftop obstacles were
+		// imported from OSRS and re-encoded, so Draynor's rough wall is loc 11404 there and
+		// 18897 here - a table taken from a wiki, or from the comments in the script that
+		// name the OSRS ids, would mark nothing at all.
+		AgilityObstacles.Obstacle roughWall = AgilityObstacles.byId(18897);
+		check(roughWall != null && roughWall.course == AgilityObstacles.DRAYNOR,
+			"Draynor's rough wall is in the table under THIS cache's id, 18897");
+		check(AgilityObstacles.byId(11404) == null,
+			"...and not under the OSRS id its own script comment names");
 	}
 
 	/**
@@ -267,23 +310,112 @@ public final class AgilityTest {
 		check("333333".equals(plugin.colourFor(gnome, true)),
 			"which beats the course colour too, rather than only applying to shortcuts");
 
-		// THE THREE SWITCHES, each against all three kinds.
-		plugin.courses = true;
-		plugin.shortcuts = true;
-		plugin.dungeon = true;
+		// ---- ONE SWITCH PER COURSE, WALKED END TO END.
+		//
+		// wanted() looks the switch up BY INDEX against a list in the courses' own order, so a
+		// list one short or one out of step would map Falador's switch onto Seers' obstacles -
+		// every switch would still "work", just on the wrong course. Nothing short of turning
+		// each on alone and checking only its own obstacles answer catches that.
+		check(plugin.switchFor().length == AgilityObstacles.COURSES.length,
+			"there is a switch for every course (" + plugin.switchFor().length + " of "
+				+ AgilityObstacles.COURSES.length + ")");
+		boolean everyCourseMapped = true;
+		StringBuilder wrong = new StringBuilder();
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			setEverySwitch(plugin, false);
+			setSwitch(plugin, course, true);
+			for (int other = 0; other < AgilityObstacles.COURSES.length; other++) {
+				AgilityObstacles.Obstacle sample = firstOf(other);
+				if (sample == null) {
+					continue;
+				}
+				boolean want = other == course;
+				if (plugin.wanted(sample) != want) {
+					everyCourseMapped = false;
+					wrong.append(AgilityObstacles.COURSES[course]).append("->")
+						.append(AgilityObstacles.COURSES[other]).append(' ');
+				}
+			}
+		}
+		check(everyCourseMapped,
+			"each course's switch marks that course's obstacles and no other's" + (wrong.length()
+				> 0 ? " (crossed: " + wrong + ")" : ""));
+		// A COURSE THE SWITCHES DO NOT COVER IS NOT MARKED, and does not throw.
+		//
+		// Nothing in the table has a course past the end of the list - a shape check above
+		// sees to that - so this guard is unreachable from the data as it stands. It is what
+		// happens the day a fifteenth course is added to the table and its switch is
+		// forgotten: a quiet "not marked" in the sidebar rather than an exception thrown out
+		// of a draw that runs fifty times a second.
+		AgilityObstacles.Obstacle offTheEnd =
+			new AgilityObstacles.Obstacle(1, "Nonesuch", AgilityObstacles.COURSES.length, 1);
+		boolean handled;
+		try {
+			handled = !plugin.wanted(offTheEnd);
+		} catch (RuntimeException threw) {
+			handled = false;
+		}
+		check(handled,
+			"an obstacle whose course has no switch is left unmarked rather than throwing");
+		AgilityObstacles.Obstacle negative =
+			new AgilityObstacles.Obstacle(1, "Nonesuch", -1, 1);
+		boolean negativeHandled;
+		try {
+			negativeHandled = !plugin.wanted(negative);
+		} catch (RuntimeException threw) {
+			negativeHandled = false;
+		}
+		check(negativeHandled, "...and so is one with no course at all");
+
+		setEverySwitch(plugin, true);
 		check(plugin.wanted(gnome) && plugin.wanted(crevice) && plugin.wanted(dungeon),
 			"with everything on, everything is wanted");
-		plugin.courses = false;
-		check(!plugin.wanted(gnome) && plugin.wanted(crevice) && plugin.wanted(dungeon),
-			"turning courses off leaves shortcuts and the dungeon");
-		plugin.courses = true;
-		plugin.shortcuts = false;
-		check(plugin.wanted(gnome) && !plugin.wanted(crevice) && plugin.wanted(dungeon),
-			"turning shortcuts off leaves courses and the dungeon");
-		plugin.shortcuts = true;
-		plugin.dungeon = false;
-		check(plugin.wanted(gnome) && plugin.wanted(crevice) && !plugin.wanted(dungeon),
-			"and turning the dungeon off leaves the other two");
+		setEverySwitch(plugin, false);
+		check(!plugin.wanted(gnome) && !plugin.wanted(crevice) && !plugin.wanted(dungeon),
+			"and with everything off, nothing is");
+		setEverySwitch(plugin, true);
+	}
+
+	/** The first obstacle of a course, or null if the table has none. */
+	static AgilityObstacles.Obstacle firstOf(int course) {
+		List<AgilityObstacles.Obstacle> all = AgilityObstacles.all();
+		for (int i = 0; i < all.size(); i++) {
+			if (all.get(i).course == course) {
+				return all.get(i);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Writes one course's switch by index, through the field the config binds.
+	 *
+	 * By reflection over the declared order rather than a fourteen-arm setter, so this helper
+	 * cannot drift from the plugin the way a hand-written copy of the mapping would - and so
+	 * that the check above is testing the plugin's own order rather than agreeing with a second
+	 * copy of it.
+	 */
+	static void setSwitch(AgilityPlugin plugin, int course, boolean on) {
+		String[] keys = {
+			"gnome", "barbarian", "wilderness", "draynor", "alkharid", "varrock", "canifis",
+			"falador", "seers", "pollnivneach", "rellekka", "ardougne", "shortcuts", "dungeon"
+		};
+		if (course < 0 || course >= keys.length) {
+			return;
+		}
+		try {
+			java.lang.reflect.Field f = AgilityPlugin.class.getDeclaredField(keys[course]);
+			f.setAccessible(true);
+			f.setBoolean(plugin, on);
+		} catch (Throwable missing) {
+			check(false, "AgilityPlugin has a switch called " + keys[course]);
+		}
+	}
+
+	static void setEverySwitch(AgilityPlugin plugin, boolean on) {
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			setSwitch(plugin, course, on);
+		}
 	}
 
 	// ---------------------------------------------------------------- the fixture
@@ -558,9 +690,9 @@ public final class AgilityTest {
 
 	static void drawTests() {
 		clearScene();
-		set("courses", "true");
-		set("shortcuts", "true");
-		set("dungeon", "true");
+		for (int course = 0; course < AgilityObstacles.COURSES.length; course++) {
+			set(switchKey(course), "true");
+		}
 		set("courseColour", "00FF00");
 		set("shortcutColour", "00FFFF");
 		set("lockedColour", "FF0000");
@@ -800,6 +932,15 @@ public final class AgilityTest {
 			}
 		}
 		return n;
+	}
+
+	/** The config key for one course's switch, in the courses' own order. */
+	static String switchKey(int course) {
+		String[] keys = {
+			"gnome", "barbarian", "wilderness", "draynor", "alkharid", "varrock", "canifis",
+			"falador", "seers", "pollnivneach", "rellekka", "ardougne", "shortcuts", "dungeon"
+		};
+		return keys[course];
 	}
 
 	static void set(String key, String value) {

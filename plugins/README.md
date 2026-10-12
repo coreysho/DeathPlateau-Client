@@ -678,22 +678,47 @@ rows about items.
 Marks every agility obstacle around you - all three courses, every shortcut, and the Yanille
 dungeon - in a colour that says which kind it is and whether your level can use it.
 
-**The obstacles come from this server's own content, not from OSRS.** There are three courses
-here, not eight, and a table of ids copied off a wiki would mark scenery that does nothing and
-miss the shortcuts that work. `AgilityObstacles` is generated from DeathPlateau-Content by
-reading every `[oploc*,name]` handler in the agility scripts, resolving each name through
-`pack/loc.pack` to its id, and taking the requirement from the `if(stat(agility) < n)` the
-handler opens with. The labels are the `name=` the cache ships, so a mark reads the same as the
-right-click menu. 53 obstacles: 9 on the gnome course, 6 on the barbarian, 8 on the wilderness,
-26 shortcuts and log balances, and 4 in the dungeon.
+**The obstacles come from this server's own content, not from OSRS.** The rooftop locs here
+were grafted in from OSRS and re-encoded, so they carry new ids - OSRS's loc 11404, Draynor's
+rough wall, is **18897** in this build. A table copied from a wiki, or from the OSRS ids the
+scripts' own comments name, marks nothing at all. `AgilityObstacles` is generated from
+DeathPlateau-Content's **default branch** by reading every `[oploc*,name]` handler under
+`scripts/skill_agility/scripts`, resolving each name through `pack/loc.pack`, and taking the
+requirement from the `stat(agility) < n` the handler gates on - or, where the gate is on the
+course's entry rather than on each obstacle, from that course's own `^name_level` constant.
+The labels are the `name=` the cache ships, so a mark reads the same as the right-click menu.
 
-**Five handlers in those scripts are deliberately not in the table.** Three of them -
+**126 obstacles across fifteen sources**: the gnome (9), barbarian (6) and wilderness (8)
+courses; the nine rooftop courses - Draynor (7, level 1), Al Kharid (8, 20), Varrock (7, 30),
+Canifis (8, 40), Falador (14, 50), Seers (6, 60), Pollnivneach (9, 70), Rellekka (7, 80) and
+Ardougne (7, 90); 26 shortcuts and log balances; and 4 in the Yanille dungeon.
+
+**The skill's own directory is the source, and getting that wrong shipped the plugin with nine
+courses missing.** The first table was generated from a content checkout three weeks stale, on
+a branch that predated the rooftop courses - so the plugin marked the barbarian course and the
+shortcuts and silently ignored two thirds of the skill. Two narrower definitions also fail:
+searching for files *named* "agility" finds the directory but not that it has grown, and
+searching for handlers that *grant agility experience* misses six rooftop courses, which award
+it through a shared helper rather than calling `agility_xp` themselves. Every `[oploc*]`
+handler under that directory is an obstacle by construction. The test pins the count and one
+anchor per course, so a regeneration from a stale checkout fails rather than quietly shrinking.
+
+**Five handlers are deliberately not in the table.** Three of them -
 `_monkeybars`, `_island_rope_swing` and `_karamja_stepping_stone` - bind loc CATEGORIES, and no
 loc in this content belongs to any of them: they were ported ahead of the locs they are for, and
 are dead code until those land. The other two are `shuttwistedchest` and `trappedchaosaltar`, a
 locked chest and a prayer altar with a trapdoor under it, which are in the Yanille dungeon's
 script file only because that is where Yanille's scripts live. Marking them as agility obstacles
 would be the table believing its source too literally.
+
+**Twenty-three settings.** One switch per course, not one for "courses": there are twelve of them and a player trains
+one at a time, so a single switch is the wrong grain: it is on for the course you are running
+and on for the eleven you are not. Shortcuts and the dungeon keep a switch each, making
+fourteen. `wanted()` looks the switch up BY INDEX against a list in the courses' own order,
+which is compact and buys one risk - a list one out of step would map Falador's switch onto
+Seers' obstacles, and every switch would still appear to work. The check for it turns each
+course on alone and asserts only that course's obstacles answer, which is the only arrangement
+that catches a crossed mapping.
 
 **A shortcut you cannot use yet is drawn in a third colour rather than hidden.** Knowing a 70
 Agility crevice is there is most of why anyone trains the skill. The switch to hide them is for
