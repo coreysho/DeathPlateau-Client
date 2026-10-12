@@ -60,6 +60,13 @@ package jagex2.client.plugin;
  *     list of the three sizes and one parse of it, rather than a copy in each plugin.</dd>
  * <dt>8</dt><dd>{@code ctx.getTrueTileX} / {@code getTrueTileZ}: the tile the SERVER has the
  *     player on, which during a walk is ahead of the one they appear to stand on.</dd>
+ * <dt>9</dt><dd>{@code ctx.findLocs}: where the scenery is. The client keeps no list of locs -
+ *     it keeps a 104x104 grid of squares with four slots each - so this walks the grid for a
+ *     set of ids and answers with {@code SceneLoc}s: an id, a place, a layer and the size the
+ *     thing covers, already turned by its rotation. One entry per loc rather than per tile.
+ *     <p>
+ *     A READ, AND ONLY A READ. There is no handle on the scene entry behind it and no way to
+ *     put a loc anywhere, change one, or click one. The scene stays the client's.</dd>
  *     <p>
  *     STILL NO TEXT AND NO ACTION. A row's words and what it does are not writable, and that is
  *     the point rather than an omission: a plugin that could relabel a row could put "Bank"
@@ -74,7 +81,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 8;
+	public static final int LEVEL = 9;
 
 	private PluginApi() {
 	}

@@ -453,15 +453,11 @@ public class MouseTest {
 	 * thing is the only structural defence there is.
 	 */
 	static void fontChoiceTests() {
-		// THE EXACT LEVEL LIVES IN THE NEWEST SUITE, which is still this one: 7 added isMenuOpen
-		// and fontFor, and 8 added the true tile - both landed here. Every older suite asks only
-		// that its own level is supported, so this pin is the single place that moves when the
-		// next addition does.
-		check(jagex2.client.plugin.PluginApi.LEVEL == 8,
-			"this client is API level 8 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
+		// THE EXACT LEVEL HAS MOVED ON to AgilityTest, which is the newest suite now that 9
+		// has added findLocs. This one asks only what every older suite asks: that the levels
+		// it needs are still supported. One pin, in one place, moving with the newest addition.
 		check(jagex2.client.plugin.PluginApi.supports(8), "a plugin asking for 8 runs here");
 		check(jagex2.client.plugin.PluginApi.supports(7), "...and one asking for 7 still does");
-		check(!jagex2.client.plugin.PluginApi.supports(9), "one asking for 9 does not");
 		check(read("src/main/java/jagex2/client/plugin/builtin/MouseHighlightPlugin.java")
 				.indexOf("apiLevel = 7") >= 0,
 			"Mouse highlight declares the level it needs, which is still 7");
