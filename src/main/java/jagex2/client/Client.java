@@ -754,9 +754,10 @@ public class Client extends GameShell implements PixMap.Target {
 	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
 	// are about this machine's screen and what it can push. Neither is a switch: both step through
 	// their values, so each keeps the tick box its neighbours have and spells out what it is on.
-	private static final int ROW_WINDOW = QolSettings.COUNT;
-	private static final int ROW_DRAW_DISTANCE = QolSettings.COUNT + 1;
-	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 2;
+	// PANEL_COUNT, not COUNT: a setting the title screen owns is not listed here. See QolSettings.
+	private static final int ROW_WINDOW = QolSettings.PANEL_COUNT;
+	private static final int ROW_DRAW_DISTANCE = QolSettings.PANEL_COUNT + 1;
+	private static final int QOL_PANEL_ROWS = QolSettings.PANEL_COUNT + 2;
 
 	private int qolPanelHeight() {
 		return QOL_PANEL_HEADER_H + QOL_PANEL_ROWS * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
@@ -2912,7 +2913,11 @@ public class Client extends GameShell implements PixMap.Target {
 			AnimFrame.init(this.onDemand.getAnimCount());
 			Model.init(this.onDemand.getFileCount(0), this.onDemand);
 
-			if (!lowMem) {
+			// The title song is requested here and starts playing the moment it arrives, which is
+			// before the title screen exists - so the toggle has to be read here as well as on the
+			// screen itself, or music the player turned off last time would play through the whole
+			// of loading and only stop once they clicked it off again.
+			if (!lowMem && QolSettings.on(QolSettings.LOGIN_MUSIC)) {
 				this.midiSong = 0;
 				this.midiFading = true;
 
@@ -3871,6 +3876,12 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.K(I)V")
 	public void updateTitle() {
+		// Before the state dispatch: state 2 ends in a keyboard loop that returns, so a check
+		// placed after it would never run on the login form - the one screen where a player
+		// waiting on a password is most likely to want the music off.
+		if (this.clickedTitleMusicToggle()) {
+			return;
+		}
 		if (this.titleScreenState == 0) {
 			int var2 = super.canvasWidth / 2 - 80;
 			int var3 = super.canvasHeight / 2 + 20;
@@ -7699,6 +7710,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.imageTitlebutton.plotSprite(var17 - 20, var16 - 73);
 			this.fontBold12.centreStringTag(true, 16777215, var17 + 5, var16, "Cancel");
 		}
+		this.drawTitleMusicToggle(var3, var4);
 		this.imageTitle4.draw(171, 202, super.graphics);
 		if (this.redrawFrame) {
 			this.redrawFrame = false;
@@ -7709,6 +7721,64 @@ public class Client extends GameShell implements PixMap.Target {
 			this.imageTitle7.draw(171, 128, super.graphics);
 			this.imageTitle8.draw(171, 562, super.graphics);
 		}
+	}
+
+	/**
+	 * THE LOGIN SCREEN'S MUSIC TOGGLE (owner, 2026-10-12). One line at the foot of the login box,
+	 * drawn in all three title states because the preference belongs to the screen rather than to
+	 * any one of its pages, and because the music is already playing on the first of them.
+	 *
+	 * WHY IT IS NOT midiActive. midiActive is the in-game Music setting, driven by the options tab
+	 * through a varp the server sends; writing it here would mean turning the title music off also
+	 * silenced the game until the player went and found that setting. This only starts and stops
+	 * the title song, and the server's own MIDI_SONG on login takes over regardless.
+	 *
+	 * TITLE BOX GEOMETRY, and the reason this sits where it does. imageTitlebox is 360x200 and
+	 * everything drawn into it is in box coordinates, while updateTitle() hit-tests in canvas
+	 * coordinates; the box is centred, so box y is canvasHeight / 2 - 100 + y.
+	 *
+	 * The bottom ten rows are the only strip free in all three states, and it is the HIT boxes that
+	 * decide that, not the pixels. Login, Cancel and Existing User are drawn around box y 155 but
+	 * their click bands run to box y 190 - far below the sprites - so a strip any higher than 191
+	 * would quietly steal part of the Login button, and this is checked first and returns, which
+	 * would have made that theft silent. Box y 180 is taken as well: it is where state 0 centres
+	 * the on-demand loading message.
+	 */
+	private static final int TITLE_MUSIC_BASELINE = 194;
+	private static final int TITLE_MUSIC_TOP = 191;
+	private static final int TITLE_MUSIC_BOTTOM = 200;
+	private static final int TITLE_MUSIC_HALFWIDTH = 50;
+
+	private void drawTitleMusicToggle(int boxWidth, int boxHeight) {
+		boolean on = QolSettings.on(QolSettings.LOGIN_MUSIC);
+		this.fontPlain11.centreStringTag(true, on ? 0xC8C8C8 : 0x8C8C8C, TITLE_MUSIC_BASELINE, boxWidth / 2, on ? "Music: on" : "Music: off");
+	}
+
+	/**
+	 * Returns true if the click landed on the music toggle, so that updateTitle() can stop there
+	 * rather than letting the same click fall through to whatever is underneath it.
+	 */
+	private boolean clickedTitleMusicToggle() {
+		if (super.mouseClickButton != 1) {
+			return false;
+		}
+		int top = super.canvasHeight / 2 - 100 + TITLE_MUSIC_TOP;
+		int bottom = super.canvasHeight / 2 - 100 + TITLE_MUSIC_BOTTOM;
+		int x = super.canvasWidth / 2;
+		if (super.mouseClickX < x - TITLE_MUSIC_HALFWIDTH || super.mouseClickX > x + TITLE_MUSIC_HALFWIDTH || super.mouseClickY < top || super.mouseClickY > bottom) {
+			return false;
+		}
+		QolSettings.toggle(QolSettings.LOGIN_MUSIC);
+		if (QolSettings.on(QolSettings.LOGIN_MUSIC)) {
+			if (!lowMem && this.onDemand != null) {
+				this.midiSong = 0;
+				this.midiFading = true;
+				this.onDemand.request(2, this.midiSong);
+			}
+		} else {
+			this.stopMidi();
+		}
+		return true;
 	}
 
 	@ObfuscatedName("client.p(I)V")
