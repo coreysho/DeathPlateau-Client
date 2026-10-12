@@ -63,12 +63,13 @@ public final class QolSettings {
 	public static final int WHEEL_INTERFACE = 11;
 	public static final int ROOFS_OFF = 12;
 	public static final int DESKTOP_NOTIFY = 13;
+	public static final int LOGIN_MUSIC = 14;
 
 	/** Stable keys written to disk. NEVER rename one of these - it silently resets that setting. */
 	private static final String[] KEYS = {
 		"chat_history", "compass_north", "shift_drop", "space_continue", "dialogue_keys",
 		"bankpin_keys", "tab_reply", "esc_close", "mmb_camera", "wheel_zoom", "wheel_chat",
-		"wheel_interface", "roofs_off", "desktop_notify"
+		"wheel_interface", "roofs_off", "desktop_notify", "login_music"
 	};
 
 	private static final String[] LABELS = {
@@ -76,7 +77,7 @@ public final class QolSettings {
 		"Space advances dialogue", "Number keys pick dialogue option", "Number keys for bank PIN",
 		"Tab replies to last PM", "Escape closes interfaces", "Middle-mouse camera drag",
 		"Scroll wheel zooms camera", "Scroll wheel scrolls chat", "Scroll wheel scrolls interfaces",
-		"Hide roofs", "Plugin notifications on the desktop"
+		"Hide roofs", "Plugin notifications on the desktop", "Login screen music"
 	};
 
 	// Every default is ON, with ONE exception. For the twelve that predate this class that was the
@@ -93,15 +94,32 @@ public final class QolSettings {
 	// looking at the game. The only time one appears is a time it is worth appearing. The switch
 	// is here for anyone whose desktop makes them loud anyway.
 	//
+	// "Login screen music" defaults ON as the title music always played. It is the one setting
+	// here the player can reach without this panel - the title screen carries its own one-click
+	// toggle for it - because the panel needs F9 in the game and the music plays before that.
+	// Both write this file.
+	//
 	// Kept out of the array literal on purpose - the roofs test reads these three arrays out of
 	// the source to check they are the same length, and a comma inside a comment in there reads
 	// as another entry.
 	private static final boolean[] DEFAULTS = {
 		true, true, true, true, true, true, true, true, true, true, true, true,
-		false, true
+		false, true, true
 	};
 
 	public static final int COUNT = KEYS.length;
+
+	/**
+	 * How many of these the in-game panel lists. Everything from here on is stored and loaded like
+	 * the rest but deliberately left out of that panel, because it has its own control somewhere the
+	 * panel cannot reach: LOGIN_MUSIC is toggled on the title screen, which is where the music it
+	 * governs is playing and where F9 does nothing.
+	 *
+	 * Watch the height when adding one that IS listed. The panel centres itself in the 334-pixel
+	 * main area and stands 24 + rows * 14 + 22 pixels tall, so there is room for twenty rows and
+	 * no more; a switch added past that would silently clip the panel top and bottom.
+	 */
+	public static final int PANEL_COUNT = LOGIN_MUSIC;
 
 	private static final boolean[] enabled = new boolean[COUNT];
 	private static boolean loaded;

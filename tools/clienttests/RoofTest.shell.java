@@ -218,9 +218,14 @@ public class RoofTest {
 	// ---------------------------------------------------------------- 3
 	static void panelTests() {
 		RoofTest c = new RoofTest().fresh();
-		check(QolSettings.COUNT == 14, "fourteen settings now (" + QolSettings.COUNT + ")");
-		check(QOL_PANEL_ROWS == QolSettings.COUNT + 2,
-			"...and two more rows under them, the window and the draw distance, which are not QolSettings switches");
+		check(QolSettings.COUNT == 15, "fifteen settings now (" + QolSettings.COUNT + ")");
+		// The panel lists PANEL_COUNT of them, not COUNT. "Login screen music" is stored and saved
+		// here like the rest but is toggled on the title screen, where the music it governs is
+		// playing and where F9 does nothing, so it is deliberately not a row.
+		check(QolSettings.PANEL_COUNT == QolSettings.COUNT - 1,
+			"...one of which the panel does not list, because the title screen owns it");
+		check(QOL_PANEL_ROWS == QolSettings.PANEL_COUNT + 2,
+			"...and two more rows under the listed ones, the window and the draw distance, which are not QolSettings switches");
 		check(QolSettings.label(QolSettings.ROOFS_OFF).equals("Hide roofs"),
 			"...the roofs one labelled " + QolSettings.label(QolSettings.ROOFS_OFF));
 		check(QolSettings.label(QolSettings.ESC_CLOSE).equals("Escape closes interfaces"),

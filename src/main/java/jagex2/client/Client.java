@@ -754,9 +754,10 @@ public class Client extends GameShell implements PixMap.Target {
 	// distance (DisplaySettings), kept with the launcher's files rather than the cache because they
 	// are about this machine's screen and what it can push. Neither is a switch: both step through
 	// their values, so each keeps the tick box its neighbours have and spells out what it is on.
-	private static final int ROW_WINDOW = QolSettings.COUNT;
-	private static final int ROW_DRAW_DISTANCE = QolSettings.COUNT + 1;
-	private static final int QOL_PANEL_ROWS = QolSettings.COUNT + 2;
+	// PANEL_COUNT, not COUNT: a setting the title screen owns is not listed here. See QolSettings.
+	private static final int ROW_WINDOW = QolSettings.PANEL_COUNT;
+	private static final int ROW_DRAW_DISTANCE = QolSettings.PANEL_COUNT + 1;
+	private static final int QOL_PANEL_ROWS = QolSettings.PANEL_COUNT + 2;
 
 	private int qolPanelHeight() {
 		return QOL_PANEL_HEADER_H + QOL_PANEL_ROWS * QOL_PANEL_ROW_H + QOL_PANEL_FOOTER_H;
@@ -2912,7 +2913,11 @@ public class Client extends GameShell implements PixMap.Target {
 			AnimFrame.init(this.onDemand.getAnimCount());
 			Model.init(this.onDemand.getFileCount(0), this.onDemand);
 
-			if (!lowMem) {
+			// The title song is requested here and starts playing the moment it arrives, which is
+			// before the title screen exists - so the toggle has to be read here as well as on the
+			// screen itself, or music the player turned off last time would play through the whole
+			// of loading and only stop once they clicked it off again.
+			if (!lowMem && QolSettings.on(QolSettings.LOGIN_MUSIC)) {
 				this.midiSong = 0;
 				this.midiFading = true;
 
@@ -3871,6 +3876,12 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.K(I)V")
 	public void updateTitle() {
+		// Before the state dispatch: state 2 ends in a keyboard loop that returns, so a check
+		// placed after it would never run on the login form - the one screen where a player
+		// waiting on a password is most likely to want the music off.
+		if (this.clickedTitleMusicToggle()) {
+			return;
+		}
 		if (this.titleScreenState == 0) {
 			int var2 = super.canvasWidth / 2 - 80;
 			int var3 = super.canvasHeight / 2 + 20;
@@ -7709,6 +7720,150 @@ public class Client extends GameShell implements PixMap.Target {
 			this.imageTitle7.draw(171, 128, super.graphics);
 			this.imageTitle8.draw(171, 562, super.graphics);
 		}
+		// Last, and every frame rather than only on redrawFrame: it has to come back after the
+		// corner it sits in is repainted, and it changes when it is clicked.
+		this.drawTitleMusicToggle();
+	}
+
+	/**
+	 * THE LOGIN SCREEN'S MUSIC TOGGLE (owner, 2026-10-12): a music note in the bottom right corner,
+	 * where Old School puts its own, drawn in all three title states because the preference belongs
+	 * to the screen rather than to any one of its pages.
+	 *
+	 * IT WAS A LINE OF TEXT ON THE LOGIN BOX FIRST AND THE CLICK DID NOT LAND ON IT. The box is
+	 * drawn in its own 360x200 coordinates and updateTitle() hit-tests in canvas coordinates, and I
+	 * had the conversion between them wrong by nineteen pixels - box y is canvasHeight / 2 + y - 80,
+	 * not + y - 100. The text and the rectangle that answered clicks were in different places, so
+	 * the only thing that could toggle it was a click on bare panel below the words. Everything here
+	 * is now in SCREEN coordinates, 0..765 by 0..503, converted once in the two places that need it,
+	 * because a 24x24 button in the corner has no second coordinate space to get wrong.
+	 *
+	 * WHY IT IS NOT midiActive. midiActive is the in-game Music setting, driven by the options tab
+	 * through a varp the server sends; writing it here would mean turning the title music off also
+	 * silenced the game until the player went and found that setting. This only starts and stops
+	 * the title song, and the server's own MIDI_SONG on login takes over regardless.
+	 */
+	private static final int MUSIC_SIZE = 24;
+	private static final int MUSIC_X = 765 - 8 - MUSIC_SIZE;
+	private static final int MUSIC_Y = 503 - 8 - MUSIC_SIZE;
+
+	// The note, 16x16 at 4,4 inside the button. Any non-space is ink, and the black outline is grown
+	// from the ink a pixel in every direction, so the glyph reads against the stone behind it
+	// whichever part of the pillar it lands on.
+	private static final String[] MUSIC_NOTE = {
+		"                ",
+		"       #######  ",
+		"       #######  ",
+		"       ##   ### ",
+		"       ##   ### ",
+		"       ##  ###  ",
+		"       ##       ",
+		"       ##       ",
+		"       ##       ",
+		"       ##       ",
+		"       ##       ",
+		"  #######       ",
+		" ########       ",
+		" #######        ",
+		" ######         ",
+		"  ####          "
+	};
+
+	private PixMap imageTitleMusicOn;
+	private PixMap imageTitleMusicOff;
+	private PixMap musicBuiltFrom;
+
+	/**
+	 * The button, background and all. imageTitle6 is the bottom right piece of the title art and it
+	 * is drawn at x 562, y 265, so the stone under the button is lifted straight out of it - the
+	 * button is that stone with a note on top, and nothing has to be restored when it is redrawn.
+	 * Rebuilt whenever the title art is reloaded, which is what musicBuiltFrom watches.
+	 */
+	private PixMap buildMusicButton(boolean on) {
+		PixMap p = new PixMap(MUSIC_SIZE, this.getBaseComponent(), MUSIC_SIZE);
+		PixMap back = this.imageTitle6;
+		if (back != null) {
+			copyRect(back.data, back.width, MUSIC_X - 562, MUSIC_Y - 265, MUSIC_SIZE, MUSIC_SIZE,
+				p.data, MUSIC_SIZE, MUSIC_SIZE, 0, 0);
+		}
+		int ink = on ? 0xFFFFFF : 0x909090;
+		for (int pass = 0; pass < 2; pass++) {
+			for (int gy = 0; gy < MUSIC_NOTE.length; gy++) {
+				String row = MUSIC_NOTE[gy];
+				for (int gx = 0; gx < row.length(); gx++) {
+					if (row.charAt(gx) == ' ') {
+						continue;
+					}
+					int x = gx + 4;
+					int y = gy + 4;
+					if (pass == 0) {
+						for (int dy = -1; dy <= 1; dy++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								int ox = x + dx;
+								int oy = y + dy;
+								if (ox >= 0 && ox < MUSIC_SIZE && oy >= 0 && oy < MUSIC_SIZE) {
+									p.data[oy * MUSIC_SIZE + ox] = 0;
+								}
+							}
+						}
+					} else {
+						p.data[y * MUSIC_SIZE + x] = ink;
+					}
+				}
+			}
+		}
+		if (!on) {
+			// A slash, so off reads at a glance rather than only by the note being a shade darker.
+			for (int i = 3; i < MUSIC_SIZE - 3; i++) {
+				p.data[i * MUSIC_SIZE + i] = 0xC81414;
+				p.data[i * MUSIC_SIZE + i + 1] = 0x500000;
+			}
+		}
+		return p;
+	}
+
+	private void drawTitleMusicToggle() {
+		if (this.imageTitle6 == null) {
+			return;
+		}
+		if (this.musicBuiltFrom != this.imageTitle6) {
+			this.imageTitleMusicOn = this.buildMusicButton(true);
+			this.imageTitleMusicOff = this.buildMusicButton(false);
+			this.musicBuiltFrom = this.imageTitle6;
+		}
+		PixMap button = QolSettings.on(QolSettings.LOGIN_MUSIC) ? this.imageTitleMusicOn : this.imageTitleMusicOff;
+		if (button != null) {
+			button.draw(MUSIC_Y, MUSIC_X, super.graphics);
+		}
+	}
+
+	/**
+	 * Returns true if the click landed on the music button, so that updateTitle() can stop there
+	 * rather than letting the same click fall through to whatever is underneath it. Nothing else on
+	 * the title screen reaches this corner - every other hit box is within ninety pixels of the
+	 * centre - so this cannot steal a click from a button.
+	 */
+	private boolean clickedTitleMusicToggle() {
+		if (super.mouseClickButton != 1) {
+			return false;
+		}
+		int x = super.canvasWidth / 2 + MUSIC_X - 765 / 2;
+		int y = super.canvasHeight / 2 + MUSIC_Y - 503 / 2;
+		if (super.mouseClickX < x || super.mouseClickX >= x + MUSIC_SIZE
+			|| super.mouseClickY < y || super.mouseClickY >= y + MUSIC_SIZE) {
+			return false;
+		}
+		QolSettings.toggle(QolSettings.LOGIN_MUSIC);
+		if (QolSettings.on(QolSettings.LOGIN_MUSIC)) {
+			if (!lowMem && this.onDemand != null) {
+				this.midiSong = 0;
+				this.midiFading = true;
+				this.onDemand.request(2, this.midiSong);
+			}
+		} else {
+			this.stopMidi();
+		}
+		return true;
 	}
 
 	@ObfuscatedName("client.p(I)V")
