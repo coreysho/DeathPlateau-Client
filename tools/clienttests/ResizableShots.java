@@ -48,7 +48,7 @@ public class ResizableShots extends Client {
 	 * two runs (two client builds) can be compared pixel for pixel.
 	 */
 	static volatile boolean still;
-	static int pinYaw = 0;
+	static int pinYaw = Integer.getInteger("shots.yaw", 0).intValue();
 	static int pinPitch = 300;
 	/**
 	 * Click-rate mode: milliseconds of padding added to every frame, to hold a chosen frame rate on
@@ -496,6 +496,97 @@ public class ResizableShots extends Client {
 			doll(prefix);
 			return;
 		}
+		/*
+		 * WEAR MODE: dress a player in what shots.wear names and photograph him from four sides with
+		 * the CLIENT'S OWN RENDERER.
+		 *
+		 * WHY IT EXISTS. tools/wearrender.py in the content repo answers "does this garment show
+		 * through that one" by reimplementing Model.method382 in python. It is a good tool and it
+		 * was wrong about the same question five times running in October 2026 - eight passes of
+		 * worn-model priorities shipped on its numbers and every one was reported still clipping
+		 * from the game, until the lot was reverted. Two of its errors are known and fixed; the
+		 * third is that it is not the client. This is the client.
+		 *
+		 * A fresh account starts in the tutorial, where there is no inventory tab, so the first run
+		 * on a new name marks the tutorial complete and says to run again; the tabs arrive at the
+		 * next login. After that it sets all 23 stats (a Max cape asks for 99 in every one), gives
+		 * and wears each item, and takes a full frame and a scaled crop at each yaw.
+		 *
+		 *   -Dshots.wear=max_cape,armadyl_chestplate   what to put on, in order
+		 *   -Dshots.yaws=0,512,1024,1536               0 is his face, 1024 his back
+		 *   -Dshots.pitch=300                          128 is nearly level, 383 straight down
+		 */
+		if (mode.equals("cape")) {
+			set("selectedTab", Integer.valueOf(3));
+			set("redrawSidebar", Boolean.TRUE);
+			set("redrawSideicons", Boolean.TRUE);
+			waitFrames(20);
+			// A fresh account starts in the tutorial and login.rs2 only hands out the tabs once
+			// %tutorial has reached ^tutorial_complete, so this run sets it and the next one works.
+			command("::setvar tutorial 1000");
+			waitFrames(30);
+			if (((int[]) get("tabInterfaceId"))[3] == -1) {
+				say("account set up (tutorial marked complete) - run again to wear and photograph");
+				log.close();
+				System.exit(0);
+			}
+			String[] all = { "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic",
+				"cooking", "woodcutting", "fletching", "fishing", "firemaking", "crafting", "smithing",
+				"mining", "herblore", "agility", "thieving", "slayer", "farming", "runecraft",
+				"construction", "hunter" };
+			// CHECKED RATHER THAN SENT AND HOPED FOR. Twenty-three commands in a row do not all
+			// arrive - the client meters what it sends per tick - and a Max cape asks for 99 in
+			// every one of them, so a single dropped command is the difference between wearing it
+			// and "You need level 99 in all 23 skills". Each is confirmed against the client's own
+			// skillBaseLevel and sent again if it did not take.
+			for (int pass = 0; pass < 4; pass++) {
+				int missing = 0;
+				for (int i = 0; i < all.length; i++) {
+					if (((int[]) get("skillBaseLevel"))[i] >= 99) {
+						continue;
+					}
+					missing++;
+					command("::setstat " + all[i] + " 99");
+					waitFrames(6);
+				}
+				if (missing == 0) {
+					break;
+				}
+				waitFrames(20);
+			}
+			int low = 0;
+			for (int i = 0; i < all.length; i++) {
+				if (((int[]) get("skillBaseLevel"))[i] < 99) {
+					low++;
+				}
+			}
+			if (low > 0) {
+				say("FAIL " + low + " of 23 stats would not go to 99");
+			}
+			waitFrames(20);
+			for (String item : System.getProperty("shots.wear", "max_cape").split(",")) {
+				item = item.trim();
+				if (item.isEmpty()) {
+					continue;
+				}
+				command("::give " + item);
+				waitFrames(25);
+				int[] at = invSlotAt(-1);
+				click(at[0], at[1], false);
+				waitFrames(30);
+				say("wore " + item);
+			}
+			waitFrames(60);
+			for (String yaw : System.getProperty("shots.yaws", "0,512,1024,1536").split(",")) {
+				pinYaw = Integer.parseInt(yaw.trim()) & 0x7FF;
+				waitFrames(12);
+				shot(prefix + "_y" + yaw.trim());
+				zoomShot(prefix + "_y" + yaw.trim() + "_zoom", 512 / 2, 334 / 2 - 22, 76, 96, 5);
+			}
+			say("done");
+			log.close();
+			System.exit(0);
+		}
 		if (mode.startsWith("swaps")) {
 			swaps(prefix);
 			return;
@@ -557,6 +648,31 @@ public class ResizableShots extends Client {
 	}
 
 	/** Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred. */
+	/**
+	 * A rectangle of the last frame, scaled up with no smoothing, written beside the full shot. A
+	 * player is about sixty pixels tall in a 512x334 viewport and the thing being judged is a seam
+	 * between two garments, so the full frame is unreadable for it and a scaled crop is not.
+	 */
+	static void zoomShot(String name, int cx, int cy, int w, int h, int scale) throws Exception {
+		BufferedImage src;
+		synchronized (LOCK) {
+			src = canvas;
+		}
+		int x = Math.max(0, cx - w / 2);
+		int y = Math.max(0, cy - h / 2);
+		w = Math.min(w, src.getWidth() - x);
+		h = Math.min(h, src.getHeight() - y);
+		BufferedImage crop = src.getSubimage(x, y, w, h);
+		BufferedImage big = new BufferedImage(w * scale, h * scale, BufferedImage.TYPE_INT_RGB);
+		Graphics2D g = big.createGraphics();
+		g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+			java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		g.drawImage(crop, 0, 0, w * scale, h * scale, null);
+		g.dispose();
+		ImageIO.write(big, "png", new File(out, name + ".png"));
+		say("zoom " + name + ".png " + (w * scale) + "x" + (h * scale));
+	}
+
 	static void logIn(String user, boolean resizable, int w, int h) throws Exception {
 		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
 		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
@@ -1192,6 +1308,20 @@ public class ResizableShots extends Client {
 			if (p != null) {
 				ox = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("mainX")).intValue();
 				oy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("mainY")).intValue();
+			}
+		}
+		if (p == null) {
+			// The ordinary inventory TAB, which neither of the two above covers: sidebarInterfaceId
+			// is only set when the server pushes a side panel, and viewportInterfaceId when it
+			// pushes a main one. With neither open the inventory is still right there in the tab.
+			int[] tabs = (int[]) get("tabInterfaceId");
+			int tab = tabs[geti("selectedTab")];
+			if (tab != -1) {
+				p = invPath(comp, get, get.invoke(null, Integer.valueOf(tab)), 0, 0, 0);
+				if (p != null) {
+					ox = ((Number) staticField("SIDE_X")).intValue();
+					oy = 205;
+				}
 			}
 		}
 		if (p == null) {
