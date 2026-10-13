@@ -113,7 +113,10 @@ public class ResizableShots extends Client {
 				set("macroCameraZ", 0);
 				set("macroMinimapAngle", 0);
 				set("macroMinimapZoom", 0);
-				set("cameraZoomOffset", 0);
+				// shots.zoom moves the camera in: -600 is as close as the client allows, 900 as far.
+				// A player is sixty pixels tall at 0 and a seam between two garments is not readable
+				// there, which is why every early wear shot had to be scaled up afterwards.
+				set("cameraZoomOffset", Integer.getInteger("shots.zoom", 0));
 			}
 			int npcs = 0;
 			int players = 0;
@@ -405,6 +408,9 @@ public class ResizableShots extends Client {
 		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
 		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
 		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
+			// wear mode too: a player is sixty pixels tall in the fixed 512x334 viewport and the
+			// thing being judged is a seam between two garments. A bigger window is a bigger him.
+			|| mode.equals("cape")
 			|| mode.equals("swapsclassic")
 			// Zulrah is a five-tile snake in a horseshoe arena: the fixed 765x503 box shows its head
 			// and nothing of the platform its clouds are on.
