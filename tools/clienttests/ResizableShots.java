@@ -516,6 +516,22 @@ public class ResizableShots extends Client {
 		 *   -Dshots.yaws=0,512,1024,1536               0 is his face, 1024 his back
 		 *   -Dshots.pitch=300                          128 is nearly level, 383 straight down
 		 */
+		// What the character design screen is made of, so wear mode can drive it. A player at
+		// %tutorial 0 is handed that screen at login with allowdesign on (tutorial.rs2), which is the
+		// only door to it short of a house with a wardrobe in it.
+		if (mode.equals("design")) {
+			if (geti("viewportInterfaceId") == -1) {
+				command("::setvar tutorial 0");
+				waitFrames(30);
+				say("put back to the start of the tutorial - run again to see the design screen");
+			} else {
+				shot(prefix + "_design");
+				dumpMain();
+			}
+			say("done");
+			log.close();
+			System.exit(0);
+		}
 		if (mode.equals("cape")) {
 			set("selectedTab", Integer.valueOf(3));
 			set("redrawSidebar", Boolean.TRUE);
@@ -1361,6 +1377,83 @@ public class ResizableShots extends Client {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Click a component of the open MAIN interface by the name it carries in the cache.
+	 *
+	 * The design screen, the bank, a quest scroll - none of them are an inventory, so invSlotAt()
+	 * cannot reach them, and their buttons are only ever at one place. This walks the open
+	 * interface's tree the way invPath does, adds up the child offsets, and clicks the middle of the
+	 * first component whose comName contains the needle. Returns false if there is no such thing,
+	 * which a caller should treat as a failure rather than carry on.
+	 */
+	static boolean clickCom(String needle) throws Exception {
+		int main = geti("viewportInterfaceId");
+		if (main == -1) {
+			return false;
+		}
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		int[] at = findCom(comp, get, get.invoke(null, Integer.valueOf(main)), needle, 0, 0, 0);
+		if (at == null) {
+			return false;
+		}
+		int ox = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("mainX")).intValue();
+		int oy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("mainY")).intValue();
+		click(ox + at[0] + at[2] / 2, oy + at[1] + at[3] / 2, false);
+		return true;
+	}
+
+	/** {x, y, width, height} of the first component under this one whose name contains the needle. */
+	static int[] findCom(Class<?> comp, Method get, Object c, String needle, int x, int y, int depth) throws Exception {
+		if (c == null || depth > 5) {
+			return null;
+		}
+		Object name = comp.getField("comName").get(c);
+		if (name != null && name.toString().contains(needle)) {
+			return new int[] { x, y, comp.getField("width").getInt(c), comp.getField("height").getInt(c) };
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		int[] kx = (int[]) comp.getField("childX").get(c);
+		int[] ky = (int[]) comp.getField("childY").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			int[] found = findCom(comp, get, get.invoke(null, Integer.valueOf(kids[i])), needle,
+				x + kx[i], y + ky[i], depth + 1);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
+	}
+
+	/** Every named component of the open main interface, for finding out what a screen is made of. */
+	static void dumpMain() throws Exception {
+		int main = geti("viewportInterfaceId");
+		if (main == -1) {
+			say("no main interface open");
+			return;
+		}
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		dumpCom(comp, get, get.invoke(null, Integer.valueOf(main)), 0, 0, 0);
+	}
+
+	static void dumpCom(Class<?> comp, Method get, Object c, int x, int y, int depth) throws Exception {
+		if (c == null || depth > 5) {
+			return;
+		}
+		Object name = comp.getField("comName").get(c);
+		if (name != null) {
+			say("  com " + name + " at " + x + "," + y + " "
+				+ comp.getField("width").getInt(c) + "x" + comp.getField("height").getInt(c));
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		int[] kx = (int[]) comp.getField("childX").get(c);
+		int[] ky = (int[]) comp.getField("childY").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			dumpCom(comp, get, get.invoke(null, Integer.valueOf(kids[i])), x + kx[i], y + ky[i], depth + 1);
+		}
 	}
 
 	/** The 28-slot inventory somewhere under this component. */
