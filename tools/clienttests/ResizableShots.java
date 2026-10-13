@@ -599,11 +599,33 @@ public class ResizableShots extends Client {
 				say("wore " + item);
 			}
 			waitFrames(60);
+			// A STILL IS NOT ENOUGH, and finding that out cost two reverts. The arm's vertices are
+			// driven by a transform group, so a sleeve that clears a glove in the rest pose does not
+			// clear it once the forearm swings, and two shoulder plates that sort correctly standing
+			// can swap over through the walk cycle. shots.frames samples the player WHILE HE MOVES:
+			// he is sent walking and photographed every shots.every client frames, so the answer
+			// comes from the poses the game actually draws rather than from the one he happens to be
+			// standing in.
+			int frames = Integer.getInteger("shots.frames", 0).intValue();
+			int every = Integer.getInteger("shots.every", 4).intValue();
 			for (String yaw : System.getProperty("shots.yaws", "0,512,1024,1536").split(",")) {
 				pinYaw = Integer.parseInt(yaw.trim()) & 0x7FF;
 				waitFrames(12);
-				shot(prefix + "_y" + yaw.trim());
-				zoomShot(prefix + "_y" + yaw.trim() + "_zoom", 512 / 2, 334 / 2 - 22, 76, 96, 5);
+				String tag = prefix + "_y" + yaw.trim();
+				if (frames <= 0) {
+					shot(tag);
+					zoomShot(tag + "_zoom", 512 / 2, 334 / 2 - 22, 76, 96, 5);
+					continue;
+				}
+				for (int f = 0; f < frames; f++) {
+					// Re-issued every few shots: one click walks a few tiles and he stops, and a
+					// standing player is the thing this mode exists to avoid.
+					if (f % 6 == 0) {
+						walkABit(f);
+					}
+					waitFrames(every);
+					shot(tag + "_f" + (f < 10 ? "0" : "") + f);
+				}
 			}
 			say("done");
 			log.close();
@@ -670,6 +692,21 @@ public class ResizableShots extends Client {
 	}
 
 	/** Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred. */
+	/**
+	 * Send the player a few tiles on, by clicking the scene the way a player does. The direction
+	 * alternates so he walks back and forth about one spot instead of leaving the camera behind.
+	 */
+	static void walkABit(int n) throws Exception {
+		// The SCENE's middle, not the main interface's: in resizable mode the viewport is the whole
+		// window and mainX/mainY are where a centred interface would go, which is somewhere else
+		// entirely. Clicking there walked him nowhere and the first animated run was eighteen
+		// photographs of a man standing still.
+		int cx = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("vpW")).intValue() / 2;
+		int cy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("vpH")).intValue() / 2;
+		int dx = (n / 6) % 2 == 0 ? 90 : -90;
+		click(cx + dx, cy + 40, false);
+	}
+
 	/**
 	 * A rectangle of the last frame, scaled up with no smoothing, written beside the full shot. A
 	 * player is about sixty pixels tall in a 512x334 viewport and the thing being judged is a seam

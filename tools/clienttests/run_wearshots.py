@@ -48,6 +48,12 @@ def main():
     ap.add_argument('--wear', default='max_cape', help='comma separated obj names, worn in order')
     ap.add_argument('--yaws', default='0,512,1024,1536')
     ap.add_argument('--pitch', default='300', help='128 nearly level .. 383 straight down')
+    ap.add_argument('--zoom', default='0', help='camera: 900 is as close as the client allows, -600 as far')
+    ap.add_argument('--tele', default='', help='coord to stand at, e.g. 0,50,50,26,34')
+    ap.add_argument('--frames', default='0',
+                    help='photograph him WALKING, this many frames per yaw, instead of standing')
+    ap.add_argument('--every', default='4', help='client frames between animated shots')
+    ap.add_argument('--window', default='765x503', help='bigger window, bigger player')
     ap.add_argument('--user', default='wearshots')
     ap.add_argument('--prefix', default='wear')
     ap.add_argument('--port', type=int, default=43694)
@@ -73,11 +79,15 @@ def main():
         print(r.stdout + r.stderr)
         raise SystemExit('the harness did not compile')
 
+    w, h = a.window.lower().split('x')
     cmd = ['java', '-Dshots.rsan=' + rsan, '-Dshots.wear=' + a.wear, '-Dshots.yaws=' + a.yaws,
-           '-Dshots.pitch=' + a.pitch, '-Dlostcity.host=127.0.0.1', '-Dlostcity.port=%d' % a.port,
-           '-Dlostcity.webport=%d' % a.webport, '-Duser.home=' + home,
-           '-cp', a.jar + os.pathsep + classes, 'ResizableShots', a.out, 'cape', '765', '503',
-           a.user, a.prefix]
+           '-Dshots.pitch=' + a.pitch, '-Dshots.zoom=' + a.zoom, '-Dshots.frames=' + a.frames,
+           '-Dshots.every=' + a.every, '-Dlostcity.host=127.0.0.1', '-Dlostcity.port=%d' % a.port,
+           '-Dlostcity.webport=%d' % a.webport, '-Duser.home=' + home]
+    if a.tele:
+        cmd.append('-Dshots.tele=' + a.tele)
+    cmd += ['-cp', a.jar + os.pathsep + classes, 'ResizableShots', a.out, 'cape', w, h,
+            a.user, a.prefix]
 
     # The first run on a new account only marks the tutorial complete; the tabs arrive at the next
     # login, so a second run is always needed and is harmless when the first one did the work.
