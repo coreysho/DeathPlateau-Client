@@ -76,18 +76,25 @@ def text_mask(size, pad):
         return fu if i == len(WORD) - 1 else f
 
     width = sum(font_for(i).getlength(c) + track for i, c in enumerate(WORD)) - track
-    # Ascent and descent across both sizes, so no spike is clipped at either end.
-    top = min(font_for(i).getbbox(c)[1] for i, c in enumerate(WORD) if c != ' ')
-    bottom = max(font_for(i).getbbox(c)[3] for i, c in enumerate(WORD) if c != ' ')
+
+    # EVERY GLYPH ON ONE BASELINE, which is what anchor 'ls' means and why it is not optional
+    # here. PIL's default anchor places text by the top of the ASCENDER box, and the U is drawn
+    # from a larger font whose ascender box is taller - so drawn that way the U comes out the
+    # right size but sitting some nine pixels low, hanging under the word. Measuring the shipped
+    # PNG is what found it: height right at 100% of its neighbours, top 26 against their 17.
+    boxes = [font_for(i).getbbox(c, anchor='ls') for i, c in enumerate(WORD) if c != ' ']
+    above = min(b[1] for b in boxes)        # negative: how far the tallest glyph rises
+    below = max(b[3] for b in boxes)        # positive: how far the lowest spike drops
 
     w = int(width + pad * 2 * SS)
-    h = int(bottom - top + pad * 2 * SS)
+    h = int(below - above + pad * 2 * SS)
+    baseline = pad * SS - above
     mask = Image.new('L', (w, h), 0)
     dr = ImageDraw.Draw(mask)
     x = pad * SS
     for i, c in enumerate(WORD):
         use = font_for(i)
-        dr.text((x, pad * SS - top), c, font=use, fill=255)
+        dr.text((x, baseline), c, font=use, fill=255, anchor='ls')
         x += use.getlength(c) + track
     return mask.resize((w // SS, h // SS), Image.LANCZOS)
 
