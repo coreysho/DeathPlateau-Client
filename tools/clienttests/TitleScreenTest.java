@@ -45,6 +45,9 @@ public class TitleScreenTest {
 		System.out.println();
 		System.out.println("5. nothing claims a pixel that belongs to nothing");
 		emptyTests();
+		System.out.println();
+		System.out.println("6. the player count, which the client does not always have");
+		footerTests();
 
 		System.out.println();
 		if (fails == 0) {
@@ -139,6 +142,16 @@ public class TitleScreenTest {
 			"the left of a card is not its x");
 		check(TitleScreen.forgetAt(rowStart(count) + 120, 460, count) == -1,
 			"nor the bottom of it, where the timestamp is");
+	}
+
+	static void footerTests() {
+		// This shipped as "-1 PLAYERS ONLINE" on the live client. The guard was described in a
+		// commit message and never written, and nothing could catch it: with no font both
+		// branches draw nothing, so only the rule itself is testable.
+		check(TitleScreen.footerText(-1) == null, "no line at all when nobody has told us");
+		check(TitleScreen.footerText(-99) == null, "nor for any other negative");
+		check("0 PLAYERS ONLINE".equals(TitleScreen.footerText(0)), "an empty world still says so");
+		check("142 PLAYERS ONLINE".equals(TitleScreen.footerText(142)), "and a count reads plainly");
 	}
 
 	static void emptyTests() {

@@ -72,6 +72,16 @@ MUTS = [
     (SCREEN, 'the x spreading down the whole card height',
      '\t\tif (y < PROFILE_Y || y > PROFILE_Y + 26) {',
      '\t\tif (y < PROFILE_Y || y > PROFILE_Y + PROFILE_H) {'),
+
+    # ---- THE PLAYER COUNT. This one shipped: the live client's footer read "-1 PLAYERS ONLINE"
+    # because the guard existed only in a commit message. It is a method rather than an `if` so
+    # that it can be tested at all - with no font both branches of an `if` draw nothing.
+    (SCREEN, 'the no-count guard dropped, so the footer prints whatever it was handed',
+     '\t\treturn online < 0 ? null : online + " PLAYERS ONLINE";',
+     '\t\treturn online + " PLAYERS ONLINE";'),
+    (SCREEN, 'the guard off by one, so -1 prints and -2 does not',
+     '\t\treturn online < 0 ? null : online + " PLAYERS ONLINE";',
+     '\t\treturn online < -1 ? null : online + " PLAYERS ONLINE";'),
 ]
 
 

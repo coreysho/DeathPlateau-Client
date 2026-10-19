@@ -60,7 +60,8 @@ def main():
         cp = os.pathsep.join([classes, RES])
         rc = 0
         for name, extra in (('title', []), ('title-guides', ['guides']),
-                            ('title-hover', ['plain', '0'])):
+                            ('title-hover', ['plain', '0']),
+                            ('title-loading', ['progress'])):
             png = os.path.join(out_dir, name + '.png')
             args = [java, '-Djava.awt.headless=true', '-cp', cp,
                     'jagex2.client.TitlePreview', png] + extra

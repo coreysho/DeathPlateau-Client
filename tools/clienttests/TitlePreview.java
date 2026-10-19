@@ -37,6 +37,15 @@ public class TitlePreview {
 
 		Pix32 canvas = new Pix32(TitleScreen.W, TitleScreen.H);
 
+		// The loading screen shares the ground and the mark; drawn here with a null font, which
+		// is the state it is genuinely in for its first frames - the fonts are in the cache it
+		// is still downloading.
+		if ("progress".equals(args.length > 1 ? args[1] : "")) {
+			TitleScreen.paintProgress(canvas, null, 35, "Loading animations");
+			write(canvas, out);
+			return;
+		}
+
 		List<LoginProfiles.Profile> profiles = new ArrayList<LoginProfiles.Profile>();
 		profiles.add(profile("Corey", true));
 		profiles.add(profile("Faken", true));
@@ -49,10 +58,14 @@ public class TitlePreview {
 			overlay(canvas.pixels, profiles.size());
 		}
 
+		write(canvas, out);
+		System.out.println("wrote " + out + (guides ? " (with hit-test guides)" : ""));
+	}
+
+	static void write(Pix32 canvas, String out) throws Exception {
 		BufferedImage img = new BufferedImage(TitleScreen.W, TitleScreen.H, BufferedImage.TYPE_INT_RGB);
 		img.setRGB(0, 0, TitleScreen.W, TitleScreen.H, canvas.pixels, 0, TitleScreen.W);
 		ImageIO.write(img, "png", new File(out));
-		System.out.println("wrote " + out + (guides ? " (with hit-test guides)" : ""));
 	}
 
 	/** Profile's constructor is package-private, which is why this preview lives in the package. */
