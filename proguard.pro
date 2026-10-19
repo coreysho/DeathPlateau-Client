@@ -1,6 +1,16 @@
 -target 1.8
 
 -libraryjars <java.home>/lib/rt.jar
+# AND jce.jar, which is NOT part of rt.jar on Java 8 - the build job pins java-version: 8, and
+# the JCE classes (javax.crypto.Cipher and friends) ship in their own jar there. LoginProfiles is
+# the first thing in this client to encrypt anything, and without this line proguard cannot
+# resolve what it references and the Obfuscate step fails.
+#
+# It failed that way for seven commits before anyone noticed, because release.yml ships the PLAIN
+# jar from `gradle build` and never runs proguard - so the shipped client was fine and only this
+# workflow was red. Running the test suites does not touch proguard either. If you add a class
+# here that reaches for a corner of the JDK nobody has used yet, this is the line that needs it.
+-libraryjars <java.home>/lib/jce.jar
 
 -repackageclasses ''
 -applymapping 'proguard.map'
