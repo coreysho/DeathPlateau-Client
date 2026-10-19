@@ -20,10 +20,16 @@ import javax.imageio.ImageIO;
  * title bar, 32 or 48 in the taskbar and alt-tab, more for a large-icon view. Given one image it
  * scales, and a photographic badge scaled to 16 pixels by a window manager is a smear.
  *
- * WHY THE SMALL ONES ARE A DIFFERENT PICTURE. Below about 32 pixels the whole badge - the
- * wordmark, the castle, the ravine - stops being readable at all, so those sizes are a tight crop
- * of the skull alone. What a 16-pixel icon has to do is be recognisable in a taskbar, not be
- * complete.
+ * WHY THE SMALL ONES ARE A DIFFERENT PICTURE. The icons are the DP sigil, and below about 64
+ * pixels its ragged ring is a few pixels of broken red while the monogram inside it loses its
+ * counters. So every size up to 64 is a tight crop of the monogram with the ring dropped, and
+ * only 128 carries the whole mark. What a 16-pixel icon has to do is be recognisable in a
+ * taskbar, not be complete.
+ *
+ * They are a badge on black rather than a cut-out mark, because the artwork is drawn on black
+ * and cutting it out leaves it correct over black and bleached over anything else. The alpha is
+ * the rounded-square badge shape instead. tools/art/make_icons.py builds them and has the whole
+ * reasoning; re-run it when the mark changes.
  *
  * NOTHING HERE THROWS. An icon is decoration: a client that cannot find its own images is a
  * client with the default Java icon, not a client that fails to start. That matters for the
