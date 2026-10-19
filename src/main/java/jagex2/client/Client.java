@@ -2086,6 +2086,19 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.ji")
 	public int titleScreenState;
 
+	/**
+	 * Whether the password is kept when this login succeeds. On by default because the row of
+	 * saved accounts is the point of the screen, and a player who does not want it unticks it
+	 * once - LoginProfiles then saves the name alone, so the account still has a button.
+	 */
+	public boolean rememberLogin = true;
+
+	/** The saved account the pointer is over, or -1. Drives the highlight, nothing else. */
+	public int titleHover = -1;
+
+	/** The whole 765x503 login screen, composed in screen coordinates before it is cut up. */
+	private Pix32 titleCanvas;
+
 	@ObfuscatedName("client.ki")
 	public int hintNpc;
 
@@ -3876,101 +3889,124 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.K(I)V")
 	public void updateTitle() {
-		// Before the state dispatch: state 2 ends in a keyboard loop that returns, so a check
-		// placed after it would never run on the login form - the one screen where a player
-		// waiting on a password is most likely to want the music off.
+		// Before anything else: the music toggle is drawn on every page of this screen, so a
+		// check placed after a branch that returns would miss it on the one the player is on.
 		if (this.clickedTitleMusicToggle()) {
 			return;
 		}
-		if (this.titleScreenState == 0) {
-			int var2 = super.canvasWidth / 2 - 80;
-			int var3 = super.canvasHeight / 2 + 20;
-			int var14 = var3 + 20;
-			if (super.mouseClickButton == 1 && super.mouseClickX >= var2 - 75 && super.mouseClickX <= var2 + 75 && super.mouseClickY >= var14 - 20 && super.mouseClickY <= var14 + 20) {
-				this.titleScreenState = 3;
-				this.titleLoginField = 0;
-			}
-			int var4 = super.canvasWidth / 2 + 80;
-			if (super.mouseClickButton == 1 && super.mouseClickX >= var4 - 75 && super.mouseClickX <= var4 + 75 && super.mouseClickY >= var14 - 20 && super.mouseClickY <= var14 + 20) {
-				this.loginMessage0 = "";
-				this.loginMessage1 = "Enter your username & password.";
-				this.titleScreenState = 2;
-				this.titleLoginField = 0;
-			}
-		} else if (this.titleScreenState == 2) {
-			int var5 = super.canvasHeight / 2 - 40;
-			int var15 = var5 + 30;
-			int var16 = var15 + 25;
-			if (super.mouseClickButton == 1 && super.mouseClickY >= var16 - 15 && super.mouseClickY < var16) {
-				this.titleLoginField = 0;
-			}
-			var5 = var16 + 15;
-			if (super.mouseClickButton == 1 && super.mouseClickY >= var5 - 15 && super.mouseClickY < var5) {
-				this.titleLoginField = 1;
-			}
-			var5 += 15;
-			int var6 = super.canvasWidth / 2 - 80;
-			int var7 = super.canvasHeight / 2 + 50;
-			int var17 = var7 + 20;
-			if (super.mouseClickButton == 1 && super.mouseClickX >= var6 - 75 && super.mouseClickX <= var6 + 75 && super.mouseClickY >= var17 - 20 && super.mouseClickY <= var17 + 20) {
-				this.loginRetryCount = 0;
-				this.login(this.username, this.password, false);
-				if (this.ingame) {
-					return;
-				}
-			}
-			int var8 = super.canvasWidth / 2 + 80;
-			if (super.mouseClickButton == 1 && super.mouseClickX >= var8 - 75 && super.mouseClickX <= var8 + 75 && super.mouseClickY >= var17 - 20 && super.mouseClickY <= var17 + 20) {
-				this.titleScreenState = 0;
-				this.username = "";
-				this.password = "";
-			}
-			while (true) {
-				int var9 = this.pollKey();
-				if (var9 == -1) {
-					return;
-				}
-				boolean var10 = false;
-				for (int var11 = 0; var11 < CHARSET.length(); var11++) {
-					if (var9 == CHARSET.charAt(var11)) {
-						var10 = true;
-						break;
-					}
-				}
-				if (this.titleLoginField == 0) {
-					if (var9 == 8 && this.username.length() > 0) {
-						this.username = this.username.substring(0, this.username.length() - 1);
-					}
-					if (var9 == 9 || var9 == 10 || var9 == 13) {
-						this.titleLoginField = 1;
-					}
-					if (var10) {
-						this.username = this.username + (char) var9;
-					}
-					if (this.username.length() > 12) {
-						this.username = this.username.substring(0, 12);
-					}
-				} else if (this.titleLoginField == 1) {
-					if (var9 == 8 && this.password.length() > 0) {
-						this.password = this.password.substring(0, this.password.length() - 1);
-					}
-					if (var9 == 9 || var9 == 10 || var9 == 13) {
-						this.titleLoginField = 0;
-					}
-					if (var10) {
-						this.password = this.password + (char) var9;
-					}
-					if (this.password.length() > 20) {
-						this.password = this.password.substring(0, 20);
-					}
-				}
-			}
-		} else if (this.titleScreenState == 3) {
+		if (this.titleScreenState == 3) {
 			int var12 = super.canvasWidth / 2;
 			int var13 = super.canvasHeight / 2 + 50;
 			int var18 = var13 + 20;
 			if (super.mouseClickButton == 1 && super.mouseClickX >= var12 - 75 && super.mouseClickX <= var12 + 75 && super.mouseClickY >= var18 - 20 && super.mouseClickY <= var18 + 20) {
 				this.titleScreenState = 0;
+			}
+			return;
+		}
+
+		java.util.List<LoginProfiles.Profile> saved = LoginProfiles.all();
+		int count = saved.size();
+
+		// The highlight. Only a change is worth a repaint: the accounts sit outside the piece
+		// that is redrawn every frame, so they move only when redrawFrame says so.
+		int hover = TitleScreen.profileAt(super.mouseX, super.mouseY, count);
+		if (hover != this.titleHover) {
+			this.titleHover = hover;
+			this.redrawFrame = true;
+		}
+
+		if (super.mouseClickButton == 1) {
+			int x = super.mouseClickX;
+			int y = super.mouseClickY;
+
+			// THE x IS TESTED BEFORE THE CARD IT SITS IN. The other way round, every attempt to
+			// remove an account would sign into it instead.
+			int forget = TitleScreen.forgetAt(x, y, count);
+			if (forget >= 0) {
+				LoginProfiles.forget(saved.get(forget).username);
+				this.titleHover = -1;
+				this.redrawFrame = true;
+				return;
+			}
+
+			int pick = TitleScreen.profileAt(x, y, count);
+			if (pick >= 0) {
+				LoginProfiles.Profile profile = saved.get(pick);
+				this.username = profile.username;
+				this.redrawFrame = true;
+				if (profile.canSignIn()) {
+					this.password = profile.secret;
+					this.loginRetryCount = 0;
+					this.login(this.username, this.password, false);
+					if (this.ingame) {
+						return;
+					}
+				} else {
+					// Saved without its password - fill the name in and put the cursor where
+					// the player has to type, rather than failing a login they did not ask for.
+					this.password = "";
+					this.titleLoginField = 1;
+				}
+			} else if (TitleScreen.inAdd(x, y, count)) {
+				this.username = "";
+				this.password = "";
+				this.titleLoginField = 0;
+				this.redrawFrame = true;
+			} else if (TitleScreen.inRemember(x, y, this.fontBold12)) {
+				this.rememberLogin = !this.rememberLogin;
+				this.redrawFrame = true;
+			} else if (TitleScreen.inEnter(x, y)) {
+				this.loginRetryCount = 0;
+				this.login(this.username, this.password, false);
+				if (this.ingame) {
+					return;
+				}
+			} else {
+				int field = TitleScreen.fieldAt(x, y);
+				if (field >= 0) {
+					this.titleLoginField = field;
+				}
+			}
+		}
+
+		while (true) {
+			int var9 = this.pollKey();
+			if (var9 == -1) {
+				return;
+			}
+			boolean var10 = false;
+			for (int var11 = 0; var11 < CHARSET.length(); var11++) {
+				if (var9 == CHARSET.charAt(var11)) {
+					var10 = true;
+					break;
+				}
+			}
+			if (this.titleLoginField == 0) {
+				if (var9 == 8 && this.username.length() > 0) {
+					this.username = this.username.substring(0, this.username.length() - 1);
+				}
+				if (var9 == 9 || var9 == 10 || var9 == 13) {
+					this.titleLoginField = 1;
+				}
+				if (var10) {
+					this.username = this.username + (char) var9;
+				}
+				if (this.username.length() > 12) {
+					this.username = this.username.substring(0, 12);
+				}
+			} else if (this.titleLoginField == 1) {
+				if (var9 == 8 && this.password.length() > 0) {
+					this.password = this.password.substring(0, this.password.length() - 1);
+				}
+				if (var9 == 9 || var9 == 10 || var9 == 13) {
+					this.titleLoginField = 0;
+				}
+				if (var10) {
+					this.password = this.password + (char) var9;
+				}
+				if (this.password.length() > 20) {
+					this.password = this.password.substring(0, 20);
+				}
 			}
 		}
 	}
@@ -4057,6 +4093,9 @@ public class Client extends GameShell implements PixMap.Target {
 				this.field571 = true;
 				this.ingame = true;
 				DevLog.log("SESSION", "logged in as \"" + arg0 + "\"");
+				// Only now, with the server's yes in hand: saving on the attempt would fill the
+				// row with accounts whose password was wrong.
+				LoginProfiles.remember(arg0, arg1, this.rememberLogin);
 				this.out.pos = 0;
 				this.in.pos = 0;
 				this.ptype = -1;
@@ -4206,6 +4245,9 @@ public class Client extends GameShell implements PixMap.Target {
 			} else if (var8 == 15) {
 				this.ingame = true;
 				DevLog.log("SESSION", "logged in as \"" + arg0 + "\"");
+				// Only now, with the server's yes in hand: saving on the attempt would fill the
+				// row with accounts whose password was wrong.
+				LoginProfiles.remember(arg0, arg1, this.rememberLogin);
 				this.out.pos = 0;
 				this.in.pos = 0;
 				this.ptype = -1;
@@ -7643,58 +7685,79 @@ public class Client extends GameShell implements PixMap.Target {
 		this.flameBuffer2 = new int[32768];
 		this.flameBuffer3 = new int[32768];
 		this.drawProgress(10, "Connecting to fileserver");
-		if (!this.flameActive) {
-			this.flameActive0 = true;
-			this.flameActive = true;
-			this.startThread(this, 2);
-		}
+		// THE FLAME COLUMNS ARE NOT STARTED. They animated the two top corners of the stone
+		// title screen; on this one those corners are black ground with the sigil's glow
+		// reaching into them, and two columns of fire there would be nonsense. Left unstarted
+		// rather than deleted: flameActive staying false is also what makes drawProgress blit
+		// imageTitle0 and imageTitle1 as plain pictures, which is how the new screen fills
+		// them. Re-enabling is this block coming back.
 	}
 
 	@ObfuscatedName("client.a(BZ)V")
 	public void drawTitle() {
 		this.loadTitle();
+		if (this.titleScreenState == 3) {
+			this.drawTitleCreateAccount();
+			return;
+		}
+		if (this.titleCanvas == null) {
+			this.titleCanvas = new Pix32(TitleScreen.W, TitleScreen.H);
+		}
+		TitleScreen.paint(this.titleCanvas, this.fontBold12, this.fontPlain12, this.username,
+			this.password, this.titleLoginField, this.rememberLogin, this.loginMessage1,
+			LoginProfiles.all(), this.titleHover, -1, loopCycle);
+
+		// The middle piece every frame, because the cursor blinks there and nowhere else. The
+		// other eight only when something outside it moved, which is what redrawFrame has always
+		// meant on this screen - a click, a keystroke, the pointer crossing an account.
+		this.blitTitle(202, 171, this.imageTitle4);
+		this.imageTitle4.draw(171, 202, super.graphics);
+		if (this.redrawFrame) {
+			this.redrawFrame = false;
+			this.blitTitle(0, 0, this.imageTitle0);
+			this.imageTitle0.draw(0, 0, super.graphics);
+			this.blitTitle(637, 0, this.imageTitle1);
+			this.imageTitle1.draw(0, 637, super.graphics);
+			this.blitTitle(128, 0, this.imageTitle2);
+			this.imageTitle2.draw(0, 128, super.graphics);
+			this.blitTitle(202, 371, this.imageTitle3);
+			this.imageTitle3.draw(371, 202, super.graphics);
+			this.blitTitle(0, 265, this.imageTitle5);
+			this.imageTitle5.draw(265, 0, super.graphics);
+			this.blitTitle(562, 265, this.imageTitle6);
+			this.imageTitle6.draw(265, 562, super.graphics);
+			this.blitTitle(128, 171, this.imageTitle7);
+			this.imageTitle7.draw(171, 128, super.graphics);
+			this.blitTitle(562, 171, this.imageTitle8);
+			this.imageTitle8.draw(171, 562, super.graphics);
+		}
+		this.drawTitleMusicToggle();
+	}
+
+	/**
+	 * One rectangle of the composed screen into one of the nine pieces: screen coordinates in,
+	 * piece-local out. THE ONLY PLACE THE TWO SPACES MEET, which is the whole reason TitleScreen
+	 * draws into a single sprite - the pieces are addressed as PixMap(h, c, w) and draw(y, x),
+	 * and mixing that convention with an (x, y) one is what put the music toggle nineteen pixels
+	 * off the button it was meant to be.
+	 */
+	private void blitTitle(int x, int y, PixMap dst) {
+		for (int row = 0; row < dst.height; row++) {
+			System.arraycopy(this.titleCanvas.pixels, (y + row) * TitleScreen.W + x,
+				dst.data, row * dst.width, dst.width);
+		}
+	}
+
+	/**
+	 * The "go to the website to make an account" page, in the old stone box. Unreachable from
+	 * the new screen, which has no New User button, and kept rather than deleted so that adding
+	 * a link back to it is a one-line change instead of an archaeology exercise.
+	 */
+	private void drawTitleCreateAccount() {
 		this.imageTitle4.bind();
 		this.imageTitlebox.plotSprite(0, 0);
 		short var3 = 360;
 		short var4 = 200;
-		if (this.titleScreenState == 0) {
-			int var6 = var4 / 2 + 80;
-			this.fontPlain11.centreStringTag(true, 7711145, var6, var3 / 2, this.onDemand.message);
-			int var7 = var4 / 2 - 28;
-			this.fontBold12.centreStringTag(true, 16776960, var7, var3 / 2, "Welcome to " + SERVER_NAME);
-			this.fontPlain12.centreStringTag(true, SLOGAN_COLOUR, var7 + 16, var3 / 2, SLOGAN);
-			int var18 = var7 + 30;
-			int var8 = var3 / 2 - 80;
-			int var9 = var4 / 2 + 20;
-			this.imageTitlebutton.plotSprite(var9 - 20, var8 - 73);
-			this.fontBold12.centreStringTag(true, 16777215, var9 + 5, var8, "New User");
-			int var10 = var3 / 2 + 80;
-			this.imageTitlebutton.plotSprite(var9 - 20, var10 - 73);
-			this.fontBold12.centreStringTag(true, 16777215, var9 + 5, var10, "Existing User");
-		}
-		if (this.titleScreenState == 2) {
-			int var11 = var4 / 2 - 40;
-			if (this.loginMessage0.length() > 0) {
-				this.fontBold12.centreStringTag(true, 16776960, var11 - 15, var3 / 2, this.loginMessage0);
-				this.fontBold12.centreStringTag(true, 16776960, var11, var3 / 2, this.loginMessage1);
-				var11 += 30;
-			} else {
-				this.fontBold12.centreStringTag(true, 16776960, var11 - 7, var3 / 2, this.loginMessage1);
-				var11 += 30;
-			}
-			this.fontBold12.drawStringTag(16777215, var3 / 2 - 90, var11, true, "Username: " + this.username + (this.titleLoginField == 0 & loopCycle % 40 < 20 ? "@yel@|" : ""));
-			var11 += 15;
-			this.fontBold12.drawStringTag(16777215, var3 / 2 - 88, var11, true, "Password: " + JString.censor(this.password) + (this.titleLoginField == 1 & loopCycle % 40 < 20 ? "@yel@|" : ""));
-			var11 += 15;
-			int var12 = var3 / 2 - 80;
-			int var13 = var4 / 2 + 50;
-			this.imageTitlebutton.plotSprite(var13 - 20, var12 - 73);
-			this.fontBold12.centreStringTag(true, 16777215, var13 + 5, var12, "Login");
-			int var14 = var3 / 2 + 80;
-			this.imageTitlebutton.plotSprite(var13 - 20, var14 - 73);
-			this.fontBold12.centreStringTag(true, 16777215, var13 + 5, var14, "Cancel");
-		}
-		if (this.titleScreenState == 3) {
 			this.fontBold12.centreStringTag(true, 16776960, var4 / 2 - 60, var3 / 2, "Create a free account");
 			int var15 = var4 / 2 - 35;
 			this.fontBold12.centreStringTag(true, 16777215, var15, var3 / 2, "To create a new account you need to");
@@ -7709,19 +7772,7 @@ public class Client extends GameShell implements PixMap.Target {
 			int var17 = var4 / 2 + 50;
 			this.imageTitlebutton.plotSprite(var17 - 20, var16 - 73);
 			this.fontBold12.centreStringTag(true, 16777215, var17 + 5, var16, "Cancel");
-		}
 		this.imageTitle4.draw(171, 202, super.graphics);
-		if (this.redrawFrame) {
-			this.redrawFrame = false;
-			this.imageTitle2.draw(0, 128, super.graphics);
-			this.imageTitle3.draw(371, 202, super.graphics);
-			this.imageTitle5.draw(265, 0, super.graphics);
-			this.imageTitle6.draw(265, 562, super.graphics);
-			this.imageTitle7.draw(171, 128, super.graphics);
-			this.imageTitle8.draw(171, 562, super.graphics);
-		}
-		// Last, and every frame rather than only on redrawFrame: it has to come back after the
-		// corner it sits in is repainted, and it changes when it is clicked.
 		this.drawTitleMusicToggle();
 	}
 
