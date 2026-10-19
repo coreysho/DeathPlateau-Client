@@ -72,6 +72,9 @@ public final class TitleScreen {
 	private static final int BUTTON_H = 44;
 	private static final int LINK_Y = 380;
 
+	private static final int BAR_Y = BUTTON_Y;
+	private static final int BAR_H = 22;
+
 	private static final int PROFILE_Y = 423;
 	private static final int PROFILE_H = 44;
 	private static final int PROFILE_W = 128;
@@ -246,7 +249,40 @@ public final class TitleScreen {
 		centre(plain, "Forgot your password?", CRIMSON_TEXT, LINK_Y + 13);
 
 		profileRow(plain, profiles, hover);
-		centre(plain, online + " PLAYERS ONLINE", STONE_FAINT, FOOTER_Y + 10);
+		centre(plain, footerText(online), STONE_FAINT, FOOTER_Y + 10);
+	}
+
+	/**
+	 * The loading screen: the same ground, sigil and wordmark, with a bar where the form goes.
+	 *
+	 * It is the FIRST thing a player sees, before the cache has arrived, so it cannot use any of
+	 * it - the art comes out of the jar and the font may still be null, which is why this looked
+	 * like the old stone hall long after the login screen behind it had changed. Drawn here
+	 * rather than in Client so the two screens cannot drift apart: one ground, one mark, one set
+	 * of colours.
+	 */
+	public static void paintProgress(Pix32 canvas, PixFont font, int percent, String message) {
+		int[] ground = base(canvas);
+		canvas.bind();
+		System.arraycopy(ground, 0, canvas.pixels, 0, ground.length);
+
+		if (wordmark != null) {
+			wordmark.plotSprite(WORDMARK_Y, CX - wordmark.wi / 2);
+		}
+		rule();
+
+		if (percent < 0) {
+			percent = 0;
+		}
+		if (percent > 100) {
+			percent = 100;
+		}
+
+		centre(font, message == null ? "" : message, STONE_DIM, BAR_Y - 12);
+		Pix2D.fillRectTrans(CRIMSON, BAR_Y, FORM_W, BAR_H, 36, FORM_X);
+		Pix2D.fillRect(BAR_H, BAR_Y, CRIMSON, FORM_W * percent / 100, FORM_X);
+		Pix2D.drawRect(BAR_Y, BAR_H, CRIMSON_EDGE, FORM_X, FORM_W);
+		centre(font, percent + "%", STONE, BAR_Y + BAR_H - 5);
 	}
 
 	/** The crimson hairline under the wordmark, fading out at both ends. */
@@ -338,6 +374,22 @@ public final class TitleScreen {
 
 	private static int wid(PixFont font, String s) {
 		return font == null || s == null ? 0 : font.stringWidTag(s);
+	}
+
+	/**
+	 * The player count line, or null for no line at all.
+	 *
+	 * BELOW ZERO MEANS NOBODY HAS TOLD US, and an invented number is worse than none: the client
+	 * has no online count at the title screen - playerCount is the in-scene count during play -
+	 * so Client passes -1 until a login server sends one.
+	 *
+	 * A method rather than an `if` around the draw, so the rule can be tested. As an `if` it
+	 * could not be: every text call here tolerates a null font and no test in this repo has a
+	 * font, so both branches draw nothing and a pixel cannot tell them apart. It shipped reading
+	 * "-1 PLAYERS ONLINE" for exactly that reason.
+	 */
+	static String footerText(int online) {
+		return online < 0 ? null : online + " PLAYERS ONLINE";
 	}
 
 	private static void centre(PixFont font, String text, int colour, int y) {

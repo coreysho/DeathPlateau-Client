@@ -3633,35 +3633,43 @@ public class Client extends GameShell implements PixMap.Target {
 		this.lastProgressPercent = percent;
 		this.lastProgressMessage = message;
 		this.loadTitle();
-		if (this.jagTitle == null) {
+
+		// NO LONGER GATED ON jagTitle, which is why this screen stayed the old stone hall long
+		// after the login screen behind it changed: the backdrop it used came out of the cache,
+		// and this runs while the cache is still downloading. The art comes from the jar now, so
+		// the loading screen can look like the game from the first frame. loadTitle makes the
+		// nine pieces whether or not the cache is there; without them there is nothing to draw
+		// into and the plain AWT fallback is still the right answer.
+		if (this.imageTitle4 == null) {
 			super.drawProgress(percent, message);
 			return;
 		}
-		this.imageTitle4.bind();
-		short var4 = 360;
-		short var5 = 200;
-		byte var6 = 20;
-		this.fontBold12.centreString(var4 / 2, var5 / 2 - 26 - var6, 16777215, SERVER_NAME + " is loading - please wait...");
-		int var7 = var5 / 2 - 18 - var6;
-		Pix2D.drawRect(var7, 34, 9179409, var4 / 2 - 152, 304);
-		Pix2D.drawRect(var7 + 1, 32, 0, var4 / 2 - 151, 302);
-		Pix2D.fillRect(30, var7 + 2, 9179409, percent * 3, var4 / 2 - 150);
-		Pix2D.fillRect(30, var7 + 2, 0, 300 - percent * 3, percent * 3 + (var4 / 2 - 150));
-		this.fontBold12.centreString(var4 / 2, var5 / 2 + 5 - var6, 16777215, message);
-		this.imageTitle4.draw(171, 202, super.graphics);
-		if (this.redrawFrame) {
-			this.redrawFrame = false;
-			if (!this.flameActive) {
-				this.imageTitle0.draw(0, 0, super.graphics);
-				this.imageTitle1.draw(0, 637, super.graphics);
-			}
-			this.imageTitle2.draw(0, 128, super.graphics);
-			this.imageTitle3.draw(371, 202, super.graphics);
-			this.imageTitle5.draw(265, 0, super.graphics);
-			this.imageTitle6.draw(265, 562, super.graphics);
-			this.imageTitle7.draw(171, 128, super.graphics);
-			this.imageTitle8.draw(171, 562, super.graphics);
+		if (this.titleCanvas == null) {
+			this.titleCanvas = new Pix32(TitleScreen.W, TitleScreen.H);
 		}
+		TitleScreen.paintProgress(this.titleCanvas, this.fontBold12, percent, message);
+
+		// Every piece, every call. This is not a frame loop - it ticks a handful of times while
+		// the cache comes down - and the bar is the one thing on screen that moves.
+		this.blitTitle(202, 171, this.imageTitle4);
+		this.imageTitle4.draw(171, 202, super.graphics);
+		this.blitTitle(0, 0, this.imageTitle0);
+		this.imageTitle0.draw(0, 0, super.graphics);
+		this.blitTitle(637, 0, this.imageTitle1);
+		this.imageTitle1.draw(0, 637, super.graphics);
+		this.blitTitle(128, 0, this.imageTitle2);
+		this.imageTitle2.draw(0, 128, super.graphics);
+		this.blitTitle(202, 371, this.imageTitle3);
+		this.imageTitle3.draw(371, 202, super.graphics);
+		this.blitTitle(0, 265, this.imageTitle5);
+		this.imageTitle5.draw(265, 0, super.graphics);
+		this.blitTitle(562, 265, this.imageTitle6);
+		this.imageTitle6.draw(265, 562, super.graphics);
+		this.blitTitle(128, 171, this.imageTitle7);
+		this.imageTitle7.draw(171, 128, super.graphics);
+		this.blitTitle(562, 171, this.imageTitle8);
+		this.imageTitle8.draw(171, 562, super.graphics);
+		this.redrawFrame = false;
 	}
 
 	@ObfuscatedName("client.G(I)V")
