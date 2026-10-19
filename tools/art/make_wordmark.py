@@ -6,9 +6,11 @@ of the cache; it has no way to load a TrueType face. The wordmark is therefore a
 once here, and the client blits it like any other sprite.
 
 THE LICENCE. The face is Curse of the Zombie, whose own metadata reads "Free for personal use
-ONLY". A client distributed to players is not personal use, so this asset may only ship under a
-commercial licence bought for it. That licence is being bought; if it ever lapses or the face is
-replaced, re-run this script with the new file and nothing else changes.
+ONLY" - and a client distributed to players is not personal use, so the rendered wordmark may
+only ship under a commercial licence. One was obtained on 2026-10-19; see
+tools/art/source/FONT-LICENCE.md, which is also where the purchase record belongs. If it ever
+lapses or the face is replaced, drop the new file in under the same name and re-run this - the
+client loads a picture and knows nothing about fonts.
 
 THE U IS DRAWN 1.25x LARGER THAN THE REST, and that is a correction, not a flourish. Measured
 from the font's own glyf table, its cap top is 1807 units where its neighbours are 2223 to 2360,
