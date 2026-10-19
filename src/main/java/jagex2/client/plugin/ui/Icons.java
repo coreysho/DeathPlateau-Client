@@ -150,6 +150,40 @@ public final class Icons {
 		};
 	}
 
+	/** A pile of coins, for a page about loot on the floor. */
+	public static Icon coins(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.4f, s * 0.09f)));
+				double d = s * 0.46;
+				// Two behind and one in front, offset, so it reads as a pile. One circle at tab
+				// size is a dot, and three in a row is a chart.
+				g.draw(new Ellipse2D.Double(s * 0.04, s - d - s * 0.06, d, d));
+				g.draw(new Ellipse2D.Double(s - d - s * 0.04, s - d - s * 0.16, d, d));
+				g.fill(new Ellipse2D.Double((s - d) / 2.0, s * 0.08, d, d));
+			}
+		};
+	}
+
+	/** A bell, for a page that is about being told something. */
+	public static Icon bell(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				Path2D body = new Path2D.Double();
+				body.moveTo(s * 0.16, s * 0.70);
+				body.curveTo(s * 0.30, s * 0.60, s * 0.26, s * 0.40, s * 0.31, s * 0.30);
+				body.curveTo(s * 0.37, s * 0.14, s * 0.63, s * 0.14, s * 0.69, s * 0.30);
+				body.curveTo(s * 0.74, s * 0.40, s * 0.70, s * 0.60, s * 0.84, s * 0.70);
+				body.closePath();
+				g.fill(body);
+				// The clapper, detached, which is what stops it reading as a plain dome.
+				g.fill(new Ellipse2D.Double(s * 0.41, s * 0.76, s * 0.18, s * 0.18));
+			}
+		};
+	}
+
 	/** Reload, on the plugin list's header. */
 	/**
 	 * The icon a plugin's rail page asked for, by name.
@@ -159,9 +193,35 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
+	public static final String[] KNOWN = { "chart", "coins", "bell", "wrench", "download", "move", "refresh", "list" };
+
+	/**
+	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
+	 * one by accident.
+	 *
+	 * An unknown name falls through to the plain list icon, silently - and two plugins that both
+	 * fell through got the SAME icon, so the rail had three identical rows of bars on it and the
+	 * only way to tell the pages apart was to click them. Nothing failed; it just could not be
+	 * read. IconsTest reads the names straight out of the plugins and checks them against this.
+	 */
+	public static boolean isKnown(String name) {
+		for (int i = 0; i < KNOWN.length; i++) {
+			if (KNOWN[i].equals(name)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static Icon named(String name, int size, Color colour) {
 		if ("chart".equals(name)) {
 			return chart(size, colour);
+		}
+		if ("coins".equals(name)) {
+			return coins(size, colour);
+		}
+		if ("bell".equals(name)) {
+			return bell(size, colour);
 		}
 		if ("wrench".equals(name)) {
 			return wrench(size, colour);

@@ -439,7 +439,7 @@ public final class GroundItemsPlugin extends Plugin {
 		// than one of seven presets, and a value anyone can set to the number they mean.
 		this.addConfigList("Items", this.itemList());
 		this.addConfigList("Item colours", this.colourList());
-		this.addPanel("Loot nearby", "list", this.lootList());
+		this.addPanel("Loot nearby", "coins", this.lootList());
 	}
 
 	// ------------------------------------------------------------------ drawing

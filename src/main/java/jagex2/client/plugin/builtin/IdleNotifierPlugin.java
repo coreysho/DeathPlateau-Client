@@ -98,7 +98,7 @@ public final class IdleNotifierPlugin extends Plugin {
 		this.armed = false;
 		this.sinceGain = 0;
 		try {
-			this.addPanel("Idle notifier", "wrench", this.testList());
+			this.addPanel("Idle notifier", "bell", this.testList());
 		} catch (Throwable olderClient) {
 			// No rail pages in this client. Everything else works; the sound is just harder to
 			// try out.
