@@ -607,6 +607,24 @@ public class CourseCam extends Client {
 				return new int[] { x, y };
 			}
 		}
+		// AND A FINE PASS FOR A MODEL MADE OF ALMOST NOTHING. Varrock's gap 1 is a 149-byte .ob2 -
+		// a handful of triangles, where the tightrope beside it is 1023 - because a gap in a roof
+		// edge is drawn as a marker rather than as a thing. The client picks locs triangle by
+		// triangle, so a target that small falls between the twelve-pixel samples above.
+		for (int dy = 6; dy >= -24; dy -= 6) {
+			for (int dx = -18; dx <= 18; dx += 6) {
+				int x = px + dx;
+				int y = py + dy;
+				if (x < 8 || y < 8 || x > app.getWidth() - 8 || y > app.getHeight() - 8) {
+					continue;
+				}
+				hover(x, y);
+				waitFrames(3);
+				if (rowOf(verb) >= 0) {
+					return new int[] { x, y };
+				}
+			}
+		}
 		// and a ring below it, for anything that leans the other way
 		for (int a = 0; a < 12; a++) {
 			double th = a * Math.PI / 6.0;
