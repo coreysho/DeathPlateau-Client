@@ -385,7 +385,20 @@ public class CourseCam extends Client {
 			if (sq == null) {
 				return false;
 			}
-			return sq.field1385 != null || sq.field1384 != null;
+			// A LOC IS FLOOR TOO. Half of these obstacles are climbed ON TO - a market stall, a
+			// basket, a banner, a steep roof, a tree - and the tile you end on has no Ground and no
+			// QuickGround, because what holds you up is the obstacle's own model. Canifis' tall
+			// tree lands you on one, and a terrain-only test called that standing in the sky.
+			//
+			// Scenery is kept at its origin tile only, so a tile in the middle of a big canopy can
+			// still read empty; that is a false negative to live with rather than a reason to ask
+			// about terrain alone.
+			return sq.field1385 != null
+				|| sq.field1384 != null
+				|| sq.field1389 != null
+				|| sq.field1388 != null
+				|| sq.field1386 != null
+				|| sq.field1387 != null;
 		}
 	}
 
