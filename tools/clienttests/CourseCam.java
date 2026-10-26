@@ -309,6 +309,12 @@ public class CourseCam extends Client {
 		ImageIO.write(copy, "png", new File(out, name + ".png"));
 	}
 
+	/** "x,zLl" back to numbers. */
+	static int[] tileOf(String tile) {
+		String[] p = tile.split("[,L]");
+		return new int[] { Integer.parseInt(p[0]), Integer.parseInt(p[1]) };
+	}
+
 	/** The rows under the cursor, top first, colour tags stripped. */
 	static List<String> menu() {
 		List<String> rows = new ArrayList<String>();
@@ -1002,18 +1008,34 @@ public class CourseCam extends Client {
 		// obstacle drags them diagonally across whatever is in between. Falador's first tightrope
 		// slid ten tiles east and seven north off a three-tile rope. A climb or a drop changes
 		// storey in two or three tiles and is left alone.
-		if (path.size() >= 4) {
+		// MEASURED OVER THE GLIDE ONLY, which is not the whole path. The op routes the player to the
+		// obstacle first - the engine's own walk, one tile a tick, and diagonal whenever the last
+		// landing was not in line with this obstacle, which is most of the time and is perfectly
+		// fine. The glide starts afterwards, and Player.exactMove gives it away: it teleports the
+		// player to the end before setting the mask, so the path contains one jump of several tiles
+		// and then the drawn slide back from the start. Everything before that jump is walking.
+		int jump = -1;
+		for (int i = 1; i < path.size(); i++) {
+			int[] a = tileOf(path.get(i - 1));
+			int[] b = tileOf(path.get(i));
+			if (Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) > 1) {
+				jump = i;
+				break;
+			}
+		}
+		if (jump > 0 && path.size() - jump >= 3) {
+			int[] start = tileOf(path.get(jump - 1));
 			boolean straight = true;
-			String[] first = path.get(0).split("[,L]");
-			for (String tile : path) {
-				String[] p2 = tile.split("[,L]");
-				if (!p2[0].equals(first[0]) && !p2[1].equals(first[1])) {
+			for (int i = jump; i < path.size(); i++) {
+				int[] t = tileOf(path.get(i));
+				if (t[0] != start[0] && t[1] != start[1]) {
 					straight = false;
 					break;
 				}
 			}
-			check("and it crossed in a straight line", straight,
-				straight ? "" : "it moved on both axes, which means it slid across the roofs between");
+			check("and the crossing itself went in a straight line", straight,
+				straight ? "" : "the glide from " + start[0] + "," + start[1]
+					+ " moved on both axes, which means it slid across the roofs between");
 		}
 	}
 
