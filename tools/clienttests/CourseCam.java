@@ -572,34 +572,53 @@ public class CourseCam extends Client {
 	 * back empty is a real finding: it means a player standing here cannot click the thing.
 	 */
 	static int[] findVerb(int px, int py, String verb) throws Exception {
-		// STRAIGHT UP FIRST. A model stands on its tile and rises up the screen from it, so the
-		// clickable part of anything tall is above the tile the pick answers with - Falador's rough
-		// wall wanted 77 pixels of it, and a search that stopped at 44 reported a wall that is
-		// plainly there as unclickable.
-		for (int dy = 0; dy >= -140; dy -= 10) {
-			if (py + dy < 8) {
-				break;
-			}
-			hover(px, py + dy);
-			waitFrames(4);
-			if (rowOf(verb) >= 0) {
-				return new int[] { px, py + dy };
+		// A GRID ABOVE THE TILE, NEAREST FIRST.
+		//
+		// A model stands on its tile and rises up the screen from it, so the clickable part of
+		// anything tall is well above the tile the scene pick answers with: Falador's rough wall
+		// wanted 77 pixels of it. And a column straight up is not enough either - hand holds are a
+		// thin plate up a wall, a dozen pixels to one side of the tile's middle, and a single
+		// column walked right past them while the tile itself offered nothing but Cancel.
+		//
+		// So: every point in a band above the tile, closest first, which is what a player does with
+		// the mouse when they cannot see what they are aiming at.
+		final int[][] pts = new int[25 * 18][];
+		int n = 0;
+		for (int dy = 0; dy >= -204; dy -= 12) {
+			for (int dx = -36; dx <= 36; dx += 12) {
+				pts[n++] = new int[] { dx, dy };
 			}
 		}
-		// then rings, which pick up anything that leans off its own square
-		for (int r = 12; r <= 72; r += 12) {
-			for (int a = 0; a < 16; a++) {
-				double th = a * Math.PI / 8.0;
-				int x = (int) Math.round(px + r * Math.cos(th));
-				int y = (int) Math.round(py + r * Math.sin(th));
-				if (x < 8 || y < 8 || x > app.getWidth() - 8 || y > app.getHeight() - 8) {
-					continue;
-				}
-				hover(x, y);
-				waitFrames(3);
-				if (rowOf(verb) >= 0) {
-					return new int[] { x, y };
-				}
+		final int count = n;
+		java.util.Arrays.sort(pts, 0, count, new java.util.Comparator<int[]>() {
+			public int compare(int[] a, int[] b) {
+				return (a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1]);
+			}
+		});
+		for (int i = 0; i < count; i++) {
+			int x = px + pts[i][0];
+			int y = py + pts[i][1];
+			if (x < 8 || y < 8 || x > app.getWidth() - 8 || y > app.getHeight() - 8) {
+				continue;
+			}
+			hover(x, y);
+			waitFrames(3);
+			if (rowOf(verb) >= 0) {
+				return new int[] { x, y };
+			}
+		}
+		// and a ring below it, for anything that leans the other way
+		for (int a = 0; a < 12; a++) {
+			double th = a * Math.PI / 6.0;
+			int x = (int) Math.round(px + 48 * Math.cos(th));
+			int y = (int) Math.round(py + 48 * Math.sin(th));
+			if (x < 8 || y < 8 || x > app.getWidth() - 8 || y > app.getHeight() - 8) {
+				continue;
+			}
+			hover(x, y);
+			waitFrames(3);
+			if (rowOf(verb) >= 0) {
+				return new int[] { x, y };
 			}
 		}
 		return null;
@@ -642,6 +661,8 @@ public class CourseCam extends Client {
 		int locId;
 		int x;
 		int z;
+		int w = 1;
+		int l = 1;
 		int level;
 		int landX;
 		int landZ;
@@ -683,6 +704,10 @@ public class CourseCam extends Client {
 			o.landLevel = Integer.parseInt(f[7]);
 			o.verb = f[8];
 			o.xp = Integer.parseInt(f[9]);
+			if (f.length > 11) {
+				o.w = Integer.parseInt(f[10]);
+				o.l = Integer.parseInt(f[11]);
+			}
 			obstacles.add(o);
 		}
 		r.close();
@@ -796,18 +821,46 @@ public class CourseCam extends Client {
 		// 2. THE OBSTACLE IS ON SCREEN AND THE MENU HAS THE VERB ON IT. This is the check that the
 		// engine side cannot make: reachedLoc says a tile is close enough, and the client says
 		// whether a player standing there can actually click the thing.
-		int[] sxy = aimAt(o.x, o.z);
+		// AIM AT THE MIDDLE OF THE FOOTPRINT. A four-tile tree clicked at its origin corner is
+		// aimed at its edge, and the model above that corner can be branches and sky.
+		int[] sxy = aimAt(o.x + (o.w - 1) / 2, o.z + (o.l - 1) / 2);
 		if (sxy == null) {
 			check("the cursor can be put on the obstacle's tile", false,
 				"it is not on screen from here - " + aimWhy);
 			return;
 		}
 		int[] on = findVerb(sxy[0], sxy[1], o.verb);
+		// AND IF IT IS NOT THERE, LOWER THE CAMERA AND LOOK AGAIN.
+		//
+		// The client draws every storey up to the one the player is on, so from the street with
+		// rooftops overhead a steep camera is looking at the roofs: the pick at Varrock's rough
+		// wall came back with a blocked roof tile and a menu of nothing but Cancel. A player would
+		// drag the camera down to see the wall, so this does - two pitches, nearly level and
+		// steeper than the default - and restores it afterwards so the photographs stay comparable.
+		if (on == null) {
+			int wasPitch = pinPitch;
+			for (int pitch : new int[] { 160, 128, 340 }) {
+				pinPitch = pitch;
+				waitFrames(8);
+				int[] again = aimAt(o.x + (o.w - 1) / 2, o.z + (o.l - 1) / 2);
+				if (again != null) {
+					on = findVerb(again[0], again[1], o.verb);
+					if (on != null) {
+						say("      (found it with the camera at pitch " + pitch + ")");
+						break;
+					}
+				}
+			}
+			if (on == null) {
+				pinPitch = wasPitch;
+				waitFrames(6);
+			}
+		}
 		if (on == null) {
 			hover(sxy[0], sxy[1]);
 			waitFrames(4);
 			check("the obstacle can be clicked from here ('" + o.verb + "')", false,
-				"nothing within 140px above its tile or 72px around it offers it; over the tile itself the menu is " + menu());
+				"nothing in the band above its tile offers it; over the tile itself the menu is " + menu());
 			return;
 		}
 		sxy = on;
@@ -890,16 +943,47 @@ public class CourseCam extends Client {
 		shot(course + "_" + (index + 1) + "c_after");
 		say("      drawn path: " + path);
 
-		// 5. WHERE IT PUT US, against the course's own constant, and whether every tile it drew the
-		// player on had a floor under it.
+		// 5. WHERE IT PUT US, against the course's own constant.
 		int[] end = tileAt();
 		boolean landed = end[0] == o.landX && end[1] == o.landZ && end[2] == o.landLevel;
 		check("it landed on " + end[0] + "," + end[1] + " L" + end[2], landed,
 			landed ? "" : "the constant says " + o.landX + "," + o.landZ + " L" + o.landLevel);
-		check("and every tile it drew the player on had floor under it", airborne == 0,
-			airborne == 0 ? "" : airborne + " of " + path.size() + " had none");
+
+		// AND THE TILE IT LEFT US ON HAS SOMETHING UNDER IT.
+		//
+		// The tiles CROSSED are a different matter and must not be asserted: a tightrope, a clothes
+		// line or a plank spans open air by definition, and at the storey the player is drawn on
+		// there is nothing beneath them for the length of it. Varrock's clothes line crosses eight
+		// tiles of which two are sky, and that is the obstacle working. The count is printed
+		// because a run of them in the wrong place is still worth seeing.
+		check("and the tile it left the player on has floor under it", floorAt(end[0], end[1], end[2]), "");
+		if (airborne > 0) {
+			say("      " + airborne + " of the " + path.size() + " tiles crossed had nothing drawn under them"
+				+ (airborne > 1 ? " - expected on a rope or a line, not on a roof" : ""));
+		}
 		check("the crossing is " + (path.size() - 1) + " tiles", path.size() >= 2,
 			path.size() < 2 ? "the player never moved" : "");
+
+		// AND IT WENT IN A STRAIGHT LINE, for anything long enough for that to mean something.
+		//
+		// This is what catches the fault the landings had: ~agility_roof_move glides the player
+		// from the obstacle to the landing in one slide, so a landing that is not in line with the
+		// obstacle drags them diagonally across whatever is in between. Falador's first tightrope
+		// slid ten tiles east and seven north off a three-tile rope. A climb or a drop changes
+		// storey in two or three tiles and is left alone.
+		if (path.size() >= 4) {
+			boolean straight = true;
+			String[] first = path.get(0).split("[,L]");
+			for (String tile : path) {
+				String[] p2 = tile.split("[,L]");
+				if (!p2[0].equals(first[0]) && !p2[1].equals(first[1])) {
+					straight = false;
+					break;
+				}
+			}
+			check("and it crossed in a straight line", straight,
+				straight ? "" : "it moved on both axes, which means it slid across the roofs between");
+		}
 	}
 
 	static void logIn(int w, int h) throws Exception {

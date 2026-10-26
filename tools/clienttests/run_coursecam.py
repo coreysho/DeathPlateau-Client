@@ -81,7 +81,10 @@ def read_constants(content, course):
 
 
 def read_verbs(content):
-    """loc debugname -> its op1 text, over every agility loc config."""
+    """loc debugname -> [op1 text, width, length], over every agility loc config.
+
+    The footprint comes along because the cam aims at the MIDDLE of it: a four-tile tree clicked at
+    its origin corner is aimed at its edge, where the model above is branches and sky."""
     cfg = os.path.join(content, 'scripts/skill_agility/configs')
     out = {}
     for f in sorted(os.listdir(cfg)):
@@ -93,9 +96,17 @@ def read_verbs(content):
             m = re.match(r'^\[(\w+)\]$', line)
             if m:
                 cur = m.group(1)
+                out[cur] = ['Cross', 1, 1]
                 continue
-            if cur and line.startswith('op1='):
-                out[cur] = line.split('=', 1)[1].strip()
+            if not cur or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            if k == 'op1':
+                out[cur][0] = v.strip()
+            elif k == 'width':
+                out[cur][1] = int(v.strip())
+            elif k == 'length':
+                out[cur][2] = int(v.strip())
     return out
 
 
@@ -120,13 +131,14 @@ def write_table(path, course, consts, verbs, pack):
         for o in course['obstacles']:
             land = consts.get(o['land'])
             pid = pack.get(o['loc'])
-            verb = verbs.get(o['loc'], 'Cross').split()[0]
+            info = verbs.get(o['loc'], ['Cross', 1, 1])
+            verb = info[0].split()[0]
             if land is None or pid is None:
                 missing.append(o['name'] + (' (no landing constant)' if land is None else ' (not in loc.pack)'))
                 continue
-            f.write('%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\n' % (
+            f.write('%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\n' % (
                 o['name'], pid, o['x'], o['z'], o['level'], land[0], land[1], land[2], verb,
-                consts.get(o['xp'], 0)))
+                consts.get(o['xp'], 0), info[1], info[2]))
         return missing
 
 
