@@ -1040,26 +1040,48 @@ public class CourseCam extends Client {
 	}
 
 	static void logIn(int w, int h) throws Exception {
+		// THE TITLE SCREEN WAS REPLACED UNDER THIS AND THE CAM WENT ON CLICKING THE OLD ONE.
+		// It used to be two pages: click "Existing User", wait for titleScreenState to reach 2, then
+		// click Login. The client now has one page - TitleScreen draws the saved accounts, the two
+		// fields and an ENTER button, and Client.updateTitle only ever sets titleScreenState to 0 or
+		// 3. There is no state 2 left to wait for, so every run died in logIn with "timed out waiting
+		// for the login box (login screen says:  / )". The message is empty because there IS no login
+		// box, and the natural reading of it - that the engine is not serving the client its cache -
+		// is wrong and costs an hour. The jar on disk was older than the source, which is why this
+		// only appeared on the first run after rebuilding it.
+		//
+		// So: fill the fields and press ENTER. TitleScreen puts that button at FORM_X..FORM_X+FORM_W
+		// by BUTTON_Y..BUTTON_Y+BUTTON_H in its own 765x503 coordinates, and whether the hit test
+		// sees those or a centred canvas depends on the display mode, so both are tried. Clicking is
+		// kept rather than calling Client.login by reflection because the click goes through the
+		// client's own input handling on the client's own thread, which is the whole point of
+		// driving the real thing.
 		int lx = (Math.max(w, 765) - 765) / 2;
 		int ly = (Math.max(h, 503) - 503) / 2;
-		click(lx + 765 / 2 + 80, ly + 503 / 2 + 40, false);
-		waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
-		set("username", user);
-		set("password", "cam12345");
+		final int ex = 765 / 2;                 // TitleScreen.CX
+		final int ey = 325 + 44 / 2;            // TitleScreen.BUTTON_Y + BUTTON_H / 2
+		int[][] enter = { { ex, ey }, { ex + lx, ey + ly } };
+
 		say("logging in as '" + user + "'");
-		long giveUp = System.currentTimeMillis() + 150000L;
-		while (true) {
-			click(lx + 765 / 2 - 80, ly + 503 / 2 + 70, false);
-			try {
-				waitFor("the game", 15000, () -> app.ingame && geti("sceneState") == 2);
-				break;
-			} catch (RuntimeException e) {
-				if (app.ingame || System.currentTimeMillis() > giveUp) {
-					waitFor("the game", 45000, () -> app.ingame && geti("sceneState") == 2);
+		long giveUp = System.currentTimeMillis() + 180000L;
+		while (!(app.ingame && geti("sceneState") == 2)) {
+			if (System.currentTimeMillis() > giveUp) {
+				// one more go, and let waitFor write the real message if it is still not in
+				waitFor("the game", 1, () -> app.ingame && geti("sceneState") == 2);
+			}
+			// Set them every pass: a failed login leaves the fields where the client left them, and
+			// the title screen's own key handling can edit them between attempts.
+			set("username", user);
+			set("password", "cam12345");
+			for (int[] p : enter) {
+				click(p[0], p[1], false);
+				waitFrames(10);
+				if (app.ingame) {
 					break;
 				}
-				say("not in yet (" + get("loginMessage0") + " " + get("loginMessage1") + "), trying again");
-				Thread.sleep(5000);
+			}
+			if (!app.ingame) {
+				Thread.sleep(1000);
 			}
 		}
 		say("logged in");
