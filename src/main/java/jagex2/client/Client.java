@@ -3108,8 +3108,9 @@ public class Client extends GameShell implements PixMap.Target {
 				this.imageMapscene[i] = new Pix8(jagMedia, "mapscene", i);
 			}
 
-			// 70 is the trading post's (Old School's Grand Exchange icon), newer than some servers' media
-			for (int i = 0; i < 71; i++) {
+			// 70 is the trading post's (Old School's Grand Exchange icon) and 71 is Aleck's Hunter
+			// Emporium (Old School's kebbit), both newer than some servers' media
+			for (int i = 0; i < 72; i++) {
 				try {
 					this.imageMapfunction[i] = new Pix32(jagMedia, "mapfunction", i);
 				} catch (Exception e) {
