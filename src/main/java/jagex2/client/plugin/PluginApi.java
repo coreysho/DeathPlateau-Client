@@ -79,9 +79,13 @@ package jagex2.client.plugin;
  *     {@code ctx.getInventorySize}, {@code getInventoryObjId}, {@code getInventoryObjCount},
  *     {@code countObj}, {@code hasObj} and {@code ctx.getObjName}.
  *     <p>
- *     This is the level farm timers, a slayer tracker and a loot tracker need, and none of them
- *     could be written before it: a patch's stage and a task's monster live in varps, and what
- *     you are carrying lives in an interface component nothing exposed.
+ *     This is the level farm timers and a slayer tracker need: a patch's stage and a task's
+ *     monster live in varps, and nothing before this could read one.
+ *     <p>
+ *     NOT the loot tracker, which was written next and turned out to need none of it - it infers
+ *     a kill from the npcs and the floor, both of which level 4 already had. Said here because
+ *     this entry claimed it did, and a level's list of what it is FOR is the thing a later reader
+ *     trusts when deciding what to reach for.
  *     <p>
  *     READS, AS EVERYTHING HERE IS. There is no setVarp and no way to move, drop or use an item.
  *     A varp is the server's copy of the truth and writing the client's would only make the two

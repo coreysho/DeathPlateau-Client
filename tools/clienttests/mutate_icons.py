@@ -49,9 +49,15 @@ MUTS = [
      '\t\treturn chart(size, colour);\n\t}'),
 
     # ---- THE SET. isKnown is what the plugin check leans on.
+    # The set itself, which grows with every page that wants an icon of its own - mutate_guard
+    # reports these two as stale the moment it does, which is how they get updated rather than
+    # quietly matching nothing.
     (ICONS, 'coins missing from the known set, so nothing vouches for the name',
-     '\tpublic static final String[] KNOWN = { "chart", "coins", "bell", "wrench", "download", "move", "refresh", "list" };',
-     '\tpublic static final String[] KNOWN = { "chart", "bell", "wrench", "download", "move", "refresh", "list" };'),
+     '\tpublic static final String[] KNOWN = { "chart", "coins", "bag", "bell", "wrench", "download", "move", "refresh", "list" };',
+     '\tpublic static final String[] KNOWN = { "chart", "bag", "bell", "wrench", "download", "move", "refresh", "list" };'),
+    (ICONS, 'bag missing from the known set, so the loot page falls through to the plain list icon',
+     '\t\tif ("bag".equals(name)) {\n\t\t\treturn bag(size, colour);\n\t\t}\n',
+     ''),
     (ICONS, 'isKnown waving everything through',
      '\t\t\tif (KNOWN[i].equals(name)) {\n\t\t\t\treturn true;\n\t\t\t}',
      '\t\t\tif (KNOWN[i] != null) {\n\t\t\t\treturn true;\n\t\t\t}'),

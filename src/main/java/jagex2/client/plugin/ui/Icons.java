@@ -151,6 +151,40 @@ public final class Icons {
 	}
 
 	/** A pile of coins, for a page about loot on the floor. */
+	/**
+	 * A drawstring sack, for loot.
+	 *
+	 * NOT A PILE OF COINS, deliberately: the ground items page already wears that one, and
+	 * IconsTest refuses two pages the same icon - which is how this got drawn rather than
+	 * shipping a rail with two identical rows on it.
+	 */
+	public static Icon bag(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.4f, s * 0.09f)));
+				// Sides that flare OUT and a wide, nearly flat bottom. A round body on a long
+				// neck is a flask, which is what the first version of this looked like.
+				Path2D.Double body = new Path2D.Double();
+				body.moveTo(s * 0.38, s * 0.32);
+				body.curveTo(s * 0.10, s * 0.46, s * 0.02, s * 0.78, s * 0.10, s * 0.90);
+				body.lineTo(s * 0.90, s * 0.90);
+				body.curveTo(s * 0.98, s * 0.78, s * 0.90, s * 0.46, s * 0.62, s * 0.32);
+				g.draw(body);
+				// A SHORT gathered top, and a tie wider than it, so the tie reads as the knot
+				// rather than as the shoulders of a bottle.
+				Path2D.Double neck = new Path2D.Double();
+				neck.moveTo(s * 0.42, s * 0.32);
+				neck.lineTo(s * 0.46, s * 0.10);
+				neck.moveTo(s * 0.58, s * 0.32);
+				neck.lineTo(s * 0.54, s * 0.10);
+				neck.moveTo(s * 0.24, s * 0.32);
+				neck.lineTo(s * 0.76, s * 0.32);
+				g.draw(neck);
+			}
+		};
+	}
+
 	public static Icon coins(int size, Color colour) {
 		return new Vector(size, colour) {
 
@@ -193,7 +227,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bell", "wrench", "download", "move", "refresh", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "bell", "wrench", "download", "move", "refresh", "list" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -219,6 +253,9 @@ public final class Icons {
 		}
 		if ("coins".equals(name)) {
 			return coins(size, colour);
+		}
+		if ("bag".equals(name)) {
+			return bag(size, colour);
 		}
 		if ("bell".equals(name)) {
 			return bell(size, colour);
