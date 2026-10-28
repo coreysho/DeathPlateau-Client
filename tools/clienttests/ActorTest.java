@@ -23,6 +23,25 @@ public class ActorTest {
 
 	static int fails;
 
+	/**
+	 * termColour, with anything it throws turned into a failure that has a name.
+	 *
+	 * The answer for a malformed colour is the fallback. An exception is not the fallback, and
+	 * a check that lets one out ends the whole run with no failure reported - which the
+	 * mutation runner counts as a crash rather than as a catch. Returning a value no check
+	 * expects makes it an ordinary failure, naming the input that caused it.
+	 */
+	static int colourOf(String name, String terms, int fallback) {
+		try {
+			return NpcIndicatorsPlugin.termColour(name, terms, fallback);
+		} catch (RuntimeException threw) {
+			return THREW;
+		}
+	}
+
+	/** Not a colour and not any fallback, so a check comparing against one fails. */
+	static final int THREW = -1;
+
 	static void check(boolean ok, String what) {
 		System.out.println((ok ? "  ok   " : "FAIL   ") + what);
 		if (!ok) {
@@ -176,17 +195,26 @@ public class ActorTest {
 
 		// A colour that is not six hex characters is no colour rather than a thrown exception or
 		// a plausible wrong answer: this runs per npc, per frame.
-		check(NpcIndicatorsPlugin.termColour("Cow", "cow=ZZZZZZ", fallback) == fallback,
+		//
+		// THROUGH colourOf, WHICH CATCHES. "Rather than a thrown exception" is half of what
+		// these checks are for, and a check that throws rather than failing ends the run with
+		// nothing named - the mutation runner reports that as a crash, and a crash is not a
+		// catch. Both guards inside termOwnColour are reachable from here: without the length
+		// test "cow=FFF" walks off the end of its own string, and without the digit test
+		// "cow=ZZZZZZ" reaches parseInt.
+		check(colourOf("Cow", "cow=ZZZZZZ", fallback) == fallback,
 			"a term with nonsense where its colour goes falls back");
-		check(NpcIndicatorsPlugin.termColour("Cow", "cow=FFF", fallback) == fallback,
+		check(colourOf("Cow", "cow=FFF", fallback) == fallback,
 			"...and so does a short one");
-		check(NpcIndicatorsPlugin.termColour("Cow", "cow=-00FF0", fallback) == fallback,
+		check(colourOf("Cow", "cow=-00FF0", fallback) == fallback,
 			"...and one with a sign in it, which parseInt would otherwise accept");
-		check(NpcIndicatorsPlugin.termColour("Cow", "cow=", fallback) == fallback,
+		check(colourOf("Cow", "cow=", fallback) == fallback,
 			"...and an empty one");
+		check(colourOf("Cow", "cow=FFFFFFF", fallback) == fallback,
+			"...and a long one");
 		// BLACK IS READ AS NO COLOUR, because 0 is already the answer for "no match": a term
 		// written =000000 would be an npc that silently stops being marked.
-		check(NpcIndicatorsPlugin.termColour("Cow", "cow=000000", fallback) == fallback,
+		check(colourOf("Cow", "cow=000000", fallback) == fallback,
 			"a term coloured black falls back, rather than being drawn in 'not drawn'");
 		check(NpcIndicatorsPlugin.matches("Cow", "cow=000000"),
 			"...and still matches, so the npc is marked rather than vanishing");

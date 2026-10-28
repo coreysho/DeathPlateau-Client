@@ -65,7 +65,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.IdleNotifierPlugin",
 		"jagex2.client.plugin.builtin.MouseHighlightPlugin",
 		"jagex2.client.plugin.builtin.TileIndicatorsPlugin",
-		"jagex2.client.plugin.builtin.NpcIndicatorsPlugin"
+		"jagex2.client.plugin.builtin.NpcIndicatorsPlugin",
+		"jagex2.client.plugin.builtin.AgilityPlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */

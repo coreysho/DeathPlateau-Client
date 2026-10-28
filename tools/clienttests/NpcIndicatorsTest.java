@@ -350,6 +350,23 @@ public class NpcIndicatorsTest {
 				+ Integer.toHexString(colourAt(1)) + " and "
 				+ Integer.toHexString(colourAt(2)) + ")");
 
+		// ...AND THE OTHER IS LEFT ALONE, not written with 0.
+		//
+		// termColour returns 0 for a name no term matches, and setMenuColour writes whatever
+		// it is handed - so dropping the matches() test does not colour the unmarked row, it
+		// stamps 0 over it. Against a menu nobody else has touched those are the same thing,
+		// which is why this fixture could not tell them apart: it turns every other plugin
+		// off so that a colour can only have come from this one. In the real client Ground
+		// items colours rows of the same menu, and whichever of the two ran second would
+		// erase the other's work. Pre-coloured here the way the first plugin would leave it.
+		menu(new String[] { "Attack @yel@Goblin", "Attack @yel@Cow" }, new int[] { 7, 7 });
+		client.menuColour[2] = 0x123456;
+		manager.onMenuBuilt(client.menuSize);
+		check(colourAt(2) == 0x123456,
+			"a row this plugin has no term for keeps the colour another plugin gave it, "
+				+ "rather than being written with 0 (" + Integer.toHexString(colourAt(2)) + ")");
+		check(colourAt(1) == GREEN, "...and the marked one is still coloured beside it");
+
 		// AND THE WALK NEVER TOUCHES INDEX 0. In 377 index 0 is Cancel - the client builds every
 		// menu that way - so the loop starts at 1. Written as a row that WOULD be coloured if
 		// anything read it, because an index nothing looks at cannot be checked any other way.

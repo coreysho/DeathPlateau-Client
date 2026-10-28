@@ -122,7 +122,7 @@ public final class SkillsPlugin extends Plugin {
 		// Guarded, because a page is API level 1 and this plugin may be running on a client that
 		// predates it. Everything else here is a config item, which every client has had.
 		try {
-			this.addPanel("Skills", "list", new ConfigList() {
+			this.addPanel("Skills", "chart", new ConfigList() {
 
 				public int size() {
 					return SkillsPlugin.this.rows().size();

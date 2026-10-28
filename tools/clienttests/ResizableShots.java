@@ -48,7 +48,7 @@ public class ResizableShots extends Client {
 	 * two runs (two client builds) can be compared pixel for pixel.
 	 */
 	static volatile boolean still;
-	static int pinYaw = 0;
+	static int pinYaw = Integer.getInteger("shots.yaw", 0).intValue();
 	static int pinPitch = 300;
 	/**
 	 * Click-rate mode: milliseconds of padding added to every frame, to hold a chosen frame rate on
@@ -113,7 +113,10 @@ public class ResizableShots extends Client {
 				set("macroCameraZ", 0);
 				set("macroMinimapAngle", 0);
 				set("macroMinimapZoom", 0);
-				set("cameraZoomOffset", 0);
+				// shots.zoom moves the camera in: -600 is as close as the client allows, 900 as far.
+				// A player is sixty pixels tall at 0 and a seam between two garments is not readable
+				// there, which is why every early wear shot had to be scaled up afterwards.
+				set("cameraZoomOffset", Integer.getInteger("shots.zoom", 0));
 			}
 			int npcs = 0;
 			int players = 0;
@@ -405,6 +408,9 @@ public class ResizableShots extends Client {
 		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
 		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
 		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
+			// wear mode too: a player is sixty pixels tall in the fixed 512x334 viewport and the
+			// thing being judged is a seam between two garments. A bigger window is a bigger him.
+			|| mode.equals("cape")
 			|| mode.equals("swapsclassic")
 			// Zulrah is a five-tile snake in a horseshoe arena: the fixed 765x503 box shows its head
 			// and nothing of the platform its clouds are on.
@@ -496,6 +502,135 @@ public class ResizableShots extends Client {
 			doll(prefix);
 			return;
 		}
+		/*
+		 * WEAR MODE: dress a player in what shots.wear names and photograph him from four sides with
+		 * the CLIENT'S OWN RENDERER.
+		 *
+		 * WHY IT EXISTS. tools/wearrender.py in the content repo answers "does this garment show
+		 * through that one" by reimplementing Model.method382 in python. It is a good tool and it
+		 * was wrong about the same question five times running in October 2026 - eight passes of
+		 * worn-model priorities shipped on its numbers and every one was reported still clipping
+		 * from the game, until the lot was reverted. Two of its errors are known and fixed; the
+		 * third is that it is not the client. This is the client.
+		 *
+		 * A fresh account starts in the tutorial, where there is no inventory tab, so the first run
+		 * on a new name marks the tutorial complete and says to run again; the tabs arrive at the
+		 * next login. After that it sets all 23 stats (a Max cape asks for 99 in every one), gives
+		 * and wears each item, and takes a full frame and a scaled crop at each yaw.
+		 *
+		 *   -Dshots.wear=max_cape,armadyl_chestplate   what to put on, in order
+		 *   -Dshots.yaws=0,512,1024,1536               0 is his face, 1024 his back
+		 *   -Dshots.pitch=300                          128 is nearly level, 383 straight down
+		 */
+		// What the character design screen is made of, so wear mode can drive it. A player at
+		// %tutorial 0 is handed that screen at login with allowdesign on (tutorial.rs2), which is the
+		// only door to it short of a house with a wardrobe in it.
+		if (mode.equals("design")) {
+			if (geti("viewportInterfaceId") == -1) {
+				command("::setvar tutorial 0");
+				waitFrames(30);
+				say("put back to the start of the tutorial - run again to see the design screen");
+			} else {
+				shot(prefix + "_design");
+				dumpMain();
+			}
+			say("done");
+			log.close();
+			System.exit(0);
+		}
+		if (mode.equals("cape")) {
+			set("selectedTab", Integer.valueOf(3));
+			set("redrawSidebar", Boolean.TRUE);
+			set("redrawSideicons", Boolean.TRUE);
+			waitFrames(20);
+			// A fresh account starts in the tutorial and login.rs2 only hands out the tabs once
+			// %tutorial has reached ^tutorial_complete, so this run sets it and the next one works.
+			command("::setvar tutorial 1000");
+			waitFrames(30);
+			if (((int[]) get("tabInterfaceId"))[3] == -1) {
+				say("account set up (tutorial marked complete) - run again to wear and photograph");
+				log.close();
+				System.exit(0);
+			}
+			String[] all = { "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic",
+				"cooking", "woodcutting", "fletching", "fishing", "firemaking", "crafting", "smithing",
+				"mining", "herblore", "agility", "thieving", "slayer", "farming", "runecraft",
+				"construction", "hunter" };
+			// CHECKED RATHER THAN SENT AND HOPED FOR. Twenty-three commands in a row do not all
+			// arrive - the client meters what it sends per tick - and a Max cape asks for 99 in
+			// every one of them, so a single dropped command is the difference between wearing it
+			// and "You need level 99 in all 23 skills". Each is confirmed against the client's own
+			// skillBaseLevel and sent again if it did not take.
+			for (int pass = 0; pass < 4; pass++) {
+				int missing = 0;
+				for (int i = 0; i < all.length; i++) {
+					if (((int[]) get("skillBaseLevel"))[i] >= 99) {
+						continue;
+					}
+					missing++;
+					command("::setstat " + all[i] + " 99");
+					waitFrames(6);
+				}
+				if (missing == 0) {
+					break;
+				}
+				waitFrames(20);
+			}
+			int low = 0;
+			for (int i = 0; i < all.length; i++) {
+				if (((int[]) get("skillBaseLevel"))[i] < 99) {
+					low++;
+				}
+			}
+			if (low > 0) {
+				say("FAIL " + low + " of 23 stats would not go to 99");
+			}
+			waitFrames(20);
+			for (String item : System.getProperty("shots.wear", "max_cape").split(",")) {
+				item = item.trim();
+				if (item.isEmpty()) {
+					continue;
+				}
+				command("::give " + item);
+				waitFrames(25);
+				int[] at = invSlotAt(-1);
+				click(at[0], at[1], false);
+				waitFrames(30);
+				say("wore " + item);
+			}
+			waitFrames(60);
+			// A STILL IS NOT ENOUGH, and finding that out cost two reverts. The arm's vertices are
+			// driven by a transform group, so a sleeve that clears a glove in the rest pose does not
+			// clear it once the forearm swings, and two shoulder plates that sort correctly standing
+			// can swap over through the walk cycle. shots.frames samples the player WHILE HE MOVES:
+			// he is sent walking and photographed every shots.every client frames, so the answer
+			// comes from the poses the game actually draws rather than from the one he happens to be
+			// standing in.
+			int frames = Integer.getInteger("shots.frames", 0).intValue();
+			int every = Integer.getInteger("shots.every", 4).intValue();
+			for (String yaw : System.getProperty("shots.yaws", "0,512,1024,1536").split(",")) {
+				pinYaw = Integer.parseInt(yaw.trim()) & 0x7FF;
+				waitFrames(12);
+				String tag = prefix + "_y" + yaw.trim();
+				if (frames <= 0) {
+					shot(tag);
+					zoomShot(tag + "_zoom", 512 / 2, 334 / 2 - 22, 76, 96, 5);
+					continue;
+				}
+				for (int f = 0; f < frames; f++) {
+					// Re-issued every few shots: one click walks a few tiles and he stops, and a
+					// standing player is the thing this mode exists to avoid.
+					if (f % 6 == 0) {
+						walkABit(f);
+					}
+					waitFrames(every);
+					shot(tag + "_f" + (f < 10 ? "0" : "") + f);
+				}
+			}
+			say("done");
+			log.close();
+			System.exit(0);
+		}
 		if (mode.startsWith("swaps")) {
 			swaps(prefix);
 			return;
@@ -557,6 +692,46 @@ public class ResizableShots extends Client {
 	}
 
 	/** Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred. */
+	/**
+	 * Send the player a few tiles on, by clicking the scene the way a player does. The direction
+	 * alternates so he walks back and forth about one spot instead of leaving the camera behind.
+	 */
+	static void walkABit(int n) throws Exception {
+		// The SCENE's middle, not the main interface's: in resizable mode the viewport is the whole
+		// window and mainX/mainY are where a centred interface would go, which is somewhere else
+		// entirely. Clicking there walked him nowhere and the first animated run was eighteen
+		// photographs of a man standing still.
+		int cx = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("vpW")).intValue() / 2;
+		int cy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("vpH")).intValue() / 2;
+		int dx = (n / 6) % 2 == 0 ? 90 : -90;
+		click(cx + dx, cy + 40, false);
+	}
+
+	/**
+	 * A rectangle of the last frame, scaled up with no smoothing, written beside the full shot. A
+	 * player is about sixty pixels tall in a 512x334 viewport and the thing being judged is a seam
+	 * between two garments, so the full frame is unreadable for it and a scaled crop is not.
+	 */
+	static void zoomShot(String name, int cx, int cy, int w, int h, int scale) throws Exception {
+		BufferedImage src;
+		synchronized (LOCK) {
+			src = canvas;
+		}
+		int x = Math.max(0, cx - w / 2);
+		int y = Math.max(0, cy - h / 2);
+		w = Math.min(w, src.getWidth() - x);
+		h = Math.min(h, src.getHeight() - y);
+		BufferedImage crop = src.getSubimage(x, y, w, h);
+		BufferedImage big = new BufferedImage(w * scale, h * scale, BufferedImage.TYPE_INT_RGB);
+		Graphics2D g = big.createGraphics();
+		g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+			java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		g.drawImage(crop, 0, 0, w * scale, h * scale, null);
+		g.dispose();
+		ImageIO.write(big, "png", new File(out, name + ".png"));
+		say("zoom " + name + ".png " + (w * scale) + "x" + (h * scale));
+	}
+
 	static void logIn(String user, boolean resizable, int w, int h) throws Exception {
 		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
 		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
@@ -1195,6 +1370,20 @@ public class ResizableShots extends Client {
 			}
 		}
 		if (p == null) {
+			// The ordinary inventory TAB, which neither of the two above covers: sidebarInterfaceId
+			// is only set when the server pushes a side panel, and viewportInterfaceId when it
+			// pushes a main one. With neither open the inventory is still right there in the tab.
+			int[] tabs = (int[]) get("tabInterfaceId");
+			int tab = tabs[geti("selectedTab")];
+			if (tab != -1) {
+				p = invPath(comp, get, get.invoke(null, Integer.valueOf(tab)), 0, 0, 0);
+				if (p != null) {
+					ox = ((Number) staticField("SIDE_X")).intValue();
+					oy = 205;
+				}
+			}
+		}
+		if (p == null) {
 			throw new RuntimeException("no inventory on screen (sidebar " + side + ", main " + main + ")");
 		}
 		int[] ids = (int[]) comp.getField("invSlotObjId").get(invComponent);
@@ -1231,6 +1420,83 @@ public class ResizableShots extends Client {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Click a component of the open MAIN interface by the name it carries in the cache.
+	 *
+	 * The design screen, the bank, a quest scroll - none of them are an inventory, so invSlotAt()
+	 * cannot reach them, and their buttons are only ever at one place. This walks the open
+	 * interface's tree the way invPath does, adds up the child offsets, and clicks the middle of the
+	 * first component whose comName contains the needle. Returns false if there is no such thing,
+	 * which a caller should treat as a failure rather than carry on.
+	 */
+	static boolean clickCom(String needle) throws Exception {
+		int main = geti("viewportInterfaceId");
+		if (main == -1) {
+			return false;
+		}
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		int[] at = findCom(comp, get, get.invoke(null, Integer.valueOf(main)), needle, 0, 0, 0);
+		if (at == null) {
+			return false;
+		}
+		int ox = ((Number) layoutField("vpX")).intValue() + ((Number) layoutField("mainX")).intValue();
+		int oy = ((Number) layoutField("vpY")).intValue() + ((Number) layoutField("mainY")).intValue();
+		click(ox + at[0] + at[2] / 2, oy + at[1] + at[3] / 2, false);
+		return true;
+	}
+
+	/** {x, y, width, height} of the first component under this one whose name contains the needle. */
+	static int[] findCom(Class<?> comp, Method get, Object c, String needle, int x, int y, int depth) throws Exception {
+		if (c == null || depth > 5) {
+			return null;
+		}
+		Object name = comp.getField("comName").get(c);
+		if (name != null && name.toString().contains(needle)) {
+			return new int[] { x, y, comp.getField("width").getInt(c), comp.getField("height").getInt(c) };
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		int[] kx = (int[]) comp.getField("childX").get(c);
+		int[] ky = (int[]) comp.getField("childY").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			int[] found = findCom(comp, get, get.invoke(null, Integer.valueOf(kids[i])), needle,
+				x + kx[i], y + ky[i], depth + 1);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
+	}
+
+	/** Every named component of the open main interface, for finding out what a screen is made of. */
+	static void dumpMain() throws Exception {
+		int main = geti("viewportInterfaceId");
+		if (main == -1) {
+			say("no main interface open");
+			return;
+		}
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Method get = comp.getMethod("get", int.class);
+		dumpCom(comp, get, get.invoke(null, Integer.valueOf(main)), 0, 0, 0);
+	}
+
+	static void dumpCom(Class<?> comp, Method get, Object c, int x, int y, int depth) throws Exception {
+		if (c == null || depth > 5) {
+			return;
+		}
+		Object name = comp.getField("comName").get(c);
+		if (name != null) {
+			say("  com " + name + " at " + x + "," + y + " "
+				+ comp.getField("width").getInt(c) + "x" + comp.getField("height").getInt(c));
+		}
+		int[] kids = (int[]) comp.getField("children").get(c);
+		int[] kx = (int[]) comp.getField("childX").get(c);
+		int[] ky = (int[]) comp.getField("childY").get(c);
+		for (int i = 0; kids != null && i < kids.length; i++) {
+			dumpCom(comp, get, get.invoke(null, Integer.valueOf(kids[i])), x + kx[i], y + ky[i], depth + 1);
+		}
 	}
 
 	/** The 28-slot inventory somewhere under this component. */

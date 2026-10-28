@@ -275,6 +275,7 @@ public class MyToolPlugin extends Plugin {
 | 6 | Restyling the right-click menu: `ctx.setMenuColour`, `ctx.deprioritiseMenuEntry`, `ctx.isGroundItemTake`. |
 | 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
 | 8 | `ctx.getTrueTileX` / `getTrueTileZ`: the tile the server has the player on, which during a walk is ahead of the one they appear to stand on. |
+| 9 | Where the scenery is: `ctx.findLocs`, and the `SceneLoc` it hands back. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new
@@ -671,6 +672,73 @@ it: moving an npc's `Attack` row is a change to what a click does, which is the 
 A row is identified by its kind tag (`@yel@` is an npc), because that is the only thing separating
 `Attack @yel@Goblin` from `Take @lre@Bones` — without the check, a term like `bones` would colour
 rows about items.
+
+### Agility, in detail
+
+Marks every agility obstacle around you - all three courses, every shortcut, and the Yanille
+dungeon - in a colour that says which kind it is and whether your level can use it.
+
+**The obstacles come from this server's own content, not from OSRS.** The rooftop locs here
+were grafted in from OSRS and re-encoded, so they carry new ids - OSRS's loc 11404, Draynor's
+rough wall, is **18897** in this build. A table copied from a wiki, or from the OSRS ids the
+scripts' own comments name, marks nothing at all. `AgilityObstacles` is generated from
+DeathPlateau-Content's **default branch** by reading every `[oploc*,name]` handler under
+`scripts/skill_agility/scripts`, resolving each name through `pack/loc.pack`, and taking the
+requirement from the `stat(agility) < n` the handler gates on - or, where the gate is on the
+course's entry rather than on each obstacle, from that course's own `^name_level` constant.
+The labels are the `name=` the cache ships, so a mark reads the same as the right-click menu.
+
+**126 obstacles across fifteen sources**: the gnome (9), barbarian (6) and wilderness (8)
+courses; the nine rooftop courses - Draynor (7, level 1), Al Kharid (8, 20), Varrock (7, 30),
+Canifis (8, 40), Falador (14, 50), Seers (6, 60), Pollnivneach (9, 70), Rellekka (7, 80) and
+Ardougne (7, 90); 26 shortcuts and log balances; and 4 in the Yanille dungeon.
+
+**The skill's own directory is the source, and getting that wrong shipped the plugin with nine
+courses missing.** The first table was generated from a content checkout three weeks stale, on
+a branch that predated the rooftop courses - so the plugin marked the barbarian course and the
+shortcuts and silently ignored two thirds of the skill. Two narrower definitions also fail:
+searching for files *named* "agility" finds the directory but not that it has grown, and
+searching for handlers that *grant agility experience* misses six rooftop courses, which award
+it through a shared helper rather than calling `agility_xp` themselves. Every `[oploc*]`
+handler under that directory is an obstacle by construction. The test pins the count and one
+anchor per course, so a regeneration from a stale checkout fails rather than quietly shrinking.
+
+**Five handlers are deliberately not in the table.** Three of them -
+`_monkeybars`, `_island_rope_swing` and `_karamja_stepping_stone` - bind loc CATEGORIES, and no
+loc in this content belongs to any of them: they were ported ahead of the locs they are for, and
+are dead code until those land. The other two are `shuttwistedchest` and `trappedchaosaltar`, a
+locked chest and a prayer altar with a trapdoor under it, which are in the Yanille dungeon's
+script file only because that is where Yanille's scripts live. Marking them as agility obstacles
+would be the table believing its source too literally.
+
+**Twenty-three settings.** One switch per course, not one for "courses": there are twelve of them and a player trains
+one at a time, so a single switch is the wrong grain: it is on for the course you are running
+and on for the eleven you are not. Shortcuts and the dungeon keep a switch each, making
+fourteen. `wanted()` looks the switch up BY INDEX against a list in the courses' own order,
+which is compact and buys one risk - a list one out of step would map Falador's switch onto
+Seers' obstacles, and every switch would still appear to work. The check for it turns each
+course on alone and asserts only that course's obstacles answer, which is the only arrangement
+that catches a crossed mapping.
+
+**A shortcut you cannot use yet is drawn in a third colour rather than hidden.** Knowing a 70
+Agility crevice is there is most of why anyone trains the skill. The switch to hide them is for
+players who would rather not see what they cannot use, and it is off.
+
+**The level is read by NAME, not by a hardcoded index.** Agility is 16 in a stock 377 cache and
+this server is free to change that; a wrong constant would gate every shortcut by some other
+skill's level, which looks like the plugin working. If the cache has no Agility skill at all,
+nothing is locked - marking an obstacle a player cannot use is the lesser mistake.
+
+**Scanned once a tick, not once a frame.** The client keeps no list of locs: it keeps a 104x104
+grid of squares with four slots each, so finding obstacles is a walk of the whole grid. That is
+cheap once a tick and silly fifty times a second. It is rescanned every tick rather than cached
+against a scene-change event because obstacles are ordinary scenery - a gate the server opens is
+a different loc in the same square, and a cache would go on marking the old one.
+
+**All four layers are scanned**, because the obstacles alone span all of them: a gate is a wall,
+a stile is scenery, a strange floor is a ground decoration. A multi-tile obstacle is marked on
+every tile it stands on, with its size turned by its rotation - a three-by-one log laid
+north-south covers three tiles of z, and the loc type gives its size unrotated.
 
 ### XP drops, in detail
 
