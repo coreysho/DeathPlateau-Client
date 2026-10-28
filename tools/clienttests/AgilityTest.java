@@ -235,19 +235,18 @@ public final class AgilityTest {
 	}
 
 	/**
-	 * The client's API level, pinned exactly.
+	 * The client's API level, from the suite that needed 9.
 	 *
-	 * THE EXACT LEVEL LIVES IN THE NEWEST SUITE, which is this one: 9 added findLocs, and this
-	 * is what it was added for. Every older suite asks only that its own level is still
-	 * supported, so this pin is the single place that moves when the next addition does - it
-	 * was MouseTest's while 8 was the newest.
+	 * THE EXACT PIN HAS MOVED ON to GameStateTest, which is the newest suite - 10 added varps and
+	 * the inventory. This one goes back to asking only that its own level is still supported,
+	 * the way every older suite does, because an exact pin in two places is one that gets missed
+	 * in one of them.
 	 */
 	static void apiLevelTests() {
-		check(jagex2.client.plugin.PluginApi.LEVEL == 9,
-			"this client is API level 9 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
+		check(jagex2.client.plugin.PluginApi.LEVEL >= 9,
+			"this client is at least API level 9 (" + jagex2.client.plugin.PluginApi.LEVEL + ")");
 		check(jagex2.client.plugin.PluginApi.supports(9), "a plugin asking for 9 runs here");
 		check(jagex2.client.plugin.PluginApi.supports(8), "...and one asking for 8 still does");
-		check(!jagex2.client.plugin.PluginApi.supports(10), "one asking for 10 does not");
 		check(read("src/main/java/jagex2/client/plugin/builtin/AgilityPlugin.java")
 				.indexOf("apiLevel = 9") >= 0,
 			"Agility declares the level it needs, which is 9 because it reads the scene");

@@ -73,6 +73,24 @@ package jagex2.client.plugin;
  *     where "Attack" is. A colour and a position can only change how the menu looks and what
  *     order it offers things in - the client still decides what each row does, and nothing here
  *     adds or removes a row.</dd>
+ * <dt>10</dt><dd>What the server has told the client, rather than what is on the screen:
+ *     {@code ctx.getVarp} and {@code ctx.getVarbit} (with {@code getVarpCount},
+ *     {@code getVarbitCount} and {@code hasVarbit}), and the inventory -
+ *     {@code ctx.getInventorySize}, {@code getInventoryObjId}, {@code getInventoryObjCount},
+ *     {@code countObj}, {@code hasObj} and {@code ctx.getObjName}.
+ *     <p>
+ *     This is the level farm timers, a slayer tracker and a loot tracker need, and none of them
+ *     could be written before it: a patch's stage and a task's monster live in varps, and what
+ *     you are carrying lives in an interface component nothing exposed.
+ *     <p>
+ *     READS, AS EVERYTHING HERE IS. There is no setVarp and no way to move, drop or use an item.
+ *     A varp is the server's copy of the truth and writing the client's would only make the two
+ *     disagree until the next update - which is exactly how a plugin would make a quest look
+ *     finished. The client still owns input and the socket.
+ *     <p>
+ *     KNOWING WHICH NUMBER MEANS WHAT IS STILL THE PLUGIN'S PROBLEM, and some of them cannot be
+ *     read at all: a varp the content has not marked {@code transmit=yes} never reaches the
+ *     client, and reads 0 here however correct the id is.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -81,7 +99,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 9;
+	public static final int LEVEL = 10;
 
 	private PluginApi() {
 	}

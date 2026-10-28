@@ -166,8 +166,10 @@ MUTS = [
 	 * The players in the scene'''),
 
     # ---- THE LEVEL ITSELF.
+    # The current level, which moves with every addition - mutate_guard reports this pattern as
+    # stale the moment it does, which is how it gets noticed rather than quietly matching nothing.
     (API, 'the API level left behind, so a plugin built for this client is refused by it',
-     'public static final int LEVEL = 9;',
+     'public static final int LEVEL = 10;',
      'public static final int LEVEL = 4;'),
     (API, 'the level check made exact, so every older plugin stops loading',
      'return apiLevel <= LEVEL;',
