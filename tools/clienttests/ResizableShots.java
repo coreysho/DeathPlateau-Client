@@ -285,12 +285,33 @@ public class ResizableShots extends Client {
 		}
 	}
 
+	/**
+	 * Type a command and SEND WHAT WAS MEANT. The client meters the keys it takes per frame, so a
+	 * typed string loses characters - "::setstat atack 99" is a real line out of an earlier run of
+	 * this file, and the cape mode's four-pass stat loop exists because of it. A mangled ::setstat
+	 * merely does nothing; a mangled ::anim names a sequence that does not exist, nothing plays,
+	 * and the run then reports that the client "never played anything", which reads as a fault in
+	 * the animation rather than in the typing.
+	 *
+	 * So the box is cleared, typed into and read back before Enter: what the client HAS is what
+	 * gets sent, or it is typed again.
+	 */
 	static void command(String cmd) throws Exception {
-		type(cmd);
-		waitFrames(2);
-		say("typed '" + get("chatTyped") + "'");
-		key(KeyEvent.VK_ENTER, '\n');
-		waitFrames(5);
+		for (int attempt = 0; attempt < 5; attempt++) {
+			set("chatTyped", "");
+			waitFrames(1);
+			type(cmd);
+			waitFrames(3);
+			String got = String.valueOf(get("chatTyped"));
+			if (cmd.equals(got)) {
+				key(KeyEvent.VK_ENTER, '\n');
+				waitFrames(5);
+				return;
+			}
+			say("retyping (got '" + got + "' for '" + cmd + "')");
+		}
+		say("FAIL could not type '" + cmd + "'");
+		set("chatTyped", "");
 	}
 
 	// ------------------------------------------------------------------------------ waiting
@@ -414,7 +435,10 @@ public class ResizableShots extends Client {
 			|| mode.equals("swapsclassic")
 			// Zulrah is a five-tile snake in a horseshoe arena: the fixed 765x503 box shows its head
 			// and nothing of the platform its clouds are on.
-			|| mode.equals("zulrah");
+			|| mode.equals("zulrah")
+			// and weaponanim for the cape mode's reason: the thing being judged is a pose, and in
+			// the fixed viewport the whole player is sixty pixels tall.
+			|| mode.equals("weaponanim");
 		// 383 is straight down and 128 is nearly level. The interface modes want the steep default,
 		// which keeps the scene out of the way; a boss wants to be looked AT, so the zulrah mode sits
 		// low enough to see the snake stand up out of the water and the clouds lie on the floor.
@@ -463,6 +487,9 @@ public class ResizableShots extends Client {
 		}
 
 		dollUser = user;
+		winW = w;
+		winH = h;
+		winResizable = resizable;
 		logIn(user, resizable, w, h);
 
 		// A quiet spot (nobody walks through it) so a frame can be compared with another run's.
@@ -639,6 +666,10 @@ public class ResizableShots extends Client {
 			zulrah(prefix);
 			return;
 		}
+		if (mode.equals("weaponanim")) {
+			weaponanim(prefix);
+			return;
+		}
 		shot(prefix + "_game");
 		waitFrames(25);
 		shot(prefix + "_game2");
@@ -717,10 +748,16 @@ public class ResizableShots extends Client {
 		synchronized (LOCK) {
 			src = canvas;
 		}
-		int x = Math.max(0, cx - w / 2);
-		int y = Math.max(0, cy - h / 2);
-		w = Math.min(w, src.getWidth() - x);
-		h = Math.min(h, src.getHeight() - y);
+		// CLAMPED TO THE IMAGE, origin included. Clamping only the width and height leaves an
+		// origin that can sit past the bottom of the frame, which makes the height negative and
+		// getSubimage throw "(y + height) is outside raster" - and the canvas is whatever the
+		// render thread last published, not always the size the layout believes.
+		int iw = src.getWidth();
+		int ih = src.getHeight();
+		int x = Math.min(Math.max(0, cx - w / 2), Math.max(0, iw - 1));
+		int y = Math.min(Math.max(0, cy - h / 2), Math.max(0, ih - 1));
+		w = Math.max(1, Math.min(w, iw - x));
+		h = Math.max(1, Math.min(h, ih - y));
 		BufferedImage crop = src.getSubimage(x, y, w, h);
 		BufferedImage big = new BufferedImage(w * scale, h * scale, BufferedImage.TYPE_INT_RGB);
 		Graphics2D g = big.createGraphics();
@@ -732,19 +769,57 @@ public class ResizableShots extends Client {
 		say("zoom " + name + ".png " + (w * scale) + "x" + (h * scale));
 	}
 
+	/** What run() chose, so a relogin comes back to the same layout rather than guessing one. */
+	static int winW = 765;
+	static int winH = 503;
+	static boolean winResizable = false;
+
+	/**
+	 * Out and straight back in. A fresh account starts in the tutorial, where login.rs2 hands out
+	 * no tabs at all; once %tutorial is past the post, the next login takes the ordinary
+	 * ~initalltabs branch and they are there. There is no way to get them without this.
+	 */
+	static void relogin() throws Exception {
+		call("logout");
+		waitFor("the title screen", 60000, () -> !app.ingame && geti("titleScreenState") == 0);
+		waitFrames(20);
+		logIn(dollUser, winResizable, winW, winH);
+		waitFor("the scene", 60000, () -> geti("sceneState") == 2);
+		waitFrames(60);
+	}
+
 	static void logIn(String user, boolean resizable, int w, int h) throws Exception {
 		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
 		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
+		// TWO TITLE SCREENS, and this has to drive either. The stock 377 one is a splash with an
+		// "Existing User" button that opens a login box - that is the click below, and the state it
+		// waits for. Death Plateau's own draws the username, password and an ENTER button straight
+		// away, so there is no second state to reach and the wait used to time out with "timed out
+		// waiting for the login box", which reads like the server never answered.
 		click(lx + 765 / 2 + 80, ly + 503 / 2 + 40, false);
-		waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
+		try {
+			waitFor("the login box", 5000, () -> geti("titleScreenState") == 2);
+		} catch (RuntimeException e) {
+			say("no login box to open - a title screen that is already one (state "
+				+ get("titleScreenState") + ")");
+		}
 		set("username", user);
 		set("password", "shots123");
 		say("logging in as '" + get("username") + "'");
+		// ...and their buttons are in different places: the stock one 80 left of centre and 70 down,
+		// Death Plateau's centred and 95 down. Alternated rather than chosen, so neither screen has
+		// to be identified.
+		int[][] buttons = {
+			{ lx + 765 / 2 - 80, ly + 503 / 2 + 70 },
+			{ lx + 765 / 2, ly + 503 / 2 + 95 }
+		};
+		int button = 0;
 		// The same account twice in a row (two client builds compared) is still logged in for a
 		// minute after the last run's socket closed: try again until the server lets it back in.
 		long giveUp = System.currentTimeMillis() + 150000L;
 		while (true) {
-			click(lx + 765 / 2 - 80, ly + 503 / 2 + 70, false);
+			click(buttons[button % buttons.length][0], buttons[button % buttons.length][1], false);
+			button++;
 			try {
 				waitFor("the game", 15000, () -> app.ingame && geti("sceneState") == 2);
 				break;
@@ -1025,11 +1100,28 @@ public class ResizableShots extends Client {
 	static int[] sideSlots() throws Exception {
 		Class<?> comp = Class.forName("jagex2.config.Component");
 		Method get = comp.getMethod("get", int.class);
-		Object inv = findInv(comp, get, get.invoke(null, Integer.valueOf(geti("sidebarInterfaceId"))), 0);
-		if (inv == null) {
-			return new int[0];
+		// Whatever inventory is on screen: the interface the SERVER pushed into the sidebar, then
+		// the open main interface, then the selected TAB - which is where the ordinary inventory
+		// lives and which this used to miss entirely, because sidebarInterfaceId is only ever a
+		// pushed interface and is -1 while the plain inventory tab is up.
+		//
+		// The grid is found rather than a filled slot, because this is called BEFORE ::give to take
+		// the baseline that filledSlot() compares against, and at that point it is empty.
+		int[] roots = { geti("sidebarInterfaceId"), geti("viewportInterfaceId"),
+			tabInterface(((Number) get("selectedTab")).intValue()) };
+		for (int i = 0; i < roots.length; i++) {
+			if (roots[i] == -1) {
+				continue;
+			}
+			Object inv = findInv(comp, get, get.invoke(null, Integer.valueOf(roots[i])), 0);
+			if (inv != null) {
+				int[] ids = (int[]) comp.getField("invSlotObjId").get(inv);
+				if (ids != null) {
+					return ids.clone();
+				}
+			}
 		}
-		return ((int[]) comp.getField("invSlotObjId").get(inv)).clone();
+		return new int[0];
 	}
 
 	/** The slot that has gained something since these were read, waiting up to ten seconds for it. */
@@ -1394,7 +1486,12 @@ public class ResizableShots extends Client {
 			if (want == slot || (want == -1 && ids[slot] > 0)) {
 				int x = ox + p[0] + slot % cols * pitchX + 16;
 				int y = oy + p[1] + slot / cols * pitchY + 16;
-				return side != -1 && oy == 205 ? windowOf(x, y) : new int[] { x, y };
+				// oy == 205 means these are in the FIXED sidebar's frame and have to be converted
+				// to window coordinates. The `side != -1` that used to guard this was written when
+				// only a pushed sidebar could land there; the inventory TAB lands there too, with
+				// side == -1, so its clicks were sent at fixed coordinates into a resizable window
+				// and hit empty screen - "would not go on from the side panel", with the right slot.
+				return oy == 205 ? windowOf(x, y) : new int[] { x, y };
 			}
 		}
 		throw new RuntimeException("the inventory on screen is empty");
@@ -2026,6 +2123,306 @@ public class ResizableShots extends Client {
 	}
 
 	static java.util.Map<Integer, String> zulSeqs;
+
+	/**
+	 * WHAT THE CLIENT DRAWS when a weapon swings, frame by frame.
+	 *
+	 * The gap this closes: tools/sim/specanims.ts can prove which seq id a weapon plays and which
+	 * entity its graphic lands on, and it passed on every animation the owner has reported wrong -
+	 * because the id it asserts is the one the obj names, and the obj was naming the granite maul's.
+	 * A sim cannot tell a bludgeon's swing from a maul's. This can: it is the client's own renderer,
+	 * logged in to a local engine, drawing a real player in real poses.
+	 *
+	 * ::anim and ::spot play any animation or graphic on the player (debug_anim.rs2, debug_spot.rs2),
+	 * so no target and no combat are needed - which is what makes it cheap enough to walk a list.
+	 * Every value printed is read out of the client's own ClientEntity rather than assumed: field1171
+	 * is the sequence it is playing, field1172 the frame of it, field1161 the spotanim and field1165
+	 * that graphic's height.
+	 *
+	 *     -Dshots.anims="abyssal_bludgeon:abyssal_bludgeon_crush;staff_of_the_dead:human_scythe_sweep"
+	 *     -Dshots.anims="dragon_warhammer:osrs_dwh_spec:dwh_spec"      (a special and its graphic)
+	 */
+	static void weaponanim(String prefix) throws Exception {
+		set("selectedTab", Integer.valueOf(3));
+		set("redrawSidebar", Boolean.TRUE);
+		set("redrawSideicons", Boolean.TRUE);
+		waitFrames(20);
+		// A fresh account starts in the tutorial and login.rs2 only hands out the tabs once
+		// %tutorial has reached ^tutorial_complete, so this run sets it and the next one works -
+		// the same two-pass setup the cape mode has.
+		command("::setvar tutorial 1000");
+		waitFrames(30);
+		if (((int[]) get("tabInterfaceId"))[3] == -1) {
+			say("account set up (tutorial marked complete) - run again to wield and photograph");
+			log.close();
+			System.exit(0);
+		}
+		// CONFIRMED, not sent and hoped for. The client meters what it sends per tick, so a
+		// ::setstat in a run of them can be dropped on the way out - and the abyssal bludgeon wants
+		// 70 Attack and 70 Strength, so one lost command is the difference between a photograph and
+		// "You are not a high enough level to use this item", which arrives as a wield that did
+		// nothing and reads as a click that missed. Each is checked against the client's own
+		// skillBaseLevel and sent again.
+		//
+		// The order of SKILLS here is the client's, not a guess: attack 0, defence 1, strength 2,
+		// hitpoints 3, ranged 4, prayer 5, magic 6.
+		String[] stats = { "attack", "defence", "strength", "hitpoints", "ranged", "prayer", "magic" };
+		for (int pass = 0; pass < 5; pass++) {
+			int missing = 0;
+			for (int i = 0; i < stats.length; i++) {
+				if (((int[]) get("skillBaseLevel"))[i] >= 99) {
+					continue;
+				}
+				missing++;
+				command("::setstat " + stats[i] + " 99");
+				waitFrames(6);
+			}
+			if (missing == 0) {
+				break;
+			}
+			waitFrames(20);
+		}
+		StringBuilder levels = new StringBuilder();
+		int low = 0;
+		for (int i = 0; i < stats.length; i++) {
+			int lvl = ((int[]) get("skillBaseLevel"))[i];
+			levels.append(stats[i]).append(' ').append(lvl).append("  ");
+			if (lvl < 99) {
+				low++;
+			}
+		}
+		say("stats: " + levels.toString().trim());
+		if (low > 0) {
+			say("FAIL " + low + " stat(s) would not go to 99 - a weapon with a requirement will not go on");
+		}
+		waitFrames(20);
+		// THE SIDEBAR HAS TO BE DRAWN before a slot in it can be read: selectedTab says which tab
+		// is chosen, sidebarInterfaceId says which interface the client currently has there, and
+		// that stays -1 until it redraws. Reading slots first threw an ArrayIndexOutOfBounds out of
+		// Component.get(-1), which says nothing about what is wrong.
+		// THE GRID, not the pushed sidebar: sidebarInterfaceId stays -1 while the plain inventory
+		// tab is up, so waiting on it waits for ever. What matters is that the tab has an interface
+		// and that a 28-slot grid can be found in it.
+		int side = -1;
+		for (int attempt = 0; attempt < 2 && side == -1; attempt++) {
+			for (int w = 0; w < 40 && side == -1; w++) {
+				set("selectedTab", Integer.valueOf(3));
+				set("redrawSidebar", Boolean.TRUE);
+				set("redrawSideicons", Boolean.TRUE);
+				waitFrames(5);
+				if (tabInterface(3) != -1 && sideSlots().length == 28) {
+					side = tabInterface(3);
+				}
+			}
+			if (side == -1 && attempt == 0) {
+				// The tutorial's tabless login: %tutorial is set now, so the NEXT one has them.
+				say("no inventory tab yet (still the tutorial's): logging out and back in");
+				relogin();
+			}
+		}
+		if (side == -1) {
+			// Say what the client actually has rather than only that it is not what was wanted.
+			int[] tabs = (int[]) get("tabInterfaceId");
+			StringBuilder sb = new StringBuilder();
+			for (int t = 0; t < tabs.length; t++) {
+				sb.append(t).append('=').append(tabs[t]).append(' ');
+			}
+			say("FAIL no sidebar interface. selectedTab=" + get("selectedTab")
+				+ " sidebarInterfaceId=" + geti("sidebarInterfaceId")
+				+ " viewportInterfaceId=" + geti("viewportInterfaceId"));
+			say("     tabInterfaceId: " + sb.toString().trim());
+			log.close();
+			System.exit(1);
+		}
+		say("inventory tab is interface " + side);
+		// One camera angle for the whole run, so two weapons' frames can be compared at all.
+		pinYaw = Integer.getInteger("shots.yaw", 1536).intValue() & 0x7FF;
+		waitFrames(12);
+
+		String[] rows = System.getProperty("shots.anims", "").split(";");
+		int shots = 0;
+		for (int r = 0; r < rows.length; r++) {
+			String row = rows[r].trim();
+			if (row.length() == 0) {
+				continue;
+			}
+			String[] f = row.split(":");
+			String weapon = f[0].trim();
+			String seq = f.length > 1 ? f[1].trim() : "";
+			String gfx = f.length > 2 ? f[2].trim() : "";
+			say("");
+			if (!wieldFromPanel(weapon)) {
+				continue;
+			}
+			waitFrames(25);
+			if (seq.length() > 0) {
+				shots = playAnim(prefix, weapon, seq, shots);
+			}
+			if (gfx.length() > 0) {
+				shots = playSpot(prefix, weapon, gfx, shots);
+			}
+		}
+		say("");
+		say("done - " + shots + " frame(s)");
+		log.close();
+		System.exit(0);
+	}
+
+	/** ::give it and put it on from the side panel, waiting for the HAND to change rather than a tick count. */
+	static boolean wieldFromPanel(String weapon) throws Exception {
+		int[] was = sideSlots();
+		int held = wornPart(RIGHT_HAND);
+		command("::give " + weapon);
+		int slot = filledSlot(was);
+		if (slot < 0) {
+			say("FAIL ::give " + weapon + " put nothing in the side panel");
+			return false;
+		}
+		// ALREADY IN HAND. Two rows for one weapon - its own animation and the one it used to
+		// borrow - is the ordinary case here, and on the second the hand cannot change, so the
+		// test below would call a correctly equipped weapon a failure. The slot ::give just filled
+		// holds the obj and wornPart holds what is worn: same number, same weapon, nothing to do.
+		// THE APPEARANCE STORES 512 + objId, not the obj id: ClientPlayer.getHeadModel reads a
+		// slot as an obj when it is >= 512 and looks it up at value - 512. Comparing the raw
+		// numbers never matched, so the second row for a weapon still clicked and still reported
+		// that the hand had not changed.
+		// TWO ENCODINGS, NEITHER OF THEM THE RAW ID. invSlotObjId holds objId + 1 so that 0 can
+		// mean an empty slot, and the appearance holds 512 + objId (ClientPlayer.getHeadModel
+		// reads a slot as an obj when it is >= 512 and looks it up at value - 512). Measured:
+		// the slot said 11386 while the hand said 11897, for obj 11385.
+		int[] now = sideSlots();
+		if (held >= 512 && slot < now.length && now[slot] - 1 == held - 512) {
+			say("already wielding " + weapon);
+			return true;
+		}
+		int[] at = invSlotAt(slot);
+		click(at[0], at[1], false);
+		// A wield is a round trip: the op goes up, ~update_all answers with a new appearance.
+		for (int waited = 0; waited < 40 && wornPart(RIGHT_HAND) == held; waited++) {
+			waitFrames(5);
+		}
+		if (wornPart(RIGHT_HAND) == held) {
+			say("FAIL " + weapon + " would not go on from the side panel (slot " + slot + ")");
+			shot("wieldfail_" + weapon);
+			return false;
+		}
+		say("wielded " + weapon);
+		return true;
+	}
+
+	/**
+	 * The player, scaled up, taken from the LIVE viewport rather than the fixed layout's numbers.
+	 *
+	 * The cape mode hardcodes 512/2, 334/2-22, which is the middle of the fixed 512x334 viewport. In
+	 * a resizable window the viewport is the whole window and that lands in the top-left quarter, so
+	 * the first run of this mode produced forty crops of empty grass.
+	 */
+	static void playerZoom(String name, int tall) throws Exception {
+		// THE CANVAS, not the layout. vpX/vpY/vpW/vpH are not the scene's box in this mode, and the
+		// rectangle they gave landed near the bottom of the frame, was clamped to a sliver, and
+		// the first contact sheets were bands of grass. The player is drawn at the middle of what
+		// is actually rendered, so that is what to measure.
+		BufferedImage src;
+		synchronized (LOCK) {
+			src = canvas;
+		}
+		// MEASURED off a full frame rather than reasoned about: at the default pitch the player
+		// stands at the middle of the width and just under half the height - 640,380 in a 1280x800
+		// window. Half the height put the crop below his feet.
+		int cx = src.getWidth() / 2;
+		int cy = src.getHeight() * 47 / 100;
+		zoomShot(name, cx, cy, 150, tall, 4);
+	}
+
+	/** One int off the client's own entity, by name, so nothing here is a guess about its state. */
+	static int entInt(String field) throws Exception {
+		Object self = Client.class.getField("localPlayer").get(null);
+		if (self == null) {
+			return -1;
+		}
+		return ((Number) self.getClass().getField(field).get(self)).intValue();
+	}
+
+	/**
+	 * Play one animation and photograph every frame of it the client draws.
+	 *
+	 * A frame is saved per DISTINCT frame number rather than per client frame: a 13-frame animation
+	 * at three ticks a frame is forty client frames of which thirteen are new poses, and the point
+	 * is the poses.
+	 */
+	static int playAnim(String prefix, String weapon, String seq, int shots) throws Exception {
+		// A DEBUGPROC, not a cheat: [debugproc,anim] is run as ::~anim (NODE_DEBUGPROC_CHAR), and
+		// needs developer rank - start the engine with NODE_MIN_STAFF_LEVEL=5. Sent as ::anim it is
+		// not a command at all, which is silent, and the run then says the animation never played.
+		command("::~anim " + seq);
+		int seqId = -1;
+		StringBuilder saw = new StringBuilder();
+		for (int w = 0; w < 120 && seqId < 0; w++) {
+			waitFrames(1);
+			seqId = entInt("field1171");
+			if (w < 12) {
+				saw.append(seqId).append(' ');
+			}
+		}
+		if (seqId < 0) {
+			// Say what it DID have. "Never played anything" on its own blames the animation, and
+			// the cause has twice been something else entirely - a mangled command, a wrong field.
+			say("FAIL " + weapon + " / " + seq + ": nothing played. field1171 over the first "
+				+ "frames: " + saw.toString().trim());
+			say("     (stand seq " + entInt("field1176") + ", spotanim " + entInt("field1161") + ")");
+			return shots;
+		}
+		say(weapon + " / " + seq + ": the client is playing " + seqLabel(seqId));
+		int lastFrame = -1;
+		StringBuilder drawn = new StringBuilder();
+		int max = Integer.getInteger("shots.animmax", 24).intValue();
+		for (int i = 0; i < 400; i++) {
+			int cur = entInt("field1171");
+			if (cur < 0) {
+				break;
+			}
+			int fr = entInt("field1172");
+			if (fr != lastFrame) {
+				lastFrame = fr;
+				drawn.append(fr).append(' ');
+				if (shots < max * 40) {
+					String name = prefix + "_" + weapon + "_" + seqFile(seqId) + "_f" + two(fr);
+					shot(name);
+					playerZoom(name + "_zoom", 96);
+					shots++;
+				}
+			}
+			waitFrames(1);
+		}
+		say("  frames drawn: " + drawn.toString().trim());
+		return shots;
+	}
+
+	/** Throw one graphic on the player and photograph it, with the height the client was given. */
+	static int playSpot(String prefix, String weapon, String gfx, int shots) throws Exception {
+		command("::~spot " + gfx);
+		int id = -1;
+		for (int w = 0; w < 120 && id < 0; w++) {
+			waitFrames(1);
+			id = entInt("field1161");
+		}
+		if (id < 0) {
+			say("FAIL " + weapon + " / " + gfx + ": no graphic reached the player");
+			return shots;
+		}
+		say(weapon + " / " + gfx + ": spotanim " + id + " at height " + entInt("field1165"));
+		for (int i = 0; i < 12; i++) {
+			if (entInt("field1161") < 0) {
+				break;
+			}
+			String name = prefix + "_" + weapon + "_gfx" + id + "_" + two(i);
+			shot(name);
+			playerZoom(name + "_zoom", 130);
+			shots++;
+			waitFrames(2);
+		}
+		return shots;
+	}
 
 	static String seqLabel(int id) {
 		if (zulSeqs == null) {
