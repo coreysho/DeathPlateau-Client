@@ -917,13 +917,24 @@ public class Model extends ModelSource {
 	}
 
 	@ObfuscatedName("LZYQDKJV.a(LLZYQDKJV;I)I")
+	// WELDING A WORN PART ONTO AN EARLIER ONE AT A SHARED POSITION ALSO HANDS IT THAT PART'S VERTEX
+	// LABEL, because the slot already exists and keeps the label it was created with. Where the two
+	// labels agree that is free - the seams between body parts are built on it, and nothing moves.
+	// Where they DISAGREE the second part's vertex is now skinned to the first part's bone, and the
+	// faces around it are stretched to wherever that bone goes: the staff of light's shaft vertex at
+	// (-31,-80,27) is label 50, the infernal max cape has a vertex at the very same point on label
+	// 14, and wearing the two together tore a brown bar out of the staff across the player's legs.
+	// 2,321 more hand-slot-against-another-slot pairs in the current obj set share a position with
+	// mismatched labels, so this is not one bad model. Matching on the label as well leaves every
+	// intended weld alone and refuses only the ones that would mis-skin a vertex.
 	public int method362(Model arg0, int arg1) {
 		int var3 = -1;
 		int var4 = arg0.field1196[arg1];
 		int var5 = arg0.field1197[arg1];
 		int var6 = arg0.field1198[arg1];
+		int var8 = arg0.field1223 == null ? 0 : arg0.field1223[arg1];
 		for (int var7 = 0; var7 < this.field1195; var7++) {
-			if (this.field1196[var7] == var4 && this.field1197[var7] == var5 && this.field1198[var7] == var6) {
+			if (this.field1196[var7] == var4 && this.field1197[var7] == var5 && this.field1198[var7] == var6 && (this.field1223 == null || this.field1223[var7] == var8)) {
 				var3 = var7;
 				break;
 			}
@@ -932,8 +943,8 @@ public class Model extends ModelSource {
 			this.field1196[this.field1195] = var4;
 			this.field1197[this.field1195] = var5;
 			this.field1198[this.field1195] = var6;
-			if (arg0.field1223 != null) {
-				this.field1223[this.field1195] = arg0.field1223[arg1];
+			if (this.field1223 != null) {
+				this.field1223[this.field1195] = var8;
 			}
 			var3 = this.field1195++;
 		}
