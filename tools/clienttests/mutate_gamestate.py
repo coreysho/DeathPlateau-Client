@@ -103,11 +103,26 @@ MUTS = [
      '\t\tif (types == null || data == null || INVENTORY_COM >= types.length || INVENTORY_COM >= data.length) {\n\t\t\treturn null;\n\t\t}\n',
      ''),
 
+    # ---- WHAT FORM A LOC IS IN. An off-by-one here hands back a REAL loc one state along: a
+    # farming patch at the growth stage either side of the one it is at, named and drawn.
+    (CTX, 'the multiloc table read one along, so every patch reads as the next stage',
+     '\t\treturn children == null || value < 0 || value >= children.length ? -1 : children[value];',
+     '\t\treturn children == null || value < 0 || value + 1 >= children.length ? -1 : children[value + 1];'),
+    (CTX, 'the end of the table unchecked, so a state past it throws mid-frame',
+     '\t\treturn children == null || value < 0 || value >= children.length ? -1 : children[value];',
+     '\t\treturn children == null || value < 0 ? -1 : children[value];'),
+    (CTX, 'a loc with no table resolving to itself rather than to nothing',
+     '\t\treturn children == null || value < 0 || value >= children.length ? -1 : children[value];',
+     '\t\treturn children == null ? value : value < 0 || value >= children.length ? -1 : children[value];'),
+    (CTX, 'the loc cache not checked, so a name read throws before there is one',
+     '\t\tint[] offsets = LocType.field1612;\n\t\tif (offsets == null || locId < 0 || locId >= offsets.length) {\n\t\t\treturn null;\n\t\t}\n',
+     ''),
+
     # ---- THE LEVEL. A level that does not move is a jar built for this client running on the
     # last one and throwing NoSuchMethodError mid-frame.
-    (API, 'the level left where it was, so a plugin built for 10 is refused here',
-     '\tpublic static final int LEVEL = 10;',
-     '\tpublic static final int LEVEL = 9;'),
+    (API, 'the level left where it was, so a plugin built for 11 is refused here',
+     '\tpublic static final int LEVEL = 11;',
+     '\tpublic static final int LEVEL = 10;'),
 ]
 
 

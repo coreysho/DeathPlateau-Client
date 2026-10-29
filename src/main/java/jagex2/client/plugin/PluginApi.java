@@ -95,6 +95,25 @@ package jagex2.client.plugin;
  *     KNOWING WHICH NUMBER MEANS WHAT IS STILL THE PLUGIN'S PROBLEM, and some of them cannot be
  *     read at all: a varp the content has not marked {@code transmit=yes} never reaches the
  *     client, and reads 0 here however correct the id is.</dd>
+ * <dt>11</dt><dd>What a loc looks like RIGHT NOW: {@code ctx.resolveLoc} turns a multiloc into
+ *     the form its varbit currently selects, and {@code ctx.getLocName},
+ *     {@code ctx.getLocDesc} and {@code ctx.getLocOp} read that form's name, examine text and
+ *     right-click options. {@code ctx.getLocVarbit} / {@code getLocVarp} say which varbit drives
+ *     one, and {@code ctx.getLocCount} bounds the lot.
+ *     <p>
+ *     The multiloc table is the only place in this client that says what a state MEANS. A
+ *     farming patch's state byte is 23, and nothing but the table knows 23 is a fully grown
+ *     cabbage that can be harvested - the crop names, the stages and the Harvest option are all
+ *     cache data and exist nowhere else. Without this a plugin would carry a copy of the
+ *     server's crop tables and watch it rot.
+ *     <p>
+ *     getLocVarbit is there so a plugin can FIND its locs rather than be told their ids: a loc
+ *     id is assigned by whoever packed the content and moves when it is renumbered, while the
+ *     varbit behind a farming patch is original cache data and does not.
+ *     <p>
+ *     VALUES, NOT A HANDLE, as everywhere else here - LocType.get hands out references into a
+ *     20-entry round-robin cache - and a read, as everywhere else: nothing added here changes a
+ *     loc, places one, or clicks one.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -103,7 +122,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 10;
+	public static final int LEVEL = 11;
 
 	private PluginApi() {
 	}

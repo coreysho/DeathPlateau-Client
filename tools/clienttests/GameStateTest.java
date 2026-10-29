@@ -26,6 +26,7 @@ package jagex2.client.plugin;
 
 import jagex2.client.Client;
 import jagex2.config.Component;
+import jagex2.config.LocType;
 import jagex2.config.VarbitType;
 
 public class GameStateTest {
@@ -59,7 +60,10 @@ public class GameStateTest {
 		System.out.println("5. the inventory, read through the component the server fills");
 		inventoryTests();
 		System.out.println();
-		System.out.println("6. the level, and the line it is drawn on");
+		System.out.println("6. what a loc looks like right now");
+		locTests();
+		System.out.println();
+		System.out.println("7. the level, and the line it is drawn on");
 		levelTests();
 
 		System.out.println();
@@ -323,13 +327,82 @@ public class GameStateTest {
 		Component.data = null;
 	}
 
-	// ------------------------------------------------------------------ 5. the level
+	// ------------------------------------------------------------------ 6. locs
+
+	/**
+	 * pickChild, with anything it throws turned into a failure that has a NAME.
+	 *
+	 * Same reason as {@link #varp}: a state past the end of the table must answer -1, and an
+	 * exception is not -1. Letting one out ends the run with no failure printed, which the
+	 * mutation runner counts as a crash rather than a catch.
+	 */
+	static int child(int[] children, int value) {
+		try {
+			return PluginContext.pickChild(children, value);
+		} catch (RuntimeException threw) {
+			return THREW;
+		}
+	}
+
+	static void locTests() {
+		// The table lookup, which is the part that can be wrong invisibly: an off-by-one here
+		// hands back a REAL loc one state along - a farming patch at the growth stage either
+		// side of the one it is at, with the right name and a plausible picture.
+		int[] children = { 40, 41, 42, -1, 44 };
+		check(child(children, 0) == 40, "value 0 picks the first form");
+		check(child(children, 2) == 42, "...and value 2 the third, not the second");
+		check(child(children, 4) == 44, "...and the last value the last form");
+		check(child(children, 5) == -1, "a value past the table picks nothing");
+		check(child(children, -1) == -1, "...as does one below it");
+		check(child(children, 3) == -1,
+			"and an empty slot is 'draw nothing', which is an answer rather than a failure");
+		check(child(null, 0) == -1, "a loc with no table at all picks nothing");
+
+		// A sweep: every value of an 8-bit state against a full table, which is the shape a
+		// farming patch actually has.
+		int[] full = new int[256];
+		for (int i = 0; i < 256; i++) {
+			full[i] = 5000 + i;
+		}
+		int wrong = 0;
+		for (int i = 0; i < 256; i++) {
+			if (child(full, i) != 5000 + i) {
+				wrong++;
+			}
+		}
+		check(wrong == 0, "and all 256 states of a patch-sized table pick their own form");
+
+		// The no-cache contract, as for the rest of this class.
+		Client client = newClient();
+		if (client == null) {
+			skip("needs a display to build a Client - run under xvfb-run");
+			return;
+		}
+		LocType.field1612 = null;
+		PluginContext ctx = new PluginContext(client);
+		String threw = "";
+		try {
+			check(ctx.getLocCount() == 0, "with no loc cache, the count is 0");
+			check(ctx.resolveLoc(0) == -1, "...and nothing resolves");
+			check("".equals(ctx.getLocName(0)), "...and nothing is named");
+			check("".equals(ctx.getLocDesc(0)), "...nor described");
+			check("".equals(ctx.getLocOp(0, 0)), "...nor offers an option");
+			check(ctx.getLocVarbit(0) == -1 && ctx.getLocVarp(0) == -1, "...nor answers for a varbit");
+			check(ctx.getLocOp(-1, 99) == "" || "".equals(ctx.getLocOp(-1, 99)), "...at any index");
+		} catch (Throwable error) {
+			threw = error.getClass().getName();
+		}
+		check(threw.length() == 0, "and not one of them threw"
+			+ (threw.length() == 0 ? "" : " (" + threw + ")"));
+	}
+
+	// ------------------------------------------------------------------ 7. the level
 
 	static void levelTests() {
-		check(PluginApi.LEVEL == 10, "this client is API level 10 (" + PluginApi.LEVEL + ")");
-		check(PluginApi.supports(10), "a plugin asking for 10 runs here");
-		check(PluginApi.supports(9), "...and one asking for 9 still does");
-		check(!PluginApi.supports(11), "one asking for 11 does not");
+		check(PluginApi.LEVEL == 11, "this client is API level 11 (" + PluginApi.LEVEL + ")");
+		check(PluginApi.supports(11), "a plugin asking for 11 runs here");
+		check(PluginApi.supports(10), "...and one asking for 10 still does");
+		check(!PluginApi.supports(12), "one asking for 12 does not");
 
 		// THE LINE THE API IS DRAWN ON, which no run of it can state. A varp is the server's copy
 		// of the truth; a plugin that could write the client's could make a quest look finished
@@ -343,6 +416,9 @@ public class GameStateTest {
 		check(ctx.indexOf("setInventory") < 0 && ctx.indexOf("public void dropObj(") < 0
 				&& ctx.indexOf("public void useObj(") < 0,
 			"...and cannot move, drop or use what is in one");
+		check(ctx.indexOf("public int resolveLoc(") >= 0, "it can see what form a loc is in");
+		check(ctx.indexOf("setLoc(") < 0 && ctx.indexOf("public void addLoc(") < 0,
+			"...and cannot put one anywhere or change one");
 	}
 
 	/** A source file, for the checks that are about what the source says. */

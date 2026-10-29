@@ -1,5 +1,6 @@
 package jagex2.client.plugin;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -1013,6 +1014,129 @@ public final class PluginContext {
 			}
 		}
 		return items;
+	}
+
+	// ------------------------------------------------------------------ what a loc looks like now
+
+	/*
+	 * A MULTILOC IS A LOC THAT CHANGES WITH A VARBIT. A door is open or shut, a farming patch is
+	 * weeds or seedlings or a grown crop, and the cache holds the whole table: one child loc per
+	 * value of the varbit, each with its own model, name, examine text and right-click options.
+	 * The client resolves it every time it draws the thing.
+	 *
+	 * WHY A PLUGIN WANTS IT, and why it is worth a level of its own: the table is the only place
+	 * that says what a state MEANS. A farming patch's state byte is 23, and the only thing in
+	 * this client that knows 23 is a fully grown cabbage is the multiloc table - the crop names,
+	 * the growth stages and the harvest option are all in the cache, and none of it is anywhere
+	 * else. Without this a plugin would have to carry a copy of the server's crop tables and
+	 * watch it rot.
+	 *
+	 * VALUES, NOT A HANDLE, like {@link Actor} and for the same reason: LocType.get hands out
+	 * references into a 20-entry round-robin cache that recycles under you once more than 20
+	 * types are looked at, so everything here is copied out on the spot.
+	 *
+	 * STILL A READ. Nothing here changes a loc, puts one anywhere, or clicks one.
+	 */
+
+	/** How many locs this cache defines. Indices below this are safe to pass to the rest. */
+	public int getLocCount() {
+		int[] offsets = LocType.field1612;
+		return offsets == null ? 0 : offsets.length;
+	}
+
+	/**
+	 * The varbit that chooses which form a multiloc takes, or -1 for a loc that is only ever
+	 * itself.
+	 *
+	 * This is how a plugin FINDS the locs it cares about without being told their ids. Loc ids
+	 * are assigned by whoever packed the interfaces and move when the content is renumbered;
+	 * the varbit behind a farming patch is original cache data and does not.
+	 */
+	public int getLocVarbit(int locId) {
+		LocType type = locType(locId);
+		return type == null ? -1 : type.field1632;
+	}
+
+	/** The varp a multiloc uses directly, for the few that switch on a whole varp. -1 if none. */
+	public int getLocVarp(int locId) {
+		LocType type = locType(locId);
+		return type == null ? -1 : type.field1635;
+	}
+
+	/**
+	 * The loc the client would draw here right now: a multiloc resolved through its varbit, or
+	 * the loc itself when it is not one. -1 when the current value picks nothing at all, which
+	 * the cache uses for "draw no scenery" and is a real answer rather than an error.
+	 */
+	public int resolveLoc(int locId) {
+		LocType type = locType(locId);
+		if (type == null) {
+			return -1;
+		}
+		int[] children = type.field1659;
+		if (children == null) {
+			return locId;
+		}
+		int value = type.field1632 != -1 ? this.getVarbit(type.field1632)
+			: type.field1635 != -1 ? this.getVarp(type.field1635) : -1;
+		return pickChild(children, value);
+	}
+
+	/**
+	 * Which child of a multiloc a value selects, or -1 when it selects none.
+	 *
+	 * Static and separate for the same reason as {@link #decodeVarbit}: a table lookup with an
+	 * off-by-one hands back a REAL loc, one state along. A farming patch would read as the
+	 * growth stage either side of the one it is at, with the right name and a plausible
+	 * picture, and nothing anywhere would throw.
+	 *
+	 * -1 is a real answer, not a failure: the cache uses an empty slot for "draw nothing here".
+	 */
+	static int pickChild(int[] children, int value) {
+		return children == null || value < 0 || value >= children.length ? -1 : children[value];
+	}
+
+	/** A loc's name, e.g. "Herbs", or "" for one the cache has no name for. */
+	public String getLocName(int locId) {
+		LocType type = locType(locId);
+		if (type == null || type.field1630 == null || "null".equals(type.field1630)) {
+			return "";
+		}
+		return type.field1630;
+	}
+
+	/** A loc's examine text, or "" when it has none. */
+	public String getLocDesc(int locId) {
+		LocType type = locType(locId);
+		if (type == null || type.field1637 == null) {
+			return "";
+		}
+		return new String(type.field1637, StandardCharsets.ISO_8859_1);
+	}
+
+	/**
+	 * One of a loc's right-click options, e.g. "Harvest", or "" for a slot it does not have.
+	 *
+	 * Slots are 0 to 4, as the cache numbers them. Worth more than it looks: whether a farming
+	 * patch can be harvested is not a number anywhere, it is whether the form it is currently in
+	 * offers Harvest.
+	 */
+	public String getLocOp(int locId, int slot) {
+		LocType type = locType(locId);
+		if (type == null || type.field1644 == null || slot < 0 || slot >= type.field1644.length) {
+			return "";
+		}
+		String op = type.field1644[slot];
+		return op == null ? "" : op;
+	}
+
+	/** The cache's entry for a loc, or null for an id it does not define. */
+	private static LocType locType(int locId) {
+		int[] offsets = LocType.field1612;
+		if (offsets == null || locId < 0 || locId >= offsets.length) {
+			return null;
+		}
+		return LocType.method561(locId);
 	}
 
 	// ------------------------------------------------------------------ keys held
