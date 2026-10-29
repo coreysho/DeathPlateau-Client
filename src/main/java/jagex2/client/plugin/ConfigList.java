@@ -91,6 +91,10 @@ public abstract class ConfigList {
 	static final java.awt.image.BufferedImage[] NO_ICONS = new java.awt.image.BufferedImage[0];
 
 	/** Every sprite turned into its own image, here and now, for the reason Row.icon gives. */
+	static java.awt.image.BufferedImage[] toImages(Sprite[] icons) {
+		return copy(icons);
+	}
+
 	private static java.awt.image.BufferedImage[] copy(Sprite[] icons) {
 		if (icons == null || icons.length == 0) {
 			return NO_ICONS;
@@ -115,6 +119,37 @@ public abstract class ConfigList {
 	/** A grid of pictures to draw under a row, or null for none. */
 	public Sprite[] icons(int index) {
 		return null;
+	}
+
+	/*
+	 * TABS, for a page with more rows than one screen and a natural way to divide them.
+	 *
+	 * A STRIP OF PICTURES AND NOTHING ELSE. Words across the top of a 240-pixel column cost a
+	 * line each and run out after three; the game's own art says "herbs" in twenty pixels, and
+	 * a player picking a patch type recognises a ranarr faster than they read the word. The
+	 * name is still there as a tooltip for anything that is not obvious.
+	 *
+	 * A page with no tabs - which is every page but farming today - returns null and gets the
+	 * strip it had before, which is none.
+	 */
+
+	/** Pictures for a strip above the rows, or null for a page that does not divide. */
+	public Sprite[] tabs() {
+		return null;
+	}
+
+	/** What a tab is called, for its tooltip. */
+	public String tabTip(int index) {
+		return "";
+	}
+
+	/** Which tab is showing, or -1 when none is. */
+	public int selectedTab() {
+		return -1;
+	}
+
+	/** A tab was clicked. Called on the game thread, like onAction. */
+	public void onTab(int index) {
 	}
 
 	/** How many rows there are. */

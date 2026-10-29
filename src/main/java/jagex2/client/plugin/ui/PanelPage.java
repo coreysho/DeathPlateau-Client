@@ -71,6 +71,10 @@ public final class PanelPage extends JPanel {
 		heading.setMaximumSize(new Dimension(Integer.MAX_VALUE, heading.getPreferredSize().height));
 		this.rows.add(heading);
 
+		if (this.snapshot.tabs.length > 0) {
+			this.rows.add(this.buildTabs());
+		}
+
 		if (this.snapshot.rows.isEmpty()) {
 			this.rows.add(Sidebar.leftStrip(Sidebar.wrappedLabel(this.snapshot.emptyMessage,
 				Theme.TEXT_DIM, Theme.FONT_SMALL, Theme.WIDTH - 36), 10, 10, 10, 10));
@@ -176,6 +180,93 @@ public final class PanelPage extends JPanel {
 	}
 
 	/** A progress bar: a track and a fill, in the client's own colours and nothing else. */
+	/** How many tabs fit across the strip before it wraps. */
+	static final int TAB_COLUMNS = 6;
+
+	/**
+	 * The strip of pictures above the rows.
+	 *
+	 * PICTURES AND NOT WORDS, because words across a 240-pixel column cost a line each and run
+	 * out after three, while the game's own art says "herbs" in twenty pixels. The name is the
+	 * tooltip, for the ones that are not obvious.
+	 *
+	 * The one showing is drawn on the row colour with the accent under it, the way the rail
+	 * marks its own open page, so the strip and the rail say "you are here" the same way.
+	 */
+	private Component buildTabs() {
+		final java.awt.image.BufferedImage[] icons = this.snapshot.tabs;
+		int rows = (icons.length + TAB_COLUMNS - 1) / TAB_COLUMNS;
+		JPanel strip = new JPanel(new java.awt.GridLayout(rows, TAB_COLUMNS, 2, 2));
+		strip.setBackground(Theme.DARKER);
+		strip.setAlignmentX(LEFT_ALIGNMENT);
+		strip.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+		for (int i = 0; i < rows * TAB_COLUMNS; i++) {
+			if (i >= icons.length) {
+				JLabel filler = new JLabel();
+				filler.setOpaque(false);
+				strip.add(filler);
+				continue;
+			}
+			final int which = i;
+			JButton tab = new JButton();
+			if (icons[i] != null) {
+				tab.setIcon(new javax.swing.ImageIcon(icons[i]));
+			} else {
+				// No picture for this one - the cache had no item by that name - so the strip
+				// falls back to a word rather than to a gap nobody can click with confidence.
+				tab.setText(shortTip(this.snapshot.tabTips[i]));
+				tab.setFont(Theme.FONT_SMALL);
+				tab.setForeground(Theme.TEXT_DIM);
+			}
+			tab.setToolTipText(this.snapshot.tabTips[i]);
+			tab.setFocusPainted(false);
+			tab.setBackground(which == this.snapshot.selectedTab ? Theme.ROW : Theme.DARKER);
+			tab.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createMatteBorder(0, 0, 2, 0,
+					which == this.snapshot.selectedTab ? Theme.ACCENT : Theme.DARKER),
+				BorderFactory.createEmptyBorder(3, 3, 1, 3)));
+			tab.addActionListener(new ActionListener() {
+
+				public void actionPerformed(ActionEvent event) {
+					PanelPage.this.pickTab(which);
+				}
+			});
+			strip.add(tab);
+		}
+		strip.setMaximumSize(new Dimension(Integer.MAX_VALUE, strip.getPreferredSize().height));
+		return strip;
+	}
+
+	/** Enough of a tab's name to tell it from its neighbours when there is no picture. */
+	static String shortTip(String tip) {
+		if (tip == null || tip.length() == 0) {
+			return "?";
+		}
+		return tip.length() <= 3 ? tip : tip.substring(0, 3);
+	}
+
+	/**
+	 * Shows a tab, on the game thread, then reads the page again.
+	 *
+	 * Same shape as {@link #press}: what the plugin does with the click is its own business and
+	 * the snapshot in hand is stale the moment it happens.
+	 */
+	private void pickTab(final int index) {
+		final PluginManager.PanelSnapshot acting = this.snapshot;
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				try {
+					acting.selectTab(index);
+				} catch (Throwable error) {
+					// As press(): a plugin's own code on the game thread, so one bad tab is a
+					// log line and not a dead client.
+					jagex2.client.DevLog.log("PLUGIN", "a panel tab threw: " + error);
+				}
+			}
+		});
+	}
+
 	/** How many icons fit across a page before the grid wraps. */
 	static final int GRID_COLUMNS = 5;
 

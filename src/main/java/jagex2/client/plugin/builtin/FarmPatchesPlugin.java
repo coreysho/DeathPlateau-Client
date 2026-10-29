@@ -178,6 +178,49 @@ public final class FarmPatchesPlugin extends Plugin {
 		return (int) (gone * 100L / span);
 	}
 
+	/**
+	 * The families the strip divides the page into, and the item that pictures each.
+	 *
+	 * SEVERAL CANDIDATES PER FAMILY because this cache's names are not guessable from here -
+	 * "Guam leaf" and "Grimy guam" are both plausible and only one of them exists - and the
+	 * same rule applies as to a crop's own picture: whichever the obj table actually has is the
+	 * right one, and a family that matches none shows its name instead of a gap.
+	 *
+	 * The first tab is everything, so the page a player opens is the page they had before.
+	 */
+	static final String[] FAMILY_NAME = {
+		"All", "Allotment", "Herb", "Hops", "Flower", "Bush", "Tree", "Fruit tree"
+	};
+
+	static final String[][] FAMILY_ITEM = {
+		{ "Watering can", "Rake", "Spade" },
+		{ "Potato", "Cabbage", "Onion" },
+		{ "Guam leaf", "Grimy guam", "Guam" },
+		{ "Barley", "Hammerstone hops", "Barley seed" },
+		{ "Marigold", "Marigold seed", "Limpwurt root" },
+		{ "Redberries", "Redberry", "Cadava berries" },
+		{ "Oak logs", "Acorn", "Logs" },
+		{ "Apple", "Cooking apple", "Apple tree seed" }
+	};
+
+	/** Which family a row belongs to, by its position in PATCH_VARBIT. */
+	static int familyOf(int patch) {
+		if (patch < 0) {
+			return -1;
+		}
+		if (patch < 8) {
+			return 1;
+		}
+		return patch < 32 ? 2 + (patch - 8) / 4 : -1;
+	}
+
+	/** Whether a patch belongs on the page with this tab showing. Tab 0 is everything. */
+	static boolean inTab(int patch, int tab) {
+		return tab <= 0 || familyOf(patch) == tab;
+	}
+
+	private int tab;
+
 	@ConfigItem(keyName = "onlyPlanted", name = "Hide empty patches",
 		description = "Leave out patches that are bare soil or weeds.")
 	public boolean onlyPlanted = true;
@@ -226,6 +269,24 @@ public final class FarmPatchesPlugin extends Plugin {
 
 				public int progress(int index) {
 					return FarmPatchesPlugin.this.progress(index);
+				}
+
+				public jagex2.client.plugin.Sprite[] tabs() {
+					return FarmPatchesPlugin.this.tabIcons();
+				}
+
+				public String tabTip(int index) {
+					return index >= 0 && index < FAMILY_NAME.length ? FAMILY_NAME[index] : "";
+				}
+
+				public int selectedTab() {
+					return FarmPatchesPlugin.this.tab;
+				}
+
+				public void onTab(int index) {
+					if (index >= 0 && index < FAMILY_NAME.length) {
+						FarmPatchesPlugin.this.tab = index;
+					}
 				}
 
 				public jagex2.client.plugin.Sprite icon(int index) {
@@ -413,6 +474,9 @@ public final class FarmPatchesPlugin extends Plugin {
 			if (form == -1) {
 				continue;
 			}
+			if (!inTab(i, this.tab)) {
+				continue;
+			}
 			if (this.onlyPlanted && isEmpty(this.ctx.getLocName(form))) {
 				continue;
 			}
@@ -596,6 +660,23 @@ public final class FarmPatchesPlugin extends Plugin {
 		}
 		long minute = now();
 		return growthPercent(this.patches.changedAt(patch), minute + left, minute);
+	}
+
+	/** One picture per family, found the same way a crop's own picture is. */
+	jagex2.client.plugin.Sprite[] tabIcons() {
+		if (this.ctx == null) {
+			return null;
+		}
+		jagex2.client.plugin.Sprite[] out = new jagex2.client.plugin.Sprite[FAMILY_NAME.length];
+		for (int i = 0; i < out.length; i++) {
+			for (int j = 0; j < FAMILY_ITEM[i].length && out[i] == null; j++) {
+				int obj = this.cropObj(FAMILY_ITEM[i][j]);
+				if (obj >= 0) {
+					out[i] = this.ctx.getObjIcon(obj, 1);
+				}
+			}
+		}
+		return out;
 	}
 
 	/** The model, for the test: the plugin is wiring, the rules are in there. */

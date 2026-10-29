@@ -140,6 +140,21 @@ MUTS = [
      '\t\tlong gone = now - changedAt;',
      '\t\tlong gone = span;'),
 
+    # ---- THE TABS. A row under the wrong tab is a real patch with a real crop, filed one
+    # family along, and the page looks perfectly fine.
+    (PLUGIN, 'the allotments counted as one family too few, shifting every tab after them',
+     '\t\tif (patch < 8) {\n\t\t\treturn 1;\n\t\t}',
+     '\t\tif (patch < 4) {\n\t\t\treturn 1;\n\t\t}'),
+    (PLUGIN, 'the family worked out in fours from zero, so herbs land under allotments',
+     '\t\treturn patch < 32 ? 2 + (patch - 8) / 4 : -1;',
+     '\t\treturn patch < 32 ? 2 + patch / 4 : -1;'),
+    (PLUGIN, 'the All tab filtering like any other, so the page opens empty',
+     '\t\treturn tab <= 0 || familyOf(patch) == tab;',
+     '\t\treturn familyOf(patch) == tab;'),
+    (PLUGIN, 'every tab showing everything, so choosing one does nothing',
+     '\t\treturn tab <= 0 || familyOf(patch) == tab;',
+     '\t\treturn true;'),
+
     # ---- THE TABLE. A wrong id reads a different patch, with no symptom but a row that never moves.
     (PLUGIN, 'a patch varbit off by one, so a row reads the patch next door',
      '\t\t708, 709, 710, 711, 712, 713, 714, 715,   // allotments 1-8',
