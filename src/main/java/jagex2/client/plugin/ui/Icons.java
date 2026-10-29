@@ -211,6 +211,38 @@ public final class Icons {
 		};
 	}
 
+	/** A skull, for the slayer page. */
+	public static Icon skull(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.2f, s * 0.07f)));
+				// The cranium: wider than it is tall, and flat across the brow, or it reads as
+				// an egg. Drawn filled so the two eyes can be punched out of it in the
+				// background colour, which is what makes a skull a skull at tab size.
+				Path2D.Double head = new Path2D.Double();
+				head.moveTo(s * 0.12, s * 0.52);
+				head.curveTo(s * 0.12, s * 0.12, s * 0.88, s * 0.12, s * 0.88, s * 0.52);
+				head.curveTo(s * 0.88, s * 0.70, s * 0.70, s * 0.74, s * 0.70, s * 0.74);
+				head.lineTo(s * 0.30, s * 0.74);
+				head.curveTo(s * 0.30, s * 0.74, s * 0.12, s * 0.70, s * 0.12, s * 0.52);
+				head.closePath();
+				g.fill(head);
+				// The jaw: three short teeth under it, so the shape is not a plain dome.
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.34, s * 0.74, s * 0.10, s * 0.16));
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.46, s * 0.74, s * 0.10, s * 0.16));
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.58, s * 0.74, s * 0.10, s * 0.16));
+				// The eyes, cut back out. CLEAR rather than a colour: the rail paints this over
+				// whatever the row behind it is, and a black pair of holes would be a black pair
+				// of holes on a dark panel.
+				g.setComposite(java.awt.AlphaComposite.Clear);
+				g.fill(new Ellipse2D.Double(s * 0.24, s * 0.36, s * 0.22, s * 0.24));
+				g.fill(new Ellipse2D.Double(s * 0.54, s * 0.36, s * 0.22, s * 0.24));
+				g.setComposite(java.awt.AlphaComposite.SrcOver);
+			}
+		};
+	}
+
 	public static Icon coins(int size, Color colour) {
 		return new Vector(size, colour) {
 
@@ -253,7 +285,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "bell", "wrench", "download", "move", "refresh", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "bell", "wrench", "download", "move", "refresh", "list" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -285,6 +317,9 @@ public final class Icons {
 		}
 		if ("sprout".equals(name)) {
 			return sprout(size, colour);
+		}
+		if ("skull".equals(name)) {
+			return skull(size, colour);
 		}
 		if ("bell".equals(name)) {
 			return bell(size, colour);
