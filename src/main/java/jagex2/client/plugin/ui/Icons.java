@@ -185,6 +185,32 @@ public final class Icons {
 		};
 	}
 
+	/** A seedling: one stem and two leaves, for the farming page. */
+	public static Icon sprout(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.4f, s * 0.09f)));
+				Path2D.Double stem = new Path2D.Double();
+				stem.moveTo(s * 0.50, s * 0.94);
+				stem.lineTo(s * 0.50, s * 0.26);
+				g.draw(stem);
+				// Two leaves at DIFFERENT heights. Level with each other the whole thing reads
+				// as a goblet at tab size.
+				Path2D.Double left = new Path2D.Double();
+				left.moveTo(s * 0.50, s * 0.66);
+				left.curveTo(s * 0.18, s * 0.66, s * 0.08, s * 0.50, s * 0.12, s * 0.36);
+				left.curveTo(s * 0.34, s * 0.38, s * 0.48, s * 0.50, s * 0.50, s * 0.66);
+				g.draw(left);
+				Path2D.Double right = new Path2D.Double();
+				right.moveTo(s * 0.50, s * 0.48);
+				right.curveTo(s * 0.80, s * 0.48, s * 0.90, s * 0.32, s * 0.88, s * 0.18);
+				right.curveTo(s * 0.66, s * 0.20, s * 0.52, s * 0.32, s * 0.50, s * 0.48);
+				g.draw(right);
+			}
+		};
+	}
+
 	public static Icon coins(int size, Color colour) {
 		return new Vector(size, colour) {
 
@@ -227,7 +253,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bag", "bell", "wrench", "download", "move", "refresh", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "bell", "wrench", "download", "move", "refresh", "list" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -256,6 +282,9 @@ public final class Icons {
 		}
 		if ("bag".equals(name)) {
 			return bag(size, colour);
+		}
+		if ("sprout".equals(name)) {
+			return sprout(size, colour);
 		}
 		if ("bell".equals(name)) {
 			return bell(size, colour);
