@@ -2376,11 +2376,16 @@ public class ResizableShots extends Client {
 		int lastFrame = -1;
 		StringBuilder drawn = new StringBuilder();
 		int max = Integer.getInteger("shots.animmax", 24).intValue();
+		// HOW LONG IT RUNS, in render frames. The .seq cannot be totted up to get this: a frame
+		// with no delayN of its own takes the delay stored on the animation frame, which is not in
+		// the .seq at all. The client knows, so let it count.
+		int ran = 0;
 		for (int i = 0; i < 400; i++) {
 			int cur = entInt("field1171");
 			if (cur < 0) {
 				break;
 			}
+			ran++;
 			int fr = entInt("field1172");
 			if (fr != lastFrame) {
 				lastFrame = fr;
@@ -2395,6 +2400,7 @@ public class ResizableShots extends Client {
 			waitFrames(1);
 		}
 		say("  frames drawn: " + drawn.toString().trim());
+		say("  DURATION " + seqLabel(seqId) + ": ran " + ran + " render frames");
 		return shots;
 	}
 

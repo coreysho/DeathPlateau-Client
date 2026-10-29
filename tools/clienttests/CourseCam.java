@@ -371,6 +371,36 @@ public class CourseCam extends Client {
 	}
 
 	/**
+	 * WHAT IS PLAYING ON THE PLAYER RIGHT NOW, or -1 for nothing.
+	 *
+	 * field1171 is the entity's current seq; the client clears it to -1 when the sequence runs out
+	 * of frames. Sampled every frame through a crossing it says how long the animation lasted
+	 * against how long the client spent gliding the player across - which is the whole question on
+	 * an obstacle whose animation is 8 cycles and whose glide is 50.
+	 */
+	static int animNow() {
+		synchronized (LOCK) {
+			ClientPlayer me = (ClientPlayer) get("localPlayer");
+			return me == null ? -1 : me.field1171;
+		}
+	}
+
+	/**
+	 * AND THE WALK BAS, which is the other way an obstacle animates.
+	 *
+	 * field1176 is the stance/walk sequence the entity is rendered with between one-shot anims. A
+	 * tightrope, a plank or a narrow wall is crossed by ~agility_force_move, which sets this to
+	 * human_walk_logbalance and then WALKS the player over - no one-shot seq is involved at all, so
+	 * reading only field1171 calls those obstacles silent when they are working.
+	 */
+	static int basNow() {
+		synchronized (LOCK) {
+			ClientPlayer me = (ClientPlayer) get("localPlayer");
+			return me == null ? -1 : me.field1176;
+		}
+	}
+
+	/**
 	 * IS THERE FLOOR DRAWN HERE? The client's scene keeps one Square per tile per level, and the
 	 * floor is a Ground (a shaped tile) or a QuickGround (a flat one). A Square with neither is a
 	 * tile the renderer draws nothing for: standing on it is standing in thin air, which is what
@@ -944,6 +974,20 @@ public class CourseCam extends Client {
 		double[] last = drawnAt();
 		int still = 0;
 		boolean shotMid = false;
+		// AND HOW MUCH OF THE CROSSING WAS ANIMATED.
+		//
+		// Counting starts at the first frame a seq is on the player, because the frames before that
+		// are the walk ONTO the obstacle - driven by the bas, with no seq, which is correct and not
+		// what is being measured. From that frame on, crossFrames is how long the player kept
+		// being drawn somewhere new and animFrames is how much of it had an animation.
+		int crossFrames = 0;
+		int animFrames = 0;
+		int seqSeen = -1;
+		boolean crossing = false;
+		int basBefore = basNow();
+		int basSeen = -1;
+		int basFrames = 0;
+		int walkFrames = 0;
 		// A TELEJUMP ARRIVES A TICK AFTER THE ANIMATION. The climb up a rough wall plays where the
 		// player stands, waits a tick and only then moves them, so "still for a while" is not the
 		// same as finished: judging it after 25 still frames reported the wall as landing the
@@ -957,6 +1001,35 @@ public class CourseCam extends Client {
 				path.add(tile);
 				if (!floorAt(t[0], t[1], t[2])) {
 					airborne++;
+				}
+			}
+			int seqNow = animNow();
+			if (seqNow >= 0 && seqSeen < 0) {
+				seqSeen = seqNow;
+				crossing = true;
+			}
+			int basNowV = basNow();
+			boolean moved = Math.abs(d[0] - last[0]) > 0.001 || Math.abs(d[1] - last[1]) > 0.001;
+			// A CHANGED BAS IS A CROSSING TOO. ~agility_force_move swaps the walk bas and walks,
+			// so the obstacle starting shows up here rather than in field1171.
+			if (basNowV != basBefore && basNowV >= 0) {
+				if (basSeen < 0) {
+					basSeen = basNowV;
+				}
+				crossing = true;
+			}
+			if (crossing) {
+				if (seqNow >= 0) {
+					animFrames++;
+				}
+				if (basNowV != basBefore && basNowV >= 0) {
+					basFrames++;
+				}
+				if (moved) {
+					crossFrames++;
+					if (seqNow < 0 && (basNowV == basBefore || basNowV < 0)) {
+						walkFrames++;
+					}
 				}
 			}
 			if (!shotMid && (Math.abs(d[0] - last[0]) > 0.4 || Math.abs(d[1] - last[1]) > 0.4)) {
@@ -979,6 +1052,24 @@ public class CourseCam extends Client {
 		waitFrames(10);
 		shot(course + "_" + (index + 1) + "c_after");
 		say("      drawn path: " + path);
+		say("      crossing: " + crossFrames + " frames moving"
+			+ (seqSeen >= 0 ? ", seq " + seqSeen + " for " + animFrames : ", no one-shot seq")
+			+ (basSeen >= 0 ? ", walk bas " + basSeen + " for " + basFrames : "")
+			+ (walkFrames > 0 ? ", " + walkFrames + " frames with neither" : ""));
+		// HALF IS THE BAR, not all of it: a jump may finish just before the landing, and the cam
+		// samples render frames while the engine counts client cycles, so the two never line up
+		// exactly. What this catches is the player still being carried across long after the
+		// animation has run out - sliding in their idle pose, which is the reported complaint.
+		// WAS THE PLAYER EVER CARRIED WITH NOTHING ON THEM? That is the fault worth catching: not
+		// which animation was picked, but the player being moved in their idle pose. A one-shot
+		// seq that ends early and a bas that covers the rest are both fine; frames with neither
+		// are the slide. A third of the crossing is the bar, to leave room for the frame-versus-
+		// cycle slop and for the last frame or two of a landing.
+		check("the player was animated for the whole crossing",
+			crossFrames == 0 || walkFrames * 3 <= crossFrames,
+			walkFrames + " of " + crossFrames + " moving frames had neither a seq nor a changed"
+			+ " walk bas on the player"
+			+ (seqSeen >= 0 ? " (seq " + seqSeen + " covered " + animFrames + ")" : ""));
 
 		// 5. WHERE IT PUT US, against the course's own constant.
 		int[] end = tileAt();

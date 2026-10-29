@@ -49,8 +49,8 @@ def read_courses(engine):
             if 'COURSES' in src and 'obstacles:' in src:
                 break
     out = []
-    for m in re.finditer(r"\{\s*key:\s*'(\w+)',\s*title:\s*(?:'([^']*)'|\"([^\"]*)\"),\s*"
-                         r"level:\s*(\d+),\s*lapXp:\s*(\d+),\s*start:\s*\[(\d+),\s*(\d+),\s*(\d+)\],\s*"
+    for m in re.finditer(r"\{\s*key:\s*'(\w+)',\s*(?:\w+:\s*[^,\n]+,\s*)*?title:\s*(?:'([^']*)'|\"([^\"]*)\"),\s*"
+                         r"(?:\w+:\s*[^,\n]+,\s*)*?level:\s*(\d+),\s*lapXp:\s*(\d+),\s*start:\s*\[(\d+),\s*(\d+),\s*(\d+)\],\s*"
                          r"obstacles:\s*\[(.*?)\n\s*\]", src, re.S):
         key, t1, t2, level, lapxp, sx, sz, sl, body = m.groups()
         obs = []
