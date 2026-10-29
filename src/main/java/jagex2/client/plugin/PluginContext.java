@@ -384,6 +384,43 @@ public final class PluginContext {
 	}
 
 	/**
+	 * How many objs this cache defines. Indices below this are safe to pass to the rest.
+	 *
+	 * Here so a plugin can WALK the obj table rather than be told an id. A page that wants the
+	 * picture of a crop knows what the cache calls it - "Watermelon" - and not what number it
+	 * is, and a number written into a plugin is a number that moves when the content is
+	 * repacked.
+	 */
+	public int getObjCount() {
+		int[] offsets = ObjType.field824;
+		return offsets == null ? 0 : offsets.length;
+	}
+
+	/**
+	 * An item's picture as the game draws it in an inventory slot, stack number and all, or null
+	 * for an id this cache has no art for.
+	 *
+	 * THE COUNT IS PART OF THE PICTURE. The cache draws the yellow number into the icon itself
+	 * above one, which is why this takes a count rather than handing back a bare image for a
+	 * page to write a number next to: done here it is the game's own numeral, in the game's own
+	 * colours and position, and a page showing a drop looks like the drop.
+	 *
+	 * Pass 1 for a single item. The icons are cached by the client, so asking every frame is
+	 * what the game itself does.
+	 */
+	public Sprite getObjIcon(int objId, int count) {
+		if (objType(objId) == null) {
+			return null;
+		}
+		try {
+			return Sprite.of(ObjType.method230(0, count, objId));
+		} catch (RuntimeException noArt) {
+			// A model this cache cannot build is not a reason to take a page down.
+			return null;
+		}
+	}
+
+	/**
 	 * The client stores a slot's obj as its id PLUS ONE, so that a zero can mean empty.
 	 *
 	 * Static and separate for the same reason as {@link #decodeVarbit}: forgetting the plus one

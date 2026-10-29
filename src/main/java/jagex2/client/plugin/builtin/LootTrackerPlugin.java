@@ -88,6 +88,10 @@ public final class LootTrackerPlugin extends Plugin {
 					return LootTrackerPlugin.this.value(index);
 				}
 
+				public jagex2.client.plugin.Sprite[] icons(int index) {
+					return LootTrackerPlugin.this.icons(index);
+				}
+
 				public boolean removable(int index) {
 					return LootTrackerPlugin.this.bySource() && index < LootTrackerPlugin.this.sources().size();
 				}
@@ -228,7 +232,13 @@ public final class LootTrackerPlugin extends Plugin {
 		}
 		if (this.bySource()) {
 			List<LootTracker.Source> sources = this.sources();
-			return index < sources.size() ? sources.get(index).name : "";
+			if (index >= sources.size()) {
+				return "";
+			}
+			LootTracker.Source source = sources.get(index);
+			// "Zulrah x 13" - the count belongs beside the name, where the eye already is,
+			// rather than in the value column, which is the gp.
+			return source.name + "  x " + source.kills;
 		}
 		List<LootTracker.Item> items = this.items();
 		return index < items.size() ? items.get(index).name : "";
@@ -270,9 +280,11 @@ public final class LootTrackerPlugin extends Plugin {
 				return "";
 			}
 			LootTracker.Source source = sources.get(index);
-			LootTracker.Item best = source.best();
+			// The drops are drawn under this line now, so naming the best one here would say
+			// twice what the picture already says once.
+			int kinds = source.items().size();
 			String kills = source.kills + (source.kills == 1 ? " kill" : " kills");
-			return best == null ? kills : kills + ", best " + best.name;
+			return kinds > MAX_ICONS ? kills + ", showing " + MAX_ICONS + " of " + kinds + " drops" : kills;
 		}
 		List<LootTracker.Item> items = this.items();
 		if (index >= items.size()) {
@@ -280,6 +292,65 @@ public final class LootTrackerPlugin extends Plugin {
 		}
 		return LootTracker.commas(items.get(index).count) + " of them";
 	}
+
+	/**
+	 * The drops to draw under a row, as the game's own inventory icons.
+	 *
+	 * PICTURES RATHER THAN A LIST OF NAMES, which is what this page showed first and what sent
+	 * it back for another go. A kill's drops are a thing a player glances at - twelve icons in
+	 * a block are read at once, where "2947 x Zulrah's scales, 30 x Grimy ranarr weed, ..." has
+	 * to be read a word at a time and does not fit in the column anyway. The stack number is
+	 * drawn into the icon by the cache, in the game's own numerals, so a row looks like the
+	 * drop did on the floor.
+	 *
+	 * Most valuable first, as the rows are, and capped so one enormous haul cannot push the
+	 * rest of the page off the bottom.
+	 */
+	jagex2.client.plugin.Sprite[] icons(int index) {
+		List<LootTracker.Item> items = this.gridItems(index);
+		if (items == null || this.ctx == null) {
+			return null;
+		}
+		jagex2.client.plugin.Sprite[] out = new jagex2.client.plugin.Sprite[items.size()];
+		for (int i = 0; i < out.length; i++) {
+			LootTracker.Item item = items.get(i);
+			long n = item.count;
+			out[i] = this.ctx.getObjIcon(item.id, n > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) n);
+		}
+		return out;
+	}
+
+	/**
+	 * WHICH drops a row's grid shows, in order, before any of them are drawn.
+	 *
+	 * Split from {@link #icons} so the choice can be tested: the icons themselves need a cache
+	 * to draw and a headless run has none, but which items are picked, in what order, and how
+	 * many of them, is arithmetic over the tracker and is where this can go wrong.
+	 */
+	List<LootTracker.Item> gridItems(int index) {
+		if (index < 0 || this.trailing(index) != 0) {
+			return null;
+		}
+		List<LootTracker.Item> items;
+		if (this.bySource()) {
+			List<LootTracker.Source> sources = this.sources();
+			if (index >= sources.size()) {
+				return null;
+			}
+			items = sources.get(index).items();
+		} else {
+			List<LootTracker.Item> all = this.items();
+			if (index >= all.size()) {
+				return null;
+			}
+			// In the item view a row IS one kind, so its grid is that one icon.
+			items = all.subList(index, index + 1);
+		}
+		return items.size() > MAX_ICONS ? items.subList(0, MAX_ICONS) : items;
+	}
+
+	/** As many drops as a row shows before it stops, so one haul cannot fill the page. */
+	static final int MAX_ICONS = 25;
 
 	void forget(int index) {
 		if (!this.bySource()) {

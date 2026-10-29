@@ -112,8 +112,71 @@ public final class FarmPatchesPlugin extends Plugin {
 	static final int DUE_VARP_FIRST = 1957;
 	static final int WORLD_MINUTE_VARP = 1996;
 
-	/** Locs looked at per tick while the index is being built. Small enough not to be felt. */
+	/** Locs, and objs, looked at per tick while the indexes are built. Small enough not to be felt. */
 	static final int SCAN_PER_TICK = 400;
+
+	/**
+	 * The names to try, in order, when looking for the item that pictures a crop.
+	 *
+	 * THE PATCH KNOWS WHAT IT LOOKS LIKE, NOT WHAT IT GROWS. The cache calls a growing form
+	 * "Potato plant", a seedling "Potato seed", a sick one "Diseased Belladonna" and a finished
+	 * one "Potato" - and of those four only two are also the name of an item. So the name is
+	 * tried as it stands first, because "Potato seed" and "Oak sapling" ARE items and anything
+	 * clever would spoil them, and only then with the words the patch adds taken off.
+	 *
+	 * MATCHING AN ITEM IS THE TEST. Whichever candidate the obj table actually has is the right
+	 * one, so a wrong guess costs nothing: it simply does not match and the next is tried. The
+	 * page shows no picture rather than the wrong one.
+	 */
+	static String[] cropItemNames(String locName) {
+		if (locName == null || locName.length() == 0) {
+			return new String[0];
+		}
+		String name = locName.trim();
+		java.util.List<String> out = new java.util.ArrayList<String>();
+		out.add(name);
+		String bare = name;
+		for (String prefix : new String[] { "Diseased ", "Dead " }) {
+			if (bare.length() > prefix.length() && bare.regionMatches(true, 0, prefix, 0, prefix.length())) {
+				bare = bare.substring(prefix.length());
+				// The cache lower-cases what follows: "Dead potato plant".
+				bare = Character.toUpperCase(bare.charAt(0)) + bare.substring(1);
+			}
+		}
+		for (String suffix : new String[] { " plant", " bush", " tree", " plants" }) {
+			if (bare.length() > suffix.length() && bare.toLowerCase().endsWith(suffix)) {
+				bare = bare.substring(0, bare.length() - suffix.length());
+			}
+		}
+		if (!out.contains(bare)) {
+			out.add(bare);
+		}
+		return out.toArray(new String[0]);
+	}
+
+	/**
+	 * How far through its current stage a patch is, as a percentage, or -1 when that is not
+	 * knowable.
+	 *
+	 * BETWEEN TWO THINGS THE PAGE ALREADY HAS: the minute the patch last changed, which this
+	 * watched happen, and the minute it next advances, which the server sends. The bar is the
+	 * distance travelled between them - not overall growth, which would need the stage count,
+	 * and not a guess, which would be a moving bar that means nothing.
+	 *
+	 * -1 rather than 0 for "cannot say", because a bar at 0 looks like a patch that has just
+	 * started rather than one nobody can measure.
+	 */
+	static int growthPercent(long changedAt, long due, long now) {
+		if (due <= changedAt || now < changedAt) {
+			return -1;
+		}
+		long span = due - changedAt;
+		long gone = now - changedAt;
+		if (gone >= span) {
+			return 100;
+		}
+		return (int) (gone * 100L / span);
+	}
 
 	@ConfigItem(keyName = "onlyPlanted", name = "Hide empty patches",
 		description = "Leave out patches that are bare soil or weeds.")
@@ -130,6 +193,12 @@ public final class FarmPatchesPlugin extends Plugin {
 
 	private int scanned;
 	private boolean scanDone;
+
+	/** Lower-cased obj name -> id, built the same way and for the same reason as the loc index. */
+	private final java.util.Map<String, Integer> objByName = new java.util.HashMap<String, Integer>();
+
+	private int objScanned;
+	private boolean objScanDone;
 
 	@Override
 	protected void startUp() {
@@ -155,6 +224,14 @@ public final class FarmPatchesPlugin extends Plugin {
 					return FarmPatchesPlugin.this.value(index);
 				}
 
+				public int progress(int index) {
+					return FarmPatchesPlugin.this.progress(index);
+				}
+
+				public jagex2.client.plugin.Sprite icon(int index) {
+					return FarmPatchesPlugin.this.icon(index);
+				}
+
 				public boolean removable(int index) {
 					return false;
 				}
@@ -174,6 +251,7 @@ public final class FarmPatchesPlugin extends Plugin {
 			return;
 		}
 		this.scanSome();
+		this.scanObjs();
 		long minute = now();
 		for (int i = 0; i < PATCH_VARBIT.length; i++) {
 			this.patches.observe(i, this.ctx.getVarbit(PATCH_VARBIT[i]), minute);
@@ -218,6 +296,54 @@ public final class FarmPatchesPlugin extends Plugin {
 		}
 		this.scanned = end;
 		this.scanDone = this.scanned >= count;
+	}
+
+	/**
+	 * Works through the obj table a slice at a time, remembering what each item is called.
+	 *
+	 * Same bargain as the loc scan above: a page that wants the picture of a watermelon knows
+	 * the cache calls it "Watermelon" and not what number that is, and a number written in here
+	 * is one that moves when the content is repacked. Spread over ticks because ObjType hands
+	 * its entries out of a ten-entry round-robin cache, so reading them all decodes them all.
+	 */
+	private void scanObjs() {
+		if (this.objScanDone) {
+			return;
+		}
+		int count = this.ctx.getObjCount();
+		if (count <= 0) {
+			return;
+		}
+		int end = this.objScanned + SCAN_PER_TICK;
+		if (end > count) {
+			end = count;
+		}
+		for (int obj = this.objScanned; obj < end; obj++) {
+			String name = this.ctx.getObjName(obj);
+            if (name.length() == 0) {
+				continue;
+			}
+			String key = name.toLowerCase();
+			// FIRST ONE WINS. The cache repeats a name across noted and placeholder forms, and
+			// the lowest id is the real item - the one whose picture a player recognises.
+			if (!this.objByName.containsKey(key)) {
+				this.objByName.put(key, Integer.valueOf(obj));
+			}
+		}
+		this.objScanned = end;
+		this.objScanDone = this.objScanned >= count;
+	}
+
+	/** The item that pictures what is in a patch, or -1 while the index is still being built. */
+	int cropObj(String locName) {
+		String[] candidates = cropItemNames(locName);
+		for (int i = 0; i < candidates.length; i++) {
+			Integer id = this.objByName.get(candidates[i].toLowerCase());
+			if (id != null) {
+				return id.intValue();
+			}
+		}
+		return -1;
 	}
 
 	// ------------------------------------------------------------------ what a patch is doing
@@ -421,6 +547,55 @@ public final class FarmPatchesPlugin extends Plugin {
 		}
 		long since = this.patches.sinceChange(patch, minute);
 		return what + " - changed " + FarmPatches.span(since) + " ago";
+	}
+
+	/**
+	 * The picture of what is in the patch: the crop's own item, as the game draws it.
+	 *
+	 * A SINGLE ONE, not a stack, so no number is drawn over it - the row is about the patch,
+	 * not about how much of something is in it.
+	 */
+	jagex2.client.plugin.Sprite icon(int index) {
+		int patch = this.patchAt(index);
+		if (patch < 0 || this.ctx == null) {
+			return null;
+		}
+		int form = this.formOf(patch);
+		if (form == -1) {
+			return null;
+		}
+		int obj = this.cropObj(this.ctx.getLocName(form));
+		return obj < 0 ? null : this.ctx.getObjIcon(obj, 1);
+	}
+
+	/**
+	 * The bar under a row: how far through its current stage the patch is.
+	 *
+	 * FULL WHEN THERE IS NOTHING LEFT TO WAIT FOR, and absent for a sick one. A ready patch is
+	 * at the end of its road; a diseased one is not on the road at all, and a bar creeping
+	 * along under a crop that is dying would say the opposite of what the row says.
+	 */
+	int progress(int index) {
+		int patch = this.patchAt(index);
+		if (patch < 0 || this.ctx == null) {
+			return -1;
+		}
+		int form = this.formOf(patch);
+		if (form != -1) {
+			String name = this.ctx.getLocName(form);
+			if (isSick(name)) {
+				return -1;
+			}
+			if (isReady(this.ctx.getLocOp(form, 0), this.ctx.getLocOp(form, 1), this.ctx.getLocOp(form, 2))) {
+				return 100;
+			}
+		}
+		long left = this.serverMinutesLeft(patch);
+		if (left < 0) {
+			return -1;
+		}
+		long minute = now();
+		return growthPercent(this.patches.changedAt(patch), minute + left, minute);
 	}
 
 	/** The model, for the test: the plugin is wiring, the rules are in there. */

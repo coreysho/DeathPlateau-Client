@@ -461,6 +461,22 @@ public class GameStateTest {
 				&& ctx.indexOf("public void useObj(") < 0,
 			"...and cannot move, drop or use what is in one");
 		check(ctx.indexOf("public int resolveLoc(") >= 0, "it can see what form a loc is in");
+
+		// A ROW'S PICTURES ARE COPIED, NOT HELD. ObjType hands icons out of a round-robin the
+		// GAME thread overwrites, and a row is painted later on the Swing thread, so a Sprite
+		// kept on a Row would be painted as whatever that slot had become by then. The pixels
+		// are taken when the snapshot is. This cannot be run - it needs two threads and a
+		// cache - so it is read out of the source, as the menu guards are.
+		String list = read("src/main/java/jagex2/client/plugin/ConfigList.java");
+		check(list.indexOf("public final java.awt.image.BufferedImage icon;") >= 0,
+			"a row holds its picture as an image, not as a handle into the icon cache");
+		check(list.indexOf("public final java.awt.image.BufferedImage[] icons;") >= 0,
+			"...and so does its grid");
+		check(list.indexOf("icon.toImage()") >= 0 && list.indexOf("icons[i].toImage()") >= 0,
+			"...both copied where the snapshot is taken, on the game thread");
+		String page = read("src/main/java/jagex2/client/plugin/ui/PanelPage.java");
+		check(page.indexOf("toImage()") < 0,
+			"...and never on the Swing thread, which is where the recycled buffer would be read");
 		check(ctx.indexOf("setLoc(") < 0 && ctx.indexOf("public void addLoc(") < 0,
 			"...and cannot put one anywhere or change one");
 	}
