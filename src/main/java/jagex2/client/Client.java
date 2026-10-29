@@ -245,7 +245,7 @@ public class Client extends GameShell implements PixMap.Target {
 	public int[] cameraModifierWobbleSpeed = new int[5];
 
 	@ObfuscatedName("client.Wd")
-	public int[] varCache = new int[2000];
+	public int[] varCache = new int[VARP_COUNT];
 
 	@ObfuscatedName("client.be")
 	public int macroCameraZModifier = 2;
@@ -269,7 +269,19 @@ public class Client extends GameShell implements PixMap.Target {
 	public final int[] LOC_SHAPE_TO_LAYER = new int[] { 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3 };
 
 	@ObfuscatedName("client.Ee")
-	public int[] varps = new int[2000];
+	/**
+	 * How many varps the client keeps room for.
+	 *
+	 * 2000 IS THE NUMBER THE GAMEPACK SHIPPED WITH, and the content had grown to varp 1956 - 44
+	 * short of it - with the two packet handlers below writing straight into the array with no
+	 * check at all. The 44th varp anybody added would have thrown ArrayIndexOutOfBounds inside
+	 * the packet loop the first time the server set it, which on this client is a disconnect
+	 * that comes back on every login, for every player who has that bit of state. Nothing in
+	 * the protocol caps a varp id at 2000; the id arrives as a short.
+	 */
+	public static final int VARP_COUNT = 4000;
+
+	public int[] varps = new int[VARP_COUNT];
 
 	@ObfuscatedName("client.Le")
 	public boolean redrawFrame = false;
@@ -9703,6 +9715,15 @@ public class Client extends GameShell implements PixMap.Target {
 				// VARP_SMALL
 				int var17 = this.in.g2_alt2();
 				byte var18 = this.in.g1b_alt3();
+				// A varp this client has no room for is DROPPED, not fatal. Writing past the
+				// array throws inside the packet loop, which is a disconnect on every login for
+				// as long as the server keeps setting it.
+				if (var17 < 0 || var17 >= VARP_COUNT) {
+					// ptype first: every other exit from this handler clears it, and leaving
+					// it set makes the client read the same opcode again next pass.
+					this.ptype = -1;
+					return true;
+				}
 				this.varCache[var17] = var18;
 				if (this.varps[var17] != var18) {
 					this.varps[var17] = var18;
@@ -9954,6 +9975,13 @@ public class Client extends GameShell implements PixMap.Target {
 				// VARP_LARGE
 				int var43 = this.in.g4_alt3();
 				int var44 = this.in.g2_alt1();
+				// As VARP_SMALL above: out of range is dropped rather than fatal.
+				if (var44 < 0 || var44 >= VARP_COUNT) {
+					// ptype first: every other exit from this handler clears it, and leaving
+					// it set makes the client read the same opcode again next pass.
+					this.ptype = -1;
+					return true;
+				}
 				this.varCache[var44] = var43;
 				if (this.varps[var44] != var43) {
 					this.varps[var44] = var43;

@@ -54,6 +54,9 @@ public class GameStateTest {
 		System.out.println("3. nothing here throws, or lies, without a world");
 		noWorldTests();
 		System.out.println();
+		System.out.println("3b. there is room for the varps the content actually has");
+		ceilingTests();
+		System.out.println();
 		System.out.println("4. a varbit read out of the varp it actually lives in");
 		liveVarpTests();
 		System.out.println();
@@ -177,6 +180,47 @@ public class GameStateTest {
 			threw = error.getClass().getName();
 		}
 		check(threw.length() == 0, "and not one of them threw" + (threw.length() == 0 ? "" : " (" + threw + ")"));
+	}
+
+	/**
+	 * The highest varp id the content was using when this was written.
+	 *
+	 * Pinned rather than read from anywhere, because the point is the HEADROOM between it and
+	 * the array: the gamepack shipped with room for 2000 and the content had reached 1956, with
+	 * both packet handlers writing straight in. The 44th varp anybody added would have thrown
+	 * inside the packet loop the first time the server set it - a disconnect on every login for
+	 * every player carrying that state, with nothing to say why.
+	 */
+	static final int CONTENT_HIGHEST_VARP = 1956;
+
+	static void ceilingTests() {
+		Client client = newClient();
+		if (client == null) {
+			skip("needs a display to build a Client - run under xvfb-run");
+			return;
+		}
+		check(client.varps.length == Client.VARP_COUNT, "the varp array is the size the constant says");
+		check(client.varCache.length == Client.VARP_COUNT, "...and so is the cache beside it");
+		check(Client.VARP_COUNT > CONTENT_HIGHEST_VARP,
+			"there is room for the highest varp the content uses (" + CONTENT_HIGHEST_VARP + ")");
+		check(Client.VARP_COUNT - CONTENT_HIGHEST_VARP >= 500,
+			"...with room to spare, which 2000 no longer was ("
+				+ (Client.VARP_COUNT - CONTENT_HIGHEST_VARP) + " free)");
+
+		// THE GUARDS, which no headless run can reach: they sit in the packet loop and need a
+		// socket. Read out of the source, the way JaggrabTest reads openUrl's branches.
+		String src = read("src/main/java/jagex2/client/Client.java");
+		int small = src.indexOf("// VARP_SMALL");
+		int large = src.indexOf("// VARP_LARGE");
+		check(small > 0 && large > 0, "both varp handlers are where the test expects them");
+		String smallBody = small < 0 ? "" : src.substring(small, src.indexOf("return true;", small));
+		String largeBody = large < 0 ? "" : src.substring(large, src.indexOf("return true;", large));
+		check(smallBody.indexOf(">= VARP_COUNT") >= 0, "VARP_SMALL drops an id it has no room for");
+		check(largeBody.indexOf(">= VARP_COUNT") >= 0, "...and so does VARP_LARGE");
+		// Dropping it must still finish the packet, or the client reads the same opcode for ever.
+		check(smallBody.indexOf("this.ptype = -1;") >= 0,
+			"...and clears ptype on the way out, or the opcode is read again next pass");
+		check(largeBody.indexOf("this.ptype = -1;") >= 0, "...both of them");
 	}
 
 	/** Not any varp value a check here expects, so a throw fails the check that caused it. */

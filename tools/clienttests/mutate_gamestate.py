@@ -31,6 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CTX = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
 API = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginApi.java')
+CLIENT = os.path.join(ROOT, 'src/main/java/jagex2/client/Client.java')
 RUNNER = os.path.join(HERE, 'run_gamestatetest.py')
 
 MUTS = [
@@ -103,6 +104,18 @@ MUTS = [
      '\t\tif (types == null || data == null || INVENTORY_COM >= types.length || INVENTORY_COM >= data.length) {\n\t\t\treturn null;\n\t\t}\n',
      ''),
 
+    # ---- ROOM FOR THE VARPS THE CONTENT HAS. The gamepack shipped with 2000 and the content
+    # had reached 1956, with both handlers writing straight in.
+    (CLIENT, 'the array back at the size the gamepack shipped with, 44 short of the content',
+     '\tpublic static final int VARP_COUNT = 4000;',
+     '\tpublic static final int VARP_COUNT = 2000;'),
+    (CLIENT, 'VARP_SMALL writing past the end again, which disconnects on every login',
+     '\t\t\t\tif (var17 < 0 || var17 >= VARP_COUNT) {',
+     '\t\t\t\tif (false) {'),
+    (CLIENT, 'the dropped packet leaving ptype set, so the opcode is read again for ever',
+     '\t\t\t\t\tthis.ptype = -1;\n\t\t\t\t\treturn true;\n\t\t\t\t}\n\t\t\t\tthis.varCache[var17] = var18;',
+     '\t\t\t\t\treturn true;\n\t\t\t\t}\n\t\t\t\tthis.varCache[var17] = var18;'),
+
     # ---- WHAT FORM A LOC IS IN. An off-by-one here hands back a REAL loc one state along: a
     # farming patch at the growth stage either side of the one it is at, named and drawn.
     (CTX, 'the multiloc table read one along, so every patch reads as the next stage',
@@ -129,7 +142,7 @@ MUTS = [
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (CTX, API):
+    for path in (CTX, API, CLIENT):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     _work, inside = workspace('gamestate')
