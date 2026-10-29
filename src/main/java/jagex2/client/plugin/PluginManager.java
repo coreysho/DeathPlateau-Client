@@ -68,7 +68,9 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.NpcIndicatorsPlugin",
 		"jagex2.client.plugin.builtin.AgilityPlugin",
 		"jagex2.client.plugin.builtin.LootTrackerPlugin",
-		"jagex2.client.plugin.builtin.FarmPatchesPlugin"
+		"jagex2.client.plugin.builtin.FarmPatchesPlugin",
+		"jagex2.client.plugin.builtin.SlayerPlugin",
+		"jagex2.client.plugin.builtin.CluePlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */
