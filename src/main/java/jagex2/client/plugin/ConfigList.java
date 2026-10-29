@@ -48,8 +48,27 @@ public abstract class ConfigList {
 		/** 0 to 100 for a bar under the row, or -1 for none. */
 		public final int progress;
 
+		/** A picture at the left of the row - a crop, an item - or null. */
+		public final Sprite icon;
+
+		/**
+		 * A grid of pictures UNDER the row, or empty.
+		 *
+		 * Separate from {@link #icon} because it is a different shape of thing: one icon labels
+		 * the row, and a grid is the row's contents - a kill's drops, a tab's items - laid out
+		 * as a block the eye reads at once rather than as a sentence.
+		 */
+		public final Sprite[] icons;
+
 		Row(int index, String label, String detail, String action, boolean removable,
 			String value, int progress) {
+			this(index, label, detail, action, removable, value, progress, null, null);
+		}
+
+		Row(int index, String label, String detail, String action, boolean removable,
+			String value, int progress, Sprite icon, Sprite[] icons) {
+			this.icon = icon;
+			this.icons = icons == null ? NO_ICONS : icons;
 			this.index = index;
 			this.label = label;
 			this.detail = detail;
@@ -58,6 +77,23 @@ public abstract class ConfigList {
 			this.value = value;
 			this.progress = progress < 0 ? -1 : progress > 100 ? 100 : progress;
 		}
+	}
+
+	static final Sprite[] NO_ICONS = new Sprite[0];
+
+	/**
+	 * A picture for the left of a row, or null for none.
+	 *
+	 * Asked for as a Sprite rather than a name, unlike the rail's icons, because these are the
+	 * game's own art - an item, a crop - and there is no fixed set of them to name.
+	 */
+	public Sprite icon(int index) {
+		return null;
+	}
+
+	/** A grid of pictures to draw under a row, or null for none. */
+	public Sprite[] icons(int index) {
+		return null;
 	}
 
 	/** How many rows there are. */
@@ -139,7 +175,7 @@ public abstract class ConfigList {
 					continue;
 				}
 				rows.add(new Row(i, label, this.detail(i), this.action(i), this.removable(i),
-					this.value(i), this.progress(i)));
+					this.value(i), this.progress(i), this.icon(i), this.icons(i)));
 			} catch (Throwable ignored) {
 				// One bad row, not a blank page.
 			}

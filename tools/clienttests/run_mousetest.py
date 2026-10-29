@@ -83,6 +83,11 @@ def main():
         if not lines:
             print(r.stderr[-4000:])
             return 1
+        if r.returncode != 0 and not any(l.startswith('FAIL') for l in lines):
+            # NON-ZERO WITH NO FAILURE NAMED means the suite died part way through, and the
+            # reason is on stderr. Printing stdout alone here showed a run that simply stopped
+            # mid-section with nothing to say why, which cost an afternoon once.
+            print(r.stderr[-4000:])
         return 0 if r.returncode == 0 else 1
     finally:
         shutil.rmtree(work, ignore_errors=True)

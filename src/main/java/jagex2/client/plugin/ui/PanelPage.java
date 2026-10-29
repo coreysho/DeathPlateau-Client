@@ -11,6 +11,7 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 import jagex2.client.plugin.ConfigList;
@@ -95,6 +96,16 @@ public final class PanelPage extends JPanel {
 		top.setOpaque(false);
 		top.setAlignmentX(LEFT_ALIGNMENT);
 
+		if (row.icon != null) {
+			java.awt.image.BufferedImage img = row.icon.toImage();
+			if (img != null) {
+				JLabel picture = new JLabel(new javax.swing.ImageIcon(img));
+				picture.setOpaque(false);
+				picture.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
+				top.add(picture, BorderLayout.WEST);
+			}
+		}
+
 		JPanel text = new JPanel();
 		text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
 		text.setOpaque(false);
@@ -132,6 +143,11 @@ public final class PanelPage extends JPanel {
 		top.setMaximumSize(new Dimension(Integer.MAX_VALUE, top.getPreferredSize().height));
 		panel.add(top);
 
+		if (row.icons.length > 0) {
+			panel.add(javax.swing.Box.createVerticalStrut(5));
+			panel.add(iconGrid(row.icons));
+		}
+
 		if (row.progress >= 0) {
 			panel.add(javax.swing.Box.createVerticalStrut(5));
 			panel.add(new Bar(row.progress));
@@ -163,6 +179,40 @@ public final class PanelPage extends JPanel {
 	}
 
 	/** A progress bar: a track and a fill, in the client's own colours and nothing else. */
+	/** How many icons fit across a page before the grid wraps. */
+	static final int GRID_COLUMNS = 5;
+
+	/**
+	 * A block of item pictures under a row, five to a line.
+	 *
+	 * A GRID RATHER THAN A SENTENCE. This is a kill's drops, and the thing a player does with
+	 * it is glance: twelve pictures in a block are read at once, while "2947 x Zulrah's scales,
+	 * 30 x Grimy ranarr weed, ..." has to be read a word at a time. The count is already drawn
+	 * into the picture by the cache, which is where the game draws it too.
+	 *
+	 * The last line is padded with empty cells so the ones above it stay square - a GridLayout
+	 * with a short final row stretches every cell in it otherwise.
+	 */
+	private static Component iconGrid(jagex2.client.plugin.Sprite[] icons) {
+		int rows = (icons.length + GRID_COLUMNS - 1) / GRID_COLUMNS;
+		JPanel grid = new JPanel(new java.awt.GridLayout(rows, GRID_COLUMNS, 2, 2));
+		grid.setOpaque(false);
+		grid.setAlignmentX(LEFT_ALIGNMENT);
+		for (int i = 0; i < rows * GRID_COLUMNS; i++) {
+			JLabel cell = new JLabel();
+			cell.setOpaque(false);
+			cell.setHorizontalAlignment(JLabel.CENTER);
+			if (i < icons.length && icons[i] != null) {
+				java.awt.image.BufferedImage img = icons[i].toImage();
+				if (img != null) {
+					cell.setIcon(new javax.swing.ImageIcon(img));
+				}
+			}
+			grid.add(cell);
+		}
+		return grid;
+	}
+
 	private static final class Bar extends JComponent {
 
 		private static final int HEIGHT = 4;
