@@ -1,5 +1,6 @@
 package jagex2.client.plugin;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -7,8 +8,10 @@ import jagex2.client.Client;
 import jagex2.client.DevLog;
 import jagex2.client.GameShell;
 import jagex2.client.Stats;
+import jagex2.config.Component;
 import jagex2.config.LocType;
 import jagex2.config.ObjType;
+import jagex2.config.VarbitType;
 import jagex2.dash3d.ClientNpc;
 import jagex2.dash3d.ClientObj;
 import jagex2.dash3d.ClientPlayer;
@@ -195,6 +198,234 @@ public final class PluginContext {
 	/** Whether the client's own fps counter is on, which an overlay in that corner must dodge. */
 	public boolean isFpsShown() {
 		return Client.displayFps;
+	}
+
+	// ------------------------------------------------------------------ varps and varbits
+
+	/*
+	 * THE SERVER'S OWN STATE. A varp is one of the two thousand numbers the server keeps per
+	 * player and sends over as they change: how far through a quest somebody is, which stage a
+	 * farming patch is at, what the settings tab has toggled. A varbit is a named slice of bits
+	 * inside one of them, because most of those facts need three bits rather than thirty-two.
+	 *
+	 * READS ONLY, AND THERE IS DELIBERATELY NO SETTER. A varp is the server's copy of the truth.
+	 * Writing the client's copy would not change the server's mind about anything - it would only
+	 * make the client disagree with it until the next update arrived. A plugin that could do that
+	 * could make a quest look finished or a patch look grown, and the bug report would come here.
+	 *
+	 * WHAT THIS STILL DOES NOT GIVE A PLUGIN IS WHICH NUMBER MEANS WHAT. That is content
+	 * knowledge, not cache knowledge - farming_allotment_varp_1 is a name in the content repo,
+	 * and nothing in this client knows it. Worse, a varp the content has not marked
+	 * `transmit=yes` never leaves the server at all, so it reads 0 here forever however right the
+	 * id is. Every slayer varp is like that today, which is a content change rather than one here.
+	 */
+
+	/** How many varps the client keeps. Indices below this are safe to pass to {@link #getVarp}. */
+	public int getVarpCount() {
+		int[] varps = this.client.varps;
+		return varps == null ? 0 : varps.length;
+	}
+
+	/**
+	 * One varp's whole value. 0 for an index out of range, and for any index at all before there
+	 * is a world - the client throws its varps away on logout, and an overlay can outlive that.
+	 */
+	public int getVarp(int id) {
+		int[] varps = this.client.varps;
+		return varps == null || id < 0 || id >= varps.length ? 0 : varps[id];
+	}
+
+	/** How many varbits this cache defines. */
+	public int getVarbitCount() {
+		VarbitType[] all = VarbitType.field1760;
+		return all == null ? 0 : all.length;
+	}
+
+	/**
+	 * Whether this cache has an entry for the varbit at all. Worth asking before believing a 0:
+	 * an id past the end of the table and a varbit that is honestly zero both read 0.
+	 *
+	 * It answers for the TABLE, not for the content: varbit.dat gives every id up to its count
+	 * an entry, so this separates a real id from one somebody made up, and cannot tell you that
+	 * a real id is one the server never sends.
+	 */
+	public boolean hasVarbit(int id) {
+		return varbitType(id) != null;
+	}
+
+	/**
+	 * One varbit's value - the bits it covers, shifted down to zero, so a three-bit varbit at its
+	 * highest reads 7 rather than some multiple of eight. 0 for an id this cache does not define.
+	 */
+	public int getVarbit(int id) {
+		VarbitType bit = varbitType(id);
+		if (bit == null) {
+			return 0;
+		}
+		return decodeVarbit(this.getVarp(bit.field1762), bit.field1763, bit.field1764);
+	}
+
+	/** The cache's entry for a varbit, or null for an id it does not define. */
+	private static VarbitType varbitType(int id) {
+		VarbitType[] all = VarbitType.field1760;
+		return all == null || id < 0 || id >= all.length ? null : all[id];
+	}
+
+	/**
+	 * The bits of a varp from lsb to msb INCLUSIVE, shifted down to zero.
+	 *
+	 * Static and separate because it is the one part of this that can be wrong invisibly. A mask
+	 * one bit short reads a four-bit patch stage as its lower three bits - still a number, still
+	 * a plausible patch stage, and nothing anywhere throws. Being a pure function, it is tested
+	 * as one.
+	 *
+	 * THE MASK IS THE CLIENT'S OWN TABLE, not a copy of it: the same one LocType and NpcType read
+	 * when they pick a model by varbit. Its last entry is -1 - every bit set - which is what a
+	 * varbit spanning a whole varp needs, and what a hand-written (1 << 32) - 1 gets wrong.
+	 *
+	 * The shift is arithmetic, matching the client. That looks like a bug for a negative varp and
+	 * is not: the sign bits it drags down land above the mask's top bit for every range msb can
+	 * hold, so the mask clears all of them again.
+	 */
+	static int decodeVarbit(int varp, int lsb, int msb) {
+		int[] masks = Client.VARBIT_MASKS;
+		if (masks == null || lsb < 0 || msb < lsb || msb > 31 || msb - lsb >= masks.length) {
+			return 0;
+		}
+		return varp >> lsb & masks[msb - lsb];
+	}
+
+	// ------------------------------------------------------------------ the player's inventory
+
+	/*
+	 * THE TWENTY-EIGHT SLOTS, as the client has them.
+	 *
+	 * The server binds the player's inventory to one interface component at login - the content's
+	 * login script runs `inv_transmit(inv, inventory:inv)` - and keeps it up to date from then
+	 * on, whatever tab is open and whether or not the bank is. So this reads that component.
+	 *
+	 * SLOTS, NOT A SHOPPING LIST. Slot order is what the player arranged, what a drop takes from,
+	 * and the whole point of anti-drag, so it is kept: an empty slot in the middle reads empty
+	 * rather than closing the gap up.
+	 */
+
+	/**
+	 * The component the inventory is transmitted to, as the content's interface.pack numbers it
+	 * (`3214=inventory:inv`).
+	 *
+	 * A NUMBER FROM THE CACHE, WHICH IS WHY IT IS HERE. Which component holds the inventory is
+	 * knowledge about this revision's interfaces, the same kind as which sprite sheet holds a
+	 * skill icon, and it belongs to the client rather than to every plugin that wants to know
+	 * what it is carrying. If the content ever renumbers its interfaces this is the one line that
+	 * moves, and the symptom would be an inventory that reads empty for everybody.
+	 */
+	private static final int INVENTORY_COM = 3214;
+
+	/** How many slots the inventory has - 28 in game, 0 before there is a cache to ask. */
+	public int getInventorySize() {
+		int[] ids = inventoryObjIds();
+		return ids == null ? 0 : ids.length;
+	}
+
+	/**
+	 * The obj in a slot, or -1 for an empty slot and for a slot out of range.
+	 *
+	 * -1 rather than 0 because 0 is a real obj id in this cache, so a plugin that treated 0 as
+	 * empty would be right about the slot and wrong about the item.
+	 */
+	public int getInventoryObjId(int slot) {
+		int[] ids = inventoryObjIds();
+		if (ids == null || slot < 0 || slot >= ids.length) {
+			return -1;
+		}
+		return decodeSlotObj(ids[slot]);
+	}
+
+	/** How many are in a slot: 1 for anything unstackable, 0 for an empty slot. */
+	public int getInventoryObjCount(int slot) {
+		int[] ids = inventoryObjIds();
+		int[] counts = inventoryObjCounts();
+		if (ids == null || counts == null || slot < 0 || slot >= ids.length || slot >= counts.length) {
+			return 0;
+		}
+		return decodeSlotObj(ids[slot]) == -1 ? 0 : counts[slot];
+	}
+
+	/** How many of an obj the player is carrying in total, adding up every stack of it. */
+	public int countObj(int objId) {
+		int[] ids = inventoryObjIds();
+		int[] counts = inventoryObjCounts();
+		if (ids == null || counts == null || objId < 0) {
+			return 0;
+		}
+		int total = 0;
+		for (int slot = 0; slot < ids.length && slot < counts.length; slot++) {
+			if (decodeSlotObj(ids[slot]) == objId) {
+				total += counts[slot];
+			}
+		}
+		return total;
+	}
+
+	/** Whether any slot holds the obj at all. */
+	public boolean hasObj(int objId) {
+		return this.countObj(objId) > 0;
+	}
+
+	/**
+	 * An obj's name, e.g. "Rune scimitar", or "" for an id this cache has no name for.
+	 *
+	 * Here so that a plugin reading the inventory does not have to reach into ObjType for the one
+	 * thing it wants from it. {@link GroundItem} already carries its own name for the same reason.
+	 */
+	public String getObjName(int objId) {
+		ObjType type = objType(objId);
+		return type == null || type.field811 == null ? "" : type.field811;
+	}
+
+	/**
+	 * The client stores a slot's obj as its id PLUS ONE, so that a zero can mean empty.
+	 *
+	 * Static and separate for the same reason as {@link #decodeVarbit}: forgetting the plus one
+	 * does not fail, it hands back the obj one id below the real one. In this cache that is a
+	 * perfectly ordinary item with a perfectly ordinary name, so the only symptom is a plugin
+	 * quietly talking about the wrong thing.
+	 */
+	static int decodeSlotObj(int raw) {
+		return raw <= 0 ? -1 : raw - 1;
+	}
+
+	/** The inventory component, or null before the cache is loaded or after it is thrown away. */
+	private static Component inventoryCom() {
+		Component[] types = Component.types;
+		byte[][] data = Component.data;
+		if (types == null || data == null || INVENTORY_COM >= types.length || INVENTORY_COM >= data.length) {
+			return null;
+		}
+		if (types[INVENTORY_COM] == null && data[INVENTORY_COM] == null) {
+			// Not decoded yet, and nothing to decode it from - Component.get would throw.
+			return null;
+		}
+		return Component.get(INVENTORY_COM);
+	}
+
+	private static int[] inventoryObjIds() {
+		Component com = inventoryCom();
+		return com == null ? null : com.invSlotObjId;
+	}
+
+	private static int[] inventoryObjCounts() {
+		Component com = inventoryCom();
+		return com == null ? null : com.invSlotObjCount;
+	}
+
+	/** The cache's entry for an obj, or null for an id it does not define. */
+	private static ObjType objType(int id) {
+		int[] offsets = ObjType.field824;
+		if (offsets == null || id < 0 || id >= offsets.length) {
+			return null;
+		}
+		return ObjType.get(id);
 	}
 
 	// ------------------------------------------------------------------ chat
@@ -783,6 +1014,129 @@ public final class PluginContext {
 			}
 		}
 		return items;
+	}
+
+	// ------------------------------------------------------------------ what a loc looks like now
+
+	/*
+	 * A MULTILOC IS A LOC THAT CHANGES WITH A VARBIT. A door is open or shut, a farming patch is
+	 * weeds or seedlings or a grown crop, and the cache holds the whole table: one child loc per
+	 * value of the varbit, each with its own model, name, examine text and right-click options.
+	 * The client resolves it every time it draws the thing.
+	 *
+	 * WHY A PLUGIN WANTS IT, and why it is worth a level of its own: the table is the only place
+	 * that says what a state MEANS. A farming patch's state byte is 23, and the only thing in
+	 * this client that knows 23 is a fully grown cabbage is the multiloc table - the crop names,
+	 * the growth stages and the harvest option are all in the cache, and none of it is anywhere
+	 * else. Without this a plugin would have to carry a copy of the server's crop tables and
+	 * watch it rot.
+	 *
+	 * VALUES, NOT A HANDLE, like {@link Actor} and for the same reason: LocType.get hands out
+	 * references into a 20-entry round-robin cache that recycles under you once more than 20
+	 * types are looked at, so everything here is copied out on the spot.
+	 *
+	 * STILL A READ. Nothing here changes a loc, puts one anywhere, or clicks one.
+	 */
+
+	/** How many locs this cache defines. Indices below this are safe to pass to the rest. */
+	public int getLocCount() {
+		int[] offsets = LocType.field1612;
+		return offsets == null ? 0 : offsets.length;
+	}
+
+	/**
+	 * The varbit that chooses which form a multiloc takes, or -1 for a loc that is only ever
+	 * itself.
+	 *
+	 * This is how a plugin FINDS the locs it cares about without being told their ids. Loc ids
+	 * are assigned by whoever packed the interfaces and move when the content is renumbered;
+	 * the varbit behind a farming patch is original cache data and does not.
+	 */
+	public int getLocVarbit(int locId) {
+		LocType type = locType(locId);
+		return type == null ? -1 : type.field1632;
+	}
+
+	/** The varp a multiloc uses directly, for the few that switch on a whole varp. -1 if none. */
+	public int getLocVarp(int locId) {
+		LocType type = locType(locId);
+		return type == null ? -1 : type.field1635;
+	}
+
+	/**
+	 * The loc the client would draw here right now: a multiloc resolved through its varbit, or
+	 * the loc itself when it is not one. -1 when the current value picks nothing at all, which
+	 * the cache uses for "draw no scenery" and is a real answer rather than an error.
+	 */
+	public int resolveLoc(int locId) {
+		LocType type = locType(locId);
+		if (type == null) {
+			return -1;
+		}
+		int[] children = type.field1659;
+		if (children == null) {
+			return locId;
+		}
+		int value = type.field1632 != -1 ? this.getVarbit(type.field1632)
+			: type.field1635 != -1 ? this.getVarp(type.field1635) : -1;
+		return pickChild(children, value);
+	}
+
+	/**
+	 * Which child of a multiloc a value selects, or -1 when it selects none.
+	 *
+	 * Static and separate for the same reason as {@link #decodeVarbit}: a table lookup with an
+	 * off-by-one hands back a REAL loc, one state along. A farming patch would read as the
+	 * growth stage either side of the one it is at, with the right name and a plausible
+	 * picture, and nothing anywhere would throw.
+	 *
+	 * -1 is a real answer, not a failure: the cache uses an empty slot for "draw nothing here".
+	 */
+	static int pickChild(int[] children, int value) {
+		return children == null || value < 0 || value >= children.length ? -1 : children[value];
+	}
+
+	/** A loc's name, e.g. "Herbs", or "" for one the cache has no name for. */
+	public String getLocName(int locId) {
+		LocType type = locType(locId);
+		if (type == null || type.field1630 == null || "null".equals(type.field1630)) {
+			return "";
+		}
+		return type.field1630;
+	}
+
+	/** A loc's examine text, or "" when it has none. */
+	public String getLocDesc(int locId) {
+		LocType type = locType(locId);
+		if (type == null || type.field1637 == null) {
+			return "";
+		}
+		return new String(type.field1637, StandardCharsets.ISO_8859_1);
+	}
+
+	/**
+	 * One of a loc's right-click options, e.g. "Harvest", or "" for a slot it does not have.
+	 *
+	 * Slots are 0 to 4, as the cache numbers them. Worth more than it looks: whether a farming
+	 * patch can be harvested is not a number anywhere, it is whether the form it is currently in
+	 * offers Harvest.
+	 */
+	public String getLocOp(int locId, int slot) {
+		LocType type = locType(locId);
+		if (type == null || type.field1644 == null || slot < 0 || slot >= type.field1644.length) {
+			return "";
+		}
+		String op = type.field1644[slot];
+		return op == null ? "" : op;
+	}
+
+	/** The cache's entry for a loc, or null for an id it does not define. */
+	private static LocType locType(int locId) {
+		int[] offsets = LocType.field1612;
+		if (offsets == null || locId < 0 || locId >= offsets.length) {
+			return null;
+		}
+		return LocType.method561(locId);
 	}
 
 	// ------------------------------------------------------------------ keys held
