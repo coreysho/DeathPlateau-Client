@@ -97,13 +97,10 @@ public final class PanelPage extends JPanel {
 		top.setAlignmentX(LEFT_ALIGNMENT);
 
 		if (row.icon != null) {
-			java.awt.image.BufferedImage img = row.icon.toImage();
-			if (img != null) {
-				JLabel picture = new JLabel(new javax.swing.ImageIcon(img));
-				picture.setOpaque(false);
-				picture.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
-				top.add(picture, BorderLayout.WEST);
-			}
+			JLabel picture = new JLabel(new javax.swing.ImageIcon(row.icon));
+			picture.setOpaque(false);
+			picture.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
+			top.add(picture, BorderLayout.WEST);
 		}
 
 		JPanel text = new JPanel();
@@ -193,7 +190,7 @@ public final class PanelPage extends JPanel {
 	 * The last line is padded with empty cells so the ones above it stay square - a GridLayout
 	 * with a short final row stretches every cell in it otherwise.
 	 */
-	private static Component iconGrid(jagex2.client.plugin.Sprite[] icons) {
+	private static Component iconGrid(java.awt.image.BufferedImage[] icons) {
 		int rows = (icons.length + GRID_COLUMNS - 1) / GRID_COLUMNS;
 		JPanel grid = new JPanel(new java.awt.GridLayout(rows, GRID_COLUMNS, 2, 2));
 		grid.setOpaque(false);
@@ -203,10 +200,7 @@ public final class PanelPage extends JPanel {
 			cell.setOpaque(false);
 			cell.setHorizontalAlignment(JLabel.CENTER);
 			if (i < icons.length && icons[i] != null) {
-				java.awt.image.BufferedImage img = icons[i].toImage();
-				if (img != null) {
-					cell.setIcon(new javax.swing.ImageIcon(img));
-				}
+				cell.setIcon(new javax.swing.ImageIcon(icons[i]));
 			}
 			grid.add(cell);
 		}
