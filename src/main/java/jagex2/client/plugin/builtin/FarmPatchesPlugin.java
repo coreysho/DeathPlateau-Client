@@ -79,6 +79,39 @@ public final class FarmPatchesPlugin extends Plugin {
 		"Fruit tree 1", "Fruit tree 2", "Fruit tree 3", "Fruit tree 4"
 	};
 
+	/**
+	 * The content's own patch index for each row above, which is NOT the order they are listed
+	 * in: the content numbers allotments 0-7, hops 8-11, flowers 12-15, herbs 16-19, bushes
+	 * 20-23, trees 24-27 and fruit trees 28-31, while this page lists herbs second because that
+	 * is the order a player cares about them in. Used to find a patch's due varp.
+	 */
+	static final int[] PATCH_INDEX = {
+		0, 1, 2, 3, 4, 5, 6, 7,       // allotments 1-8
+		16, 17, 18, 19,               // herbs 1-4
+		8, 9, 10, 11,                 // hops 1-4
+		12, 13, 14, 15,               // flowers 1-4
+		20, 21, 22, 23,               // bushes 1-4
+		24, 25, 26, 27,               // trees 1-4
+		28, 29, 30, 31                // fruit trees 1-4
+	};
+
+	/**
+	 * farming_due_0, and the world clock beside the set.
+	 *
+	 * THE SERVER NOW DOES THE ARITHMETIC. farming_due_N is the world minute a patch next
+	 * advances, worked out in the content where the growth rules are, and farming_world_minute
+	 * is the server's own clock to subtract it from. Explicit ids in the content's
+	 * pack/varp.pack (1957 onward), which is a file of fixed assignments rather than an order
+	 * things happen to be in, so they do not move the way a loc id does.
+	 *
+	 * AN OLDER SERVER SENDS NEITHER, and both read 0. That is not a countdown of zero: it is no
+	 * answer, and the page falls back to the cadence it measures for itself. A client on a world
+	 * that has not taken the content change still works, which is the whole reason the fallback
+	 * is kept rather than deleted.
+	 */
+	static final int DUE_VARP_FIRST = 1957;
+	static final int WORLD_MINUTE_VARP = 1996;
+
 	/** Locs looked at per tick while the index is being built. Small enough not to be felt. */
 	static final int SCAN_PER_TICK = 400;
 
@@ -327,8 +360,48 @@ public final class FarmPatchesPlugin extends Plugin {
 	}
 
 	/**
-	 * The line under a row: what it is, and the timing - but only the timing this can stand
-	 * behind. An estimate says so.
+	 * Minutes until this patch next advances, as the SERVER works it out, or -1 when it is not
+	 * telling us.
+	 *
+	 * -1 covers three different silences and deliberately does not distinguish them, because
+	 * the page does the same thing for all of them: an older server that has not taken the
+	 * content change (both varps 0), a patch with nothing coming (due 0 - dead, bare, or
+	 * finished with no produce), and a due time already in the past, which happens for the few
+	 * seconds between a patch falling due and the once-a-minute tick picking it up.
+	 */
+	long serverMinutesLeft(int patch) {
+		if (patch < 0 || patch >= PATCH_INDEX.length) {
+			return -1;
+		}
+		return minutesLeft(this.ctx.getVarp(WORLD_MINUTE_VARP),
+			this.ctx.getVarp(DUE_VARP_FIRST + PATCH_INDEX[patch]));
+	}
+
+	/**
+	 * The subtraction, separate and static so it can be tested without a world.
+	 *
+	 * It is three lines and all three are a decision. Treating a 0 due as "due now" would put
+	 * READY IN 0m under every dead plant and every empty patch on the page; treating a 0 clock
+	 * as the epoch would make every countdown nine hundred thousand minutes; and letting the
+	 * answer go negative would print a crop as overdue for the few seconds between it falling
+	 * due and the once-a-minute tick noticing.
+	 */
+	static long minutesLeft(int clock, int due) {
+		if (clock <= 0 || due <= 0) {
+			return -1;
+		}
+		long left = (long) due - (long) clock;
+		return left < 0 ? 0 : left;
+	}
+
+	/**
+	 * The line under a row: what it is, and when it next moves.
+	 *
+	 * THREE ANSWERS, IN ORDER OF HOW MUCH THEY ARE WORTH. The server's own figure, which is
+	 * exact and says so by not saying anything; the cadence this has measured for itself, which
+	 * is marked an estimate every time; and how long ago the patch last changed, which is all
+	 * there is until one of the other two is available. A page that printed the second as
+	 * confidently as the first would be worth less than one that printed neither.
 	 */
 	String detail(int index) {
 		int patch = this.patchAt(index);
@@ -337,6 +410,10 @@ public final class FarmPatchesPlugin extends Plugin {
 		}
 		int form = this.formOf(patch);
 		String what = form == -1 ? "" : this.ctx.getLocName(form);
+		long fromServer = this.serverMinutesLeft(patch);
+		if (fromServer >= 0) {
+			return what + " - next in " + FarmPatches.span(fromServer);
+		}
 		long minute = now();
 		if (this.patches.isEstimateReady(patch)) {
 			long until = this.patches.untilNext(patch, minute);

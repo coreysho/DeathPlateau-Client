@@ -48,6 +48,9 @@ public class FarmPatchesTest {
 		System.out.println("6. the patch table");
 		tableTests();
 		System.out.println();
+		System.out.println("6b. the countdown the server works out");
+		serverTests();
+		System.out.println();
 		System.out.println("7. the line the page is drawn on");
 		sourceTests();
 
@@ -224,6 +227,73 @@ public class FarmPatchesTest {
 		check(names[8].indexOf("Herb") == 0, "and the names line up with them");
 	}
 
+	// ------------------------------------------------------------------ 6b. the real countdown
+
+	/**
+	 * The content's varp ids for the countdown, written down here as well as in the plugin.
+	 *
+	 * A SECOND COPY ON PURPOSE, as with the window and the inventory component: a test that
+	 * reads the number it is checking cannot disagree with it. These are fixed assignments in
+	 * the content's pack/varp.pack (1957=farming_due_0 ... 1996=farming_world_minute), not an
+	 * order things happen to be packed in, so they move only when somebody edits that file -
+	 * and when they do, this is what says so.
+	 */
+	static final int DUE_FIRST = 1957;
+	static final int CLOCK = 1996;
+
+	static void serverTests() {
+		check(FarmPatchesPlugin.DUE_VARP_FIRST == DUE_FIRST,
+			"farming_due_0 is varp " + DUE_FIRST + " (the plugin says "
+				+ FarmPatchesPlugin.DUE_VARP_FIRST + ")");
+		check(FarmPatchesPlugin.WORLD_MINUTE_VARP == CLOCK,
+			"farming_world_minute is varp " + CLOCK + " (the plugin says "
+				+ FarmPatchesPlugin.WORLD_MINUTE_VARP + ")");
+		// The due varps run 1957..1995 for the content's 39 patches, so the clock must sit past
+		// them: at 1995 or below it would BE one of them and every countdown would read nonsense.
+		check(FarmPatchesPlugin.WORLD_MINUTE_VARP >= FarmPatchesPlugin.DUE_VARP_FIRST + 39,
+			"...and the clock sits past the whole run of due varps, not inside it");
+
+		// The content numbers its patches differently from the order this page lists them in,
+		// so the mapping is the thing that can be silently wrong: a row reading another patch's
+		// countdown is a plausible number against the wrong name.
+		int[] index = FarmPatchesPlugin.PATCH_INDEX;
+		check(index.length == FarmPatchesPlugin.PATCH_VARBIT.length,
+			"every row has a content patch index");
+		int dupes = 0;
+		int outOfRange = 0;
+		for (int i = 0; i < index.length; i++) {
+			if (index[i] < 0 || index[i] > 31) {
+				outOfRange++;
+			}
+			for (int j = i + 1; j < index.length; j++) {
+				if (index[i] == index[j]) {
+					dupes++;
+				}
+			}
+		}
+		check(dupes == 0, "no two rows read the same patch's countdown");
+		check(outOfRange == 0, "and every one is a real patch (0-31)");
+		// The two orders really are different, which is the whole reason the mapping exists -
+		// a mapping that is just 0,1,2,3... would mean somebody had dropped it.
+		check(index[8] == 16, "herbs are listed second here and numbered 16-19 by the content");
+		check(index[12] == 8, "...with hops the other way round");
+
+		// The subtraction, and the three silences it folds together.
+		check(FarmPatchesPlugin.minutesLeft(100, 128) == 28, "a due minute 28 past now is 28 minutes");
+		check(FarmPatchesPlugin.minutesLeft(100, 100) == 0, "...and one at now is due now");
+		check(FarmPatchesPlugin.minutesLeft(100, 95) == 0,
+			"one already past does not go negative, which happens between falling due and the tick");
+		check(FarmPatchesPlugin.minutesLeft(100, 0) == -1,
+			"a patch with nothing coming is no answer, not a countdown of zero");
+		check(FarmPatchesPlugin.minutesLeft(0, 128) == -1,
+			"and a server that sends no clock is no answer either, not nine hundred thousand minutes");
+		check(FarmPatchesPlugin.minutesLeft(0, 0) == -1, "...as is a server that sends neither");
+		check(FarmPatchesPlugin.minutesLeft(-5, 128) == -1 && FarmPatchesPlugin.minutesLeft(100, -5) == -1,
+			"nor does a negative either side read as a time");
+		// A real pair, from the sim: world minute 959310, a potato due ten minutes on.
+		check(FarmPatchesPlugin.minutesLeft(959310, 959320) == 10, "and a real pair reads plainly");
+	}
+
 	// ------------------------------------------------------------------ 7. the line
 
 	static void sourceTests() {
@@ -239,6 +309,15 @@ public class FarmPatchesTest {
 		check(body.indexOf("isEstimateReady") >= 0,
 			"a next time is only offered when a cadence has been measured");
 		check(body.indexOf("estimated") >= 0, "...and is labelled as an estimate when it is");
+
+		// THE ORDER OF THE THREE ANSWERS. The server's figure is exact and the measured one is
+		// not, so the exact one has to be asked for first - the other way round, a page on a
+		// world that sends real countdowns would show estimates instead and nobody would know.
+		int server = body.indexOf("serverMinutesLeft");
+		int guess = body.indexOf("isEstimateReady");
+		check(server >= 0, "the server's own figure is asked for");
+		check(server < guess, "...before the one this measured for itself, or the exact one is wasted");
+		check(body.indexOf("next in ") >= 0, "and the exact one is not labelled an estimate");
 
 		// The scan is spread, or it is a visible hitch on login.
 		check(src.indexOf("SCAN_PER_TICK") >= 0, "the loc scan is done a slice at a time");
