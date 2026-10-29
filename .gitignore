@@ -15,7 +15,9 @@ build/
 # the launcher build output (the release workflow builds it)
 launcher/out/
 
-# What the release's launcher step leaves in the root when it is run locally, and what the
-# python test runners leave beside themselves.
+# What the release's build and launcher steps leave in the root when they are run locally, and what
+# the python test runners leave beside themselves. client.jar is build/libs/rs2client-dev.jar under
+# the name the release publishes it as, which is the copy you hand someone to test.
+/client.jar
 /Death-Plateau-Launcher.jar
 __pycache__/
