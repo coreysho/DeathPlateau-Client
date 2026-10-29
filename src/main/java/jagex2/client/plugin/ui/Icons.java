@@ -243,6 +243,40 @@ public final class Icons {
 		};
 	}
 
+	/**
+	 * A rolled scroll, for the clue page.
+	 *
+	 * NOT THE PLAIN LIST ICON, which the clue page asked for first and which IconsTest let
+	 * through: the list icon is also what an UNKNOWN name falls back to, so any plugin that
+	 * ever asked for an icon this set has not got would have been indistinguishable from the
+	 * clues. The test cannot see that - a fallback is not a plugin asking - so the answer is
+	 * not to take the fallback for anything.
+	 */
+	public static Icon scroll(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.3f, s * 0.08f)));
+				// The sheet, inset either side so the two rolls read as thicker than it.
+				g.draw(new java.awt.geom.Rectangle2D.Double(s * 0.26, s * 0.18, s * 0.48, s * 0.64));
+				// The rolls, top and bottom, drawn as filled bars rather than outlines - at tab
+				// size an outlined roll is three lines in a row and reads as writing.
+				g.fill(new java.awt.geom.RoundRectangle2D.Double(
+					s * 0.12, s * 0.10, s * 0.76, s * 0.16, s * 0.10, s * 0.10));
+				g.fill(new java.awt.geom.RoundRectangle2D.Double(
+					s * 0.12, s * 0.74, s * 0.76, s * 0.16, s * 0.10, s * 0.10));
+				// Two short lines of writing between them.
+				g.setStroke(new BasicStroke(Math.max(1.0f, s * 0.06f)));
+				Path2D.Double writing = new Path2D.Double();
+				writing.moveTo(s * 0.36, s * 0.40);
+				writing.lineTo(s * 0.64, s * 0.40);
+				writing.moveTo(s * 0.36, s * 0.56);
+				writing.lineTo(s * 0.58, s * 0.56);
+				g.draw(writing);
+			}
+		};
+	}
+
 	public static Icon coins(int size, Color colour) {
 		return new Vector(size, colour) {
 
@@ -285,7 +319,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "bell", "wrench", "download", "move", "refresh", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "list" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -320,6 +354,9 @@ public final class Icons {
 		}
 		if ("skull".equals(name)) {
 			return skull(size, colour);
+		}
+		if ("scroll".equals(name)) {
+			return scroll(size, colour);
 		}
 		if ("bell".equals(name)) {
 			return bell(size, colour);

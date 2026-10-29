@@ -198,6 +198,20 @@ public class IconsTest {
 		// real name is satisfied by anything at all.
 		check(!Icons.isKnown("no-such-icon"), "and isKnown says so rather than waving it through");
 		check(!Icons.isKnown(""), "nor does it accept an empty name");
+
+		// AND NOTHING MAY TAKE THE FALLBACK AS ITS OWN. An unknown name falls through to the
+		// list icon, so a page wearing it is indistinguishable from any plugin that asks for an
+		// icon this set has not got - which is the unreadable rail all over again, and which
+		// the check above cannot see, because a fallback is not a plugin asking. The clue page
+		// asked for "list" first and this is what sent it back.
+		try {
+			for (java.util.Map.Entry<String, String> e : askedFor().entrySet()) {
+				check(!"list".equals(e.getValue()),
+					e.getKey() + " does not take the icon an unknown name falls back to");
+			}
+		} catch (Exception unreadable) {
+			check(false, "the plugins' icons could be read (" + unreadable + ")");
+		}
 	}
 
 	static void inkTests() {
