@@ -384,6 +384,19 @@ public final class PluginContext {
 	}
 
 	/**
+	 * How many objs this cache defines. Indices below this are safe to pass to the rest.
+	 *
+	 * Here so a plugin can WALK the obj table rather than be told an id. A page that wants the
+	 * picture of a crop knows what the cache calls it - "Watermelon" - and not what number it
+	 * is, and a number written into a plugin is a number that moves when the content is
+	 * repacked.
+	 */
+	public int getObjCount() {
+		int[] offsets = ObjType.field824;
+		return offsets == null ? 0 : offsets.length;
+	}
+
+	/**
 	 * An item's picture as the game draws it in an inventory slot, stack number and all, or null
 	 * for an id this cache has no art for.
 	 *
