@@ -58,6 +58,9 @@ public class IconsTest {
 		System.out.println();
 		System.out.println("3. every icon actually draws something");
 		inkTests();
+		System.out.println();
+		System.out.println("4. a tab the cache has no picture for");
+		tabFallbackTests();
 
 		if (args.length > 0) {
 			sheet(args[0]);
@@ -211,6 +214,20 @@ public class IconsTest {
 			check(lit > SIZE * 2 && lit < SIZE * SIZE * 3 / 4,
 				name + " covers a sensible amount of its box (" + lit + " of " + SIZE * SIZE + ")");
 		}
+	}
+
+	/**
+	 * A tab whose picture the cache has not got still has to be clickable.
+	 *
+	 * The farming strip is pictures, found by asking the obj table for an item by name, and a
+	 * name this cache does not have gets no picture. A blank button is a thing a player cannot
+	 * tell from its neighbour or aim at with any confidence, so it falls back to words.
+	 */
+	static void tabFallbackTests() {
+		check("Her".equals(PanelPage.shortTip("Herb")), "a tab with no picture shows the start of its name");
+		check("All".equals(PanelPage.shortTip("All")), "...whole, when the name is short enough");
+		check("?".equals(PanelPage.shortTip("")), "...and something clickable when there is no name either");
+		check("?".equals(PanelPage.shortTip(null)), "...including when there is none at all");
 	}
 
 	/** A strip of every icon, so the set can be looked at rather than described. */
