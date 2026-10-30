@@ -383,8 +383,7 @@ public class WorldMapRender {
 					if (hasScene(id)) {
 						plotScene(id, x, z, margin);
 					} else {
-						drawWall(pixels, side, px, pz, info >> 6 & 0x3, info & 0x1F,
-							wall > 0 ? DOOR : WALL);
+						wallFrom(pixels, side, px, pz, info, wall > 0 ? DOOR : WALL);
 					}
 				}
 
@@ -394,8 +393,8 @@ public class WorldMapRender {
 					int id = decor >> 14 & 0x7FFF;
 					if (hasScene(id)) {
 						plotScene(id, x, z, margin);
-					} else if ((info & 0x1F) == 9) {
-						diagonal(pixels, side, px, pz, info >> 6 & 0x3, decor > 0 ? DOOR : WALL);
+					} else if (shapeOf(info) == 9) {
+						diagonal(pixels, side, px, pz, rotationOf(info), decor > 0 ? DOOR : WALL);
 					}
 				}
 
@@ -433,6 +432,27 @@ public class WorldMapRender {
 		int offZ = (high * SCALE - sprite.hi) / 2;
 		sprite.plotSprite((SQUARE - (z - margin) - high) * SCALE + offZ,
 			(x - margin) * SCALE + offX);
+	}
+
+	/**
+	 * Which of a tile's 32 wall shapes this is: a straight wall, a corner, a diagonal.
+	 *
+	 * SHAPE AND ROTATION TRAVEL IN ONE BYTE and are the same small numbers, so reading one
+	 * where the other was meant draws walls of the right length in the right colour on the
+	 * wrong edges, which looks exactly like a town.
+	 */
+	static int shapeOf(int info) {
+		return info & 0x1F;
+	}
+
+	/** Which quarter turn it stands at. */
+	static int rotationOf(int info) {
+		return info >> 6 & 0x3;
+	}
+
+	/** One wall from the byte the scene stored it under. */
+	static void wallFrom(int[] pixels, int side, int px, int pz, int info, int colour) {
+		drawWall(pixels, side, px, pz, rotationOf(info), shapeOf(info), colour);
 	}
 
 	/**

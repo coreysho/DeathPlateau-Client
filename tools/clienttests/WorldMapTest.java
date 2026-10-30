@@ -169,6 +169,16 @@ public class WorldMapTest {
 		eq("turned twice, east and south", "0,3 1,3 2,3 3,0 3,1 3,2 3,3", wall(2, 2));
 		eq("turned three times, south and west", "0,0 0,1 0,2 0,3 1,3 2,3 3,3", wall(2, 3));
 
+		// SHAPE AND ROTATION SHARE A BYTE, and both are small numbers, so a reader that takes
+		// one for the other still draws walls - of the right length, in the right colour, on
+		// the wrong edges. These two values are chosen so that the mix-up cannot hide: as
+		// written they are a single corner pixel, and read backwards they are an L of seven.
+		eq("rotation 2 shape 3 is one pixel at the south-east corner", "3,3", packed((2 << 6) | 3));
+		eq("rotation 3 shape 2 is an L along the south and the west",
+			"0,0 0,1 0,2 0,3 1,3 2,3 3,3", packed((3 << 6) | 2));
+		eq("the shape is the low five bits", 9, WorldMapRender.shapeOf((2 << 6) | 9));
+		eq("the rotation is the two above them", 2, WorldMapRender.rotationOf((2 << 6) | 9));
+
 		eq("a diagonal runs north-east to south-west", "0,3 1,2 2,1 3,0", diagonal(0));
 		eq("turned once, north-west to south-east", "0,0 1,1 2,2 3,3", diagonal(1));
 		eq("turned twice, back the first way", "0,3 1,2 2,1 3,0", diagonal(2));
@@ -189,6 +199,12 @@ public class WorldMapTest {
 	static String wall(int shape, int rotation) {
 		int[] pixels = new int[8 * 8];
 		WorldMapRender.drawWall(pixels, 8, 0, 0, rotation, shape, 0xFFFFFF);
+		return litIn(pixels, 8);
+	}
+
+	static String packed(int info) {
+		int[] pixels = new int[8 * 8];
+		WorldMapRender.wallFrom(pixels, 8, 0, 0, info, 0xFFFFFF);
 		return litIn(pixels, 8);
 	}
 
@@ -237,6 +253,11 @@ public class WorldMapTest {
 			exactly(first, 0xEEEEEE) > 200);
 		yes("and doors among them (" + exactly(first, 0xEE0000) + " pixels)",
 			exactly(first, 0xEE0000) > 10);
+		// A BUILDING IS MOSTLY WALL. Counting the two separately is not enough on its own -
+		// swap the colours over and both counts are still large enough to look healthy, because
+		// some of the mapscene sprites are near-white too. The proportion is what gives it away.
+		yes("far more wall than door, as a building is",
+			exactly(first, 0xEEEEEE) > exactly(first, 0xEE0000) * 5);
 
 		// THE SAME SUN TWICE. method15 walks the light a step on every call, so without the pin
 		// the map would drift from one corner to the other over seven hundred squares.
@@ -300,6 +321,18 @@ public class WorldMapTest {
 		eq("and half as tall", 256, half.getHeight());
 		eq("and the northern square is still the top half",
 			0, differencesAt(half, 0, 0, WorldMapRender.shrink(north, 2)));
+
+		// AND FROM THE COMMAND LINE, which is the only caller that is not this test: every
+		// check above reaches past main into the pieces, so main could stop loading the models
+		// altogether - stripping the scenery off every map anyone renders - and none of them
+		// would notice.
+		File png = File.createTempFile("worldmap", ".png");
+		png.deleteOnExit();
+		WorldMapRender.main(new String[] { pack.getPath(), png.getPath(), "50,50", "0" });
+		BufferedImage written = javax.imageio.ImageIO.read(png);
+		eq("the command line writes a square", 256, written.getWidth());
+		yes("with its scenery on it (" + exactly(written, 0xEEEEEE) + " wall pixels)",
+			exactly(written, 0xEEEEEE) > 200);
 
 		// A SQUARE THE INDEX HAS NOT GOT IS NOT A BLACK SQUARE, it is nothing at all, so that
 		// renderAll leaves the sea black rather than painting a hole over its neighbour.
