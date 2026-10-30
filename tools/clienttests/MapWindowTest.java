@@ -127,6 +127,12 @@ public class MapWindowTest {
 			this.holds.add(Integer.valueOf(file(x, z, 1)));
 		}
 
+		/** A square whose ground is there but whose scenery is not, or the other way round. */
+		void hasOnly(int x, int z, int type) {
+			this.there.add(Integer.valueOf((x << 8) + z));
+			this.holds.add(Integer.valueOf(file(x, z, type)));
+		}
+
 		void existsButSilent(int x, int z) {
 			this.there.add(Integer.valueOf((x << 8) + z));
 		}
@@ -229,6 +235,65 @@ public class MapWindowTest {
 		waiting.arrived(Pretend.file(40, 40, 1), new byte[] { 0 });
 		waiting.tick();
 		yes("an arrival wakes it up again", waiting.square(40, 40, 0) != null);
+
+		// GROUND AND SCENERY ARE BOTH REQUIRED, not either. A square drawn the moment its land
+		// turns up is a square with no buildings on it, and nothing ever draws it again: the
+		// map keeps a finished picture of a town with no town in it.
+		Pretend half = new Pretend();
+		half.hasOnly(60, 60, 0);
+		WorldMap partial = over(half);
+		partial.square(60, 60, 0);
+		for (int frame = 0; frame < 10; frame++) {
+			partial.tick();
+		}
+		yes("a square with its ground but not its scenery is not drawn yet",
+			partial.square(60, 60, 0) == null);
+		partial.arrived(Pretend.file(60, 60, 1), new byte[] { 0 });
+		partial.tick();
+		yes("and is drawn once the scenery turns up too",
+			partial.square(60, 60, 0) != null);
+
+		// THE EIGHT AROUND IT, TOO. A square is lit by its neighbours, so all nine go in: two
+		// files each, eighteen in all, and a square gathered alone would ask for two.
+		Pretend town = new Pretend();
+		for (int x = 49; x <= 51; x++) {
+			for (int z = 49; z <= 51; z++) {
+				town.has(x, z);
+			}
+		}
+		WorldMap nine = over(town);
+		nine.square(50, 50, 0);
+		nine.tick();
+		eq("nine squares' worth of files are asked for", 18, town.asked.size());
+
+		// AND EACH OF THEM ONCE. The same neighbour is wanted by several squares and by every
+		// level of each; asking again for one already asked for is a request per frame per
+		// square, at a server, for a file that is already on its way.
+		nine.square(50, 50, 1);
+		nine.square(50, 50, 2);
+		nine.tick();
+		nine.tick();
+		eq("and not asked for again by the floors above", 18, town.asked.size());
+
+		// A FILE THAT IS NOT COMING IS ASKED FOR ONCE. Its square is set aside, but every
+		// arrival of anything wakes it up again, and each waking gathers again. Without a
+		// memory of what has been asked for that is a request per waking, at a server, for a
+		// file already on its way - and the busier the area, the more of them.
+		Pretend patchy = new Pretend();
+		patchy.has(70, 70);
+		patchy.existsButSilent(71, 70);
+		WorldMap edge = over(patchy);
+		edge.square(70, 70, 0);
+		for (int frame = 0; frame < 20; frame++) {
+			edge.tick();
+		}
+		int asks = 0;
+		for (int i = 0; i < patchy.asked.size(); i++) {
+			if (((Integer) patchy.asked.get(i)).intValue() == Pretend.file(71, 70, 0)) {
+				asks++;
+			}
+		}
+		eq("the neighbour that never answers is asked once, not once a waking", 1, asks);
 	}
 
 	static void keeping() {
@@ -259,8 +324,10 @@ public class MapWindowTest {
 				}
 			}
 		}
+		// ENOUGH OF THEM TO BE WORTH HAVING, as well as not all of them. A cache of one is
+		// bounded too, and would redraw the window's whole view every time it moved a pixel.
 		yes("a hundred squares drawn, not a hundred kept (" + held + ")",
-			held > 0 && held <= 64);
+			held > 16 && held <= 64);
 
 		// WHICH ONES ARE KEPT IS NOT PROMISED - the queue reorders itself as files arrive, so
 		// pinning a particular survivor would be pinning an accident. What is promised is that
