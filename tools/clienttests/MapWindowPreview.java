@@ -20,6 +20,7 @@ import java.io.File;
 
 import javax.imageio.ImageIO;
 
+import jagex2.client.worldmap.MapIcons;
 import jagex2.client.worldmap.MapWindow;
 import jagex2.client.worldmap.WorldMap;
 
@@ -33,6 +34,7 @@ public class MapWindowPreview {
 		}
 
 		WorldMapRender.loadConfig(pack);
+		MapIcons.useSprites(WorldMapRender.mapfunctions(pack));
 		WorldMapRender.loadModels(pack);
 		WorldMapRender.loadIndex(pack);
 		WorldMapRender.maps = new jagex2.io.FileStream(5, 600000,
@@ -56,18 +58,51 @@ public class MapWindowPreview {
 
 			public void prefetchAll() {
 			}
+
+			public int[] squares() {
+				int[] all = new int[WorldMapRender.mapIndex.length];
+				System.arraycopy(WorldMapRender.mapIndex, 0, all, 0, all.length);
+				return all;
+			}
 		});
 		held = map;
 
 		MapWindow window = new MapWindow(map);
 		window.setPlayer(3222, 3218, 0);
-		window.pack();
+		// SHOWN FOR REAL, under whatever display the runner found. A window that is never
+		// shown never lays itself out properly and never runs its own repaint timer, so a
+		// preview of one is a preview of something the player will not see.
+		window.setVisible(true);
+
+		// Every square's scenery, so the key and the search have the whole world in them - the
+		// game gets this from the prefetch over a few minutes; here it is a file read.
+		for (int i = 0; i < WorldMapRender.mapIndex.length; i++) {
+			int sx = WorldMapRender.mapIndex[i] >> 8;
+			int sz = WorldMapRender.mapIndex[i] & 0xFF;
+			map.icons().add(sx, sz, WorldMapRender.fetch(WorldMapRender.fileFor(sx, sz, 1)));
+		}
+		System.out.println("icons: " + map.icons().all().size());
 
 		shot(window, map, out, "lumbridge", 3222, 3218, 0);
 		shot(window, map, out, "varrock", 3213, 3428, 0);
 		shot(window, map, out, "upstairs", 3222, 3218, 1);
-		System.out.println("wrote 3 pictures to " + out);
+		searched(window, map, out, "furnace");
+		System.out.println("wrote 4 pictures to " + out);
 		System.exit(0);
+	}
+
+	/** A search typed in and entered, which is the only way to see the rings it draws. */
+	static void searched(MapWindow window, WorldMap map, File out, String text) throws Exception {
+		window.setPlayer(3222, 3218, 0);
+		window.typeSearch(text);
+		BufferedImage img = null;
+		for (int pass = 0; pass < 4; pass++) {
+			img = paint(window);
+			for (int frame = 0; frame < 400; frame++) {
+				map.tick();
+			}
+		}
+		ImageIO.write(paint(window), "png", new File(out, "search.png"));
 	}
 
 	static WorldMap held;
@@ -93,19 +128,36 @@ public class MapWindowPreview {
 				map.tick();
 			}
 		}
-		img = paint(window);
-		ImageIO.write(img, "png", new File(out, name + ".png"));
+		ImageIO.write(paint(window), "png", new File(out, name + ".png"));
 	}
 
+	/**
+	 * The whole window, not just the map: the key down the side and the bar along the bottom
+	 * are the half of this that arithmetic cannot check.
+	 */
 	static BufferedImage paint(MapWindow window) {
-		java.awt.Component view = window.getContentPane().getComponent(0);
-		int wide = view.getWidth() > 0 ? view.getWidth() : 900;
-		int high = view.getHeight() > 0 ? view.getHeight() : 700;
-		view.setSize(wide, high);
-		BufferedImage img = new BufferedImage(wide, high, BufferedImage.TYPE_INT_RGB);
+		java.awt.Container pane = window.getContentPane();
+		java.awt.Dimension want = pane.getSize();
+		if (want.width <= 0) {
+			want = pane.getPreferredSize();
+			pane.setSize(want);
+		}
+		layOut(pane);
+		BufferedImage img = new BufferedImage(want.width, want.height, BufferedImage.TYPE_INT_RGB);
 		java.awt.Graphics2D g = img.createGraphics();
-		view.paint(g);
+		pane.paint(g);
 		g.dispose();
 		return img;
+	}
+
+	/** Swing only lays a container out once it is on screen; off screen it has to be told. */
+	static void layOut(java.awt.Container of) {
+		of.doLayout();
+		for (int i = 0; i < of.getComponentCount(); i++) {
+			java.awt.Component child = of.getComponent(i);
+			if (child instanceof java.awt.Container) {
+				layOut((java.awt.Container) child);
+			}
+		}
 	}
 }

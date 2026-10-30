@@ -3195,6 +3195,22 @@ public class Client extends GameShell implements PixMap.Target {
 			}
 			jagex2.client.worldmap.MapSquare.useScenes(mapScenesForMap);
 
+			// And the icons the key names, for the same reason: these are tinted a moment
+			// later too, and a map whose bank icon is a different yellow every login looks
+			// broken rather than varied.
+			Pix32[] mapIconsForMap = new Pix32[72];
+			for (int i = 0; i < mapIconsForMap.length; i++) {
+				try {
+					mapIconsForMap[i] = new Pix32(jagMedia, "mapfunction", i);
+				} catch (Exception e) {
+					// 70 and 71 are newer than some servers' media, as below.
+					if (i < 70) {
+						throw e;
+					}
+				}
+			}
+			jagex2.client.worldmap.MapIcons.useSprites(mapIconsForMap);
+
 			// 70 is the trading post's (Old School's Grand Exchange icon) and 71 is Aleck's Hunter
 			// Emporium (Old School's kebbit), both newer than some servers' media
 			for (int i = 0; i < 72; i++) {

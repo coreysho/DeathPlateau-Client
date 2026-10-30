@@ -8,24 +8,31 @@
  * has no window and therefore has no map, the same trade the sidebar makes.
  *
  * IT DRAWS AND READS; IT DOES NOT TOUCH THE GAME. Everything in here runs on the event dispatch
- * thread and the only thing it ever calls is WorldMap.square, which hands back a finished array
- * or nothing at all. The drawing itself happens on the game thread, a square a frame, because
- * it writes statics the live game shares - so a window asking for forty squares at once costs
- * the game a frame's work per square and never a stall.
+ * thread and the only things it ever call are WorldMap.square and the icon index, both of which
+ * hand back finished work or nothing at all. The drawing of a square happens on the game thread,
+ * one a frame, because it writes statics the live game shares - so a window asking for forty
+ * squares at once costs the game a frame's work per square and never a stall.
  *
- * WHAT THE PLAYER GETS. Drag to pan, wheel to zoom between four pixels a tile and one, the four
- * levels on keys 1 to 4, and their own position marked while they are logged in. A square that
- * has not been drawn yet is left as the background, so panning into unexplored ground shows
- * the map filling in rather than a frozen window.
+ * WHAT THE PLAYER GETS. Drag to pan, the wheel or the two buttons to zoom, the four levels on
+ * keys 1 to 4, their own position marked with the yellow cross, every bank and altar and
+ * fishing spot drawn where the content put it, a key down the side saying what each icon is
+ * and how many there are, and a search that takes them to the nearest one.
+ *
+ * ICONS ARE DRAWN AT ONE SIZE WHATEVER THE ZOOM. Shrinking them with the map would make them
+ * four pixels across exactly when a player can see a county at once, which is when they are
+ * looking for a bank rather than at one.
  */
 package jagex2.client.worldmap;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -35,10 +42,19 @@ import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.image.BufferedImage;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
 import javax.swing.Timer;
 
 import jagex2.client.plugin.ui.Theme;
@@ -53,8 +69,17 @@ public final class MapWindow extends JFrame {
 	/** How often the window looks again for squares the game thread has finished. */
 	private static final int REPAINT_MS = 120;
 
+	/** The yellow of the you-are-here cross, and of a ring round a search result. */
+	private static final Color MARKER = new Color(0xFF, 0xE0, 0x00);
+
 	private final WorldMap map;
 	private final View view = new View();
+	private final JTextField search = new JTextField(14);
+	private final JLabel found = new JLabel("type a place and press enter");
+	private final JLabel where = new JLabel(" ");
+	private final JLabel floor = new JLabel("level 0");
+	private final KeyPanel key = new KeyPanel();
+	private final JScrollPane keyScroll;
 
 	/** Pixels per tile. */
 	private int zoom = ZOOMS[DEFAULT_ZOOM];
@@ -75,6 +100,13 @@ public final class MapWindow extends JFrame {
 	private volatile int playerX = -1;
 	private volatile int playerZ = -1;
 
+	/** What the search is showing, and which of them the view is on. */
+	private List matches;
+	private int matchAt;
+
+	/** One icon kind to show on its own, or -1 for all of them. */
+	private int only = -1;
+
 	/** Scaled squares, keyed by the square's key and the zoom they were scaled to. */
 	private final Map scaled = new HashMap();
 
@@ -82,20 +114,115 @@ public final class MapWindow extends JFrame {
 		super("World map");
 		this.map = map;
 		this.setDefaultCloseOperation(HIDE_ON_CLOSE);
+		this.getContentPane().setBackground(Theme.BACKGROUND);
 		this.getContentPane().setLayout(new BorderLayout());
+		this.view.setPreferredSize(new Dimension(900, 680));
 		this.getContentPane().add(this.view, BorderLayout.CENTER);
-		this.view.setPreferredSize(new Dimension(900, 700));
+
+		this.keyScroll = new JScrollPane(this.key,
+			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		this.keyScroll.setPreferredSize(new Dimension(172, 10));
+		this.keyScroll.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Theme.SEPARATOR));
+		this.keyScroll.getViewport().setBackground(Theme.BACKGROUND);
+		this.getContentPane().add(this.keyScroll, BorderLayout.WEST);
+
+		this.getContentPane().add(this.bar(), BorderLayout.SOUTH);
+		this.key.refresh();
 		this.pack();
 		this.setLocationRelativeTo(null);
-		new Timer(REPAINT_MS, new java.awt.event.ActionListener() {
+		new Timer(REPAINT_MS, new ActionListener() {
 
-			public void actionPerformed(java.awt.event.ActionEvent event) {
+			public void actionPerformed(ActionEvent event) {
 				if (MapWindow.this.isVisible()) {
 					MapWindow.this.view.repaint();
+					MapWindow.this.key.refresh();
 				}
 			}
 		}).start();
 	}
+
+	// ------------------------------------------------------------------ the bar along the bottom
+
+	private JPanel bar() {
+		JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 5));
+		row.setBackground(Theme.TITLE_BAR);
+		row.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.SEPARATOR));
+
+		JLabel prompt = new JLabel("Search");
+		prompt.setForeground(Theme.TEXT_DIM);
+		prompt.setFont(Theme.FONT_SMALL);
+		row.add(prompt);
+
+		this.search.setBackground(Theme.ROW);
+		this.search.setForeground(Theme.TEXT);
+		this.search.setCaretColor(Theme.TEXT);
+		this.search.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(Theme.SEPARATOR),
+			BorderFactory.createEmptyBorder(3, 5, 3, 5)));
+		this.search.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.nextMatch();
+			}
+		});
+		row.add(this.search);
+
+		this.found.setForeground(Theme.TEXT_DIM);
+		this.found.setFont(Theme.FONT_SMALL);
+		this.found.setPreferredSize(new Dimension(230, 18));
+		row.add(this.found);
+
+		row.add(this.flat("Key", new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.keyScroll.setVisible(!MapWindow.this.keyScroll.isVisible());
+				MapWindow.this.getContentPane().revalidate();
+				MapWindow.this.getContentPane().repaint();
+			}
+		}));
+		row.add(this.flat("−", new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.zoomBy(-1);
+			}
+		}));
+		row.add(this.flat("+", new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.zoomBy(1);
+			}
+		}));
+
+		this.where.setForeground(Theme.TEXT_DIM);
+		this.where.setFont(Theme.FONT_SMALL);
+		this.where.setPreferredSize(new Dimension(80, 18));
+		row.add(this.where);
+
+		// THE FLOOR, ALWAYS SHOWN. A search for a bank lands on the first floor of Lumbridge
+		// castle, because that is where the bank is - and a map that silently changes storey
+		// looks like a map that has gone blank.
+		this.floor.setForeground(Theme.TEXT);
+		this.floor.setFont(Theme.FONT_SMALL);
+		this.floor.setPreferredSize(new Dimension(58, 18));
+		row.add(this.floor);
+		row.add(Box.createHorizontalStrut(2));
+		return row;
+	}
+
+	private JButton flat(String text, ActionListener onClick) {
+		JButton button = new JButton(text);
+		button.setFocusPainted(false);
+		button.setBackground(Theme.ROW);
+		button.setForeground(Theme.TEXT);
+		button.setFont(Theme.FONT);
+		button.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(Theme.SEPARATOR),
+			BorderFactory.createEmptyBorder(2, 9, 2, 9)));
+		button.addActionListener(onClick);
+		return button;
+	}
+
+	// ------------------------------------------------------------------ what the game tells it
 
 	/** Puts the map over a world tile, which is how the game says "here is the player". */
 	public void centreOn(int tileX, int tileZ) {
@@ -104,14 +231,52 @@ public final class MapWindow extends JFrame {
 		this.view.repaint();
 	}
 
-	/** Where to draw the you-are-here marker, or -1 to draw none. Any thread. */
+	/** Where to draw the you-are-here cross, or -1 to draw none. Any thread. */
 	public void setPlayer(int tileX, int tileZ, int level) {
 		this.playerX = tileX;
 		this.playerZ = tileZ;
 		if (tileX >= 0 && this.level != level) {
-			this.level = level;
-			this.scaled.clear();
+			this.setLevel(level);
 		}
+	}
+
+	// ------------------------------------------------------------------ searching
+
+	/**
+	 * Shows the next thing matching what was typed, nearest to the player first.
+	 *
+	 * ENTER AGAIN GOES TO THE ONE AFTER, because "bank" has thirty-nine answers and the second
+	 * nearest is a perfectly ordinary thing to want. The whole set stays ringed on the map
+	 * while the box has anything in it, so a player can see where the others are.
+	 */
+	private void nextMatch() {
+		int fromX = this.playerX >= 0 ? this.playerX : this.centreX;
+		int fromZ = this.playerX >= 0 ? this.playerZ : this.centreZ;
+		List hits = this.map.icons().search(this.search.getText(), fromX, fromZ);
+		if (hits.isEmpty()) {
+			this.matches = null;
+			this.found.setText(this.search.getText().trim().length() == 0
+				? " " : "nothing called that");
+			this.view.repaint();
+			return;
+		}
+		if (this.matches == null || this.matches.size() != hits.size()) {
+			this.matchAt = 0;
+		} else {
+			this.matchAt = (this.matchAt + 1) % hits.size();
+		}
+		this.matches = hits;
+		MapIcons.Icon icon = (MapIcons.Icon) hits.get(this.matchAt);
+		this.setLevel(icon.level);
+		this.centreOn(icon.x, icon.z);
+		this.found.setText(icon.name() + "  " + (this.matchAt + 1) + " of " + hits.size()
+			+ "   (" + icon.x + ", " + icon.z + ")");
+	}
+
+	/** Types into the search box and presses enter, which is what the preview needs to see it. */
+	public void typeSearch(String text) {
+		this.search.setText(text);
+		this.nextMatch();
 	}
 
 	// ------------------------------------------------------------------ where things land
@@ -157,6 +322,15 @@ public final class MapWindow extends JFrame {
 		return fromZ + byPixels / zoom;
 	}
 
+	/** The world tile under a window pixel, which is what the readout at the bottom says. */
+	public static int tileAcross(int px, int originX, int zoom) {
+		return Math.floorDiv(px - originX, zoom);
+	}
+
+	public static int tileDown(int py, int originZ, int zoom) {
+		return Math.floorDiv(originZ - py, zoom);
+	}
+
 	// ------------------------------------------------------------------ the map itself
 
 	private final class View extends JPanel {
@@ -184,6 +358,11 @@ public final class MapWindow extends JFrame {
 						event.getY() - MapWindow.this.dragZ, at);
 					View.this.repaint();
 				}
+
+				public void mouseMoved(MouseEvent event) {
+					MapWindow.this.readOut(event.getX(), event.getY(),
+						View.this.getWidth(), View.this.getHeight());
+				}
 			});
 			this.addMouseWheelListener(new MouseWheelListener() {
 
@@ -196,8 +375,7 @@ public final class MapWindow extends JFrame {
 				public void keyPressed(KeyEvent event) {
 					int code = event.getKeyCode();
 					if (code >= KeyEvent.VK_1 && code <= KeyEvent.VK_4) {
-						MapWindow.this.level = code - KeyEvent.VK_1;
-						MapWindow.this.scaled.clear();
+						MapWindow.this.setLevel(code - KeyEvent.VK_1);
 						View.this.repaint();
 					} else if (code == KeyEvent.VK_ESCAPE) {
 						MapWindow.this.setVisible(false);
@@ -235,8 +413,10 @@ public final class MapWindow extends JFrame {
 					}
 				}
 			}
+			MapWindow.this.drawIcons(g, originX, originZ, at,
+				firstX * MapSquare.SQUARE, firstZ * MapSquare.SQUARE,
+				(lastX + 1) * MapSquare.SQUARE, (lastZ + 1) * MapSquare.SQUARE);
 			MapWindow.this.drawPlayer(g, originX, originZ, at);
-			MapWindow.this.drawLegend(g, high);
 		}
 	}
 
@@ -273,28 +453,72 @@ public final class MapWindow extends JFrame {
 		return out;
 	}
 
+	private void drawIcons(Graphics2D g, int originX, int originZ, int at,
+			int x0, int z0, int x1, int z1) {
+		List here = this.map.icons().within(x0, z0, x1, z1, this.level);
+		for (int i = 0; i < here.size(); i++) {
+			MapIcons.Icon icon = (MapIcons.Icon) here.get(i);
+			if (this.only >= 0 && icon.function != this.only) {
+				continue;
+			}
+			BufferedImage art = MapIcons.sprite(icon.function);
+			if (art == null) {
+				continue;
+			}
+			// Centred on the tile rather than hung off its corner, so an icon marks the thing
+			// it is on at every zoom.
+			int px = acrossOf(originX, icon.x, at) + at / 2 - art.getWidth() / 2;
+			int pz = downOf(originZ, icon.z, at) + at / 2 - art.getHeight() / 2;
+			g.drawImage(art, px, pz, null);
+			if (this.ringed(icon)) {
+				g.setColor(MARKER);
+				g.drawOval(px - 2, pz - 2, art.getWidth() + 3, art.getHeight() + 3);
+			}
+		}
+	}
+
+	private boolean ringed(MapIcons.Icon icon) {
+		return this.matches != null && this.matches.contains(icon);
+	}
+
+	/**
+	 * The player, as the yellow cross the game's own map uses.
+	 *
+	 * A CROSS RATHER THAN A DOT because it has to be findable on ground of any colour, and a
+	 * dot the size of a tile is lost on a town. It is drawn with a dark outline for the same
+	 * reason: yellow on sand is yellow on yellow.
+	 */
 	private void drawPlayer(Graphics2D g, int originX, int originZ, int at) {
 		int x = this.playerX;
 		int z = this.playerZ;
 		if (x < 0) {
 			return;
 		}
-		int px = acrossOf(originX, x, at);
-		int pz = downOf(originZ, z, at);
-		int size = at < 4 ? 5 : 7;
-		g.setColor(Color.WHITE);
-		g.fillOval(px - size / 2, pz - size / 2, size, size);
-		g.setColor(Theme.ACCENT_BRIGHT);
-		g.fillOval(px - size / 2 + 1, pz - size / 2 + 1, size - 2, size - 2);
+		int px = acrossOf(originX, x, at) + at / 2;
+		int pz = downOf(originZ, z, at) + at / 2;
+		int arm = at < 4 ? 5 : 7;
+		g.setStroke(new java.awt.BasicStroke(4f));
+		g.setColor(new Color(0x20, 0x18, 0x00));
+		g.drawLine(px - arm, pz - arm, px + arm, pz + arm);
+		g.drawLine(px - arm, pz + arm, px + arm, pz - arm);
+		g.setStroke(new java.awt.BasicStroke(2f));
+		g.setColor(MARKER);
+		g.drawLine(px - arm, pz - arm, px + arm, pz + arm);
+		g.drawLine(px - arm, pz + arm, px + arm, pz - arm);
+		g.setStroke(new java.awt.BasicStroke(1f));
 	}
 
-	private void drawLegend(Graphics2D g, int high) {
-		g.setColor(Theme.TITLE_BAR);
-		g.fillRect(0, high - 22, 320, 22);
-		g.setColor(Theme.TEXT_DIM);
-		g.setFont(Theme.FONT_SMALL);
-		g.drawString("drag to pan   wheel to zoom   1-4 for the floor"
-			+ "      level " + this.level, 8, high - 7);
+	private void setLevel(int to) {
+		this.level = to;
+		this.floor.setText("level " + to);
+		this.scaled.clear();
+	}
+
+	private void readOut(int px, int py, int wide, int high) {
+		int at = this.zoom;
+		int x = tileAcross(px, originAcross(wide, this.centreX, at), at);
+		int z = tileDown(py, originDown(high, this.centreZ, at), at);
+		this.where.setText(x + ", " + z);
 	}
 
 	private void zoomBy(int steps) {
@@ -315,6 +539,100 @@ public final class MapWindow extends JFrame {
 			this.zoom = ZOOMS[want];
 			this.scaled.clear();
 			this.view.repaint();
+		}
+	}
+
+	// ------------------------------------------------------------------ the key
+
+	/**
+	 * What each icon means, and how many of them the map has found.
+	 *
+	 * THE COUNT IS THE HONEST PART. The map only knows about squares whose scenery has arrived,
+	 * so on a fresh account the key starts nearly empty and fills in behind the prefetch.
+	 * Printing a count rather than a bare list is what makes that visible instead of puzzling.
+	 *
+	 * Clicking a row shows that kind on its own, which is the only way to find the one fishing
+	 * spot on a coast covered in them.
+	 */
+	private final class KeyPanel extends JPanel {
+
+		private final JLabel[] rows;
+
+		private int[] shown = new int[0];
+
+		KeyPanel() {
+			this.setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+			this.setBackground(Theme.BACKGROUND);
+			this.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+			JLabel title = new JLabel("Key");
+			title.setForeground(Theme.ACCENT);
+			title.setFont(Theme.FONT);
+			title.setBorder(BorderFactory.createEmptyBorder(0, 2, 6, 0));
+			this.add(title);
+			this.rows = new JLabel[MapIconNames.NAME.length];
+			for (int function = 0; function < this.rows.length; function++) {
+				if (MapIconNames.name(function).length() == 0) {
+					continue;
+				}
+				this.rows[function] = this.row(function);
+				this.add(this.rows[function]);
+			}
+			this.add(Box.createVerticalGlue());
+		}
+
+		private JLabel row(final int function) {
+			JLabel label = new JLabel(MapIconNames.name(function));
+			label.setForeground(Theme.TEXT_DIM);
+			label.setFont(Theme.FONT_SMALL);
+			label.setHorizontalAlignment(SwingConstants.LEFT);
+			label.setBorder(BorderFactory.createEmptyBorder(1, 2, 1, 2));
+			BufferedImage art = MapIcons.sprite(function);
+			if (art != null) {
+				label.setIcon(new javax.swing.ImageIcon(art));
+			}
+			label.setIconTextGap(6);
+			label.addMouseListener(new MouseAdapter() {
+
+				public void mousePressed(MouseEvent event) {
+					MapWindow.this.only = MapWindow.this.only == function ? -1 : function;
+					MapWindow.this.view.repaint();
+					KeyPanel.this.refresh();
+				}
+			});
+			return label;
+		}
+
+		/** Re-counts and re-colours, which is cheap and keeps the key honest while files land. */
+		void refresh() {
+			// isVisible rather than isShowing: the key being toggled off is a reason to skip
+			// the work, but a window not yet on screen is not - that is the one state the
+			// preview paints in, and a key that only fills in once a human is looking at it
+			// is a key nothing can check.
+			if (!this.isVisible()) {
+				return;
+			}
+			MapIcons icons = MapWindow.this.map.icons();
+			if (this.shown.length != this.rows.length) {
+				this.shown = new int[this.rows.length];
+				for (int i = 0; i < this.shown.length; i++) {
+					this.shown[i] = -1;
+				}
+			}
+			for (int function = 0; function < this.rows.length; function++) {
+				JLabel label = this.rows[function];
+				if (label == null) {
+					continue;
+				}
+				int n = icons.count(function);
+				boolean picked = MapWindow.this.only == function;
+				if (this.shown[function] == n && label.getForeground() != Theme.TEXT_DIM
+						== picked) {
+					continue;
+				}
+				this.shown[function] = n;
+				label.setText(MapIconNames.name(function) + (n > 0 ? "  " + n : ""));
+				label.setForeground(picked ? Theme.ACCENT : n > 0 ? Theme.TEXT : Theme.TEXT_DIM);
+			}
 		}
 	}
 }

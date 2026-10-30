@@ -73,7 +73,19 @@ def main():
             # reason is on stderr. Printing stdout alone here showed a run that simply stopped
             # mid-section with nothing to say why, which cost an afternoon once.
             print(r.stderr[-4000:])
-        return 0 if r.returncode == 0 else 1
+        bad = 0 if r.returncode == 0 else 1
+
+        # AND THE KEY'S NAMES AGAINST THE CONTENT. MapIconNames is generated from the content's
+        # .loc files; an icon added there and not regenerated here is a blank row in the key,
+        # which looks like an icon nobody bothered to name rather than like a stale file.
+        gen = os.path.join(ROOT, 'tools/worldmap/make_icons.py')
+        r = subprocess.run([sys.executable, gen, '--check'], capture_output=True, text=True)
+        for line in (r.stdout + r.stderr).split('\n'):
+            if line.strip():
+                print(('ok   ' if r.returncode == 0 else 'FAIL ') + line.strip())
+        if r.returncode == 1:
+            bad = 1
+        return bad
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

@@ -153,6 +153,22 @@ public class WorldMapRender {
 		System.out.println("models: " + loaded + " of " + count);
 	}
 
+	/** The icon sprites, for the window's key - loaded here because the tool has no client. */
+	static jagex2.graphics.Pix32[] mapfunctions(File pack) throws Exception {
+		Jagfile media = jagfile(pack, "media");
+		jagex2.graphics.Pix32[] art = new jagex2.graphics.Pix32[72];
+		for (int i = 0; i < art.length; i++) {
+			try {
+				art[i] = new jagex2.graphics.Pix32(media, "mapfunction", i);
+			} catch (Exception missing) {
+				if (i < 70) {
+					throw missing;
+				}
+			}
+		}
+		return art;
+	}
+
 	static Jagfile jagfile(File pack, String name) throws Exception {
 		File file = new File(new File(pack, "client"), name);
 		byte[] data = new byte[(int) file.length()];
