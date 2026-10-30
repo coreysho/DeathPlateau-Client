@@ -66,7 +66,7 @@ public final class WorldMap {
 		/** Asks for a file. What arrives comes back through {@link WorldMap#arrived}. */
 		void request(int file);
 
-		/** Turns on the background fetch of every square there is. */
+		/** Marks every square as worth fetching in the background. */
 		void prefetchAll();
 
 		/** Every square the world has, packed as (x << 8) + z. */
@@ -100,6 +100,18 @@ public final class WorldMap {
 
 	/** Which square each square's loc file belongs to, so an arrival can be placed. */
 	private int[] squareOfLocFile;
+
+	/**
+	 * Each square's two file numbers, by (x << 8) + z, and which way round they are.
+	 *
+	 * BUILT ONCE, BECAUSE THE OBVIOUS WAY ROUND IS A SCAN. OnDemand answers "which file is
+	 * square x,z" by walking its whole index of seven hundred, and a square needs that answer
+	 * eighteen times - nine neighbours, land and scenery. At thirty-two squares looked at per
+	 * frame that is four hundred thousand comparisons a frame, every frame, which is what
+	 * opening the map used to cost the game. Asked once and turned round, it is two array
+	 * reads.
+	 */
+	private int[] fileOfSquare;
 
 	public WorldMap(Supply supply) {
 		this.supply = supply;
@@ -163,7 +175,34 @@ public final class WorldMap {
 
 	/** Whether the world has a square there at all, drawn or not. */
 	public boolean exists(int x, int z) {
-		return this.supply.fileFor(x, z, 0) >= 0;
+		return this.fileOf(x, z, 0) >= 0;
+	}
+
+	/** A square's land or scenery file, out of the table rather than out of a scan. */
+	private int fileOf(int x, int z, int type) {
+		if (x < 0 || z < 0 || x > 0xFF || z > 0xFF) {
+			return -1;
+		}
+		int[] table = this.fileOfSquare();
+		return table[(((x << 8) + z) << 1) + type];
+	}
+
+	private int[] fileOfSquare() {
+		if (this.fileOfSquare == null) {
+			int[] table = new int[0x10000 * 2];
+			for (int i = 0; i < table.length; i++) {
+				table[i] = -1;
+			}
+			int[] squares = this.supply.squares();
+			for (int i = 0; i < squares.length; i++) {
+				int x = squares[i] >> 8;
+				int z = squares[i] & 0xFF;
+				table[(squares[i] << 1)] = this.supply.fileFor(x, z, 0);
+				table[(squares[i] << 1) + 1] = this.supply.fileFor(x, z, 1);
+			}
+			this.fileOfSquare = table;
+		}
+		return this.fileOfSquare;
 	}
 
 	/**
@@ -227,7 +266,7 @@ public final class WorldMap {
 		boolean complete = true;
 		for (int dx = -1; dx <= 1; dx++) {
 			for (int dz = -1; dz <= 1; dz++) {
-				int file = this.supply.fileFor(sx + dx, sz + dz, type);
+				int file = this.fileOf(sx + dx, sz + dz, type);
 				if (file < 0) {
 					continue;
 				}
@@ -285,12 +324,17 @@ public final class WorldMap {
 	}
 
 	/**
-	 * Turns on the background prefetch of every map square, once.
+	 * Marks every map square as worth fetching in the background, once.
 	 *
-	 * 377 HAS THIS AND NOTHING USED IT. prefetchMaps marks every square low priority, and the
-	 * on-demand thread then fetches them in the gaps between what the game actually needs,
-	 * writing each to the cache on the way past. A player who opens the map on their first day
-	 * sees it fill in; one who has played a while sees it already there.
+	 * 377 HAS THIS AND NOTHING USED IT. prefetchMaps sets a priority against every map file
+	 * and raises the top priority; the on-demand thread's own handleExtras then sweeps that
+	 * table whenever nothing urgent is outstanding and fewer than ten requests are in flight,
+	 * and fetches them in the gaps, writing each to the cache on the way past.
+	 *
+	 * IT NEEDS A CACHE ON DISK. prefetchPriority returns at once when the client has no file
+	 * store - there would be nowhere to put what it fetched - so a client running without one
+	 * simply never prefetches. That is also why the driver in run_worldmaporb cannot check
+	 * this: it gives the client a fresh home directory and no cache comes with it.
 	 */
 	public void prefetchAll() {
 		if (this.prefetched) {
@@ -321,7 +365,7 @@ public final class WorldMap {
 			for (int i = 0; i < squares.length; i++) {
 				int x = squares[i] >> 8;
 				int z = squares[i] & 0xFF;
-				int file = this.supply.fileFor(x, z, 1);
+				int file = this.fileOf(x, z, 1);
 				pairs[i] = new int[] { file, squares[i] };
 				if (file > widest) {
 					widest = file;
@@ -345,5 +389,24 @@ public final class WorldMap {
 	public void forget() {
 		this.drawn.clear();
 		this.age.clear();
+	}
+
+	/**
+	 * Nobody is looking any more: stop drawing squares for them.
+	 *
+	 * A CLOSED MAP MUST COST THE GAME NOTHING. What it asked for stays asked for otherwise,
+	 * and every file that arrives afterwards wakes the whole waiting list up again - so with
+	 * the prefetch running, a map opened once and closed went on grinding through squares
+	 * nobody could see for as long as the client was up. The pictures already drawn are kept,
+	 * because opening it again on the same view should be instant.
+	 */
+	public void closed() {
+		this.wanted.clear();
+		this.waiting.clear();
+	}
+
+	/** Opening the map: mark the rest of the world as worth fetching in the background. */
+	public void opened() {
+		this.prefetchAll();
 	}
 }

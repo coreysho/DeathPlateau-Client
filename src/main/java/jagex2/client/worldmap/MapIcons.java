@@ -185,6 +185,24 @@ public final class MapIcons {
 	}
 
 	/**
+	 * How many of each kind there are, all of them in one walk of the list.
+	 *
+	 * The key has sixty-four rows and refreshes four times a second while the map is open;
+	 * counting each row on its own is sixty-four walks of every icon in the world for a
+	 * number that changes only when a map file lands.
+	 */
+	public int[] counts(int kinds) {
+		int[] found = new int[kinds];
+		for (int i = 0; i < this.icons.size(); i++) {
+			int function = ((Icon) this.icons.get(i)).function;
+			if (function >= 0 && function < kinds) {
+				found[function]++;
+			}
+		}
+		return found;
+	}
+
+	/**
 	 * The icons inside a rectangle of world tiles on one level.
 	 *
 	 * Walked rather than indexed: a world holds a few thousand of these, and a linear pass over

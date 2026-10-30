@@ -41,7 +41,7 @@ import java.awt.event.MouseMotionAdapter;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.image.BufferedImage;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -107,8 +107,25 @@ public final class MapWindow extends JFrame {
 	/** One icon kind to show on its own, or -1 for all of them. */
 	private int only = -1;
 
-	/** Scaled squares, keyed by the square's key and the zoom they were scaled to. */
-	private final Map scaled = new HashMap();
+	/**
+	 * Scaled squares, keyed by the square, its level AND the zoom they were scaled to.
+	 *
+	 * NEVER THROWN AWAY WHOLESALE, which it used to be - on every zoom and every change of
+	 * floor, and again whenever it passed 256 entries. Zoomed right out a window this size
+	 * shows a hundred and forty squares at once and a big one five hundred, so a wholesale
+	 * clear meant every one of them had to come back from the game thread at one square a
+	 * frame, and what the player saw was most of the map going black and crawling back. The
+	 * key already carries the zoom and the level, so nothing in here is ever stale: the oldest
+	 * goes when there are too many, and that is all.
+	 */
+	private final Map scaled = new LinkedHashMap(16, 0.75f, true) {
+
+		protected boolean removeEldestEntry(Map.Entry eldest) {
+			// A square scaled to one pixel a tile is 16k; even a thousand of them is a few
+			// megabytes, and a thousand is more than any window can show at once.
+			return this.size() > 1024;
+		}
+	};
 
 	public MapWindow(WorldMap map) {
 		super("World map");
@@ -444,11 +461,6 @@ public final class MapWindow extends JFrame {
 			g.drawImage(full, 0, 0, cell, cell, null);
 			g.dispose();
 		}
-		// A SMALL CACHE OF SCALED SQUARES, cleared wholesale rather than aged: zooming or
-		// changing level invalidates all of them at once, and panning only ever adds a ring.
-		if (this.scaled.size() > 256) {
-			this.scaled.clear();
-		}
 		this.scaled.put(which, out);
 		return out;
 	}
@@ -511,7 +523,6 @@ public final class MapWindow extends JFrame {
 	private void setLevel(int to) {
 		this.level = to;
 		this.floor.setText("level " + to);
-		this.scaled.clear();
 	}
 
 	private void readOut(int px, int py, int wide, int high) {
@@ -537,7 +548,6 @@ public final class MapWindow extends JFrame {
 		}
 		if (ZOOMS[want] != this.zoom) {
 			this.zoom = ZOOMS[want];
-			this.scaled.clear();
 			this.view.repaint();
 		}
 	}
@@ -611,7 +621,9 @@ public final class MapWindow extends JFrame {
 			if (!this.isVisible()) {
 				return;
 			}
-			MapIcons icons = MapWindow.this.map.icons();
+			// ONE PASS, NOT SIXTY-FOUR. Counting each kind separately walks the whole icon
+			// list once per row, four times a second, on the thread that also has to draw.
+			int[] counts = MapWindow.this.map.icons().counts(this.rows.length);
 			if (this.shown.length != this.rows.length) {
 				this.shown = new int[this.rows.length];
 				for (int i = 0; i < this.shown.length; i++) {
@@ -623,7 +635,7 @@ public final class MapWindow extends JFrame {
 				if (label == null) {
 					continue;
 				}
-				int n = icons.count(function);
+				int n = counts[function];
 				boolean picked = MapWindow.this.only == function;
 				if (this.shown[function] == n && label.getForeground() != Theme.TEXT_DIM
 						== picked) {

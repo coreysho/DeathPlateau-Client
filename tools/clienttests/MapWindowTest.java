@@ -269,14 +269,18 @@ public class MapWindowTest {
 	 * in a table of their own and need no cache at all.
 	 */
 	static MapIcons withBank() {
+		MapIcons icons = new MapIcons();
+		icons.useFunctions(bankOnly());
+		return icons;
+	}
+
+	static int[] bankOnly() {
 		int[] functions = new int[BANK_ICON + 1];
 		for (int i = 0; i < functions.length; i++) {
 			functions[i] = -1;
 		}
 		functions[BANK_ICON] = BANK_FUNCTION;
-		MapIcons icons = new MapIcons();
-		icons.useFunctions(functions);
-		return icons;
+		return functions;
 	}
 
 	/** The loc id of the loc that exists only to put a bank on the map, and its icon number. */
@@ -422,12 +426,52 @@ public class MapWindowTest {
 		yes("the world knows the square is there", map.exists(50, 50));
 		yes("and knows its neighbour is not", !map.exists(50, 51));
 
-		yes("the prefetch is off until somebody opens the map", !cache.prefetched);
-		map.prefetchAll();
-		yes("and on afterwards", cache.prefetched);
-		cache.prefetched = false;
-		map.prefetchAll();
-		yes("once, not on every open", !cache.prefetched);
+		// ICONS ARRIVE THE WAY MAP FILES ARRIVE. Everything above hands them to the index by
+		// hand, and so did the preview - which is how a map that indexed nothing in the real
+		// client passed every check there was. A loc file going past is the only way the game
+		// ever gets one, so that is the way this gets one too.
+		Pretend post = new Pretend();
+		post.has(50, 50);
+		WorldMap byPost = over(post);
+		byPost.icons().useFunctions(bankOnly());
+		yes("nothing is indexed before anything arrives", byPost.icons().all().isEmpty());
+		byPost.arrived(Pretend.file(50, 50, 1),
+			locFile(new int[][] { { BANK_ICON, 10, 20, 0 } }));
+		eq("a loc file going past puts its icons on the map", 1,
+			byPost.icons().all().size());
+		MapIcons.Icon posted = (MapIcons.Icon) byPost.icons().all().get(0);
+		eq("in the right square", 50 * 64 + 10, posted.x);
+		byPost.arrived(Pretend.file(50, 50, 0), new byte[] { 0 });
+		eq("and a LAND file going past adds nothing", 1, byPost.icons().all().size());
+
+		// THE BACKGROUND FETCH OF THE REST OF THE WORLD. The client's own on-demand thread
+		// sweeps its priority table whenever nothing urgent is outstanding, so marking is all
+		// the map has to do - but it must do it once, when somebody opens the map, and not
+		// before: a player who never opens it has no reason to be downloading squares they
+		// will not look at.
+		Pretend wide = new Pretend();
+		wide.has(1, 1);
+		WorldMap world = over(wide);
+		yes("nothing is marked until somebody opens the map", !wide.prefetched);
+		world.opened();
+		yes("opening it marks the world", wide.prefetched);
+		wide.prefetched = false;
+		world.opened();
+		yes("and marks it once, not on every open", !wide.prefetched);
+
+		// A CLOSED MAP COSTS THE GAME NOTHING.
+		Pretend quiet3 = new Pretend();
+		quiet3.existsButSilent(90, 90);
+		WorldMap shut2 = over(quiet3);
+		shut2.square(90, 90, 0);
+		shut2.tick();
+		shut2.closed();
+		int asked2 = quiet3.asked.size();
+		shut2.arrived(Pretend.file(90, 90, 0), new byte[] { 0 });
+		for (int frame = 0; frame < 20; frame++) {
+			shut2.tick();
+		}
+		eq("a closed map asks for nothing more", asked2, quiet3.asked.size());
 	}
 
 	static void drawing() {
