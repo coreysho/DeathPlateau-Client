@@ -29,6 +29,7 @@
 //        -cp <client jar><sep><dir of this class> CourseCam <out dir> <user> <table.tsv>
 import jagex2.client.Client;
 import jagex2.dash3d.ClientPlayer;
+import jagex2.dash3d.Model;
 import jagex2.dash3d.Sprite;
 import jagex2.dash3d.Square;
 import jagex2.dash3d.World3D;
@@ -63,6 +64,10 @@ public class CourseCam extends Client {
 	static int pinYaw = Integer.getInteger("cam.yaw", 0).intValue();
 	static int pinPitch = Integer.getInteger("cam.pitch", 280).intValue();
 	static int pinZoom = Integer.getInteger("cam.zoom", 700).intValue();
+	/** The standard camera, which every obstacle starts from however the last one had to be aimed. */
+	static final int DEF_YAW = pinYaw;
+	static final int DEF_PITCH = pinPitch;
+	static final int DEF_ZOOM = pinZoom;
 	static volatile int menuOptions;
 	/** Where to point the scene pick, and what it last came back with (scene tiles, -1 for none). */
 	static volatile boolean wantPick;
@@ -124,7 +129,7 @@ public class CourseCam extends Client {
 			if (wantPick && !World3D.field1044) {
 				World3D sc = (World3D) get("scene");
 				if (sc != null) {
-					sc.method312(pickX - vp("vpX"), pickY - vp("vpY"));
+					sc.method312(pickX - layoutInt("vpScreenX"), pickY - layoutInt("vpScreenY"));
 					armed = true;
 				}
 			}
@@ -490,6 +495,37 @@ public class CourseCam extends Client {
 		return -1;
 	}
 
+	/**
+	 * IS THERE TERRAIN under this tile, on this storey or the one below - and nothing else counts.
+	 *
+	 * A DIFFERENT QUESTION FROM floorAt, which asks whether anything at all is drawn and counts a
+	 * centrepiece loc, because a stall or a walkway really does hold the player up. This one
+	 * answers "was the tile open air", which is what tells a vault over a street from a slide
+	 * across the roofs: a roof has ground under it, the gap between two roofs has none, and a stall
+	 * standing on that gap has a loc. One predicate was answering both questions, so counting locs
+	 * as floor - right for the first - silently broke the second on three obstacles at once.
+	 */
+	static boolean terrainAt(int worldX, int worldZ, int level) {
+		synchronized (LOCK) {
+			World3D sc = (World3D) get("scene");
+			if (sc == null) {
+				return false;
+			}
+			int x = worldX - geti("sceneBaseTileX");
+			int z = worldZ - geti("sceneBaseTileZ");
+			if (x < 0 || x > 103 || z < 0 || z > 103 || level < 0 || level > 3) {
+				return false;
+			}
+			for (int l = level; l >= Math.max(0, level - 1); l--) {
+				Square sq = sc.field1018[l][x][z];
+				if (sq != null && (sq.field1385 != null || sq.field1384 != null)) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
 	static boolean floorAt(int worldX, int worldZ, int level) {
 		synchronized (LOCK) {
 			World3D sc = (World3D) get("scene");
@@ -510,15 +546,19 @@ public class CourseCam extends Client {
 			// QuickGround, because what holds you up is the obstacle's own model. Canifis' tall
 			// tree lands you on one, and a terrain-only test called that standing in the sky.
 			//
-			// Scenery is kept at its origin tile only, so a tile in the middle of a big canopy can
-			// still read empty; that is a false negative to live with rather than a reason to ask
-			// about terrain alone.
+			// AND THE SCENERY LIST IS WHERE THAT LOC IS. This used to ask about everything except
+			// field1391 and then excuse the gap by claiming scenery is kept at its origin tile
+			// only - which is not what the client does. World3D.method287 loops over every tile of
+			// the footprint and writes the Sprite into that Square, the whole span rather than the
+			// corner. Eight failures of the nine-course run over four tiles were this, and the
+			// photograph of one of them has the player standing on a drawn walkway.
 			return sq.field1385 != null
 				|| sq.field1384 != null
 				|| sq.field1389 != null
 				|| sq.field1388 != null
 				|| sq.field1386 != null
-				|| sq.field1387 != null;
+				|| sq.field1387 != null
+				|| sq.field1390 > 0;
 		}
 	}
 
@@ -559,6 +599,242 @@ public class CourseCam extends Client {
 	 * tile could not be landed on - which is itself a finding: it means that obstacle cannot be
 	 * clicked from where the player is standing.
 	 */
+	/**
+	 * THE CLIENT'S OWN PROJECTION, DONE HERE, so the answer cannot depend on what was bound last.
+	 *
+	 * projectFromGround writes its answer through Pix3D.zoom and Pix3D.centerX, which belong to
+	 * whichever drawing area was bound when it is called: the viewport inside drawScene, but the
+	 * chatbox, the sidebar or an item sprite ObjType rendered when it is called from a test thread
+	 * between frames. The answer is then a point in a space that is not on the screen, which is how
+	 * the first run of this clicked a chest of drawers inside a house while aiming at a rooftop.
+	 *
+	 * The arithmetic is only a rotation into the camera, so it is repeated here against the layout's
+	 * own viewport and zoom, which do not move between frames. Takes an ABSOLUTE scene y, where the
+	 * client's version takes a height above the ground and looks the ground up for itself, because
+	 * what this is aimed at is a loc's model and the scene already knows the y it was drawn at.
+	 *
+	 * Returns a window point, or null when the point is behind the camera.
+	 */
+	static int[] project(int sceneX, int sceneY, int sceneZ) {
+		int zoom = layoutInt("zoom");
+		int cx = layoutInt("vpW") / 2 + layoutInt("vpScreenX");
+		int cy = layoutInt("vpH") / 2 + layoutInt("vpScreenY");
+		int dx = sceneX - app.cameraX;
+		int dy = sceneY - app.cameraY;
+		int dz = sceneZ - app.cameraZ;
+		int sinPitch = Model.sinTable[app.cameraPitch];
+		int cosPitch = Model.cosTable[app.cameraPitch];
+		int sinYaw = Model.sinTable[app.cameraYaw];
+		int cosYaw = Model.cosTable[app.cameraYaw];
+		int across = dx * cosYaw + dz * sinYaw >> 16;
+		int along = dz * cosYaw - dx * sinYaw >> 16;
+		int up = dy * cosPitch - sinPitch * along >> 16;
+		int depth = dy * sinPitch + cosPitch * along >> 16;
+		if (depth < 50) {
+			return null;
+		}
+		return new int[] { across * zoom / depth + cx, up * zoom / depth + cy };
+	}
+
+	static boolean onScreen(int[] p) {
+		return p != null && p[0] >= 8 && p[1] >= 8
+			&& p[0] <= app.getWidth() - 8 && p[1] <= app.getHeight() - 8;
+	}
+
+	/**
+	 * THE SPRITE THE CLIENT DREW FOR THIS OBSTACLE, found by the loc id the course table names.
+	 *
+	 * A loc is registered on every tile of its footprint, so its own tile almost always holds it -
+	 * but the course constants name the tile a PLAYER stands on for several obstacles, which is
+	 * beside the thing rather than on it, so a few tiles of slack and the nearest match wins. Every
+	 * plane is searched because a tile with LINK_BELOW drops its locs to the plane underneath, and
+	 * the table's level is the player's.
+	 */
+	static Sprite spriteOf(Ob o) {
+		synchronized (LOCK) {
+			World3D sc = (World3D) get("scene");
+			if (sc == null) {
+				return null;
+			}
+			int ox = o.x - geti("sceneBaseTileX");
+			int oz = o.z - geti("sceneBaseTileZ");
+			Sprite best = null;
+			int bestScore = Integer.MAX_VALUE;
+			for (int level = 0; level <= 3; level++) {
+				for (int x = ox - 4; x <= ox + 4; x++) {
+					for (int z = oz - 4; z <= oz + 4; z++) {
+						if (x < 0 || x > 103 || z < 0 || z > 103) {
+							continue;
+						}
+						Square sq = sc.field1018[level][x][z];
+						if (sq == null) {
+							continue;
+						}
+						for (int i = 0; i < sq.field1390; i++) {
+							Sprite sp = sq.field1391[i];
+							if (sp == null || (sp.field88 >> 14 & 0x7FFF) != o.locId) {
+								continue;
+							}
+							// the tile matters more than the plane, and the plane breaks a tie
+							int score = 8 * (Math.abs(x - ox) + Math.abs(z - oz))
+								+ Math.abs(level - o.level);
+							if (score < bestScore) {
+								bestScore = score;
+								best = sp;
+							}
+						}
+					}
+				}
+			}
+			return best;
+		}
+	}
+
+	/**
+	 * POINT AT THE OBSTACLE'S MODEL, which is what the band of points below is guessing at.
+	 *
+	 * The Sprite says where the model was drawn and how tall it is, so this walks up its body -
+	 * the middle first, where a model is usually widest, then the shoulders and the feet for
+	 * anything shaped like a ladder - and tries a small cross at each height, because the client
+	 * picks locs triangle by triangle and a plate of hand holds is a few pixels of them.
+	 *
+	 * Returns the point the verb was found at, or null, in which case the tile-and-band search
+	 * below is still worth running: a loc whose own model is behind a gable can still be clickable
+	 * at the edge of it.
+	 */
+	/**
+	 * WHERE THE PROJECTION PUTS THE PLAYER, which the camera orbits, so the answer is known: near
+	 * the middle of the window. Printed with everything it was computed from, because when it is
+	 * wrong the question is which of those numbers is not the one the scene was drawn with.
+	 */
+	static String selfCheck() {
+		int[] me = tileAt();
+		int x = (me[0] - geti("sceneBaseTileX")) * 128 + 64;
+		int z = (me[1] - geti("sceneBaseTileZ")) * 128 + 64;
+		int[] p = project(x, app.getHeightmapY(z, x, geti("currentLevel")), z);
+		return "the player at " + me[0] + "," + me[1] + " projects to "
+			+ (p == null ? "behind the camera" : p[0] + "," + p[1])
+			+ " in a " + app.getWidth() + "x" + app.getHeight() + " window"
+			+ " (zoom " + layoutInt("zoom") + ", vp " + layoutInt("vpW") + "x" + layoutInt("vpH")
+			+ " at " + layoutInt("vpScreenX") + "," + layoutInt("vpScreenY")
+			+ ", camera " + app.cameraX + "," + app.cameraY + "," + app.cameraZ
+			+ " pitch " + app.cameraPitch + " yaw " + app.cameraYaw + ")";
+	}
+
+	/**
+	 * SWING THE CAMERA ROUND TO THE OBSTACLE, and pull it back until the model is on the window.
+	 *
+	 * The cam looks north at a fixed yaw with the camera pulled in close, which frames the player
+	 * and about eight tiles around them. Half of these obstacles are further away than that -
+	 * Canifis' gap 2 is eight tiles west and sixteen north - and every aim before this moved the
+	 * cursor and left the camera where it was, which is the one thing a player would not do.
+	 *
+	 * The yaw is the one that puts the model straight ahead: across = dx.cos + dz.sin is zero when
+	 * the yaw is atan2(-dx, dz), and then the depth is the full distance, so the model is in front
+	 * rather than behind. Angles are the client's own 2048 to the turn.
+	 *
+	 * Pulling back is a second resort because it costs detail in the photograph: cameraZoomOffset
+	 * is subtracted from the camera's distance, so a smaller one stands further off.
+	 */
+	static int[] turnToModel(Ob o) throws Exception {
+		Sprite sp = spriteOf(o);
+		if (sp == null) {
+			return null;
+		}
+		int[] me = tileAt();
+		int px = (me[0] - geti("sceneBaseTileX")) * 128 + 64;
+		int pz = (me[1] - geti("sceneBaseTileZ")) * 128 + 64;
+		if (Math.abs(sp.field78 - px) < 64 && Math.abs(sp.field79 - pz) < 64) {
+			return null;
+		}
+		int yaw = (int) Math.round(Math.atan2(-(sp.field78 - px), sp.field79 - pz) * 1024.0 / Math.PI)
+			& 0x7FF;
+		// AND IT HAS TO COME DOWN AS WELL AS ROUND. Varrock's leap and Al Kharid's zip line both
+		// project to the middle of the window once the yaw is right and to fifty-odd pixels ABOVE
+		// its top: a camera looking down at pitch 280 pushes anything far away towards the horizon
+		// and off the frame. Working the zip line by hand, pitch 228 puts it at y = 99 and pitch
+		// 128 at y = 324. Nearest to the standard camera first, and an obstacle already in frame
+		// pays nothing for this, because aimAtModel rejects a projection off the window without
+		// hovering anything.
+		for (int zoom : new int[] { DEF_ZOOM, 300, 100 }) {
+			for (int pitch : new int[] { DEF_PITCH, 228, 180, 128 }) {
+				pinYaw = yaw;
+				pinPitch = pitch;
+				pinZoom = zoom;
+				// WAIT FOR THE CAMERA TO GET THERE. The pin is written every frame and the orbit
+				// camera is what the scene is drawn with, so the projection is wrong until they agree.
+				for (int f = 0; f < 60 && (app.cameraYaw != yaw || app.cameraPitch != pitch); f++) {
+					waitFrames(1);
+				}
+				waitFrames(4);
+				int[] on = aimAtModel(o);
+				if (on != null) {
+					say("      (turned the camera to yaw " + yaw
+						+ (pitch != DEF_PITCH ? ", brought it down to pitch " + pitch : "")
+						+ (zoom != DEF_ZOOM ? ", stood it back at zoom " + zoom : "") + " to see it)");
+					return on;
+				}
+			}
+		}
+		pinYaw = DEF_YAW;
+		pinPitch = DEF_PITCH;
+		pinZoom = DEF_ZOOM;
+		waitFrames(8);
+		return null;
+	}
+
+	static String modelWhy = "";
+
+	static int[] aimAtModel(Ob o) throws Exception {
+		modelWhy = "";
+		Sprite sp = spriteOf(o);
+		if (sp == null) {
+			modelWhy = "no sprite with loc " + o.locId + " within four tiles of " + o.x + "," + o.z;
+			return null;
+		}
+		int height = sp.field80 == null ? 0 : sp.field80.field1709;
+		int offScreen = 0;
+		int tried = 0;
+		String first = "";
+		for (int quarter : new int[] { 2, 1, 3, 0, 4 }) {
+			int[] at = project(sp.field78, sp.field77 - height * quarter / 4, sp.field79);
+			if (!onScreen(at)) {
+				offScreen++;
+				if (first.isEmpty()) {
+					first = at == null ? "behind the camera"
+						: "off the window at " + at[0] + "," + at[1];
+				}
+				continue;
+			}
+			tried++;
+			if (first.isEmpty()) {
+				// THE PROJECTION, AGAINST THE CLIENT'S OWN PICK. If the pick at this pixel answers
+				// the obstacle's tile the arithmetic is sound and the verb is what is missing; if it
+				// answers somewhere else the arithmetic is what is wrong.
+				int[] under = pickAt(at[0], at[1]);
+				first = "the model's middle projects to " + at[0] + "," + at[1] + " where the pick says "
+					+ (under == null ? "nothing" : under[0] + "," + under[1]);
+			}
+			for (int[] d : new int[][] { { 0, 0 }, { -8, 0 }, { 8, 0 }, { 0, -8 }, { 0, 8 } }) {
+				int x = at[0] + d[0];
+				int y = at[1] + d[1];
+				if (x < 8 || y < 8 || x > app.getWidth() - 8 || y > app.getHeight() - 8) {
+					continue;
+				}
+				hover(x, y);
+				waitFrames(3);
+				if (rowOf(o.verb) >= 0) {
+					return new int[] { x, y };
+				}
+			}
+		}
+		modelWhy = "sprite " + o.locId + " is at " + sp.field78 + "," + sp.field77 + "," + sp.field79
+			+ " L" + sp.field76 + ", " + height + " tall, rotation " + sp.field81 + "; " + first
+			+ "; " + tried + " of 5 heights on screen" + (offScreen > 0 ? ", " + offScreen + " not" : "")
+			+ ", none of them offering '" + o.verb + "'; " + selfCheck();
+		return null;
+	}
+
 	static String aimWhy = "";
 
 	static int[] aimAt(int worldX, int worldZ) throws Exception {
@@ -579,9 +855,13 @@ public class CourseCam extends Client {
 			}
 		}
 		if (at == null) {
+			// NOTHING AT THE MIDDLE IS NOT NOTHING ANYWHERE. The middle of the window is sky
+			// whenever the camera is low or the player is on a roof edge, and the Newton steps below
+			// need a tile to start from - but the sweep does not, so it is the answer here rather
+			// than abandoning the obstacle.
 			aimWhy = "the scene pick found no tile at the middle of the window (" + px + "," + py
-				+ "), after " + picks + " picks";
-			return null;
+				+ "), after " + picks + " picks, swept the window instead";
+			return sweepFor(worldX, worldZ);
 		}
 		// THE JACOBIAN, MEASURED RATHER THAN DERIVED. A hundred pixels, not sixty: at the camera's
 		// own zoom a tile can be wider than sixty pixels, and two probes that both pick the same
@@ -791,13 +1071,27 @@ public class CourseCam extends Client {
 	 */
 	static int[] lookFor(Ob o) throws Exception {
 		lookWhy = "";
+		// THE LOC'S OWN MODEL FIRST, at the pixel the client drew it at. Everything after this is a
+		// search for where the model went, and a search is what fifteen of the twenty-nine failures
+		// of the nine-course run were - "nothing in the band above its tile offers it", with the
+		// scene naming the loc on the next line.
+		int[] atModel = aimAtModel(o);
+		if (atModel != null) {
+			return atModel;
+		}
+		String fromStandard = modelWhy;
+		atModel = turnToModel(o);
+		if (atModel != null) {
+			return atModel;
+		}
 		// AIM AT THE MIDDLE OF THE FOOTPRINT. A four-tile tree clicked at its origin corner is
 		// aimed at its edge, and the model above that corner can be branches and sky.
 		int cx = o.x + (o.w - 1) / 2;
 		int cz = o.z + (o.l - 1) / 2;
 		int[] sxy = aimAt(cx, cz);
 		if (sxy == null) {
-			lookWhy = "it is not on screen from here - " + aimWhy;
+			lookWhy = "it is not on screen from here - " + aimWhy + "; by its model, " + fromStandard
+				+ "; and with the camera turned onto it, " + modelWhy;
 			return null;
 		}
 		int[] on = findVerb(sxy[0], sxy[1], o.verb);
@@ -824,7 +1118,8 @@ public class CourseCam extends Client {
 			hover(sxy[0], sxy[1]);
 			waitFrames(4);
 			lookWhy = "nothing in the band above its tile offers it; over the tile itself the menu is "
-				+ menu() + "; scene says " + locsAt(o.x, o.z);
+				+ menu() + "; scene says " + locsAt(o.x, o.z) + "; by its model, " + fromStandard
+				+ "; and with the camera turned onto it, " + modelWhy;
 		}
 		return on;
 	}
@@ -900,7 +1195,13 @@ public class CourseCam extends Client {
 		return null;
 	}
 
-	/** Project a world tile to the viewport, or null when it is off screen. */
+	/**
+	 * Project the middle of a world tile to a window point, or null when it is not on screen.
+	 *
+	 * Through project() rather than the client's projectFromGround, because this is what walkToward
+	 * steers by and that projection answering in the space of whatever was bound last is the race
+	 * that sent the player twenty-one tiles the wrong way across Al Kharid.
+	 */
 	static int[] screenOf(int worldX, int worldZ) {
 		synchronized (LOCK) {
 			int x = worldX - geti("sceneBaseTileX");
@@ -908,24 +1209,26 @@ public class CourseCam extends Client {
 			if (x < 0 || x > 103 || z < 0 || z > 103) {
 				return null;
 			}
-			call("projectFromGround", Integer.valueOf(x * 128 + 64), Integer.valueOf(0), Integer.valueOf(z * 128 + 64));
-			int px = geti("projectX");
-			int py = geti("projectY");
-			if (px == -1) {
-				return null;
-			}
-			// projectFromGround writes viewport-local coordinates; the viewport is placed by the
-			// layout, so a window coordinate is that plus the viewport's own origin.
-			return new int[] { px + vp("vpX"), py + vp("vpY") };
+			int sx = x * 128 + 64;
+			int sz = z * 128 + 64;
+			int[] p = project(sx, app.getHeightmapY(sz, sx, geti("currentLevel")), sz);
+			return onScreen(p) ? p : null;
 		}
 	}
 
-	static int vp(String name) {
+	/**
+	 * A field of the LAYOUT, which is an instance and not a class.
+	 *
+	 * This read them statically until now, so every call threw and came back 0 - harmless in the
+	 * resizable layout the cam runs in, where the viewport is the window and its origin is 0,0, and
+	 * wrong by the frame's four-pixel border in fixed.
+	 */
+	static int layoutInt(String name) {
 		try {
-			Class<?> c = Class.forName("jagex2.client.Layout");
-			Field f = c.getDeclaredField(name);
+			Object layout = get("layout");
+			Field f = layout.getClass().getDeclaredField(name);
 			f.setAccessible(true);
-			return ((Number) f.get(null)).intValue();
+			return ((Number) f.get(layout)).intValue();
 		} catch (Exception e) {
 			return 0;
 		}
@@ -1104,6 +1407,11 @@ public class CourseCam extends Client {
 
 	/** Returns whether the obstacle actually carried the player across it. */
 	static boolean doObstacle(Ob o, int[] from, int index) throws Exception {
+		// THE STANDARD CAMERA, however the last obstacle had to be aimed. A turn that is not undone
+		// reframes every obstacle after it, and then two runs of the same course are not comparable.
+		pinYaw = DEF_YAW;
+		pinPitch = DEF_PITCH;
+		pinZoom = DEF_ZOOM;
 		// 1. STAND WHERE THE LAST OBSTACLE LEFT US. The first one is reached from the course start.
 		//
 		// CHECKED AND REPEATED, because a typed command does not always arrive: the chatbox takes
@@ -1195,31 +1503,62 @@ public class CourseCam extends Client {
 				"the menu rebuilt between finding it and clicking it: " + menu());
 			return false;
 		}
-		int size = geti("menuSize");
-		int before = menuOptions;
-		lastOption = "";
 		// A LEFT CLICK WHEN THE VERB IS ALREADY THE LEFT-CLICK OPTION, which is the path a player
 		// takes, and the client's own dispatch when it is not. Twelve frames to answer, not three:
 		// the press is read in one frame, the release in another, and the action runs in the
 		// update after that - judging it at three frames called every click a dud.
-		if (row == size - 1) {
-			click(sxy[0], sxy[1], false);
-			for (int i = 0; i < 12 && menuOptions == before; i++) {
-				waitFrames(1);
-			}
-			if (menuOptions == before) {
-				// one retry, in case the press landed on a frame that rebuilt the menu
+		//
+		// AND THREE ATTEMPTS, because the menu belongs to the frame it was built in. Re-reading the
+		// row immediately before dispatching narrowed that race without closing it: Canifis lost a
+		// click to it in one run and Pollnivneach's basket lost one in the next, each with the
+		// right verb on the menu a moment earlier. The obstacle is found again between attempts,
+		// because a stray "Walk here" walks the player a tile and moves where it is on the screen.
+		boolean ran = false;
+		int tries = 0;
+		while (!ran && tries < 3) {
+			tries++;
+			int size = geti("menuSize");
+			int before = menuOptions;
+			lastOption = "";
+			if (row == size - 1) {
 				click(sxy[0], sxy[1], false);
 				for (int i = 0; i < 12 && menuOptions == before; i++) {
 					waitFrames(1);
 				}
+				// A PRESS THAT RAN NOTHING IS A FRAME THAT REBUILT THE MENU, and one more press at
+				// the same pixel is the whole fix - it is the real left click that needs this, not
+				// the useMenuOption path, which is overridden in this class and runs on the calling
+				// thread. Taking this out cost every left click on every course an outer attempt,
+				// and an outer attempt re-runs lookFor and can swing the camera round.
+				if (menuOptions == before) {
+					click(sxy[0], sxy[1], false);
+					for (int i = 0; i < 12 && menuOptions == before; i++) {
+						waitFrames(1);
+					}
+				}
+			} else {
+				call("useMenuOption", Integer.valueOf(row));
+				waitFrames(4);
 			}
-		} else {
-			call("useMenuOption", Integer.valueOf(row));
-			waitFrames(4);
+			ran = menuOptions > before && lastOption.startsWith(o.verb);
+			if (ran || tries == 3) {
+				break;
+			}
+			int[] again = lookFor(o);
+			if (again == null) {
+				break;
+			}
+			sxy = again;
+			hover(sxy[0], sxy[1]);
+			waitFrames(3);
+			row = rowOf(o.verb);
+			if (row < 0) {
+				break;
+			}
 		}
-		check("clicking it ran '" + lastOption + "'", menuOptions > before && lastOption.startsWith(o.verb),
-			menuOptions == before ? "the click ran nothing at all" : "");
+		check("clicking it ran '" + lastOption + "'" + (tries > 1 ? ", on attempt " + tries : ""), ran,
+			ran ? "" : lastOption.isEmpty() ? "the click ran nothing at all, in " + tries + " attempt(s)"
+				: tries + " attempt(s) and the last ran '" + lastOption + "'");
 
 		// 4. WATCH IT PLAY OUT, frame by frame, in DRAWN position - which is where the player sees
 		// himself, glide and all, rather than where the server has put him.
@@ -1246,17 +1585,26 @@ public class CourseCam extends Client {
 		// player stands, waits a tick and only then moves them, so "still for a while" is not the
 		// same as finished: judging it after 25 still frames reported the wall as landing the
 		// player on the wall. A tick is about thirty frames here, so two ticks of stillness it is.
-		for (int f = 0; f < 300; f++) {
+		//
+		// AND THE CAP HAS TO COVER THE LONGEST CROSSING, not the usual one. It was three hundred
+		// frames, which is ten tiles of walking, and Canifis' gap 5 is thirteen: the loop ran out
+		// with the player halfway across and the four failures that followed were all consequences
+		// of reading a tile the obstacle had not finished with. Nine hundred costs nothing on a
+		// short obstacle, because stillness still ends the loop and a dead one still gives up
+		// around frame ninety.
+		boolean settled = false;
+		for (int f = 0; f < 900; f++) {
 			waitFrames(1);
 			double[] d = drawnAt();
 			int[] t = tileAt();
 			String tile = t[0] + "," + t[1] + "L" + t[2];
 			if (path.isEmpty() || !path.get(path.size() - 1).equals(tile)) {
 				path.add(tile);
-				// floorStorey, not floorAt: on a rooftop the floor is routinely the roof model
-				// drawn a storey below, so asking only about the player's own plane counts solid
-				// roof as open air and inflates this.
-				if (floorStorey(t[0], t[1], t[2]) < 0) {
+				// terrainAt, not floorStorey: this counts OPEN AIR, and a loc is not air. It
+				// already looks a storey down, because on a rooftop the ground is routinely drawn
+				// on the storey below and asking only about the player's own plane calls solid roof
+				// air.
+				if (!terrainAt(t[0], t[1], t[2])) {
 					airborne++;
 				}
 			}
@@ -1294,8 +1642,20 @@ public class CourseCam extends Client {
 				shotMid = true;
 			}
 			if (Math.abs(d[0] - last[0]) < 0.01 && Math.abs(d[1] - last[1]) < 0.01) {
-				still++;
+				// A CLIMB THAT PLAYS WHERE IT STANDS IS NOT A CROSSING THAT HAS FINISHED. Al
+				// Kharid's tropical tree runs seq 751 for sixty frames and only then moves the
+				// player, and counting those frames as stillness ended the watch mid-animation:
+				// the landing read 3318,3165 L1 against a constant of 3317,3174 L2, and the next
+				// obstacle's path then starts on the constant, so the player did arrive. A seq on
+				// the player means the obstacle is still happening, and the cap is what stops a
+				// looping one hanging the run.
+				if (seqNow >= 0) {
+					still = 0;
+				} else {
+					still++;
+				}
 				if (still > 65 && f > 90) {
+					settled = true;
 					break;
 				}
 			} else {
@@ -1309,6 +1669,15 @@ public class CourseCam extends Client {
 		waitFrames(10);
 		shot(course + "_" + (index + 1) + "c_after");
 		say("      drawn path: " + path);
+		// AND IF THE LOOP ENDED ON ITS CAP THE PLAYER WAS STILL GOING. Every check below reads the
+		// tile they are on, so without this line a crossing cut off halfway reads exactly like a
+		// landing constant that is wrong - which is how one thirteen-tile gap produced four
+		// failures across two obstacles.
+		if (!settled) {
+			say("      THE OBSERVATION RAN OUT while the player was still being drawn somewhere new,"
+				+ " after 900 frames and " + path.size() + " tiles - everything below reads the tile"
+				+ " they had got to, not the one they stop on");
+		}
 		say("      crossing: " + crossFrames + " frames moving"
 			+ (seqSeen >= 0 ? ", seq " + seqSeen + " for " + animFrames : ", no one-shot seq")
 			+ (basSeen >= 0 ? ", walk bas " + basSeen + " for " + basFrames : "")
@@ -1346,7 +1715,9 @@ public class CourseCam extends Client {
 		int[] end = tileAt();
 		boolean landed = end[0] == o.landX && end[1] == o.landZ && end[2] == o.landLevel;
 		check("it landed on " + end[0] + "," + end[1] + " L" + end[2], landed,
-			landed ? "" : "the constant says " + o.landX + "," + o.landZ + " L" + o.landLevel);
+			landed ? "" : "the constant says " + o.landX + "," + o.landZ + " L" + o.landLevel
+				+ (settled ? "" : ", AND THE OBSERVATION RAN OUT before they stopped, so this is"
+					+ " where they had got to rather than a landing"));
 
 		// AND THE TILE IT LEFT US ON HAS SOMETHING UNDER IT.
 		//
@@ -1390,7 +1761,18 @@ public class CourseCam extends Client {
 				break;
 			}
 		}
-		if (jump > 0 && path.size() - jump >= 3) {
+		// AND ONLY FOR A GLIDE THAT GOES SOMEWHERE. A one-by-two hop onto a market stall or a
+		// steep roof is where the thing is, not a slide across anything, and it has no straight
+		// line to be out of.
+		int glideX = 0;
+		int glideZ = 0;
+		if (jump > 0) {
+			int[] a = tileOf(path.get(jump - 1));
+			int[] b = tileOf(path.get(jump));
+			glideX = Math.abs(b[0] - a[0]);
+			glideZ = Math.abs(b[1] - a[1]);
+		}
+		if (jump > 0 && path.size() - jump >= 3 && Math.max(glideX, glideZ) >= 3) {
 			int[] start = tileOf(path.get(jump - 1));
 			boolean straight = true;
 			for (int i = jump; i < path.size(); i++) {
@@ -1404,10 +1786,16 @@ public class CourseCam extends Client {
 			// is a landing out of line with its obstacle, which drags the player diagonally
 			// ACROSS WHATEVER IS IN BETWEEN - Falador's first tightrope slid ten tiles east and
 			// seven north over solid roof. Canifis' pole-vault also goes diagonally, ten east and
-			// six south, and is correct: the probe says there is nothing walkable due east of it
+			// seven south, and is correct: the probe says there is nothing walkable due east of it
 			// at all, the two roofs sit corner to corner, and the photograph shows the player in
 			// the air over the street between them. So what separates the two is what is
 			// underneath - roof all the way is the fault, open air is the obstacle working.
+			//
+			// I TRIED TO REPLACE THIS WITH THE SHAPE OF THE GLIDE and it cannot be done: the
+			// tightrope's slide is ten by seven and the pole-vault is ten by seven. Thirteen
+			// obstacles failed a rule built on that, the vault among them. What the tiles are
+			// standing on is the only thing that tells them apart, which is why airborne is counted
+			// off terrainAt rather than floorAt.
 			boolean overAir = airborne > 0;
 			check("and the crossing itself went in a straight line", straight || overAir,
 				straight || overAir ? "" : "the glide from " + start[0] + "," + start[1]

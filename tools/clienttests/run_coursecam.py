@@ -251,13 +251,15 @@ def main():
             print('   SKIPPED ' + m)
         user = a.user or ('cam' + str(int(time.time()) % 100000))
         sout = java(out, classes, rsan, a.port, a.webport, user, table, home=a.home)
-        if 'FAIL' in sout:
-            bad += 1
+        # COUNT THEM. This looked for the word FAIL in the output, and the run's own summary line
+        # reads "62 ok, 0 FAIL" - so a course with nothing wrong with it reported a failure, and a
+        # nine-course run with four clean courses ended "9 course(s) with failures above".
+        bad += len([ln for ln in sout.splitlines() if ln.strip().startswith('FAIL')])
         shots = [('%d %s' % (i + 1, o['name']), os.path.join(out, '%s_%dc_after.png' % (c['key'], i + 1)))
                  for i, o in enumerate(c['obstacles'])]
         sheet(out, c['key'], shots)
     print()
-    print('ALL PASS' if bad == 0 else '%d course(s) with failures above' % bad)
+    print('ALL PASS' if bad == 0 else '%d failure(s) above' % bad)
     return 0 if bad == 0 else 1
 
 
