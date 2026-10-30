@@ -42,11 +42,8 @@ import javax.imageio.ImageIO;
 import jagex2.config.FloType;
 import jagex2.config.LocType;
 import jagex2.config.SeqType;
-import jagex2.dash3d.CollisionMap;
 import jagex2.dash3d.Model;
-import jagex2.dash3d.World;
-import jagex2.dash3d.World3D;
-import jagex2.graphics.Pix2D;
+import jagex2.client.worldmap.MapSquare;
 import jagex2.graphics.Pix3D;
 import jagex2.graphics.Pix8;
 import jagex2.io.FileStream;
@@ -55,55 +52,6 @@ import jagex2.io.OnDemandProvider;
 import jagex2.io.Packet;
 
 public class WorldMapRender {
-
-	/**
-	 * A tile of this level that the map does not show.
-	 *
-	 * Bit 8 says the tile belongs to the level below and is drawn down there instead; bit 16 is
-	 * the one the client skips on the minimap outright. Together they are why a bridge is not
-	 * a hole: the span over a river is built at level 1 and marked as belonging at level 0, so
-	 * level 0 leaves its own water tile out and takes the one above. Ignore the pair and the
-	 * ground level comes out with a black gap across every bridge in the game, which reads as
-	 * a river that nothing crosses.
-	 */
-	static final int ELSEWHERE = 0x18;
-
-	/** The bit that says a tile of the level above is drawn down here. */
-	static final int BELOW = 0x8;
-
-	/** Pixels per tile, as the minimap draws it. */
-	static final int SCALE = 4;
-
-	/** Tiles along one side of a map square. */
-	static final int SQUARE = 64;
-
-	/** Tiles along one side of a scene, which method31 will not let us exceed. */
-	static final int SCENE = 104;
-
-	/**
-	 * Where in the scene the square being drawn sits, leaving a margin of neighbours around it.
-	 *
-	 * Any of these renders the same picture; there is more than one only so that a square whose
-	 * lighting divides by zero at one scene edge can be tried against another. The lighting
-	 * window reaches five tiles, and a square is 64 of the scene's 104, so a margin has to be at
-	 * least 5 and at most 35.
-	 */
-	static final int[] MARGINS = new int[] { 20, 28, 12, 34, 6 };
-
-	/** The sprites the minimap draws in place of a building, by the loc's mapscene number. */
-	static final Pix8[] mapscene = new Pix8[72];
-
-	/**
-	 * A wall the player cannot interact with: near-white.
-	 *
-	 * The client rolls these two a shade apart on every login, the same jitter it gives the sun,
-	 * and then hard-codes exactly these values where the roll is out of scope - so these are
-	 * both the middle of the range and the numbers the client itself writes down.
-	 */
-	static final int WALL = 0xEEEEEE;
-
-	/** A door, gate or anything else that opens: dark red. */
-	static final int DOOR = 0xEE0000;
 
 	static int[] mapIndex;
 	static int[] mapLand;
@@ -169,11 +117,11 @@ public class WorldMapRender {
 		SeqType.unpack(config);
 		LocType.unpack(config);
 		Jagfile media = jagfile(pack, "media");
-		for (int i = 0; i < mapscene.length; i++) {
-			mapscene[i] = new Pix8(media, "mapscene", i);
+		Pix8[] scenes = new Pix8[72];
+		for (int i = 0; i < scenes.length; i++) {
+			scenes[i] = new Pix8(media, "mapscene", i);
 		}
-		// The scene is never looked at from inside, so nothing should be hidden from the camera.
-		World.lowMem = false;
+		MapSquare.useScenes(scenes);
 	}
 
 	/**
@@ -274,296 +222,38 @@ public class WorldMapRender {
 	}
 
 	/**
-	 * One map square, as the minimap would draw it, or null when the cache has no land for it.
+	 * One map square, gathered out of the cache and handed to the client's own renderer.
 	 *
-	 * RETRIED AT A DIFFERENT MARGIN, because method15 divides by the total weight of the floors
-	 * in an eleven-by-eleven window and one square has a strip along a scene edge where that
-	 * window is clipped short and every floor in what is left weighs nothing. Moving the square
-	 * within the scene moves the clipped edge somewhere else. It cannot change the picture: the
-	 * height noise is seeded from world coordinates, not scene ones, and every margin here
-	 * leaves the square more than five tiles of loaded neighbour on all four sides, which is as
-	 * far as the lighting window reaches.
+	 * The nine squares are this one and its eight neighbours: MapSquare lights a square by the
+	 * tiles around it, so a square fetched alone comes out with a seam down every edge.
 	 */
 	static BufferedImage renderSquare(int sx, int sz, int level) throws Exception {
-		if (fetch(fileFor(sx, sz, 0)) == null) {
-			return null;
-		}
-		ArithmeticException last = null;
-		for (int i = 0; i < MARGINS.length; i++) {
-			try {
-				return renderSquare(sx, sz, level, MARGINS[i]);
-			} catch (ArithmeticException degenerate) {
-				last = degenerate;
-			}
-		}
-		throw last;
+		return wrap(MapSquare.draw(gather(sx, sz, 0), gather(sx, sz, 1), sx, sz, level));
 	}
 
 	static BufferedImage renderSquare(int sx, int sz, int level, int margin) throws Exception {
+		return wrap(MapSquare.draw(gather(sx, sz, 0), gather(sx, sz, 1), sx, sz, level, margin));
+	}
 
-		int[][][] heightmap = new int[4][SCENE + 1][SCENE + 1];
-		byte[][][] flags = new byte[4][SCENE][SCENE];
-		CollisionMap[] collision = new CollisionMap[4];
-		for (int i = 0; i < 4; i++) {
-			collision[i] = new CollisionMap(SCENE, SCENE);
-		}
-		World world = new World(heightmap, flags, SCENE, SCENE);
-
-		// The scene's own origin in world tiles, which is what the height noise is seeded from.
-		int baseX = sx * SQUARE - margin;
-		int baseZ = sz * SQUARE - margin;
+	/** This square and its eight neighbours, as [dx + 1][dz + 1], with nulls for what is missing. */
+	static byte[][][] gather(int sx, int sz, int type) throws Exception {
+		byte[][][] nine = new byte[3][3][];
 		for (int dx = -1; dx <= 1; dx++) {
 			for (int dz = -1; dz <= 1; dz++) {
-				byte[] land = fetch(fileFor(sx + dx, sz + dz, 0));
-				int offX = margin + dx * SQUARE;
-				int offZ = margin + dz * SQUARE;
-				if (land == null) {
-					world.method28(offX, offZ, SQUARE, SQUARE);
-				} else {
-					world.method22(offZ, baseZ, offX, land, baseX, collision);
-				}
+				nine[dx + 1][dz + 1] = fetch(fileFor(sx + dx, sz + dz, type));
 			}
 		}
+		return nine;
+	}
 
-		World3D scene = new World3D(heightmap, SCENE, 4, SCENE);
-		// THE SCENERY, AND THE NEIGHBOURS' SCENERY TOO. Not only so that a building standing
-		// across the boundary is drawn on both sides of it: a loc casts a shadow onto the tiles
-		// around it, and that shadow is part of what method15 lights the ground by, so a square
-		// built without its neighbours' scenery is a different colour along its edges.
-		for (int dx = -1; dx <= 1; dx++) {
-			for (int dz = -1; dz <= 1; dz++) {
-				byte[] locs = fetch(fileFor(sx + dx, sz + dz, 1));
-				if (locs != null) {
-					world.method27(margin + dz * SQUARE, collision, margin + dx * SQUARE,
-						scene, locs);
-				}
-			}
+	static BufferedImage wrap(int[] pixels) {
+		if (pixels == null) {
+			return null;
 		}
-		// THE SAME SUN OVER EVERY SQUARE. method15 nudges the light a step or two every time it
-		// runs and keeps the walk inside its own clamps, which is why no two logins look quite
-		// alike. Over seven hundred squares that walk wanders the full width of those clamps,
-		// and it shows: a third of the pixels in a square move when the light does. There is no
-		// true light to restore - the game picks a different one each time - so the map pins it
-		// by handing method15 a value already past the clamp, which comes back as the clamp
-		// itself whatever the nudge was. The bright end, because a map is for reading.
-		World.field104 = 10;
-		World.field126 = 20;
-		world.method15(collision, scene);
-
-		int side = SQUARE * SCALE;
-		int[] pixels = new int[side * side];
-		for (int tz = 0; tz < SQUARE; tz++) {
-			int row = rowOf(tz, side);
-			for (int tx = 0; tx < SQUARE; tx++) {
-				int x = margin + tx;
-				int z = margin + tz;
-				int at = row + tx * SCALE;
-				if (onThisMap(flags, level, x, z)) {
-					scene.method309(pixels, at, side, level, x, z);
-				}
-				if (fromAbove(flags, level, x, z)) {
-					scene.method309(pixels, at, side, level + 1, x, z);
-				}
-			}
-		}
-		drawLocs(scene, flags, pixels, side, level, margin);
+		int side = MapSquare.SIDE;
 		BufferedImage img = new BufferedImage(side, side, BufferedImage.TYPE_INT_RGB);
 		img.setRGB(0, 0, side, side, pixels, 0, side);
 		return img;
-	}
-
-	/** Whether this level's own tile is drawn here, or belongs somewhere else. */
-	static boolean onThisMap(byte[][][] flags, int level, int x, int z) {
-		return (flags[level][x][z] & ELSEWHERE) == 0;
-	}
-
-	/** Whether the tile of the level above is drawn here instead - a bridge, a walkway, a pier. */
-	static boolean fromAbove(byte[][][] flags, int level, int x, int z) {
-		return level < 3 && (flags[level + 1][x][z] & BELOW) != 0;
-	}
-
-	/**
-	 * Walls, doors and mapscene icons over the ground, as Client.drawMinimapLoc draws them.
-	 *
-	 * THIS IS THE ONE PART THAT IS COPIED RATHER THAN CALLED, and only because the client's own
-	 * version is wired to one particular picture: it indexes a 512-wide minimap at a fixed
-	 * offset of 48, with the scene's 104 tiles baked into the arithmetic. None of the DECISIONS
-	 * are rewritten - which pixels a wall of each shape and rotation lights up, which colour a
-	 * door gets against a wall, where a mapscene sprite is centred on a loc bigger than a tile -
-	 * only where the picture starts.
-	 *
-	 * RED IS A DOOR AND WHITE IS A WALL, which World.method21 says by the sign of the bitset: it
-	 * sets the top bit for a loc the player cannot interact with. The two colours are random
-	 * greys in the client, a shade apart on every login; here they are the middle of that range.
-	 *
-	 * EVERY TILE IN THE SCENE, not only the square's own 64 by 64, because a loc is anchored at
-	 * one tile and a four-tile building anchored in the next square still has three tiles of
-	 * itself over the boundary. Anything that lands off the picture is dropped by dot() and by
-	 * the sprite clipping, which is the same thing the client does at the edge of its minimap.
-	 */
-	static void drawLocs(World3D scene, byte[][][] flags, int[] pixels, int side, int level,
-			int margin) {
-		Pix2D.bind(side, side, pixels);
-		Pix2D.resetClipping();
-		for (int x = 1; x < SCENE - 1; x++) {
-			for (int z = 1; z < SCENE - 1; z++) {
-				if (onThisMap(flags, level, x, z)) {
-					locsOn(scene, pixels, side, level, x, z, margin);
-				}
-				if (fromAbove(flags, level, x, z)) {
-					locsOn(scene, pixels, side, level + 1, x, z, margin);
-				}
-			}
-		}
-	}
-
-	/** Everything standing on one tile: its wall, whatever is fixed to the wall, and its scenery. */
-	static void locsOn(World3D scene, int[] pixels, int side, int level, int x, int z,
-			int margin) {
-		int px = (x - margin) * SCALE;
-		int pz = (SQUARE - 1 - (z - margin)) * SCALE;
-
-		int wall = scene.method300(level, x, z);
-		if (wall != 0) {
-			int info = scene.method304(level, x, z, wall);
-			int id = wall >> 14 & 0x7FFF;
-			if (hasScene(id)) {
-				plotScene(id, x, z, margin);
-			} else {
-				wallFrom(pixels, side, px, pz, info, wall > 0 ? DOOR : WALL);
-			}
-		}
-
-		int decor = scene.method302(level, x, z);
-		if (decor != 0) {
-			int info = scene.method304(level, x, z, decor);
-			int id = decor >> 14 & 0x7FFF;
-			if (hasScene(id)) {
-				plotScene(id, x, z, margin);
-			} else if (shapeOf(info) == 9) {
-				diagonal(pixels, side, px, pz, rotationOf(info), decor > 0 ? DOOR : WALL);
-			}
-		}
-
-		int ground = scene.method303(level, x, z);
-		if (ground != 0 && hasScene(ground >> 14 & 0x7FFF)) {
-			plotScene(ground >> 14 & 0x7FFF, x, z, margin);
-		}
-	}
-
-	/** Whether a loc is drawn as a picture of itself rather than as lines on its tile edges. */
-	static boolean hasScene(int id) {
-		return LocType.method561(id).field1649 != -1;
-	}
-
-	/**
-	 * A mapscene sprite, centred on the loc rather than on the tile it is anchored at.
-	 *
-	 * A loc two tiles across is anchored at its south-west corner, so its picture starts two
-	 * tiles further north than the tile it sits on, and the sprite is usually smaller than the
-	 * space it fills. Both of those are the client's arithmetic, unchanged. A loc asking for a
-	 * sprite this media has not got is drawn as nothing, which is also what the client does.
-	 */
-	static void plotScene(int id, int x, int z, int margin) {
-		LocType loc = LocType.method561(id);
-		int wide = loc.field1655;
-		int high = loc.field1629;
-		int which = loc.field1649;
-		if (which < 0 || which >= mapscene.length || mapscene[which] == null) {
-			return;
-		}
-		Pix8 sprite = mapscene[which];
-		int offX = (wide * SCALE - sprite.wi) / 2;
-		int offZ = (high * SCALE - sprite.hi) / 2;
-		sprite.plotSprite((SQUARE - (z - margin) - high) * SCALE + offZ,
-			(x - margin) * SCALE + offX);
-	}
-
-	/**
-	 * Which of a tile's 32 wall shapes this is: a straight wall, a corner, a diagonal.
-	 *
-	 * SHAPE AND ROTATION TRAVEL IN ONE BYTE and are the same small numbers, so reading one
-	 * where the other was meant draws walls of the right length in the right colour on the
-	 * wrong edges, which looks exactly like a town.
-	 */
-	static int shapeOf(int info) {
-		return info & 0x1F;
-	}
-
-	/** Which quarter turn it stands at. */
-	static int rotationOf(int info) {
-		return info >> 6 & 0x3;
-	}
-
-	/** One wall from the byte the scene stored it under. */
-	static void wallFrom(int[] pixels, int side, int px, int pz, int info, int colour) {
-		drawWall(pixels, side, px, pz, rotationOf(info), shapeOf(info), colour);
-	}
-
-	/**
-	 * One wall, as four pixels along whichever edge of the tile it stands on.
-	 *
-	 * Shape 0 is a straight wall, shape 3 a corner post - one pixel - and shape 2 an L, which is
-	 * a wall along two edges at once and so draws twice, the second edge a quarter turn on.
-	 */
-	static void drawWall(int[] pixels, int side, int px, int pz, int rotation, int shape,
-			int colour) {
-		if (shape == 0 || shape == 2) {
-			edge(pixels, side, px, pz, rotation, colour);
-		}
-		if (shape == 3) {
-			dot(pixels, side, rotation == 1 || rotation == 2 ? px + 3 : px,
-				rotation == 2 || rotation == 3 ? pz + 3 : pz, colour);
-		}
-		if (shape == 2) {
-			edge(pixels, side, px, pz, rotation + 1 & 0x3, colour);
-		}
-	}
-
-	/**
-	 * A wall across the corners of a tile, the one shape no straight edge fits.
-	 *
-	 * The client steps it a pixel at a time, and the two pairs of rotations run the two ways a
-	 * diagonal can lie: north-west to south-east, or south-west to north-east.
-	 */
-	static void diagonal(int[] pixels, int side, int px, int pz, int rotation, int colour) {
-		for (int i = 0; i < 4; i++) {
-			int at = rotation == 0 || rotation == 2 ? 3 - i : i;
-			dot(pixels, side, px + at, pz + i, colour);
-		}
-	}
-
-	/** The four pixels along one edge of a tile: 0 west, 1 north, 2 east, 3 south. */
-	static void edge(int[] pixels, int side, int px, int pz, int rotation, int colour) {
-		for (int i = 0; i < 4; i++) {
-			if (rotation == 0) {
-				dot(pixels, side, px, pz + i, colour);
-			} else if (rotation == 1) {
-				dot(pixels, side, px + i, pz, colour);
-			} else if (rotation == 2) {
-				dot(pixels, side, px + 3, pz + i, colour);
-			} else {
-				dot(pixels, side, px + i, pz + 3, colour);
-			}
-		}
-	}
-
-	/** One pixel, or nothing at all when it falls outside the square being drawn. */
-	static void dot(int[] pixels, int side, int px, int pz, int colour) {
-		if (px >= 0 && px < side && pz >= 0 && pz < side) {
-			pixels[pz * side + px] = colour;
-		}
-	}
-
-	/**
-	 * Where tile z starts in the picture.
-	 *
-	 * NORTH IS UP AND A PICTURE GROWS DOWN, so the tile with the highest z is drawn in the top
-	 * row and tile 0 along the bottom. Get this backwards and the map is a mirror of itself,
-	 * which is a thing you can stare straight at without seeing.
-	 */
-	static int rowOf(int tz, int side) {
-		return (SQUARE - 1 - tz) * SCALE * side;
 	}
 
 	/** Where square x starts across a picture whose leftmost square is minX. */
@@ -595,7 +285,7 @@ public class WorldMapRender {
 		int maxX = box[1];
 		int minZ = box[2];
 		int maxZ = box[3];
-		int cell = SQUARE * SCALE / shrink;
+		int cell = MapSquare.SIDE / shrink;
 		int wide = (maxX - minX + 1) * cell;
 		int high = (maxZ - minZ + 1) * cell;
 		System.out.println("squares x " + minX + ".." + maxX + ", z " + minZ + ".." + maxZ
@@ -657,14 +347,10 @@ public class WorldMapRender {
 
 	/** Whether a square has anything on it at all, or is the black a level above the roofs is. */
 	static boolean isEmpty(BufferedImage img) {
-		for (int y = 0; y < img.getHeight(); y++) {
-			for (int x = 0; x < img.getWidth(); x++) {
-				if ((img.getRGB(x, y) & 0xFFFFFF) != 0) {
-					return false;
-				}
-			}
-		}
-		return true;
+		int side = img.getWidth();
+		int[] pixels = new int[side * img.getHeight()];
+		img.getRGB(0, 0, side, img.getHeight(), pixels, 0, side);
+		return MapSquare.isEmpty(pixels);
 	}
 
 	/**
