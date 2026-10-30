@@ -33,6 +33,7 @@ from mutate_guard import workspace  # noqa: E402  (after the sys.path line, nece
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
+COMPONENT = os.path.join(ROOT, 'src/main/java/jagex2/config/Component.java')
 STEPS = os.path.join(BUILTIN, 'ClueSteps.java')
 PLUGIN = os.path.join(BUILTIN, 'CluePlugin.java')
 MAKER = os.path.join(ROOT, 'tools/clues/make_clues.py')
@@ -131,6 +132,19 @@ MUTS = [
     (PLUGIN, 'a placeless step given a reading, which prints as "-1, -1"',
      '\t\tif (ClueSteps.SPOT[step] == ClueSteps.SPOT_NONE) {\n\t\t\treturn "";\n\t\t}\n',
      ''),
+
+    # ---- THE TRANSMIT THAT LOGGED YOU OUT. Only the guard itself is mutated: the three call
+    # sites in Client.readPacket need a live socket to drive, so they are a read rather than a
+    # check, and a mutation there would survive and say nothing useful.
+    (COMPONENT, 'every component told it can hold an inventory, model or not',
+     '\t\treturn com != null && com.invSlotObjId != null && com.invSlotObjCount != null;',
+     '\t\treturn true;'),
+    (COMPONENT, 'no component allowed to hold one, so no window ever fills',
+     '\t\treturn com != null && com.invSlotObjId != null && com.invSlotObjCount != null;',
+     '\t\treturn false;'),
+    (COMPONENT, 'only half the pair checked, which is the same throw one field later',
+     '\t\treturn com != null && com.invSlotObjId != null && com.invSlotObjCount != null;',
+     '\t\treturn com != null && com.invSlotObjId != null;'),
 
     # ---- THE SCRAPE. Two thirds of the table comes out of scripts rather than off a param, so
     # a pattern that goes stale here costs destinations and still builds a table.

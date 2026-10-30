@@ -62,7 +62,10 @@ public class ClueTest {
 		System.out.println("6. the bag, and the rows it makes");
 		emptyTests();
 		System.out.println();
-		System.out.println("7. the table against the content it came from");
+		System.out.println("7. the packet that logged you out");
+		transmitTests();
+		System.out.println();
+		System.out.println("8. the table against the content it came from");
 		generatedTests();
 
 		System.out.println();
@@ -512,7 +515,45 @@ public class ClueTest {
 		}
 	}
 
-	// ------------------------------------------------------------------ 7. the generator
+	// ------------------------------------------------------------------ 7. the transmit
+
+	/*
+	 * FOUND BY WAY OF THE PUZZLE BOX, which is why it is tested here.
+	 *
+	 * trail_puzzle.rs2 transmitted the puzzle's 25 pieces to trail_puzzle:com_3 - the Hint
+	 * button, a model - instead of com_2, the 5x5 grid. Component.decode gives invSlotObjId
+	 * only to types 2 and 7, so on a model it is null, and all three UPDATE_INV packets wrote
+	 * into it without asking. The write threw inside readPacket; the catch at the bottom of
+	 * readPacket calls logout(). Opening a puzzle box threw the player out of the game.
+	 *
+	 * The content is fixed and sweeps itself now, but the client should not be one typo away
+	 * from that, so the packets ask holdsInv first. This checks the asking; the three call
+	 * sites are a read, because readPacket needs a live socket to drive.
+	 */
+
+	static void transmitTests() {
+		jagex2.config.Component grid = new jagex2.config.Component();
+		grid.type = 2;
+		grid.invSlotObjId = new int[25];
+		grid.invSlotObjCount = new int[25];
+		check(jagex2.config.Component.holdsInv(grid), "a 5x5 inv component can be transmitted to");
+
+		jagex2.config.Component hint = new jagex2.config.Component();
+		hint.type = 6;
+		check(!jagex2.config.Component.holdsInv(hint),
+			"a model component cannot, which is the one the puzzle box was aimed at");
+
+		// BOTH ARRAYS, because the packets write both and either one missing is the same throw.
+		jagex2.config.Component half = new jagex2.config.Component();
+		half.type = 2;
+		half.invSlotObjId = new int[25];
+		check(!jagex2.config.Component.holdsInv(half), "and nor can one with only half the pair");
+
+		check(!jagex2.config.Component.holdsInv(null),
+			"...nor a component id the cache has never heard of");
+	}
+
+	// ------------------------------------------------------------------ 8. the generator
 
 	static void generatedTests() {
 		String root = System.getProperty("dp.root", ".");
