@@ -24,6 +24,8 @@ package jagex2.client;
 import java.util.ArrayList;
 import java.util.List;
 
+import jagex2.client.worldmap.MapIconNames;
+import jagex2.client.worldmap.MapIcons;
 import jagex2.client.worldmap.MapSquare;
 import jagex2.client.worldmap.MapWindow;
 import jagex2.client.worldmap.WorldMap;
@@ -36,6 +38,7 @@ public class MapWindowTest {
 	public static void main(String[] args) {
 		placement();
 		panning();
+		icons();
 		supply();
 		drawing();
 		keeping();
@@ -106,6 +109,161 @@ public class MapWindowTest {
 		eq("twenty pixels at four is five", 3217, MapWindow.pannedX(3222, 20, 4));
 	}
 
+	// ----------------------------------------------------------------- the icons
+
+	/**
+	 * Where the icons are, what they are called, and which one a search answers with.
+	 *
+	 * THE TILE IS PACKED INTO ONE NUMBER and x and z are both six bits of it, so reading them
+	 * the wrong way round puts every bank in the county on the wrong side of the river - a map
+	 * covered in icons, all of them plausible, none of them where the thing is. The level is
+	 * the bits above, and getting that wrong hangs every upstairs bank in the open air.
+	 */
+	static void icons() {
+		System.out.println("-- icons --");
+
+		// One loc file by hand: square-local x=10, z=20, ground; and x=1, z=2, first floor.
+		MapIcons found = withBank();
+		found.add(50, 60, locFile(new int[][] {
+			{ BANK_ICON, 10, 20, 0 },
+			{ BANK_ICON, 1, 2, 1 },
+		}));
+		eq("two icons on the square", 2, found.all().size());
+		MapIcons.Icon first = (MapIcons.Icon) found.all().get(0);
+		eq("x is the square's own x plus the tile's", 50 * 64 + 10, first.x);
+		eq("and z likewise", 60 * 64 + 20, first.z);
+		eq("on the ground", 0, first.level);
+		MapIcons.Icon second = (MapIcons.Icon) found.all().get(1);
+		eq("the second is upstairs", 1, second.level);
+		eq("at its own x", 50 * 64 + 1, second.x);
+		eq("and its own z", 60 * 64 + 2, second.z);
+
+		// THE SAME FILE TWICE IS THE SAME ICONS. A square's scenery arrives when it is
+		// prefetched and again when the player walks into it, and a key that counted both
+		// would say there are seventy-eight banks.
+		found.add(50, 60, locFile(new int[][] { { BANK_ICON, 10, 20, 0 } }));
+		eq("the same square read twice adds nothing", 2, found.all().size());
+
+		eq("the bank icon is called what the content calls it", "Bank store",
+			MapIconNames.name(BANK_FUNCTION));
+		eq("and the icon knows its own name", "Bank store", first.name());
+		eq("a number no loc carries has no name", "", MapIconNames.name(127));
+		yes("the content defines a key worth showing", MapIconNames.count() > 40);
+
+		eq("counted by kind", 2, found.count(BANK_FUNCTION));
+		eq("and nothing of a kind that is not there", 0, found.count(0));
+
+		eq("found inside a rectangle on its level", 1,
+			found.within(0, 0, 9999, 9999, 0).size());
+		eq("and not on another level", 1, found.within(0, 0, 9999, 9999, 1).size());
+		eq("nor outside the rectangle", 0, found.within(0, 0, 10, 10, 0).size());
+
+		// NEAREST FIRST, measured the way a player walks it. Thirty-nine banks and the one
+		// they meant is the one they can see.
+		MapIcons many = withBank();
+		many.add(10, 10, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		many.add(11, 10, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		many.add(40, 40, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		List hits = many.search("bank", 11 * 64, 10 * 64);
+		eq("every bank matches", 3, hits.size());
+		eq("the one you are standing on comes first", 11 * 64,
+			((MapIcons.Icon) hits.get(0)).x);
+		eq("then the one next door", 10 * 64, ((MapIcons.Icon) hits.get(1)).x);
+		eq("then the far one", 40 * 64, ((MapIcons.Icon) hits.get(2)).x);
+
+		eq("searching is not case sensitive", 3, many.search("BANK", 0, 0).size());
+		eq("and matches part of a name", 3, many.search("ank st", 0, 0).size());
+		eq("an empty search finds nothing rather than everything", 0,
+			many.search("   ", 0, 0).size());
+		eq("and so does a word nothing is called", 0, many.search("zzz", 0, 0).size());
+
+		eq("distance is the longer axis, as a player walks it", 30,
+			MapIcons.paces((MapIcons.Icon) many.all().get(0), 10 * 64 + 30, 10 * 64 + 4));
+
+		// THE PICTURE HAS ONE TRANSPARENT COLOUR AND IT IS BLACK. A Pix32 carries no alpha
+		// channel: pure black is the hole. Convert it without that and every round icon is a
+		// black square sitting on the map, which is a thing you notice but a colour count does
+		// not.
+		jagex2.graphics.Pix32 made = new jagex2.graphics.Pix32(2, 1);
+		made.pixels[0] = 0;
+		made.pixels[1] = 0x336699;
+		MapIcons.useSprites(new jagex2.graphics.Pix32[] { made });
+		java.awt.image.BufferedImage art = MapIcons.sprite(0);
+		yes("an icon's picture is made", art != null);
+		eq("black comes out transparent", 0, art.getRGB(0, 0) >>> 24);
+		eq("and anything else comes out solid", 255, art.getRGB(1, 0) >>> 24);
+		eq("with its colour kept", 0x336699, art.getRGB(1, 0) & 0xFFFFFF);
+		yes("converted once, not once a repaint", art == MapIcons.sprite(0));
+		yes("a sprite the media has not got is nothing at all", MapIcons.sprite(9) == null);
+	}
+
+	/**
+	 * An index that knows one loc type, the bank icon.
+	 *
+	 * The real one reads every loc type's mapfunction out of the cache. These checks are about
+	 * where an icon lands and what it is called, not about what the cache holds, so they hand
+	 * in a table of their own and need no cache at all.
+	 */
+	static MapIcons withBank() {
+		int[] functions = new int[BANK_ICON + 1];
+		for (int i = 0; i < functions.length; i++) {
+			functions[i] = -1;
+		}
+		functions[BANK_ICON] = BANK_FUNCTION;
+		MapIcons icons = new MapIcons();
+		icons.useFunctions(functions);
+		return icons;
+	}
+
+	/** The loc id of the loc that exists only to put a bank on the map, and its icon number. */
+	static final int BANK_ICON = 2738;
+	static final int BANK_FUNCTION = 5;
+
+	/**
+	 * A loc file as the cache holds one: a run of ids, each with a run of packed positions.
+	 *
+	 * Written out here rather than taken from the cache so that the checks above can put an
+	 * icon on a tile they chose and say where it should come out.
+	 */
+	static byte[] locFile(int[][] locs) {
+		java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+		int lastId = -1;
+		int at = 0;
+		boolean open = false;
+		for (int i = 0; i < locs.length; i++) {
+			// ONE RUN PER ID, and the ids ascend. A second run for an id already written would
+			// have a delta of zero, and a zero delta is what ends the file - so a hand-written
+			// file that repeats an id silently throws away everything after it.
+			if (!open || locs[i][0] != lastId) {
+				if (open) {
+					out.write(0);
+				}
+				smart(out, locs[i][0] - lastId);
+				lastId = locs[i][0];
+				at = 0;
+				open = true;
+			}
+			int packed = (locs[i][3] << 12) + (locs[i][1] << 6) + locs[i][2];
+			smart(out, packed - at + 1);
+			at = packed;
+			out.write(0);                      // shape and rotation, which an icon does not use
+		}
+		if (open) {
+			out.write(0);                      // no more of this id
+		}
+		out.write(0);                          // no more ids
+		return out.toByteArray();
+	}
+
+	static void smart(java.io.ByteArrayOutputStream out, int value) {
+		if (value < 128) {
+			out.write(value);
+		} else {
+			out.write(value + 32768 >> 8 & 0xFF);
+			out.write(value + 32768 & 0xFF);
+		}
+	}
+
 	// ----------------------------------------------------------------- the supply
 
 	/** A cache that has whatever it was told to have, and counts what it was asked for. */
@@ -156,6 +314,14 @@ public class MapWindowTest {
 
 		public void prefetchAll() {
 			this.prefetched = true;
+		}
+
+		public int[] squares() {
+			int[] all = new int[this.there.size()];
+			for (int i = 0; i < all.length; i++) {
+				all[i] = ((Integer) this.there.get(i)).intValue();
+			}
+			return all;
 		}
 	}
 
@@ -350,6 +516,16 @@ public class MapWindowTest {
 	}
 
 	// ----------------------------------------------------------------- plumbing
+
+	static void eq(String what, String want, String got) {
+		checks++;
+		if (want.equals(got)) {
+			System.out.println("ok   " + what + " = " + (got.isEmpty() ? "nothing" : got));
+		} else {
+			failures++;
+			System.out.println("FAIL " + what + ": wanted [" + want + "], got [" + got + "]");
+		}
+	}
 
 	static void eq(String what, int want, int got) {
 		checks++;
