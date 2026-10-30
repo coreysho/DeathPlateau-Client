@@ -87,7 +87,8 @@ public class MapWindowPreview {
 		shot(window, map, out, "varrock", 3213, 3428, 0);
 		shot(window, map, out, "upstairs", 3222, 3218, 1);
 		searched(window, map, out, "furnace");
-		System.out.println("wrote 4 pictures to " + out);
+		orb(pack, out);
+		System.out.println("wrote 5 pictures to " + out);
 		System.exit(0);
 	}
 
@@ -103,6 +104,40 @@ public class MapWindowPreview {
 			}
 		}
 		ImageIO.write(paint(window), "png", new File(out, "search.png"));
+	}
+
+	/**
+	 * The orb on the minimap's own frame, cold and under the cursor.
+	 *
+	 * The one thing about the orb that only an eye can judge is whether it looks like a button
+	 * and whether the eleven pixels on its face look like a map. Everything else about it -
+	 * where it is, that it clears the round map, that its click is round and not square - is
+	 * arithmetic, and is checked as arithmetic in MapWindowTest.
+	 */
+	static void orb(File pack, File out) throws Exception {
+		jagex2.graphics.Pix8 back =
+			new jagex2.graphics.Pix8(WorldMapRender.jagfile(pack, "media"), "mapback", 0);
+		int wide = jagex2.client.worldmap.MapOrb.PANEL_WIDE;
+		int high = jagex2.client.worldmap.MapOrb.PANEL_HIGH;
+		BufferedImage sheet = new BufferedImage(wide * 6, high * 3, BufferedImage.TYPE_INT_RGB);
+		java.awt.Graphics2D sg = sheet.createGraphics();
+		for (int pass = 0; pass < 2; pass++) {
+			int[] pixels = new int[wide * high];
+			jagex2.graphics.Pix2D.bind(wide, high, pixels);
+			jagex2.graphics.Pix2D.resetClipping();
+			for (int y = 0; y < back.hi && y < high; y++) {
+				for (int x = 0; x < back.wi && x < wide; x++) {
+					int p = back.pixels[y * back.wi + x] & 0xFF;
+					pixels[y * wide + x] = p == 0 ? 0x2E2A22 : back.bpal[p];
+				}
+			}
+			jagex2.client.worldmap.MapOrb.draw(pass == 1);
+			BufferedImage one = new BufferedImage(wide, high, BufferedImage.TYPE_INT_RGB);
+			one.setRGB(0, 0, wide, high, pixels, 0, wide);
+			sg.drawImage(one, pass * wide * 3, 0, wide * 3, high * 3, null);
+		}
+		sg.dispose();
+		ImageIO.write(sheet, "png", new File(out, "orb.png"));
 	}
 
 	static WorldMap held;

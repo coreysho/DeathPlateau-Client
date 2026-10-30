@@ -1040,6 +1040,22 @@ public class Client extends GameShell implements PixMap.Target {
 		});
 	}
 
+	/**
+	 * The world map button, in the bottom-right corner of the minimap panel.
+	 *
+	 * Drawn last, with areaMapback still bound, so it sits over the frame rather than under
+	 * the map. It is there whenever the minimap panel is - including when the minimap itself
+	 * is scrambled or hidden, because a map of the world is not a thing those states are
+	 * meant to take away.
+	 */
+	private void drawWorldMapOrb() {
+		if (this.worldMap == null || super.frame == null) {
+			return;
+		}
+		jagex2.client.worldmap.MapOrb.draw(
+			jagex2.client.worldmap.MapOrb.contains(super.mouseX - MAP_X, super.mouseY - 4));
+	}
+
 	/** The player's tile in world coordinates, or -1 when they are not standing anywhere. */
 	private int playerTileX() {
 		return this.ingame && localPlayer != null && this.sceneState == 2
@@ -6175,6 +6191,18 @@ public class Client extends GameShell implements PixMap.Target {
 				super.mouseClickButton = 0;
 				return;
 			}
+		}
+
+		// THE WORLD MAP BUTTON, before the walk-here below it. The minimap's own hit test is
+		// the whole rectangle, corners included, so a click on the orb would otherwise be a
+		// click on the ground behind it - and the orb is in a corner precisely because that
+		// corner is not map.
+		if (super.mouseClickButton == 1 && this.worldMap != null && super.frame != null
+				&& jagex2.client.worldmap.MapOrb.contains(super.mouseClickX - MAP_X,
+					super.mouseClickY - 4)) {
+			super.mouseClickButton = 0;
+			this.toggleWorldMap();
+			return;
 		}
 
 		if (this.minimapType != 0 || super.mouseClickButton != 1) {
@@ -15550,6 +15578,7 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 			this.imageCompass.drawRotatedMasked(0, 33, 25, 33, this.compassMaskLineLengths, 0, this.orbitCameraYaw, 256, this.compassMaskLineOffsets, 25);
+			this.drawWorldMapOrb();
 			this.areaViewport.bind();
 			Pix3D.lineOffset = this.areaViewportOffset;
 			return;
@@ -15643,6 +15672,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawOnMinimap(var23, this.imageMapmarker0, var22);
 		}
 		Pix2D.fillRect(3, 78, 16777215, 3, 97);
+		this.drawWorldMapOrb();
 		this.areaViewport.bind();
 		Pix3D.lineOffset = this.areaViewportOffset;
 	}

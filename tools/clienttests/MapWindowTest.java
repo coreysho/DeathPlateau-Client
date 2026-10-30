@@ -26,6 +26,7 @@ import java.util.List;
 
 import jagex2.client.worldmap.MapIconNames;
 import jagex2.client.worldmap.MapIcons;
+import jagex2.client.worldmap.MapOrb;
 import jagex2.client.worldmap.MapSquare;
 import jagex2.client.worldmap.MapWindow;
 import jagex2.client.worldmap.WorldMap;
@@ -38,6 +39,7 @@ public class MapWindowTest {
 	public static void main(String[] args) {
 		placement();
 		panning();
+		orb();
 		icons();
 		supply();
 		drawing();
@@ -107,6 +109,68 @@ public class MapWindowTest {
 		eq("twenty pixels at one pixel a tile is twenty tiles",
 			3202, MapWindow.pannedX(3222, 20, 1));
 		eq("twenty pixels at four is five", 3217, MapWindow.pannedX(3222, 20, 4));
+	}
+
+	// ----------------------------------------------------------------- the orb
+
+	/**
+	 * The button beside the minimap: where it is, and what a click on it is not.
+	 *
+	 * IT SITS INSIDE THE MINIMAP'S OWN HIT TEST. The walk-here rectangle is the whole of the
+	 * map panel from (25, 5), corners included, so every pixel the orb takes is a pixel the
+	 * player can no longer walk to - which is the entire reason it is round and in a corner,
+	 * and the reason its click is tested before the walk. Two things have to stay true: it
+	 * must not cover any of the round map, and it must not take any more of the corner than
+	 * the circle it draws.
+	 */
+	static void orb() {
+		System.out.println("-- the orb --");
+		yes("the whole orb is inside the minimap panel", MapOrb.insidePanel());
+		yes("and it does not reach into the round map (" + MapOrb.overlapsMap() + " pixels)",
+			MapOrb.overlapsMap() <= 0);
+
+		yes("a click in the middle of it is on it",
+			MapOrb.contains(MapOrb.CENTRE_X, MapOrb.CENTRE_Y));
+		yes("and one on its rim", MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS,
+			MapOrb.CENTRE_Y));
+		yes("one a pixel past the rim is not",
+			!MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS + 1, MapOrb.CENTRE_Y));
+		yes("nor one above it", !MapOrb.contains(MapOrb.CENTRE_X,
+			MapOrb.CENTRE_Y - MapOrb.RADIUS - 1));
+
+		// ROUND, NOT SQUARE. The corner of its bounding box is a pixel the player keeps.
+		yes("the corner of the square it would fit in is not on it",
+			!MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS, MapOrb.CENTRE_Y + MapOrb.RADIUS));
+
+		// AND IT REALLY IS INSIDE THE WALK RECTANGLE, which is why the order of the two tests
+		// in the client matters. If this ever stopped being true the orb would be in dead
+		// stone and the click order would not matter - and nobody would notice it had changed.
+		yes("the orb is inside the minimap's own click rectangle, so it must be tested first",
+			MapOrb.CENTRE_X >= MapOrb.MAP_LEFT
+				&& MapOrb.CENTRE_X < MapOrb.MAP_LEFT + MapOrb.MAP_WIDE
+				&& MapOrb.CENTRE_Y >= MapOrb.MAP_TOP
+				&& MapOrb.CENTRE_Y < MapOrb.MAP_TOP + MapOrb.MAP_HIGH);
+
+		// AND IT DRAWS SOMETHING, in the place it says it is.
+		int[] panel = new int[MapOrb.PANEL_WIDE * MapOrb.PANEL_HIGH];
+		jagex2.graphics.Pix2D.bind(MapOrb.PANEL_WIDE, MapOrb.PANEL_HIGH, panel);
+		jagex2.graphics.Pix2D.resetClipping();
+		MapOrb.draw(false);
+		yes("the middle of it is painted",
+			panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X] != 0);
+		yes("and its rim", panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE
+			+ MapOrb.CENTRE_X + MapOrb.RADIUS] != 0);
+		eq("and nothing outside it", 0, panel[(MapOrb.CENTRE_Y - MapOrb.RADIUS - 2)
+			* MapOrb.PANEL_WIDE + MapOrb.CENTRE_X]);
+		eq("nor in the corner of its square", 0,
+			panel[(MapOrb.CENTRE_Y + MapOrb.RADIUS) * MapOrb.PANEL_WIDE
+				+ MapOrb.CENTRE_X + MapOrb.RADIUS]);
+
+		// HOVER HAS TO LOOK DIFFERENT or it is not telling the player anything.
+		int cold = panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X - 8];
+		MapOrb.draw(true);
+		yes("it lights up under the cursor",
+			panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X - 8] != cold);
 	}
 
 	// ----------------------------------------------------------------- the icons
