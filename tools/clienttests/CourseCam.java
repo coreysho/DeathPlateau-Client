@@ -1042,7 +1042,24 @@ public class CourseCam extends Client {
 			say("");
 			say(" " + (i + 1) + ". " + o.name + "  loc " + o.locId + " at " + o.x + "," + o.z + " L" + o.level
 				+ "   from " + from[0] + "," + from[1] + " L" + from[2]);
-			doObstacle(o, from, i);
+			boolean crossed = doObstacle(o, from, i);
+			// A FAILED OBSTACLE MUST NOT DRAG THE REST OF THE COURSE OFF COURSE. The next obstacle
+			// starts from wherever the player actually ended up, which is right for a lap and was
+			// harmless while a failure left them where it found them. Walking broke that: Canifis
+			// obstacle two walks looking for a gap it cannot see, fails, and leaves the player six
+			// tiles from where obstacle three expects to begin - which then reported a landing
+			// failure that has nothing to do with the obstacle.
+			//
+			// So an obstacle that did not complete puts the player on its own landing constant.
+			// That costs the obstacles after it nothing, and it is said out loud rather than
+			// letting a reader think the player got there by crossing.
+			if (!crossed && o.landX > 0) {
+				command("::tele " + teleArg(o.landX, o.landZ, o.landLevel));
+				waitFor("the scene", 30000, () -> geti("sceneState") == 2);
+				waitFrames(20);
+				say("      (placed on this obstacle's landing " + o.landX + "," + o.landZ
+					+ " L" + o.landLevel + " so the rest of the course can still be tested)");
+			}
 			int[] now = tileAt();
 			from = new int[] { now[0], now[1], now[2] };
 		}
@@ -1058,7 +1075,8 @@ public class CourseCam extends Client {
 		return level + "," + (x / 64) + "," + (z / 64) + "," + (x % 64) + "," + (z % 64);
 	}
 
-	static void doObstacle(Ob o, int[] from, int index) throws Exception {
+	/** Returns whether the obstacle actually carried the player across it. */
+	static boolean doObstacle(Ob o, int[] from, int index) throws Exception {
 		// 1. STAND WHERE THE LAST OBSTACLE LEFT US. The first one is reached from the course start.
 		//
 		// CHECKED AND REPEATED, because a typed command does not always arrive: the chatbox takes
@@ -1115,7 +1133,7 @@ public class CourseCam extends Client {
 			check("the obstacle can be clicked ('" + o.verb + "')", false,
 				(walks > 0 ? "not from the landing, and not after walking " + walks + " time(s) either: " : "")
 					+ lookWhy);
-			return;
+			return false;
 		}
 		// WORTH KNOWING EITHER WAY. Some landings are islands on purpose, so whether the obstacle
 		// could be clicked without moving is a real result - it just is not a reason to abandon
@@ -1132,7 +1150,7 @@ public class CourseCam extends Client {
 		int row = rowOf(o.verb);
 		check("the obstacle can be clicked from here ('" + o.verb + "')", row >= 0, "");
 		if (row < 0) {
-			return;
+			return false;
 		}
 
 		// 3. CLICK IT - a real left click when the verb is already the left-click option, which is
@@ -1265,12 +1283,21 @@ public class CourseCam extends Client {
 		// player moves them in a single frame, so "one of one moving frames had nothing on it"
 		// fails a ratio that is meant to catch being carried. Draynor's rough wall is the case:
 		// seq 737 plays for its whole length and the move is one frame at the end of it.
-		check("the player was animated for the whole crossing",
-			crossFrames <= 2 || walkFrames * 3 <= crossFrames,
-			(crossFrames <= 2 || walkFrames * 3 <= crossFrames) ? ""
-			: walkFrames + " of " + crossFrames + " moving frames had neither a seq nor a changed"
-			+ " walk bas on the player"
-			+ (seqSeen >= 0 ? " (seq " + seqSeen + " covered " + animFrames + ")" : ""));
+		// AN OBSERVATION, NOT AN ASSERTION - and it was an assertion until Canifis showed why it
+		// cannot be. This samples render frames, with a screenshot taken in the middle of the
+		// crossing, so a glide that is over in a second is caught in a handful of samples and the
+		// ratio between them means very little: it called four Canifis gaps unanimated when
+		// Engine-TS/tools/sim/agilityglide.ts - which reads SeqType.duration against the window
+		// p_exactmove was actually given - says human_spot_jump covers 38 cycles of its 50 and is
+		// fine. That tool is the authority on whether an animation covers a crossing. What this
+		// line is still worth keeping for is saying WHICH sequence the client put on the player,
+		// which no engine-side tool can answer.
+		if (crossFrames > 2 && walkFrames * 3 > crossFrames) {
+			say("      (" + walkFrames + " of " + crossFrames + " sampled moving frames had neither a"
+				+ " seq nor a changed walk bas"
+				+ (seqSeen >= 0 ? ", seq " + seqSeen + " covered " + animFrames : "")
+				+ " - sampling is coarse here, agilityglide.ts is the authority on timing)");
+		}
 
 		// 5. WHERE IT PUT US, against the course's own constant.
 		int[] end = tileAt();
@@ -1334,6 +1361,7 @@ public class CourseCam extends Client {
 				straight ? "" : "the glide from " + start[0] + "," + start[1]
 					+ " moved on both axes, which means it slid across the roofs between");
 		}
+		return true;
 	}
 
 	static void logIn(int w, int h) throws Exception {
