@@ -69,7 +69,7 @@ MUTS = [
     # ---- THE ORB. It sits inside the minimap's own click rectangle, so every pixel it takes
     # is a pixel of walk-here taken from the player.
     (ORB, 'the orb grown until it covers the map a player is trying to read',
-     '\tpublic static final int RADIUS = 12;',
+     '\tpublic static final int RADIUS = 11;',
      '\tpublic static final int RADIUS = 22;'),
     (ORB, 'the orb moved off the bottom of the panel, where half of it is not drawn',
      '\tpublic static final int CENTRE_Y = 142;',
@@ -141,6 +141,11 @@ MUTS = [
      '\t\tif (drawn[function] != null) {\n\t\t\treturn drawn[function];\n\t\t}\n',
      ''),
 
+    (ICONS, 'the key counting one kind at a time again, sixty-four walks a refresh',
+     '\t\t\tif (function >= 0 && function < kinds) {\n\t\t\t\tfound[function]++;\n\t\t\t}',
+     '\t\t\tif (function >= 0 && function < kinds && function == 5) {\n'
+     '\t\t\t\tfound[function]++;\n\t\t\t}'),
+
     # ---- THE KEY. Three numbers in one, and two of them are the same size.
     (SUPPLY, 'x and z packed the same way round, so a square answers for its mirror',
      '\t\treturn (x << 16) + (z << 8) + level;',
@@ -151,6 +156,20 @@ MUTS = [
     (SUPPLY, 'x read out of the key where z was put in',
      '\t\treturn key >> 16 & 0xFF;',
      '\t\treturn key >> 8 & 0xFF;'),
+
+    (SUPPLY, "a closed map still wanting what it asked for, which grinds for as long as the "
+             "client is up",
+     '\t\tthis.wanted.clear();\n\t\tthis.waiting.clear();',
+     ''),
+    (SUPPLY, 'a loc file arriving without its icons being read, so the key stays empty',
+     '\t\t\tthis.icons.add(of[file] >> 8, of[file] & 0xFF, data);',
+     ''),
+    (SUPPLY, "the square's files looked up the other way round, land for scenery",
+     '\t\treturn table[(((x << 8) + z) << 1) + type];',
+     '\t\treturn table[(((x << 8) + z) << 1) + 1 - type];'),
+    (SUPPLY, 'the lookup table built for the wrong squares, so nothing is ever found',
+     '\t\t\t\ttable[(squares[i] << 1)] = this.supply.fileFor(x, z, 0);',
+     '\t\t\t\ttable[(squares[i] << 1)] = this.supply.fileFor(z, x, 0);'),
 
     # ---- THE SUPPLY. None of these throws; all of them leave a map that looks fine.
     (SUPPLY, 'a square drawn without waiting for the ground it stands on',
@@ -183,17 +202,14 @@ MUTS = [
      ''),
     (SUPPLY, 'only the square itself gathered, not the eight around it that light its edges',
      '\t\tfor (int dx = -1; dx <= 1; dx++) {\n\t\t\tfor (int dz = -1; dz <= 1; dz++) {\n'
-     '\t\t\t\tint file = this.supply.fileFor(sx + dx, sz + dz, type);',
+     '\t\t\t\tint file = this.fileOf(sx + dx, sz + dz, type);',
      '\t\tfor (int dx = 0; dx <= 0; dx++) {\n\t\t\tfor (int dz = 0; dz <= 0; dz++) {\n'
-     '\t\t\t\tint file = this.supply.fileFor(sx + dx, sz + dz, type);'),
-    (SUPPLY, 'the prefetch turned on again every time the map opens',
+     '\t\t\t\tint file = this.fileOf(sx + dx, sz + dz, type);'),
+    (SUPPLY, 'the world marked again every time the map opens',
      '\t\tif (this.prefetched) {\n\t\t\treturn;\n\t\t}\n\t\tthis.prefetched = true;\n',
      ''),
-    (SUPPLY, 'the prefetch never turned on, so the world stops at where the player has walked',
-     '\t\tthis.supply.prefetchAll();',
-     ''),
     (SUPPLY, 'a square that is not in the world reported as being in it',
-     '\t\treturn this.supply.fileFor(x, z, 0) >= 0;',
+     '\t\treturn this.fileOf(x, z, 0) >= 0;',
      '\t\treturn true;'),
 ]
 

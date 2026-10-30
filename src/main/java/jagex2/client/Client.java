@@ -1078,7 +1078,6 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.worldMap == null || super.frame == null) {
 			return;
 		}
-		this.worldMap.prefetchAll();
 		final int atX = this.playerTileX();
 		final int atZ = this.playerTileZ();
 		javax.swing.SwingUtilities.invokeLater(new Runnable() {
@@ -1092,11 +1091,13 @@ public class Client extends GameShell implements PixMap.Target {
 					jagex2.client.worldmap.MapWindow window = Client.this.worldMapWindow;
 					if (window.isVisible()) {
 						window.setVisible(false);
+						Client.this.worldMap.closed();
 						return;
 					}
 					if (atX >= 0) {
 						window.centreOn(atX, atZ);
 					}
+					Client.this.worldMap.opened();
 					window.setVisible(true);
 					window.toFront();
 				} catch (Throwable error) {
@@ -4020,9 +4021,16 @@ public class Client extends GameShell implements PixMap.Target {
 					}
 				}
 			}
-			// The world map takes a copy of every map file that goes past, whoever asked for it:
+			// THE WORLD MAP TAKES A COPY OF EVERY MAP FILE THAT GOES PAST, whoever asked for it:
 			// walking through a town fills its squares in for free.
-			if (req.archive == 3 && this.worldMap != null) {
+			//
+			// AND 93 IS A MAP FILE TOO. OnDemand relabels any map file it downloaded that
+			// nobody was waiting on - the prefetched ones - from archive 3 to 93 on the way
+			// back, which is how the client tells "the scene needs this now" from "this turned
+			// up in the background". Reading only 3 meant the map never saw a single prefetched
+			// square: it had the handful it had asked for and nothing else, so most of the
+			// world was missing and the key had almost no icons in it.
+			if ((req.archive == 3 || req.archive == 93) && this.worldMap != null) {
 				this.worldMap.arrived(req.file, req.data);
 			}
 			if (req.archive == 93 && this.onDemand.hasMapLocFile(req.file)) {

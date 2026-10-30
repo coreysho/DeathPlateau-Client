@@ -43,15 +43,16 @@ public final class MapOrb {
 
 	public static final int CENTRE_Y = 142;
 
-	public static final int RADIUS = 12;
+	public static final int RADIUS = 11;
 
 	private static final int RIM_DARK = 0x1C1711;
 	private static final int RIM_LIGHT = 0x6E6354;
 	private static final int STONE = 0x3E3529;
 	private static final int STONE_LIT = 0x584C3C;
-	private static final int PARCHMENT = 0xC8B48C;
-	private static final int INK = 0x6B5A3E;
-	private static final int LAND_GREEN = 0x4E6B35;
+	private static final int SEA = 0x2C5A86;
+	private static final int SEA_LIT = 0x3A74AA;
+	private static final int LAND = 0x4E8B3C;
+	private static final int LAND_LIT = 0x62A94D;
 
 	private MapOrb() {
 	}
@@ -112,34 +113,45 @@ public final class MapOrb {
 	}
 
 	/**
-	 * A map on the face of it: a scrap of parchment with a coastline on it.
+	 * A globe on the face of it, the way Old School's world map button has one.
 	 *
-	 * ELEVEN PIXELS ACROSS IS NOT MUCH TO SAY "MAP" WITH. The first try was a folded map - a
-	 * rectangle with two creases - and at this size the creases and the border read as three
-	 * vertical bars and nothing else. A shape with a coast in it is what a map looks like even
-	 * when it is this small, so the land is spelled out a pixel at a time below.
+	 * WHAT IT TOOK TO GET HERE. The first face was a folded map - a rectangle with two creases
+	 * - and at this size the creases and the border read as three vertical bars and nothing
+	 * else. The second was a coastline on parchment, which reads as a map but not as THE map
+	 * button. A globe is what the game it is copied from uses, and it is the one shape that
+	 * still says "the world" at seventeen pixels across.
+	 *
+	 * SPELLED OUT A PIXEL AT A TIME because it has to be: a circle drawn by arithmetic at this
+	 * size is a blob, and land drawn by arithmetic is noise. "~" is sea, "#" is land, " " is
+	 * off the edge of the globe.
 	 */
-	private static final String[] LAND = {
-		"...........",
-		"..###......",
-		".#####..#..",
-		".#########.",
-		"..#####.#..",
-		"...###.....",
-		"..#####....",
-		"...###.....",
+	private static final String[] GLOBE = {
+		"     ~~~~~     ",
+		"   ~~~~###~~   ",
+		"  ~~##~~####~  ",
+		" ~~####~~###~~ ",
+		" ~######~~##~~ ",
+		"~~#####~~~~~~~~",
+		"~~~###~~~~##~~~",
+		"~~~~#~~~~####~~",
+		"~~~~~~~~~####~~",
+		" ~~##~~~~###~~ ",
+		" ~####~~~~#~~~ ",
+		"  ~####~~~~~~  ",
+		"   ~~###~~~~   ",
+		"     ~~~~~     ",
 	};
 
 	private static void glyph(boolean hover) {
-		int left = CENTRE_X - LAND[0].length() / 2;
-		int top = CENTRE_Y - LAND.length / 2;
-		Pix2D.fillRect(LAND.length + 2, top - 1, hover ? 0xE0CCA4 : PARCHMENT,
-			LAND[0].length() + 2, left - 1);
-		Pix2D.drawRect(top - 1, LAND.length + 2, INK, left - 1, LAND[0].length() + 2);
-		for (int y = 0; y < LAND.length; y++) {
-			for (int x = 0; x < LAND[y].length(); x++) {
-				if (LAND[y].charAt(x) == '#') {
-					Pix2D.hline(left + x, LAND_GREEN, top + y, 1);
+		int left = CENTRE_X - GLOBE[0].length() / 2;
+		int top = CENTRE_Y - GLOBE.length / 2;
+		int sea = hover ? SEA_LIT : SEA;
+		int land = hover ? LAND_LIT : LAND;
+		for (int y = 0; y < GLOBE.length; y++) {
+			for (int x = 0; x < GLOBE[y].length(); x++) {
+				char at = GLOBE[y].charAt(x);
+				if (at != ' ') {
+					Pix2D.hline(left + x, at == '#' ? land : sea, top + y, 1);
 				}
 			}
 		}

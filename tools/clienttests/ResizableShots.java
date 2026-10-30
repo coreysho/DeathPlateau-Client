@@ -751,8 +751,47 @@ public class ResizableShots extends Client {
 		waitFrames(25);
 		shot(prefix + "_clicked");
 
+		// THE MAP FILES ACTUALLY REACHING THE MAP. This is the one thing only a real client
+		// and a real server can say, and the one that was wrong: OnDemand relabels a map file
+		// it downloaded that nobody was waiting on from archive 3 to 93, so a map reading only
+		// archive 3 saw none of the prefetched world - most of it missing, and a key with
+		// almost no icons in it. Nothing short of logging in and watching files land catches
+		// that.
+		Object map = clientField("worldMap");
+		if (map == null) {
+			say("FAIL the client has no world map at all");
+		} else {
+			int before = iconCount(map);
+			say((before > 0 ? "ok  " : "FAIL") + " map files reach the world map as the client"
+				+ " loads the scene (" + before + " icons)");
+
+			// THE BACKGROUND FETCH OF THE REST OF THE WORLD cannot be checked from here, and
+			// saying so is better than a check that passes for the wrong reason. The client's
+			// prefetch refuses to mark anything when it has no file store to put it in, and
+			// this driver gives the client a fresh home directory with no cache in it. What
+			// is checked instead is that the refusal is the reason.
+			map.getClass().getMethod("prefetchAll").invoke(map);
+			Object od = clientField("onDemand");
+			boolean cached = clientField("fileStreams") != null
+				&& java.lang.reflect.Array.get(clientField("fileStreams"), 0) != null;
+			int marked = odInt(od, "totalPrefetchFiles");
+			say("cache on disk: " + cached + ", files marked for prefetch: " + marked);
+			if (cached) {
+				for (int waited = 0; waited < 40 && iconCount(map) - before < 50; waited++) {
+					waitFrames(25);
+				}
+				say((iconCount(map) > before ? "ok  " : "FAIL")
+					+ " the background fetch fills the rest of the world in ("
+					+ before + " icons before, " + iconCount(map) + " after)");
+			} else {
+				say((marked == 0 ? "ok  " : "FAIL")
+					+ " no cache, so nothing is marked - the background fetch cannot be"
+					+ " checked here");
+			}
+		}
+
 		if (!windowed) {
-			say((mapOpen() ? "FAIL" : "ok  ") + " no window, so no world map");
+			say((mapOpen() ? "FAIL" : "ok  ") + " no window, so no world map window");
 			say((at == orbPixel() ? "ok  " : "FAIL")
 				+ " and no orb drawn over the minimap's frame");
 			say("done");
@@ -785,24 +824,51 @@ public class ResizableShots extends Client {
 		}
 	}
 
+	static int odInt(Object od, String name) {
+		try {
+			java.lang.reflect.Field f = od.getClass().getDeclaredField(name);
+			f.setAccessible(true);
+			return f.getInt(od);
+		} catch (Exception broken) {
+			return -1;
+		}
+	}
+
+	/** How many icons the world map has indexed so far. */
+	static int iconCount(Object map) {
+		try {
+			Object icons = map.getClass().getMethod("icons").invoke(map);
+			Object all = icons.getClass().getMethod("all").invoke(icons);
+			return ((Integer) all.getClass().getMethod("size").invoke(all)).intValue();
+		} catch (Exception broken) {
+			return -1;
+		}
+	}
+
+	/** A field declared anywhere up this client's class chain - this driver IS a Client. */
+	static Object clientField(String name) {
+		for (Class<?> at = app.getClass(); at != null; at = at.getSuperclass()) {
+			try {
+				java.lang.reflect.Field f = at.getDeclaredField(name);
+				f.setAccessible(true);
+				return f.get(app);
+			} catch (NoSuchFieldException keepLooking) {
+				continue;
+			} catch (Exception broken) {
+				return null;
+			}
+		}
+		return null;
+	}
+
 	/** Whether the world map window exists and is showing, read off the client. */
 	static boolean mapOpen() {
 		try {
 			// The field is on Client, and this driver IS a Client, so the lookup has to walk
 			// up to the class that declares it rather than asking this one.
-			for (Class<?> at = app.getClass(); at != null; at = at.getSuperclass()) {
-				try {
-					java.lang.reflect.Field f = at.getDeclaredField("worldMapWindow");
-					f.setAccessible(true);
-					Object window = f.get(app);
-					return window != null && ((Boolean) window.getClass()
-						.getMethod("isVisible").invoke(window)).booleanValue();
-				} catch (NoSuchFieldException keepLooking) {
-					continue;
-				}
-			}
-			say("FAIL no worldMapWindow field anywhere on the client");
-			return false;
+			Object window = clientField("worldMapWindow");
+			return window != null && ((Boolean) window.getClass()
+				.getMethod("isVisible").invoke(window)).booleanValue();
 		} catch (Exception broken) {
 			say("FAIL could not read worldMapWindow: " + broken);
 			return false;
