@@ -347,11 +347,25 @@ public class WorldMapTest {
 		spill("the square to the east", 53, 51, 1, 0, EAST);
 		spill("the square to the south", 53, 51, 0, -1, SOUTH);
 
-		// THE GROUND HAS NO HOLES IN IT. Every tile of this square is drawn by something: the
-		// water, the grass, or - where the road crosses the Lum - the bridge, which is built on
-		// the level above and marked as belonging down here. Skip that rule and the bridge
-		// leaves a black bar across the river, which is a thing you can look straight at.
+		// THE GROUND HAS NO HOLES IN IT. Every tile of Lumbridge is drawn by something, the
+		// water and the grass and the road alike.
 		eq("every tile of the ground level is drawn by something", 0, black(first));
+
+		// AND WHERE THE LEVEL RULES BITE, THEY BITE EXACTLY THIS HARD. A map square does not
+		// show every tile of its own level: the flags send some of them to the level below and
+		// keep others off the map altogether, and bring tiles down from the level above in
+		// their place. Lumbridge happens to be a square where all of that cancels out - it
+		// renders the same whether the rules are followed or not, which is why checking there
+		// proves nothing. 29,70 is where it shows: of its 65536 pixels only 2780 are ground
+		// anyone can see, and each of the four rules moves that number. Dropping the span from
+		// above leaves 604, drawing the hidden tiles anyway leaves 47328, and the two rules for
+		// the scenery give 2176 and 3323.
+		//
+		// A MEASURED FACT ABOUT THIS CONTENT, not a law: repack a map square here and it has to
+		// be measured again. What it is here for is that the bit arithmetic above is checked on
+		// flags this test made up, and nothing else says those rules ever reach the picture.
+		BufferedImage lumpy = rendered("the square the level rules show on renders", 29, 70, 0);
+		eq("it shows exactly the ground its flags leave showing", 2780, 65536 - black(lumpy));
 
 		// AN UPPER FLOOR IS A FLOOR, not another copy of the ground. Castle roofs, the palace,
 		// the arena stands: a few thousand pixels on a square, against the ground's 65536.

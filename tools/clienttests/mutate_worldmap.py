@@ -111,7 +111,7 @@ MUTS = [
     (RENDER, 'a level looked for above the top one, which there is not one of',
      '\t\treturn level < 3 && (flags[level + 1][x][z] & BELOW) != 0;',
      '\t\treturn level < 4 && (flags[level + 1][x][z] & BELOW) != 0;'),
-    (RENDER, 'the span above not brought down, so every bridge is a hole in the ground',
+    (RENDER, 'the span above not brought down, so a tile that belongs down here is left blank',
      '\t\t\t\tif (fromAbove(flags, level, x, z)) {\n'
      '\t\t\t\t\tscene.method309(pixels, at, side, level + 1, x, z);\n\t\t\t\t}\n',
      ''),
@@ -119,11 +119,11 @@ MUTS = [
      '\t\t\t\tif (onThisMap(flags, level, x, z)) {\n'
      '\t\t\t\t\tscene.method309(pixels, at, side, level, x, z);\n\t\t\t\t}',
      '\t\t\t\tscene.method309(pixels, at, side, level, x, z);'),
-    (RENDER, "the span's railings left off, so a bridge is ground with nothing along it",
+    (RENDER, "the span's railings left off, so what comes down arrives without what stands on it",
      '\t\t\t\tif (fromAbove(flags, level, x, z)) {\n'
      '\t\t\t\t\tlocsOn(scene, pixels, side, level + 1, x, z, margin);\n\t\t\t\t}\n',
      ''),
-    (RENDER, 'scenery drawn on tiles the map does not show, which puts roofs on the ground',
+    (RENDER, 'scenery drawn on tiles the map hides, which is scenery from a level nobody is on',
      '\t\t\t\tif (onThisMap(flags, level, x, z)) {\n'
      '\t\t\t\t\tlocsOn(scene, pixels, side, level, x, z, margin);\n\t\t\t\t}',
      '\t\t\t\tlocsOn(scene, pixels, side, level, x, z, margin);'),
