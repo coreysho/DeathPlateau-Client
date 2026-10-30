@@ -32,15 +32,18 @@ public class WorldMapTest {
 	static int failures = 0;
 
 	public static void main(String[] args) throws Exception {
-		layout();
-		regions();
-		shrinking();
-		walls();
 		File pack = packDir();
 		if (pack == null) {
 			System.out.println("FAIL no cache: pass -Ddp.pack=<engine>/data/pack");
 			failures++;
+		} else if (System.getProperty("dp.coldstart") != null) {
+			coldStart(pack);
 		} else {
+			layout();
+			regions();
+			shrinking();
+			walls();
+			levels();
 			render(pack);
 		}
 		System.out.println();
@@ -227,6 +230,48 @@ public class WorldMapTest {
 		return out.toString();
 	}
 
+	// ----------------------------------------------------------------- levels
+
+	/**
+	 * Which level's tile is drawn where, which is not simply "this one".
+	 *
+	 * A BRIDGE IS BUILT ON THE LEVEL ABOVE THE WATER IT CROSSES and marked as belonging down
+	 * below, so the ground map leaves out its own tile there and takes the one above instead.
+	 * Read only this level and every bridge in the game is a black gap in the ground, which
+	 * reads as a river nothing crosses - and the upper floors come out with a phantom span
+	 * over every river, drawn at a height nobody stands at.
+	 */
+	static void levels() {
+		System.out.println("-- levels --");
+		byte[][][] flags = new byte[4][4][4];
+
+		yes("an ordinary tile is drawn on its own level", WorldMapRender.onThisMap(flags, 0, 1, 1));
+		flags[0][1][1] = 0x8;
+		yes("one marked as belonging below is not",
+			!WorldMapRender.onThisMap(flags, 0, 1, 1));
+		flags[0][1][1] = 0x10;
+		yes("nor one the client keeps off the minimap",
+			!WorldMapRender.onThisMap(flags, 0, 1, 1));
+		flags[0][1][1] = 0x1 | 0x2 | 0x4;
+		yes("blocked, bridge and roof say nothing about it either way",
+			WorldMapRender.onThisMap(flags, 0, 1, 1));
+
+		byte[][][] span = new byte[4][4][4];
+		yes("nothing comes down from above by default",
+			!WorldMapRender.fromAbove(span, 0, 1, 1));
+		span[1][1][1] = 0x8;
+		yes("a tile above marked as belonging below is drawn down here",
+			WorldMapRender.fromAbove(span, 0, 1, 1));
+		yes("and only onto the level under it, not two down",
+			!WorldMapRender.fromAbove(span, 1, 1, 1));
+		span[3][1][1] = 0x8;
+		yes("there is nothing above level 3 to come down from",
+			!WorldMapRender.fromAbove(span, 3, 1, 1));
+		span[1][1][1] = 0x10;
+		yes("and off-minimap is not the same bit as belongs-below",
+			!WorldMapRender.fromAbove(span, 0, 1, 1));
+	}
+
 	// ----------------------------------------------------------------- the real thing
 
 	static void render(File pack) throws Exception {
@@ -240,7 +285,7 @@ public class WorldMapTest {
 
 		int sx = 50;
 		int sz = 50;
-		BufferedImage first = rendered("a square in the index renders", sx, sz, 20);
+		BufferedImage first = rendered("a square in the index renders", sx, sz, 0);
 		eq("a square is 256 pixels wide", 256, first.getWidth());
 		eq("a square is 256 pixels tall", 256, first.getHeight());
 		yes("a square is not one flat colour", colours(first) > 20);
@@ -287,10 +332,42 @@ public class WorldMapTest {
 		// row of half-buildings along an edge that nothing else disagrees with. Not Lumbridge
 		// for this one - nothing happens to reach over its lines - but 54,51, east of it, where
 		// three hundred pixels of next door's buildings fall on this side.
-		BufferedImage over = rendered("the square east of Lumbridge renders", 54, 51, 20);
+		BufferedImage over = rendered("the square east of Lumbridge renders", 54, 51, 0);
 		BufferedImage bareEdges = withoutNeighbourLocs(54, 51);
 		yes("a building anchored next door is still drawn on this square ("
 			+ differences(over, bareEdges) + " pixels)", differences(over, bareEdges) > 0);
+
+		// AND NEXT DOOR IS THE RIGHT NEXT DOOR. That it reaches over at all is not enough: the
+		// nine squares go into the scene at nine offsets, and offsets that have x and z the
+		// wrong way round still put scenery over all four edges - just the wrong neighbour's,
+		// turned a quarter. So each neighbour is let in on its own, and what it spills has to
+		// land on the side it came from.
+		spill("the square to the west", 54, 51, -1, 0, WEST);
+		spill("the square to the north", 54, 51, 0, 1, NORTH);
+		spill("the square to the east", 53, 51, 1, 0, EAST);
+		spill("the square to the south", 53, 51, 0, -1, SOUTH);
+
+		// THE GROUND HAS NO HOLES IN IT. Every tile of this square is drawn by something: the
+		// water, the grass, or - where the road crosses the Lum - the bridge, which is built on
+		// the level above and marked as belonging down here. Skip that rule and the bridge
+		// leaves a black bar across the river, which is a thing you can look straight at.
+		eq("every tile of the ground level is drawn by something", 0, black(first));
+
+		// AN UPPER FLOOR IS A FLOOR, not another copy of the ground. Castle roofs, the palace,
+		// the arena stands: a few thousand pixels on a square, against the ground's 65536.
+		BufferedImage upstairs = rendered("the first floor renders", sx, sz, 1);
+		yes("there is a first floor here (" + (65536 - black(upstairs)) + " pixels)",
+			black(upstairs) < 65536);
+		yes("and it is a floor, not the ground again", black(upstairs) > 50000);
+		yes("the floor above that is smaller still",
+			black(rendered("the second floor renders", sx, sz, 2)) > black(upstairs));
+
+		// AND ABOVE THE ROOFS, NOTHING. Which is most of the world: a file of black pixels per
+		// square per level is a file a map would fetch to learn there was nothing to show.
+		BufferedImage sky = rendered("a square with no upper floor renders", 51, 50, 2);
+		eq("it is empty", 65536, black(sky));
+		yes("and reports itself empty", WorldMapRender.isEmpty(sky));
+		yes("while the ground does not", !WorldMapRender.isEmpty(first));
 
 		// NORTH UP, ON REAL GROUND. The ground does not stop at a square boundary: the bottom
 		// row of this square and the top row of the square to the south are neighbouring tiles
@@ -322,17 +399,31 @@ public class WorldMapTest {
 		eq("and the northern square is still the top half",
 			0, differencesAt(half, 0, 0, WorldMapRender.shrink(north, 2)));
 
-		// AND FROM THE COMMAND LINE, which is the only caller that is not this test: every
-		// check above reaches past main into the pieces, so main could stop loading the models
-		// altogether - stripping the scenery off every map anyone renders - and none of them
-		// would notice.
-		File png = File.createTempFile("worldmap", ".png");
-		png.deleteOnExit();
-		WorldMapRender.main(new String[] { pack.getPath(), png.getPath(), "50,50", "0" });
-		BufferedImage written = javax.imageio.ImageIO.read(png);
-		eq("the command line writes a square", 256, written.getWidth());
-		yes("with its scenery on it (" + exactly(written, 0xEEEEEE) + " wall pixels)",
-			exactly(written, 0xEEEEEE) > 200);
+		// THE TILES A MAP WOULD ACTUALLY READ. One directory, one file per square per level,
+		// named for both - and nothing written for a level a square has nothing on, which above
+		// the ground is most of them. Two squares are enough to see all of that; seven hundred
+		// would take a minute and say no more.
+		int[] whole = WorldMapRender.mapIndex;
+		int[] land = WorldMapRender.mapLand;
+		int[] locs = WorldMapRender.mapLoc;
+		File dir = new File(System.getProperty("java.io.tmpdir"), "worldmaptiles" + sz);
+		empty(dir);
+		try {
+			keepOnly(sx, sz, 51, 50);
+			WorldMapRender.renderTiles(dir);
+		} finally {
+			WorldMapRender.mapIndex = whole;
+			WorldMapRender.mapLand = land;
+			WorldMapRender.mapLoc = locs;
+		}
+		yes("the ground of one square is written", new File(dir, "50_50_0.png").exists());
+		yes("and the ground of the other", new File(dir, "51_50_0.png").exists());
+		yes("and the floors above the first square", new File(dir, "50_50_3.png").exists());
+		yes("nothing is written where the second square has no second floor",
+			!new File(dir, "51_50_2.png").exists());
+		yes("nor its third", !new File(dir, "51_50_3.png").exists());
+		// 50,50 is Lumbridge and has all four; 51,50 is fields and a road and has two.
+		eq("six files in all, from two squares of four levels", 6, pngs(dir));
 
 		// A SQUARE THE INDEX HAS NOT GOT IS NOT A BLACK SQUARE, it is nothing at all, so that
 		// renderAll leaves the sea black rather than painting a hole over its neighbour.
@@ -340,10 +431,125 @@ public class WorldMapTest {
 			WorldMapRender.renderSquare(200, 200, 0) == null);
 	}
 
-	/** A square rendered, with a renderer that threw reported as a failure of its own. */
-	static BufferedImage rendered(String what, int sx, int sz, int margin) {
+	/**
+	 * The command line, in a JVM that has done nothing else.
+	 *
+	 * EVERY OTHER CHECK REACHES PAST MAIN into the pieces, so main could stop loading the
+	 * models altogether - stripping the scenery off every map anyone rendered - and the suite
+	 * would stay green. Calling main from the middle of the suite does not catch that either:
+	 * the models are a static table, and so are the caches LocType keeps of the models it has
+	 * already built, and by then this test has filled all of them. So the runner starts a
+	 * second JVM for this one check, which is the only way to see what main finds when it is
+	 * the first thing to run.
+	 */
+	static void coldStart(File pack) throws Exception {
+		System.out.println("-- the command line, cold --");
+		File png = File.createTempFile("worldmap", ".png");
+		png.deleteOnExit();
+		WorldMapRender.main(new String[] { pack.getPath(), png.getPath(), "50,50", "0" });
+		BufferedImage written = javax.imageio.ImageIO.read(png);
+		eq("it writes a square", 256, written.getWidth());
+		yes("with its scenery on it (" + exactly(written, 0xEEEEEE) + " wall pixels)",
+			exactly(written, 0xEEEEEE) > 200);
+	}
+
+	static final int WEST = 0;
+	static final int NORTH = 1;
+	static final int EAST = 2;
+	static final int SOUTH = 3;
+
+	/**
+	 * One neighbour's scenery, let in on its own, and which edge of the picture it lands on.
+	 *
+	 * A loc is anchored at a tile and drawn from there, so a building just over the western
+	 * line paints its last column or two onto this square's western edge and nowhere else.
+	 * Four tiles is as deep as the largest of them reaches.
+	 */
+	static void spill(String where, int sx, int sz, int dx, int dz, int edge) throws Exception {
+		BufferedImage bare = onlyLocs(sx, sz, 0, 0);
+		BufferedImage with = onlyLocs(sx, sz, dx, dz);
+		int n = 0;
+		int deepest = -1;
+		for (int y = 0; y < bare.getHeight(); y++) {
+			for (int x = 0; x < bare.getWidth(); x++) {
+				if (bare.getRGB(x, y) == with.getRGB(x, y)) {
+					continue;
+				}
+				n++;
+				int depth = edge == WEST ? x
+					: edge == NORTH ? y
+					: edge == EAST ? bare.getWidth() - 1 - x
+					: bare.getHeight() - 1 - y;
+				if (depth > deepest) {
+					deepest = depth;
+				}
+			}
+		}
+		yes(where + " reaches over the line (" + n + " pixels)", n > 0);
+		yes(where + " lands on that side, " + deepest + " pixels in",
+			deepest >= 0 && deepest < 4 * WorldMapRender.SCALE);
+	}
+
+	/** The index cut down to two squares, so a sweep over all of them is a second's work. */
+	static void keepOnly(int ax, int az, int bx, int bz) {
+		int[] index = WorldMapRender.mapIndex;
+		int[] land = WorldMapRender.mapLand;
+		int[] locs = WorldMapRender.mapLoc;
+		int[] keptIndex = new int[2];
+		int[] keptLand = new int[2];
+		int[] keptLoc = new int[2];
+		for (int i = 0; i < index.length; i++) {
+			int at = index[i] == (ax << 8) + az ? 0 : index[i] == (bx << 8) + bz ? 1 : -1;
+			if (at >= 0) {
+				keptIndex[at] = index[i];
+				keptLand[at] = land[i];
+				keptLoc[at] = locs[i];
+			}
+		}
+		WorldMapRender.mapIndex = keptIndex;
+		WorldMapRender.mapLand = keptLand;
+		WorldMapRender.mapLoc = keptLoc;
+	}
+
+	/** A directory with nothing in it, so what is counted afterwards is what this run wrote. */
+	static void empty(File dir) {
+		File[] was = dir.listFiles();
+		for (int i = 0; was != null && i < was.length; i++) {
+			was[i].delete();
+		}
+	}
+
+	static int pngs(File dir) {
+		String[] names = dir.list();
+		int n = 0;
+		for (int i = 0; names != null && i < names.length; i++) {
+			if (names[i].endsWith(".png")) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** The square with its own scenery and one neighbour's, and nobody else's. */
+	static BufferedImage onlyLocs(int sx, int sz, int dx, int dz) throws Exception {
+		int[] locs = WorldMapRender.mapLoc;
+		int[] mask = new int[locs.length];
+		for (int i = 0; i < locs.length; i++) {
+			int key = WorldMapRender.mapIndex[i];
+			mask[i] = key == (sx << 8) + sz || key == (sx + dx << 8) + (sz + dz) ? locs[i] : -1;
+		}
+		WorldMapRender.mapLoc = mask;
 		try {
-			BufferedImage img = WorldMapRender.renderSquare(sx, sz, 0, margin);
+			return WorldMapRender.renderSquare(sx, sz, 0, 20);
+		} finally {
+			WorldMapRender.mapLoc = locs;
+		}
+	}
+
+	/** A square rendered at margin 20, with a renderer that threw reported as a failure. */
+	static BufferedImage rendered(String what, int sx, int sz, int level) {
+		try {
+			BufferedImage img = WorldMapRender.renderSquare(sx, sz, level, 20);
 			yes(what, img != null);
 			return img;
 		} catch (Throwable broken) {
@@ -436,6 +642,10 @@ public class WorldMapTest {
 			gap += Math.abs((p & 0xFF) - (q & 0xFF));
 		}
 		return gap;
+	}
+
+	static int black(BufferedImage img) {
+		return exactly(img, 0);
 	}
 
 	static int exactly(BufferedImage img, int rgb) {

@@ -83,23 +83,31 @@ def main():
             print(r.stderr[-6000:])
             raise SystemExit('run_worldmaptest: the test does not compile')
 
-        r = subprocess.run([java, '-Djava.awt.headless=true', '-Xmx1g',
-                            '-Ddp.pack=' + pack,
-                            '-cp', classes,
-                            'jagex2.client.WorldMapTest'],
-                           capture_output=True, text=True, cwd=work)
-        lines = [l for l in r.stdout.split('\n') if l.strip()]
-        for l in lines:
-            print(l)
-        if not lines:
-            print(r.stderr[-4000:])
-            return 1
-        if r.returncode != 0 and not any(l.startswith('FAIL') for l in lines):
-            # NON-ZERO WITH NO FAILURE NAMED means the suite died part way through, and the
-            # reason is on stderr. Printing stdout alone here showed a run that simply stopped
-            # mid-section with nothing to say why, which cost an afternoon once.
-            print(r.stderr[-4000:])
-        return 0 if r.returncode == 0 else 1
+        bad = 0
+        # TWICE, THE SECOND TIME COLD. The models and the caches LocType keeps of the models it
+        # has built are static tables, so once the suite has filled them, main can skip loading
+        # them and still draw a square with every building on it. A second JVM is the only way
+        # to see what main finds when it is the first thing to run.
+        for cold in (False, True):
+            cmd = [java, '-Djava.awt.headless=true', '-Xmx1g', '-Ddp.pack=' + pack]
+            if cold:
+                cmd.append('-Ddp.coldstart=true')
+            cmd += ['-cp', classes, 'jagex2.client.WorldMapTest']
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=work)
+            lines = [l for l in r.stdout.split('\n') if l.strip()]
+            for l in lines:
+                print(l)
+            if not lines:
+                print(r.stderr[-4000:])
+                return 1
+            if r.returncode != 0 and not any(l.startswith('FAIL') for l in lines):
+                # NON-ZERO WITH NO FAILURE NAMED means the suite died part way through, and the
+                # reason is on stderr. Printing stdout alone here showed a run that simply
+                # stopped mid-section with nothing to say why, which cost an afternoon once.
+                print(r.stderr[-4000:])
+            if r.returncode != 0:
+                bad = 1
+        return bad
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
