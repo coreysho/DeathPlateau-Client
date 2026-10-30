@@ -756,10 +756,23 @@ public class CourseCam extends Client {
 					last = now;
 				}
 			}
+			// AND IT HAS TO HAVE GOT CLOSER. The projection can land on a tile that is not the one
+			// it was computed for, and then "Walk here" walks the wrong way: Al Kharid's zip line
+			// is twenty-three tiles east, and four unchecked walks left the player twenty-one
+			// tiles further west than they started. One wrong step is a nuisance; four is the
+			// player on the other side of the city.
 			int[] end = tileAt();
-			if (end[0] != me[0] || end[1] != me[1]) {
+			if (end[0] == me[0] && end[1] == me[1]) {
+				continue;
+			}
+			int was = Math.max(Math.abs(targetX - me[0]), Math.abs(targetZ - me[1]));
+			int now = Math.max(Math.abs(targetX - end[0]), Math.abs(targetZ - end[1]));
+			if (now < was) {
 				return true;
 			}
+			say("      (a walk towards " + targetX + "," + targetZ + " ended at " + end[0] + ","
+				+ end[1] + ", " + now + " tiles away against " + was + " before - not walking again)");
+			return false;
 		}
 		return false;
 	}
@@ -1056,9 +1069,23 @@ public class CourseCam extends Client {
 			if (!crossed && o.landX > 0) {
 				command("::tele " + teleArg(o.landX, o.landZ, o.landLevel));
 				waitFor("the scene", 30000, () -> geti("sceneState") == 2);
-				waitFrames(20);
+				// WAIT FOR THE TELEPORT BY ITS RESULT, not by a count of frames. tileAt() is
+				// sceneBaseTileX plus the player's local offset, so while the scene is still being
+				// rebuilt the two halves disagree and the answer is a tile nowhere near the
+				// course. Draynor's narrow wall lands on 3088,3261 and the next obstacle reported
+				// starting "from 3088,3206" - fifty-five tiles out, with everything after it
+				// measured from there.
+				boolean there = false;
+				for (int f = 0; f < 120 && !there; f++) {
+					waitFrames(2);
+					int[] t = tileAt();
+					there = t[0] == o.landX && t[1] == o.landZ && t[2] == o.landLevel;
+				}
+				int[] t = tileAt();
 				say("      (placed on this obstacle's landing " + o.landX + "," + o.landZ
-					+ " L" + o.landLevel + " so the rest of the course can still be tested)");
+					+ " L" + o.landLevel + " so the rest of the course can still be tested"
+					+ (there ? "" : " - BUT THE PLAYER IS AT " + t[0] + "," + t[1] + " L" + t[2]
+						+ ", so what follows starts from the wrong tile") + ")");
 			}
 			int[] now = tileAt();
 			from = new int[] { now[0], now[1], now[2] };
@@ -1155,6 +1182,19 @@ public class CourseCam extends Client {
 
 		// 3. CLICK IT - a real left click when the verb is already the left-click option, which is
 		// the path a player takes, and the client's own dispatch otherwise.
+		// RE-READ THE MENU IMMEDIATELY BEFORE DISPATCHING. The client rebuilds it every frame from
+		// wherever the cursor is, so a row index found several frames ago can be stale by the time
+		// it is used - Draynor reported "clicking it ran 'Walk here'" on a tightrope, which is the
+		// wrong row of a menu that had moved underneath it. Better to say the verb has gone than
+		// to run whatever took its place.
+		hover(sxy[0], sxy[1]);
+		waitFrames(3);
+		row = rowOf(o.verb);
+		if (row < 0) {
+			check("the verb is still on the menu when the click goes in ('" + o.verb + "')", false,
+				"the menu rebuilt between finding it and clicking it: " + menu());
+			return false;
+		}
 		int size = geti("menuSize");
 		int before = menuOptions;
 		lastOption = "";
@@ -1213,7 +1253,10 @@ public class CourseCam extends Client {
 			String tile = t[0] + "," + t[1] + "L" + t[2];
 			if (path.isEmpty() || !path.get(path.size() - 1).equals(tile)) {
 				path.add(tile);
-				if (!floorAt(t[0], t[1], t[2])) {
+				// floorStorey, not floorAt: on a rooftop the floor is routinely the roof model
+				// drawn a storey below, so asking only about the player's own plane counts solid
+				// roof as open air and inflates this.
+				if (floorStorey(t[0], t[1], t[2]) < 0) {
 					airborne++;
 				}
 			}
@@ -1357,9 +1400,23 @@ public class CourseCam extends Client {
 					break;
 				}
 			}
-			check("and the crossing itself went in a straight line", straight,
-				straight ? "" : "the glide from " + start[0] + "," + start[1]
-					+ " moved on both axes, which means it slid across the roofs between");
+			// A DIAGONAL OVER OPEN AIR IS A VAULT, NOT THE FAULT. The fault this was written for
+			// is a landing out of line with its obstacle, which drags the player diagonally
+			// ACROSS WHATEVER IS IN BETWEEN - Falador's first tightrope slid ten tiles east and
+			// seven north over solid roof. Canifis' pole-vault also goes diagonally, ten east and
+			// six south, and is correct: the probe says there is nothing walkable due east of it
+			// at all, the two roofs sit corner to corner, and the photograph shows the player in
+			// the air over the street between them. So what separates the two is what is
+			// underneath - roof all the way is the fault, open air is the obstacle working.
+			boolean overAir = airborne > 0;
+			check("and the crossing itself went in a straight line", straight || overAir,
+				straight || overAir ? "" : "the glide from " + start[0] + "," + start[1]
+					+ " moved on both axes with solid ground the whole way, so it slid across the"
+					+ " roofs between rather than crossing a gap");
+			if (!straight && overAir) {
+				say("      (diagonal, but " + airborne + " of its tiles are open air - a corner gap,"
+					+ " not a slide across the roofs)");
+			}
 		}
 		return true;
 	}
