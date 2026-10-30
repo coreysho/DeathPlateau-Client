@@ -27,6 +27,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 WINDOW = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapWindow.java')
 SUPPLY = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/WorldMap.java')
+ICONS = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapIcons.java')
+ORB = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapOrb.java')
 RUNNER = os.path.join(HERE, 'run_mapwindowtest.py')
 
 MUTS = [
@@ -64,6 +66,81 @@ MUTS = [
      '\t\treturn fromX - byPixels / zoom;',
      '\t\treturn fromX - byPixels;'),
 
+    # ---- THE ORB. It sits inside the minimap's own click rectangle, so every pixel it takes
+    # is a pixel of walk-here taken from the player.
+    (ORB, 'the orb grown until it covers the map a player is trying to read',
+     '\tpublic static final int RADIUS = 12;',
+     '\tpublic static final int RADIUS = 22;'),
+    (ORB, 'the orb moved off the bottom of the panel, where half of it is not drawn',
+     '\tpublic static final int CENTRE_Y = 142;',
+     '\tpublic static final int CENTRE_Y = 150;'),
+    (ORB, 'the orb moved onto the middle of the minimap',
+     '\tpublic static final int CENTRE_X = 158;',
+     '\tpublic static final int CENTRE_X = 98;'),
+    (ORB, 'the click area made square, which takes the corner of the map with it',
+     '\t\treturn dx * dx + dy * dy <= RADIUS * RADIUS;',
+     '\t\treturn dx > -RADIUS && dx <= RADIUS && dy > -RADIUS && dy <= RADIUS;'),
+    (ORB, 'the rim itself not counted as a click, so the edge of the button does nothing',
+     '\t\treturn dx * dx + dy * dy <= RADIUS * RADIUS;',
+     '\t\treturn dx * dx + dy * dy < RADIUS * RADIUS;'),
+    (ORB, 'the orb drawn somewhere other than where its click is tested',
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy, half * 2 + 1);',
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy - 20, half * 2 + 1);'),
+    (ORB, 'the orb drawn as a square, which puts corners on a round frame',
+     '\t\t\tint half = (int) Math.sqrt(radius * radius - dy * dy);\n'
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy, half * 2 + 1);',
+     '\t\t\tPix2D.hline(CENTRE_X - radius, colour, CENTRE_Y + dy, radius * 2 + 1);'),
+    (ORB, 'the hover left looking exactly like the rest, so the button says nothing',
+     '\t\tdisc(RADIUS - 1, hover ? STONE_LIT : STONE);',
+     '\t\tdisc(RADIUS - 1, STONE);'),
+
+    # ---- THE ICONS. Every one of these puts a bank somewhere there is not one.
+    (ICONS, 'x and z swapped reading an icon off its tile, which crosses every river',
+     "\t\t\t\tthis.icons.add(new Icon(sx * MapSquare.SQUARE + (at >> 6 & 0x3F),\n"
+     "\t\t\t\t\tsz * MapSquare.SQUARE + (at & 0x3F), at >> 12, function[id]));",
+     "\t\t\t\tthis.icons.add(new Icon(sx * MapSquare.SQUARE + (at & 0x3F),\n"
+     "\t\t\t\t\tsz * MapSquare.SQUARE + (at >> 6 & 0x3F), at >> 12, function[id]));"),
+    (ICONS, "the level read out of the tile's own bits, so every icon is on a floor above",
+     "\t\t\t\t\tsz * MapSquare.SQUARE + (at & 0x3F), at >> 12, function[id]));",
+     "\t\t\t\t\tsz * MapSquare.SQUARE + (at & 0x3F), at >> 6, function[id]));"),
+    (ICONS, "the square's own base left off, so the whole world's icons pile into one square",
+     "\t\t\t\tthis.icons.add(new Icon(sx * MapSquare.SQUARE + (at >> 6 & 0x3F),",
+     "\t\t\t\tthis.icons.add(new Icon((at >> 6 & 0x3F),"),
+    (ICONS, 'a square read twice counted twice, so the key says there are seventy-eight banks',
+     '\t\tif (this.read.contains(square)) {\n\t\t\treturn;\n\t\t}\n',
+     ''),
+    (ICONS, 'the position not advanced, so every icon on a square lands on the same tile',
+     '\t\t\t\tat += moved - 1;',
+     '\t\t\t\tat = moved - 1;'),
+    (ICONS, 'the level ignored when picking what to draw, so upstairs shows on the ground',
+     '\t\t\tif (icon.level == level && icon.x >= x0 && icon.x <= x1',
+     '\t\t\tif (icon.x >= x0 && icon.x <= x1'),
+    (ICONS, 'the rectangle ignored, so every icon in the world is drawn over one view',
+     '\t\t\tif (icon.level == level && icon.x >= x0 && icon.x <= x1\n'
+     '\t\t\t\t\t&& icon.z >= z0 && icon.z <= z1) {',
+     '\t\t\tif (icon.level == level) {'),
+    (ICONS, 'the key counting every icon rather than its own kind',
+     '\t\t\tif (((Icon) this.icons.get(i)).function == function) {',
+     '\t\t\tif (((Icon) this.icons.get(i)).function >= 0) {'),
+    (ICONS, 'search made case sensitive, so a lower-case word finds nothing',
+     '\t\t\tif (icon.name().toLowerCase().indexOf(want) >= 0) {',
+     '\t\t\tif (icon.name().indexOf(want) >= 0) {'),
+    (ICONS, 'an empty search answering with everything there is',
+     '\t\tif (want.length() == 0) {\n\t\t\treturn found;\n\t\t}\n',
+     ''),
+    (ICONS, 'search left in file order, so the nearest bank is whichever loaded first',
+     '\t\tjava.util.Collections.sort(found, new java.util.Comparator() {',
+     '\t\tif (false) java.util.Collections.sort(found, new java.util.Comparator() {'),
+    (ICONS, 'distance added rather than taken as the larger, so a diagonal counts twice',
+     '\t\treturn dx > dz ? dx : dz;',
+     '\t\treturn dx + dz;'),
+    (ICONS, "an icon's picture left opaque, so every round icon is a black square",
+     '\t\t\t\tout.setRGB(x, y, rgb == 0 ? 0 : 0xFF000000 | rgb);',
+     '\t\t\t\tout.setRGB(x, y, 0xFF000000 | rgb);'),
+    (ICONS, 'the picture rebuilt on every repaint, which is a window full of garbage',
+     '\t\tif (drawn[function] != null) {\n\t\t\treturn drawn[function];\n\t\t}\n',
+     ''),
+
     # ---- THE KEY. Three numbers in one, and two of them are the same size.
     (SUPPLY, 'x and z packed the same way round, so a square answers for its mirror',
      '\t\treturn (x << 16) + (z << 8) + level;',
@@ -95,9 +172,12 @@ MUTS = [
     (SUPPLY, 'nothing ever dropped, so a map panned across the world fills the heap',
      '\t\twhile (this.age.size() > KEEP) {\n\t\t\tthis.drawn.remove(this.age.poll());\n\t\t}',
      ''),
-    (SUPPLY, 'the newest dropped rather than the oldest, so what is on screen goes first',
-     '\t\t\tthis.drawn.remove(this.age.poll());',
-     '\t\t\tthis.drawn.remove(this.age.peek());'),
+    # NOT HERE: dropping the newest rather than the oldest. The queue is declared a Queue and
+    # a Queue has no end but its head, so that one does not compile - the declaration is the
+    # check, and a mutation the compiler refuses tests nothing.
+    (SUPPLY, 'barely anything kept, so the window redraws its whole view every time it moves',
+     '\tprivate static final int KEEP = 64;',
+     '\tprivate static final int KEEP = 1;'),
     (SUPPLY, 'the square not asked for when it is missing, so nothing is ever drawn',
      '\t\tif (pixels == null) {\n\t\t\tthis.wanted.add(at);\n\t\t}',
      ''),
@@ -121,7 +201,7 @@ MUTS = [
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (WINDOW, SUPPLY):
+    for path in (WINDOW, SUPPLY, ICONS, ORB):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     _work, inside = workspace('mapwindow')

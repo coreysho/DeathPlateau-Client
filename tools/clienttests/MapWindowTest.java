@@ -24,6 +24,9 @@ package jagex2.client;
 import java.util.ArrayList;
 import java.util.List;
 
+import jagex2.client.worldmap.MapIconNames;
+import jagex2.client.worldmap.MapIcons;
+import jagex2.client.worldmap.MapOrb;
 import jagex2.client.worldmap.MapSquare;
 import jagex2.client.worldmap.MapWindow;
 import jagex2.client.worldmap.WorldMap;
@@ -36,6 +39,8 @@ public class MapWindowTest {
 	public static void main(String[] args) {
 		placement();
 		panning();
+		orb();
+		icons();
 		supply();
 		drawing();
 		keeping();
@@ -106,6 +111,223 @@ public class MapWindowTest {
 		eq("twenty pixels at four is five", 3217, MapWindow.pannedX(3222, 20, 4));
 	}
 
+	// ----------------------------------------------------------------- the orb
+
+	/**
+	 * The button beside the minimap: where it is, and what a click on it is not.
+	 *
+	 * IT SITS INSIDE THE MINIMAP'S OWN HIT TEST. The walk-here rectangle is the whole of the
+	 * map panel from (25, 5), corners included, so every pixel the orb takes is a pixel the
+	 * player can no longer walk to - which is the entire reason it is round and in a corner,
+	 * and the reason its click is tested before the walk. Two things have to stay true: it
+	 * must not cover any of the round map, and it must not take any more of the corner than
+	 * the circle it draws.
+	 */
+	static void orb() {
+		System.out.println("-- the orb --");
+		yes("the whole orb is inside the minimap panel", MapOrb.insidePanel());
+		yes("and it does not reach into the round map (" + MapOrb.overlapsMap() + " pixels)",
+			MapOrb.overlapsMap() <= 0);
+
+		yes("a click in the middle of it is on it",
+			MapOrb.contains(MapOrb.CENTRE_X, MapOrb.CENTRE_Y));
+		yes("and one on its rim", MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS,
+			MapOrb.CENTRE_Y));
+		yes("one a pixel past the rim is not",
+			!MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS + 1, MapOrb.CENTRE_Y));
+		yes("nor one above it", !MapOrb.contains(MapOrb.CENTRE_X,
+			MapOrb.CENTRE_Y - MapOrb.RADIUS - 1));
+
+		// ROUND, NOT SQUARE. The corner of its bounding box is a pixel the player keeps.
+		yes("the corner of the square it would fit in is not on it",
+			!MapOrb.contains(MapOrb.CENTRE_X + MapOrb.RADIUS, MapOrb.CENTRE_Y + MapOrb.RADIUS));
+
+		// AND IT REALLY IS INSIDE THE WALK RECTANGLE, which is why the order of the two tests
+		// in the client matters. If this ever stopped being true the orb would be in dead
+		// stone and the click order would not matter - and nobody would notice it had changed.
+		yes("the orb is inside the minimap's own click rectangle, so it must be tested first",
+			MapOrb.CENTRE_X >= MapOrb.MAP_LEFT
+				&& MapOrb.CENTRE_X < MapOrb.MAP_LEFT + MapOrb.MAP_WIDE
+				&& MapOrb.CENTRE_Y >= MapOrb.MAP_TOP
+				&& MapOrb.CENTRE_Y < MapOrb.MAP_TOP + MapOrb.MAP_HIGH);
+
+		// AND IT DRAWS SOMETHING, in the place it says it is.
+		int[] panel = new int[MapOrb.PANEL_WIDE * MapOrb.PANEL_HIGH];
+		jagex2.graphics.Pix2D.bind(MapOrb.PANEL_WIDE, MapOrb.PANEL_HIGH, panel);
+		jagex2.graphics.Pix2D.resetClipping();
+		MapOrb.draw(false);
+		yes("the middle of it is painted",
+			panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X] != 0);
+		yes("and its rim", panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE
+			+ MapOrb.CENTRE_X + MapOrb.RADIUS] != 0);
+		eq("and nothing outside it", 0, panel[(MapOrb.CENTRE_Y - MapOrb.RADIUS - 2)
+			* MapOrb.PANEL_WIDE + MapOrb.CENTRE_X]);
+		eq("nor in the corner of its square", 0,
+			panel[(MapOrb.CENTRE_Y + MapOrb.RADIUS) * MapOrb.PANEL_WIDE
+				+ MapOrb.CENTRE_X + MapOrb.RADIUS]);
+
+		// HOVER HAS TO LOOK DIFFERENT or it is not telling the player anything.
+		int cold = panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X - 8];
+		MapOrb.draw(true);
+		yes("it lights up under the cursor",
+			panel[MapOrb.CENTRE_Y * MapOrb.PANEL_WIDE + MapOrb.CENTRE_X - 8] != cold);
+	}
+
+	// ----------------------------------------------------------------- the icons
+
+	/**
+	 * Where the icons are, what they are called, and which one a search answers with.
+	 *
+	 * THE TILE IS PACKED INTO ONE NUMBER and x and z are both six bits of it, so reading them
+	 * the wrong way round puts every bank in the county on the wrong side of the river - a map
+	 * covered in icons, all of them plausible, none of them where the thing is. The level is
+	 * the bits above, and getting that wrong hangs every upstairs bank in the open air.
+	 */
+	static void icons() {
+		System.out.println("-- icons --");
+
+		// One loc file by hand: square-local x=10, z=20, ground; and x=1, z=2, first floor.
+		MapIcons found = withBank();
+		found.add(50, 60, locFile(new int[][] {
+			{ BANK_ICON, 10, 20, 0 },
+			{ BANK_ICON, 1, 2, 1 },
+		}));
+		eq("two icons on the square", 2, found.all().size());
+		MapIcons.Icon first = (MapIcons.Icon) found.all().get(0);
+		eq("x is the square's own x plus the tile's", 50 * 64 + 10, first.x);
+		eq("and z likewise", 60 * 64 + 20, first.z);
+		eq("on the ground", 0, first.level);
+		MapIcons.Icon second = (MapIcons.Icon) found.all().get(1);
+		eq("the second is upstairs", 1, second.level);
+		eq("at its own x", 50 * 64 + 1, second.x);
+		eq("and its own z", 60 * 64 + 2, second.z);
+
+		// THE SAME FILE TWICE IS THE SAME ICONS. A square's scenery arrives when it is
+		// prefetched and again when the player walks into it, and a key that counted both
+		// would say there are seventy-eight banks.
+		found.add(50, 60, locFile(new int[][] { { BANK_ICON, 10, 20, 0 } }));
+		eq("the same square read twice adds nothing", 2, found.all().size());
+
+		eq("the bank icon is called what the content calls it", "Bank store",
+			MapIconNames.name(BANK_FUNCTION));
+		eq("and the icon knows its own name", "Bank store", first.name());
+		eq("a number no loc carries has no name", "", MapIconNames.name(127));
+		yes("the content defines a key worth showing", MapIconNames.count() > 40);
+
+		eq("counted by kind", 2, found.count(BANK_FUNCTION));
+		eq("and nothing of a kind that is not there", 0, found.count(0));
+
+		eq("found inside a rectangle on its level", 1,
+			found.within(0, 0, 9999, 9999, 0).size());
+		eq("and not on another level", 1, found.within(0, 0, 9999, 9999, 1).size());
+		eq("nor outside the rectangle", 0, found.within(0, 0, 10, 10, 0).size());
+
+		// NEAREST FIRST, measured the way a player walks it. Thirty-nine banks and the one
+		// they meant is the one they can see.
+		MapIcons many = withBank();
+		many.add(10, 10, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		many.add(11, 10, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		many.add(40, 40, locFile(new int[][] { { BANK_ICON, 0, 0, 0 } }));
+		List hits = many.search("bank", 11 * 64, 10 * 64);
+		eq("every bank matches", 3, hits.size());
+		eq("the one you are standing on comes first", 11 * 64,
+			((MapIcons.Icon) hits.get(0)).x);
+		eq("then the one next door", 10 * 64, ((MapIcons.Icon) hits.get(1)).x);
+		eq("then the far one", 40 * 64, ((MapIcons.Icon) hits.get(2)).x);
+
+		eq("searching is not case sensitive", 3, many.search("BANK", 0, 0).size());
+		eq("and matches part of a name", 3, many.search("ank st", 0, 0).size());
+		eq("an empty search finds nothing rather than everything", 0,
+			many.search("   ", 0, 0).size());
+		eq("and so does a word nothing is called", 0, many.search("zzz", 0, 0).size());
+
+		eq("distance is the longer axis, as a player walks it", 30,
+			MapIcons.paces((MapIcons.Icon) many.all().get(0), 10 * 64 + 30, 10 * 64 + 4));
+
+		// THE PICTURE HAS ONE TRANSPARENT COLOUR AND IT IS BLACK. A Pix32 carries no alpha
+		// channel: pure black is the hole. Convert it without that and every round icon is a
+		// black square sitting on the map, which is a thing you notice but a colour count does
+		// not.
+		jagex2.graphics.Pix32 made = new jagex2.graphics.Pix32(2, 1);
+		made.pixels[0] = 0;
+		made.pixels[1] = 0x336699;
+		MapIcons.useSprites(new jagex2.graphics.Pix32[] { made });
+		java.awt.image.BufferedImage art = MapIcons.sprite(0);
+		yes("an icon's picture is made", art != null);
+		eq("black comes out transparent", 0, art.getRGB(0, 0) >>> 24);
+		eq("and anything else comes out solid", 255, art.getRGB(1, 0) >>> 24);
+		eq("with its colour kept", 0x336699, art.getRGB(1, 0) & 0xFFFFFF);
+		yes("converted once, not once a repaint", art == MapIcons.sprite(0));
+		yes("a sprite the media has not got is nothing at all", MapIcons.sprite(9) == null);
+	}
+
+	/**
+	 * An index that knows one loc type, the bank icon.
+	 *
+	 * The real one reads every loc type's mapfunction out of the cache. These checks are about
+	 * where an icon lands and what it is called, not about what the cache holds, so they hand
+	 * in a table of their own and need no cache at all.
+	 */
+	static MapIcons withBank() {
+		int[] functions = new int[BANK_ICON + 1];
+		for (int i = 0; i < functions.length; i++) {
+			functions[i] = -1;
+		}
+		functions[BANK_ICON] = BANK_FUNCTION;
+		MapIcons icons = new MapIcons();
+		icons.useFunctions(functions);
+		return icons;
+	}
+
+	/** The loc id of the loc that exists only to put a bank on the map, and its icon number. */
+	static final int BANK_ICON = 2738;
+	static final int BANK_FUNCTION = 5;
+
+	/**
+	 * A loc file as the cache holds one: a run of ids, each with a run of packed positions.
+	 *
+	 * Written out here rather than taken from the cache so that the checks above can put an
+	 * icon on a tile they chose and say where it should come out.
+	 */
+	static byte[] locFile(int[][] locs) {
+		java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+		int lastId = -1;
+		int at = 0;
+		boolean open = false;
+		for (int i = 0; i < locs.length; i++) {
+			// ONE RUN PER ID, and the ids ascend. A second run for an id already written would
+			// have a delta of zero, and a zero delta is what ends the file - so a hand-written
+			// file that repeats an id silently throws away everything after it.
+			if (!open || locs[i][0] != lastId) {
+				if (open) {
+					out.write(0);
+				}
+				smart(out, locs[i][0] - lastId);
+				lastId = locs[i][0];
+				at = 0;
+				open = true;
+			}
+			int packed = (locs[i][3] << 12) + (locs[i][1] << 6) + locs[i][2];
+			smart(out, packed - at + 1);
+			at = packed;
+			out.write(0);                      // shape and rotation, which an icon does not use
+		}
+		if (open) {
+			out.write(0);                      // no more of this id
+		}
+		out.write(0);                          // no more ids
+		return out.toByteArray();
+	}
+
+	static void smart(java.io.ByteArrayOutputStream out, int value) {
+		if (value < 128) {
+			out.write(value);
+		} else {
+			out.write(value + 32768 >> 8 & 0xFF);
+			out.write(value + 32768 & 0xFF);
+		}
+	}
+
 	// ----------------------------------------------------------------- the supply
 
 	/** A cache that has whatever it was told to have, and counts what it was asked for. */
@@ -125,6 +347,12 @@ public class MapWindowTest {
 			this.there.add(Integer.valueOf((x << 8) + z));
 			this.holds.add(Integer.valueOf(file(x, z, 0)));
 			this.holds.add(Integer.valueOf(file(x, z, 1)));
+		}
+
+		/** A square whose ground is there but whose scenery is not, or the other way round. */
+		void hasOnly(int x, int z, int type) {
+			this.there.add(Integer.valueOf((x << 8) + z));
+			this.holds.add(Integer.valueOf(file(x, z, type)));
 		}
 
 		void existsButSilent(int x, int z) {
@@ -150,6 +378,14 @@ public class MapWindowTest {
 
 		public void prefetchAll() {
 			this.prefetched = true;
+		}
+
+		public int[] squares() {
+			int[] all = new int[this.there.size()];
+			for (int i = 0; i < all.length; i++) {
+				all[i] = ((Integer) this.there.get(i)).intValue();
+			}
+			return all;
 		}
 	}
 
@@ -229,6 +465,65 @@ public class MapWindowTest {
 		waiting.arrived(Pretend.file(40, 40, 1), new byte[] { 0 });
 		waiting.tick();
 		yes("an arrival wakes it up again", waiting.square(40, 40, 0) != null);
+
+		// GROUND AND SCENERY ARE BOTH REQUIRED, not either. A square drawn the moment its land
+		// turns up is a square with no buildings on it, and nothing ever draws it again: the
+		// map keeps a finished picture of a town with no town in it.
+		Pretend half = new Pretend();
+		half.hasOnly(60, 60, 0);
+		WorldMap partial = over(half);
+		partial.square(60, 60, 0);
+		for (int frame = 0; frame < 10; frame++) {
+			partial.tick();
+		}
+		yes("a square with its ground but not its scenery is not drawn yet",
+			partial.square(60, 60, 0) == null);
+		partial.arrived(Pretend.file(60, 60, 1), new byte[] { 0 });
+		partial.tick();
+		yes("and is drawn once the scenery turns up too",
+			partial.square(60, 60, 0) != null);
+
+		// THE EIGHT AROUND IT, TOO. A square is lit by its neighbours, so all nine go in: two
+		// files each, eighteen in all, and a square gathered alone would ask for two.
+		Pretend town = new Pretend();
+		for (int x = 49; x <= 51; x++) {
+			for (int z = 49; z <= 51; z++) {
+				town.has(x, z);
+			}
+		}
+		WorldMap nine = over(town);
+		nine.square(50, 50, 0);
+		nine.tick();
+		eq("nine squares' worth of files are asked for", 18, town.asked.size());
+
+		// AND EACH OF THEM ONCE. The same neighbour is wanted by several squares and by every
+		// level of each; asking again for one already asked for is a request per frame per
+		// square, at a server, for a file that is already on its way.
+		nine.square(50, 50, 1);
+		nine.square(50, 50, 2);
+		nine.tick();
+		nine.tick();
+		eq("and not asked for again by the floors above", 18, town.asked.size());
+
+		// A FILE THAT IS NOT COMING IS ASKED FOR ONCE. Its square is set aside, but every
+		// arrival of anything wakes it up again, and each waking gathers again. Without a
+		// memory of what has been asked for that is a request per waking, at a server, for a
+		// file already on its way - and the busier the area, the more of them.
+		Pretend patchy = new Pretend();
+		patchy.has(70, 70);
+		patchy.existsButSilent(71, 70);
+		WorldMap edge = over(patchy);
+		edge.square(70, 70, 0);
+		for (int frame = 0; frame < 20; frame++) {
+			edge.tick();
+		}
+		int asks = 0;
+		for (int i = 0; i < patchy.asked.size(); i++) {
+			if (((Integer) patchy.asked.get(i)).intValue() == Pretend.file(71, 70, 0)) {
+				asks++;
+			}
+		}
+		eq("the neighbour that never answers is asked once, not once a waking", 1, asks);
 	}
 
 	static void keeping() {
@@ -259,8 +554,10 @@ public class MapWindowTest {
 				}
 			}
 		}
+		// ENOUGH OF THEM TO BE WORTH HAVING, as well as not all of them. A cache of one is
+		// bounded too, and would redraw the window's whole view every time it moved a pixel.
 		yes("a hundred squares drawn, not a hundred kept (" + held + ")",
-			held > 0 && held <= 64);
+			held > 16 && held <= 64);
 
 		// WHICH ONES ARE KEPT IS NOT PROMISED - the queue reorders itself as files arrive, so
 		// pinning a particular survivor would be pinning an accident. What is promised is that
@@ -283,6 +580,16 @@ public class MapWindowTest {
 	}
 
 	// ----------------------------------------------------------------- plumbing
+
+	static void eq(String what, String want, String got) {
+		checks++;
+		if (want.equals(got)) {
+			System.out.println("ok   " + what + " = " + (got.isEmpty() ? "nothing" : got));
+		} else {
+			failures++;
+			System.out.println("FAIL " + what + ": wanted [" + want + "], got [" + got + "]");
+		}
+	}
 
 	static void eq(String what, int want, int got) {
 		checks++;

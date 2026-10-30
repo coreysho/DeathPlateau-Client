@@ -662,6 +662,10 @@ public class ResizableShots extends Client {
 			swaps(prefix);
 			return;
 		}
+		if (mode.equals("worldmap")) {
+			worldmap(prefix);
+			return;
+		}
 		if (mode.equals("zulrah")) {
 			zulrah(prefix);
 			return;
@@ -720,6 +724,89 @@ public class ResizableShots extends Client {
 		say("done");
 		log.close();
 		System.exit(0);
+	}
+
+	/**
+	 * The world map: the orb beside the minimap, and the two ways of opening the window.
+	 *
+	 * THE WINDOW ITSELF IS NOT IN THESE PICTURES. It is a JFrame of its own, so the client's
+	 * frame does not contain it; what is in the pictures is the orb, in situ on the 2004 frame,
+	 * which is the half of this that only an eye can judge. That the click and the key open the
+	 * window is read off the client instead.
+	 */
+	static void worldmap(String prefix) throws Exception {
+		waitFrames(20);
+		shot(prefix + "_orb");
+
+		// THE APPLET HAS NO WINDOW AND SO HAS NO MAP. This driver builds the client directly,
+		// the way the applet does, so there is no ViewBox - and the orb hides itself for the
+		// same reason the plugin sidebar does not appear: there is nowhere to open a window.
+		// That is the behaviour, so that is what is checked here; the orb's own look is in
+		// run_mapwindowpreview and its geometry in MapWindowTest.
+		boolean windowed = get("frame") != null;
+		say("client has a window: " + windowed);
+
+		int at = orbPixel();
+		click(545 + 158, 4 + 142, false);
+		waitFrames(25);
+		shot(prefix + "_clicked");
+
+		if (!windowed) {
+			say((mapOpen() ? "FAIL" : "ok  ") + " no window, so no world map");
+			say((at == orbPixel() ? "ok  " : "FAIL")
+				+ " and no orb drawn over the minimap's frame");
+			say("done");
+			log.close();
+			System.exit(0);
+		}
+
+		say((mapOpen() ? "ok  " : "FAIL") + " clicking the orb opens the world map");
+		click(545 + 158, 4 + 142, false);
+		waitFrames(25);
+		say((mapOpen() ? "FAIL" : "ok  ") + " clicking it again closes it");
+
+		key(KeyEvent.VK_F7, (char) 0);
+		waitFrames(25);
+		say((mapOpen() ? "ok  " : "FAIL") + " F7 opens it too");
+		key(KeyEvent.VK_F7, (char) 0);
+		waitFrames(25);
+		say((mapOpen() ? "FAIL" : "ok  ") + " and closes it");
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/** The pixel in the middle of where the orb goes, straight off the drawn frame. */
+	static int orbPixel() throws Exception {
+		waitFrames(3);
+		synchronized (LOCK) {
+			return canvas.getRGB(545 + 158, 4 + 142) & 0xFFFFFF;
+		}
+	}
+
+	/** Whether the world map window exists and is showing, read off the client. */
+	static boolean mapOpen() {
+		try {
+			// The field is on Client, and this driver IS a Client, so the lookup has to walk
+			// up to the class that declares it rather than asking this one.
+			for (Class<?> at = app.getClass(); at != null; at = at.getSuperclass()) {
+				try {
+					java.lang.reflect.Field f = at.getDeclaredField("worldMapWindow");
+					f.setAccessible(true);
+					Object window = f.get(app);
+					return window != null && ((Boolean) window.getClass()
+						.getMethod("isVisible").invoke(window)).booleanValue();
+				} catch (NoSuchFieldException keepLooking) {
+					continue;
+				}
+			}
+			say("FAIL no worldMapWindow field anywhere on the client");
+			return false;
+		} catch (Exception broken) {
+			say("FAIL could not read worldMapWindow: " + broken);
+			return false;
+		}
 	}
 
 	/** Existing user -> login box -> Login. Window coordinates: the title screen is 765x503, centred. */

@@ -1040,6 +1040,22 @@ public class Client extends GameShell implements PixMap.Target {
 		});
 	}
 
+	/**
+	 * The world map button, in the bottom-right corner of the minimap panel.
+	 *
+	 * Drawn last, with areaMapback still bound, so it sits over the frame rather than under
+	 * the map. It is there whenever the minimap panel is - including when the minimap itself
+	 * is scrambled or hidden, because a map of the world is not a thing those states are
+	 * meant to take away.
+	 */
+	private void drawWorldMapOrb() {
+		if (this.worldMap == null || super.frame == null) {
+			return;
+		}
+		jagex2.client.worldmap.MapOrb.draw(
+			jagex2.client.worldmap.MapOrb.contains(super.mouseX - MAP_X, super.mouseY - 4));
+	}
+
 	/** The player's tile in world coordinates, or -1 when they are not standing anywhere. */
 	private int playerTileX() {
 		return this.ingame && localPlayer != null && this.sceneState == 2
@@ -3194,6 +3210,22 @@ public class Client extends GameShell implements PixMap.Target {
 				mapScenesForMap[i] = new Pix8(jagMedia, "mapscene", i);
 			}
 			jagex2.client.worldmap.MapSquare.useScenes(mapScenesForMap);
+
+			// And the icons the key names, for the same reason: these are tinted a moment
+			// later too, and a map whose bank icon is a different yellow every login looks
+			// broken rather than varied.
+			Pix32[] mapIconsForMap = new Pix32[72];
+			for (int i = 0; i < mapIconsForMap.length; i++) {
+				try {
+					mapIconsForMap[i] = new Pix32(jagMedia, "mapfunction", i);
+				} catch (Exception e) {
+					// 70 and 71 are newer than some servers' media, as below.
+					if (i < 70) {
+						throw e;
+					}
+				}
+			}
+			jagex2.client.worldmap.MapIcons.useSprites(mapIconsForMap);
 
 			// 70 is the trading post's (Old School's Grand Exchange icon) and 71 is Aleck's Hunter
 			// Emporium (Old School's kebbit), both newer than some servers' media
@@ -6159,6 +6191,18 @@ public class Client extends GameShell implements PixMap.Target {
 				super.mouseClickButton = 0;
 				return;
 			}
+		}
+
+		// THE WORLD MAP BUTTON, before the walk-here below it. The minimap's own hit test is
+		// the whole rectangle, corners included, so a click on the orb would otherwise be a
+		// click on the ground behind it - and the orb is in a corner precisely because that
+		// corner is not map.
+		if (super.mouseClickButton == 1 && this.worldMap != null && super.frame != null
+				&& jagex2.client.worldmap.MapOrb.contains(super.mouseClickX - MAP_X,
+					super.mouseClickY - 4)) {
+			super.mouseClickButton = 0;
+			this.toggleWorldMap();
+			return;
 		}
 
 		if (this.minimapType != 0 || super.mouseClickButton != 1) {
@@ -15534,6 +15578,7 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 			this.imageCompass.drawRotatedMasked(0, 33, 25, 33, this.compassMaskLineLengths, 0, this.orbitCameraYaw, 256, this.compassMaskLineOffsets, 25);
+			this.drawWorldMapOrb();
 			this.areaViewport.bind();
 			Pix3D.lineOffset = this.areaViewportOffset;
 			return;
@@ -15627,6 +15672,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawOnMinimap(var23, this.imageMapmarker0, var22);
 		}
 		Pix2D.fillRect(3, 78, 16777215, 3, 97);
+		this.drawWorldMapOrb();
 		this.areaViewport.bind();
 		Pix3D.lineOffset = this.areaViewportOffset;
 	}

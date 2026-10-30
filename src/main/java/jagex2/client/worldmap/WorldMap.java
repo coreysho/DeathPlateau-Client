@@ -68,6 +68,9 @@ public final class WorldMap {
 
 		/** Turns on the background fetch of every square there is. */
 		void prefetchAll();
+
+		/** Every square the world has, packed as (x << 8) + z. */
+		int[] squares();
 	}
 
 	private final Supply supply;
@@ -92,6 +95,12 @@ public final class WorldMap {
 
 	private boolean prefetched;
 
+	/** Every icon in every square whose scenery has arrived. */
+	private final MapIcons icons = new MapIcons();
+
+	/** Which square each square's loc file belongs to, so an arrival can be placed. */
+	private int[] squareOfLocFile;
+
 	public WorldMap(Supply supply) {
 		this.supply = supply;
 	}
@@ -110,6 +119,12 @@ public final class WorldMap {
 
 			public void prefetchAll() {
 				onDemand.prefetchMaps(true);
+			}
+
+			public int[] squares() {
+				int[] all = new int[onDemand.mapIndex.length];
+				System.arraycopy(onDemand.mapIndex, 0, all, 0, all.length);
+				return all;
 			}
 		});
 	}
@@ -252,6 +267,14 @@ public final class WorldMap {
 	public void arrived(int file, byte[] data) {
 		Integer which = Integer.valueOf(file);
 		this.files.put(which, data == null ? new byte[0] : data);
+		// A LOC FILE IS ALSO A LIST OF ICONS, and this is the only moment the map is certain to
+		// see one: a square is drawn only if somebody looks at it, but every square's scenery
+		// comes past here once, so the key and the search fill in as the prefetch lands rather
+		// than as the player pans.
+		int[] of = this.squareOfLocFile();
+		if (data != null && file >= 0 && file < of.length && of[file] >= 0) {
+			this.icons.add(of[file] >> 8, of[file] & 0xFF, data);
+		}
 		if (this.waiting.isEmpty()) {
 			return;
 		}
@@ -275,6 +298,47 @@ public final class WorldMap {
 		}
 		this.prefetched = true;
 		this.supply.prefetchAll();
+	}
+
+	/** The banks, altars and fishing spots of everywhere whose scenery has arrived. */
+	public MapIcons icons() {
+		return this.icons;
+	}
+
+	/**
+	 * Which square a loc file belongs to, by its file number.
+	 *
+	 * BUILT ONCE FROM THE INDEX, not searched for on every arrival: the index is a flat list of
+	 * seven hundred and the obvious way round - ask it which file square x,z uses - is a scan
+	 * of that list per square, which is half a million comparisons to answer a question that is
+	 * one array read the other way round.
+	 */
+	private int[] squareOfLocFile() {
+		if (this.squareOfLocFile == null) {
+			int[] squares = this.supply.squares();
+			int widest = 0;
+			int[][] pairs = new int[squares.length][];
+			for (int i = 0; i < squares.length; i++) {
+				int x = squares[i] >> 8;
+				int z = squares[i] & 0xFF;
+				int file = this.supply.fileFor(x, z, 1);
+				pairs[i] = new int[] { file, squares[i] };
+				if (file > widest) {
+					widest = file;
+				}
+			}
+			int[] of = new int[widest + 1];
+			for (int i = 0; i < of.length; i++) {
+				of[i] = -1;
+			}
+			for (int i = 0; i < pairs.length; i++) {
+				if (pairs[i][0] >= 0) {
+					of[pairs[i][0]] = pairs[i][1];
+				}
+			}
+			this.squareOfLocFile = of;
+		}
+		return this.squareOfLocFile;
 	}
 
 	/** Forgets every drawn square, for when the look of them changes under us. */
