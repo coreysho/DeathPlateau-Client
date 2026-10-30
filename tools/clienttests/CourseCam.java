@@ -704,6 +704,118 @@ public class CourseCam extends Client {
 	 * first one whose menu carries the verb, which is what a player does with the mouse. Coming
 	 * back empty is a real finding: it means a player standing here cannot click the thing.
 	 */
+	/**
+	 * WALK A FEW TILES TOWARDS SOMETHING, the way a player would, and say whether we moved.
+	 *
+	 * Stops one tile short of the target: an obstacle's own tile is routinely blocked, because
+	 * o161/o175 with f1 is how this build marks the span of one, and clicking a blocked tile walks
+	 * nowhere. Tries the longest step first and shortens it, since a tile far across a roof is the
+	 * one most likely to be off the window or behind a gable.
+	 *
+	 * The walk is taken off the menu rather than by a bare left click, so a loc lying under the
+	 * cursor cannot have its own default option run by accident.
+	 */
+	static boolean walkToward(int targetX, int targetZ) throws Exception {
+		int[] me = tileAt();
+		int dx = targetX - me[0];
+		int dz = targetZ - me[1];
+		int dist = Math.max(Math.abs(dx), Math.abs(dz));
+		if (dist <= 1) {
+			return false;
+		}
+		for (int step = Math.min(dist - 1, 6); step >= 1; step--) {
+			int tx = me[0] + (int) Math.round((double) dx * step / dist);
+			int tz = me[1] + (int) Math.round((double) dz * step / dist);
+			if (tx == me[0] && tz == me[1]) {
+				continue;
+			}
+			int[] p = screenOf(tx, tz);
+			if (p == null) {
+				continue;
+			}
+			hover(p[0], p[1]);
+			waitFrames(4);
+			int row = rowOf("Walk here");
+			if (row < 0) {
+				continue;
+			}
+			call("useMenuOption", Integer.valueOf(row));
+			// LET IT ARRIVE. A walk is a tile a tick, so a handful of tiles is a couple of
+			// seconds; judging it by stillness rather than a fixed wait keeps short walks short.
+			int[] last = tileAt();
+			int still = 0;
+			for (int f = 0; f < 200; f++) {
+				waitFrames(1);
+				int[] now = tileAt();
+				if (now[0] == last[0] && now[1] == last[1]) {
+					if (++still > 40) {
+						break;
+					}
+				} else {
+					still = 0;
+					last = now;
+				}
+			}
+			int[] end = tileAt();
+			if (end[0] != me[0] || end[1] != me[1]) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static String lookWhy = "";
+
+	/**
+	 * LOOK FOR THE OBSTACLE FROM WHERE WE STAND: aim at the middle of its footprint, hunt the verb
+	 * in the band above it, and if that fails lower the camera and look again.
+	 *
+	 * The client draws every storey up to the one the player is on, so from the street with
+	 * rooftops overhead a steep camera is looking at the roofs: the pick at Varrock's rough wall
+	 * came back with a blocked roof tile and a menu of nothing but Cancel. A player would drag the
+	 * camera down to see the wall, so this does - two pitches, nearly level and steeper than the
+	 * default - and restores it afterwards so the photographs stay comparable.
+	 */
+	static int[] lookFor(Ob o) throws Exception {
+		lookWhy = "";
+		// AIM AT THE MIDDLE OF THE FOOTPRINT. A four-tile tree clicked at its origin corner is
+		// aimed at its edge, and the model above that corner can be branches and sky.
+		int cx = o.x + (o.w - 1) / 2;
+		int cz = o.z + (o.l - 1) / 2;
+		int[] sxy = aimAt(cx, cz);
+		if (sxy == null) {
+			lookWhy = "it is not on screen from here - " + aimWhy;
+			return null;
+		}
+		int[] on = findVerb(sxy[0], sxy[1], o.verb);
+		if (on == null) {
+			int wasPitch = pinPitch;
+			for (int pitch : new int[] { 160, 128, 340 }) {
+				pinPitch = pitch;
+				waitFrames(8);
+				int[] again = aimAt(cx, cz);
+				if (again != null) {
+					on = findVerb(again[0], again[1], o.verb);
+					if (on != null) {
+						say("      (found it with the camera at pitch " + pitch + ")");
+						break;
+					}
+				}
+			}
+			if (on == null) {
+				pinPitch = wasPitch;
+				waitFrames(6);
+			}
+		}
+		if (on == null) {
+			hover(sxy[0], sxy[1]);
+			waitFrames(4);
+			lookWhy = "nothing in the band above its tile offers it; over the tile itself the menu is "
+				+ menu() + "; scene says " + locsAt(o.x, o.z);
+		}
+		return on;
+	}
+
 	static int[] findVerb(int px, int py, String verb) throws Exception {
 		// A GRID ABOVE THE TILE, NEAREST FIRST.
 		//
@@ -968,7 +1080,7 @@ public class CourseCam extends Client {
 			at[0] == from[0] && at[1] == from[1] && at[2] == from[2] ? "" : "wanted " + from[0] + "," + from[1] + " L" + from[2]);
 		int standFloor = floorStorey(at[0], at[1], at[2]);
 		check("and the client draws floor under it", standFloor >= 0,
-			"nothing is drawn on this storey or the one below");
+			standFloor >= 0 ? "" : "nothing is drawn on this storey or the one below");
 		if (standFloor >= 0 && standFloor != at[2]) {
 			say("      (the floor under it is the roof drawn on L" + standFloor + " - deck over roof)");
 		}
@@ -977,53 +1089,44 @@ public class CourseCam extends Client {
 		// 2. THE OBSTACLE IS ON SCREEN AND THE MENU HAS THE VERB ON IT. This is the check that the
 		// engine side cannot make: reachedLoc says a tile is close enough, and the client says
 		// whether a player standing there can actually click the thing.
-		// AIM AT THE MIDDLE OF THE FOOTPRINT. A four-tile tree clicked at its origin corner is
-		// aimed at its edge, and the model above that corner can be branches and sky.
-		int[] sxy = aimAt(o.x + (o.w - 1) / 2, o.z + (o.l - 1) / 2);
-		if (sxy == null) {
-			check("the cursor can be put on the obstacle's tile", false,
-				"it is not on screen from here - " + aimWhy);
-			return;
-		}
-		int[] on = findVerb(sxy[0], sxy[1], o.verb);
-		// AND IF IT IS NOT THERE, LOWER THE CAMERA AND LOOK AGAIN.
+		int[] on = lookFor(o);
+		String fromLanding = lookWhy;
+
+		// AND IF IT CANNOT BE SEEN FROM THE LANDING, WALK TOWARDS IT AND LOOK AGAIN.
 		//
-		// The client draws every storey up to the one the player is on, so from the street with
-		// rooftops overhead a steep camera is looking at the roofs: the pick at Varrock's rough
-		// wall came back with a blocked roof tile and a menu of nothing but Cancel. A player would
-		// drag the camera down to see the wall, so this does - two pitches, nearly level and
-		// steeper than the default - and restores it afterwards so the photographs stay comparable.
-		if (on == null) {
-			int wasPitch = pinPitch;
-			for (int pitch : new int[] { 160, 128, 340 }) {
-				pinPitch = pitch;
-				waitFrames(8);
-				int[] again = aimAt(o.x + (o.w - 1) / 2, o.z + (o.l - 1) / 2);
-				if (again != null) {
-					on = findVerb(again[0], again[1], o.verb);
-					if (on != null) {
-						say("      (found it with the camera at pitch " + pitch + ")");
-						break;
-					}
-				}
+		// The scene diagnostic is what made this worth doing: on Draynor the wall and the gap ARE
+		// in the client's scene, on plane 3, as 18891 and 18892 - the course table's own ids. They
+		// simply cannot be reached with the cursor from five tiles away across a roof, which is not
+		// how the obstacle behaves for a player, who walks over and clicks it. Stopping there left
+		// every obstacle after it on the course untested.
+		int walks = 0;
+		int[] startedAt = tileAt();
+		while (on == null && walks < 4) {
+			if (!walkToward(o.x + (o.w - 1) / 2, o.z + (o.l - 1) / 2)) {
+				break;
 			}
-			if (on == null) {
-				pinPitch = wasPitch;
-				waitFrames(6);
-			}
+			walks++;
+			on = lookFor(o);
 		}
 		if (on == null) {
-			hover(sxy[0], sxy[1]);
-			waitFrames(4);
 			say("      the client's scene at " + o.x + "," + o.z + " - " + locsAt(o.x, o.z));
 			say("      and under the player at " + tileAt()[0] + "," + tileAt()[1] + " - "
 				+ locsAt(tileAt()[0], tileAt()[1]));
-			check("the obstacle can be clicked from here ('" + o.verb + "')", false,
-				"nothing in the band above its tile offers it; over the tile itself the menu is " + menu()
-				+ "; scene says " + locsAt(o.x, o.z));
+			check("the obstacle can be clicked ('" + o.verb + "')", false,
+				(walks > 0 ? "not from the landing, and not after walking " + walks + " time(s) either: " : "")
+					+ lookWhy);
 			return;
 		}
-		sxy = on;
+		// WORTH KNOWING EITHER WAY. Some landings are islands on purpose, so whether the obstacle
+		// could be clicked without moving is a real result - it just is not a reason to abandon
+		// the course.
+		if (walks > 0) {
+			int[] nowAt = tileAt();
+			int moved = Math.max(Math.abs(nowAt[0] - startedAt[0]), Math.abs(nowAt[1] - startedAt[1]));
+			say("      (not clickable from the landing, so walked " + moved + " tile(s) closer: "
+				+ fromLanding + ")");
+		}
+		int[] sxy = on;
 		List<String> rows = menu();
 		say("      menu: " + rows + "   at " + (sxy[0] - app.getWidth() / 2) + "," + (sxy[1] - app.getHeight() / 2) + " from centre");
 		int row = rowOf(o.verb);
@@ -1164,7 +1267,8 @@ public class CourseCam extends Client {
 		// seq 737 plays for its whole length and the move is one frame at the end of it.
 		check("the player was animated for the whole crossing",
 			crossFrames <= 2 || walkFrames * 3 <= crossFrames,
-			walkFrames + " of " + crossFrames + " moving frames had neither a seq nor a changed"
+			(crossFrames <= 2 || walkFrames * 3 <= crossFrames) ? ""
+			: walkFrames + " of " + crossFrames + " moving frames had neither a seq nor a changed"
 			+ " walk bas on the player"
 			+ (seqSeen >= 0 ? " (seq " + seqSeen + " covered " + animFrames + ")" : ""));
 
@@ -1183,7 +1287,7 @@ public class CourseCam extends Client {
 		// because a run of them in the wrong place is still worth seeing.
 		int endFloor = floorStorey(end[0], end[1], end[2]);
 		check("and the tile it left the player on has floor under it", endFloor >= 0,
-			"nothing is drawn on this storey or the one below");
+			endFloor >= 0 ? "" : "nothing is drawn on this storey or the one below");
 		if (endFloor >= 0 && endFloor != end[2]) {
 			say("      (the floor under it is the roof drawn on L" + endFloor + " - deck over roof)");
 		}
