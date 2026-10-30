@@ -24,6 +24,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.RandomAccessFile;
 
+import jagex2.client.worldmap.MapSquare;
 import jagex2.io.FileStream;
 
 public class WorldMapTest {
@@ -69,18 +70,18 @@ public class WorldMapTest {
 
 		// A SQUARE IS 64 TILES AND A TILE IS 4 PIXELS, both pinned here rather than read off the
 		// renderer, because a test that asks the code what the number is agrees with any answer.
-		eq("a map square is 64 tiles", 64, WorldMapRender.SQUARE);
-		eq("the minimap draws a tile 4 pixels wide", 4, WorldMapRender.SCALE);
-		eq("a square is 256 pixels", 256, WorldMapRender.SQUARE * WorldMapRender.SCALE);
+		eq("a map square is 64 tiles", 64, MapSquare.SQUARE);
+		eq("the minimap draws a tile 4 pixels wide", 4, MapSquare.SCALE);
+		eq("a square is 256 pixels", 256, MapSquare.SQUARE * MapSquare.SCALE);
 
 		// NORTH UP. Tile 0 is the southernmost, so it is drawn along the BOTTOM of the square.
 		int side = 256;
-		eq("tile z=0 starts the last four rows", 252 * side, WorldMapRender.rowOf(0, side));
-		eq("tile z=63 is the top row", 0, WorldMapRender.rowOf(63, side));
+		eq("tile z=0 starts the last four rows", 252 * side, MapSquare.rowOf(0, side));
+		eq("tile z=63 is the top row", 0, MapSquare.rowOf(63, side));
 		yes("going north moves up the picture",
-			WorldMapRender.rowOf(30, side) > WorldMapRender.rowOf(31, side));
+			MapSquare.rowOf(30, side) > MapSquare.rowOf(31, side));
 		eq("one tile north is four rows up",
-			4 * side, WorldMapRender.rowOf(30, side) - WorldMapRender.rowOf(31, side));
+			4 * side, MapSquare.rowOf(30, side) - MapSquare.rowOf(31, side));
 
 		// WEST LEFT, and the leftmost square sits flush against the edge.
 		eq("the leftmost square starts at 0", 0, WorldMapRender.acrossOf(27, 27, 256));
@@ -179,8 +180,8 @@ public class WorldMapTest {
 		eq("rotation 2 shape 3 is one pixel at the south-east corner", "3,3", packed((2 << 6) | 3));
 		eq("rotation 3 shape 2 is an L along the south and the west",
 			"0,0 0,1 0,2 0,3 1,3 2,3 3,3", packed((3 << 6) | 2));
-		eq("the shape is the low five bits", 9, WorldMapRender.shapeOf((2 << 6) | 9));
-		eq("the rotation is the two above them", 2, WorldMapRender.rotationOf((2 << 6) | 9));
+		eq("the shape is the low five bits", 9, MapSquare.shapeOf((2 << 6) | 9));
+		eq("the rotation is the two above them", 2, MapSquare.rotationOf((2 << 6) | 9));
 
 		eq("a diagonal runs north-east to south-west", "0,3 1,2 2,1 3,0", diagonal(0));
 		eq("turned once, north-west to south-east", "0,0 1,1 2,2 3,3", diagonal(1));
@@ -191,29 +192,29 @@ public class WorldMapTest {
 		// the scene so that a building across the boundary is drawn on both sides of it. Its
 		// pixels have to fall off this picture rather than wrap round onto the far side.
 		int[] pixels = new int[8 * 8];
-		WorldMapRender.edge(pixels, 8, -4, 0, 0, 0xFFFFFF);
+		MapSquare.edge(pixels, 8, -4, 0, 0, 0xFFFFFF);
 		eq("a wall a tile off the west edge lands nowhere", "", litIn(pixels, 8));
-		WorldMapRender.edge(pixels, 8, 6, 0, 2, 0xFFFFFF);
+		MapSquare.edge(pixels, 8, 6, 0, 2, 0xFFFFFF);
 		eq("and one off the east edge does not wrap to the west", "", litIn(pixels, 8));
-		WorldMapRender.edge(pixels, 8, 0, -4, 1, 0xFFFFFF);
+		MapSquare.edge(pixels, 8, 0, -4, 1, 0xFFFFFF);
 		eq("nor one off the south edge", "", litIn(pixels, 8));
 	}
 
 	static String wall(int shape, int rotation) {
 		int[] pixels = new int[8 * 8];
-		WorldMapRender.drawWall(pixels, 8, 0, 0, rotation, shape, 0xFFFFFF);
+		MapSquare.drawWall(pixels, 8, 0, 0, rotation, shape, 0xFFFFFF);
 		return litIn(pixels, 8);
 	}
 
 	static String packed(int info) {
 		int[] pixels = new int[8 * 8];
-		WorldMapRender.wallFrom(pixels, 8, 0, 0, info, 0xFFFFFF);
+		MapSquare.wallFrom(pixels, 8, 0, 0, info, 0xFFFFFF);
 		return litIn(pixels, 8);
 	}
 
 	static String diagonal(int rotation) {
 		int[] pixels = new int[8 * 8];
-		WorldMapRender.diagonal(pixels, 8, 0, 0, rotation, 0xFFFFFF);
+		MapSquare.diagonal(pixels, 8, 0, 0, rotation, 0xFFFFFF);
 		return litIn(pixels, 8);
 	}
 
@@ -245,31 +246,31 @@ public class WorldMapTest {
 		System.out.println("-- levels --");
 		byte[][][] flags = new byte[4][4][4];
 
-		yes("an ordinary tile is drawn on its own level", WorldMapRender.onThisMap(flags, 0, 1, 1));
+		yes("an ordinary tile is drawn on its own level", MapSquare.onThisMap(flags, 0, 1, 1));
 		flags[0][1][1] = 0x8;
 		yes("one marked as belonging below is not",
-			!WorldMapRender.onThisMap(flags, 0, 1, 1));
+			!MapSquare.onThisMap(flags, 0, 1, 1));
 		flags[0][1][1] = 0x10;
 		yes("nor one the client keeps off the minimap",
-			!WorldMapRender.onThisMap(flags, 0, 1, 1));
+			!MapSquare.onThisMap(flags, 0, 1, 1));
 		flags[0][1][1] = 0x1 | 0x2 | 0x4;
 		yes("blocked, bridge and roof say nothing about it either way",
-			WorldMapRender.onThisMap(flags, 0, 1, 1));
+			MapSquare.onThisMap(flags, 0, 1, 1));
 
 		byte[][][] span = new byte[4][4][4];
 		yes("nothing comes down from above by default",
-			!WorldMapRender.fromAbove(span, 0, 1, 1));
+			!MapSquare.fromAbove(span, 0, 1, 1));
 		span[1][1][1] = 0x8;
 		yes("a tile above marked as belonging below is drawn down here",
-			WorldMapRender.fromAbove(span, 0, 1, 1));
+			MapSquare.fromAbove(span, 0, 1, 1));
 		yes("and only onto the level under it, not two down",
-			!WorldMapRender.fromAbove(span, 1, 1, 1));
+			!MapSquare.fromAbove(span, 1, 1, 1));
 		span[3][1][1] = 0x8;
 		yes("there is nothing above level 3 to come down from",
-			!WorldMapRender.fromAbove(span, 3, 1, 1));
+			!MapSquare.fromAbove(span, 3, 1, 1));
 		span[1][1][1] = 0x10;
 		yes("and off-minimap is not the same bit as belongs-below",
-			!WorldMapRender.fromAbove(span, 0, 1, 1));
+			!MapSquare.fromAbove(span, 0, 1, 1));
 	}
 
 	// ----------------------------------------------------------------- the real thing
@@ -324,7 +325,7 @@ public class WorldMapTest {
 		BufferedImage alone = lonely(sx, sz);
 		yes("without its neighbours a square is lit differently", differences(first, alone) > 0);
 		eq("and only near its edges, which is how far the lighting reaches",
-			0, differencesInside(first, alone, 6 * WorldMapRender.SCALE));
+			0, differencesInside(first, alone, 6 * MapSquare.SCALE));
 
 		// THE NEIGHBOURS' SCENERY, TOO. A building is anchored at one tile and can be four
 		// across, so one anchored just over the boundary has most of itself inside this square;
@@ -347,11 +348,25 @@ public class WorldMapTest {
 		spill("the square to the east", 53, 51, 1, 0, EAST);
 		spill("the square to the south", 53, 51, 0, -1, SOUTH);
 
-		// THE GROUND HAS NO HOLES IN IT. Every tile of this square is drawn by something: the
-		// water, the grass, or - where the road crosses the Lum - the bridge, which is built on
-		// the level above and marked as belonging down here. Skip that rule and the bridge
-		// leaves a black bar across the river, which is a thing you can look straight at.
+		// THE GROUND HAS NO HOLES IN IT. Every tile of Lumbridge is drawn by something, the
+		// water and the grass and the road alike.
 		eq("every tile of the ground level is drawn by something", 0, black(first));
+
+		// AND WHERE THE LEVEL RULES BITE, THEY BITE EXACTLY THIS HARD. A map square does not
+		// show every tile of its own level: the flags send some of them to the level below and
+		// keep others off the map altogether, and bring tiles down from the level above in
+		// their place. Lumbridge happens to be a square where all of that cancels out - it
+		// renders the same whether the rules are followed or not, which is why checking there
+		// proves nothing. 29,70 is where it shows: of its 65536 pixels only 2780 are ground
+		// anyone can see, and each of the four rules moves that number. Dropping the span from
+		// above leaves 604, drawing the hidden tiles anyway leaves 47328, and the two rules for
+		// the scenery give 2176 and 3323.
+		//
+		// A MEASURED FACT ABOUT THIS CONTENT, not a law: repack a map square here and it has to
+		// be measured again. What it is here for is that the bit arithmetic above is checked on
+		// flags this test made up, and nothing else says those rules ever reach the picture.
+		BufferedImage lumpy = rendered("the square the level rules show on renders", 29, 70, 0);
+		eq("it shows exactly the ground its flags leave showing", 2780, 65536 - black(lumpy));
 
 		// AN UPPER FLOOR IS A FLOOR, not another copy of the ground. Castle roofs, the palace,
 		// the arena stands: a few thousand pixels on a square, against the ground's 65536.
@@ -487,7 +502,7 @@ public class WorldMapTest {
 		}
 		yes(where + " reaches over the line (" + n + " pixels)", n > 0);
 		yes(where + " lands on that side, " + deepest + " pixels in",
-			deepest >= 0 && deepest < 4 * WorldMapRender.SCALE);
+			deepest >= 0 && deepest < 4 * MapSquare.SCALE);
 	}
 
 	/** The index cut down to two squares, so a sweep over all of them is a second's work. */
