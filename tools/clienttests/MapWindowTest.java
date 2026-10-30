@@ -217,6 +217,23 @@ public class MapWindowTest {
 		eq("counted by kind", 2, found.count(BANK_FUNCTION));
 		eq("and nothing of a kind that is not there", 0, found.count(0));
 
+		// THE KEY COUNTS EVERY KIND IN ONE WALK, because counting them one at a time is
+		// sixty-four walks of every icon in the world, four times a second, on the thread
+		// that also has to draw. One kind coming out right says nothing: the whole point is
+		// that the others do too.
+		MapIcons mixed = withBank();
+		mixed.add(20, 20, locFile(new int[][] {
+			{ BANK_ICON, 1, 1, 0 },
+			{ ALTAR_ICON, 2, 2, 0 },
+			{ ALTAR_ICON, 3, 3, 0 },
+		}));
+		int[] counted = mixed.counts(64);
+		eq("one bank", 1, counted[BANK_FUNCTION]);
+		eq("and two altars", 2, counted[ALTAR_FUNCTION]);
+		eq("and nothing of anything else", 0, counted[0]);
+		eq("the whole key adds up to every icon there is", 3,
+			counted[BANK_FUNCTION] + counted[ALTAR_FUNCTION]);
+
 		eq("found inside a rectangle on its level", 1,
 			found.within(0, 0, 9999, 9999, 0).size());
 		eq("and not on another level", 1, found.within(0, 0, 9999, 9999, 1).size());
@@ -274,12 +291,17 @@ public class MapWindowTest {
 		return icons;
 	}
 
+	/** The loc that marks an altar, so the checks have two kinds and not just one. */
+	static final int ALTAR_ICON = 2752;
+	static final int ALTAR_FUNCTION = 19;
+
 	static int[] bankOnly() {
-		int[] functions = new int[BANK_ICON + 1];
+		int[] functions = new int[ALTAR_ICON + 1];
 		for (int i = 0; i < functions.length; i++) {
 			functions[i] = -1;
 		}
 		functions[BANK_ICON] = BANK_FUNCTION;
+		functions[ALTAR_ICON] = ALTAR_FUNCTION;
 		return functions;
 	}
 
@@ -459,19 +481,28 @@ public class MapWindowTest {
 		world.opened();
 		yes("and marks it once, not on every open", !wide.prefetched);
 
-		// A CLOSED MAP COSTS THE GAME NOTHING.
+		// A CLOSED MAP COSTS THE GAME NOTHING. What it asked for has to STOP being wanted:
+		// every arrival afterwards wakes the whole waiting list up again, and the client is
+		// full of arrivals, so a map opened once and shut went on building scenes nobody
+		// could see for as long as the client was up.
+		//
+		// COUNTING REQUESTS DOES NOT SHOW THIS, which is how it got past the first time: a
+		// file already asked for is not asked for twice, so the number stops going up whether
+		// the map gave up or not. What shows it is the work itself - if the queue is still
+		// live, the square gets drawn.
 		Pretend quiet3 = new Pretend();
 		quiet3.existsButSilent(90, 90);
 		WorldMap shut2 = over(quiet3);
 		shut2.square(90, 90, 0);
 		shut2.tick();
 		shut2.closed();
-		int asked2 = quiet3.asked.size();
 		shut2.arrived(Pretend.file(90, 90, 0), new byte[] { 0 });
+		shut2.arrived(Pretend.file(90, 90, 1), new byte[] { 0 });
 		for (int frame = 0; frame < 20; frame++) {
 			shut2.tick();
 		}
-		eq("a closed map asks for nothing more", asked2, quiet3.asked.size());
+		yes("a closed map draws nothing, even once what it wanted turns up",
+			shut2.square(90, 90, 0) == null);
 	}
 
 	static void drawing() {
