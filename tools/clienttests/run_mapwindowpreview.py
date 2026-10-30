@@ -44,7 +44,7 @@ GUESSES = [
 # line as a view of a town, and holding it to one would be asking the map to be wrong. A window
 # that drew nothing at all has the background and the legend, which is four; the first floor
 # over Lumbridge has sixteen, so ten is the line between them with room either side.
-SHOTS = [('lumbridge', 200), ('varrock', 200), ('upstairs', 10), ('search', 200)]
+SHOTS = [('lumbridge', 200), ('varrock', 200), ('upstairs', 10), ('search', 200), ('orb', 60)]
 
 
 def find_pack(argv):

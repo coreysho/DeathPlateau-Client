@@ -28,6 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 WINDOW = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapWindow.java')
 SUPPLY = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/WorldMap.java')
 ICONS = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapIcons.java')
+ORB = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapOrb.java')
 RUNNER = os.path.join(HERE, 'run_mapwindowtest.py')
 
 MUTS = [
@@ -64,6 +65,34 @@ MUTS = [
     (WINDOW, 'the zoom left out of the drag, so a zoomed-out map barely moves',
      '\t\treturn fromX - byPixels / zoom;',
      '\t\treturn fromX - byPixels;'),
+
+    # ---- THE ORB. It sits inside the minimap's own click rectangle, so every pixel it takes
+    # is a pixel of walk-here taken from the player.
+    (ORB, 'the orb grown until it covers the map a player is trying to read',
+     '\tpublic static final int RADIUS = 12;',
+     '\tpublic static final int RADIUS = 22;'),
+    (ORB, 'the orb moved off the bottom of the panel, where half of it is not drawn',
+     '\tpublic static final int CENTRE_Y = 142;',
+     '\tpublic static final int CENTRE_Y = 150;'),
+    (ORB, 'the orb moved onto the middle of the minimap',
+     '\tpublic static final int CENTRE_X = 158;',
+     '\tpublic static final int CENTRE_X = 98;'),
+    (ORB, 'the click area made square, which takes the corner of the map with it',
+     '\t\treturn dx * dx + dy * dy <= RADIUS * RADIUS;',
+     '\t\treturn dx > -RADIUS && dx <= RADIUS && dy > -RADIUS && dy <= RADIUS;'),
+    (ORB, 'the rim itself not counted as a click, so the edge of the button does nothing',
+     '\t\treturn dx * dx + dy * dy <= RADIUS * RADIUS;',
+     '\t\treturn dx * dx + dy * dy < RADIUS * RADIUS;'),
+    (ORB, 'the orb drawn somewhere other than where its click is tested',
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy, half * 2 + 1);',
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy - 20, half * 2 + 1);'),
+    (ORB, 'the orb drawn as a square, which puts corners on a round frame',
+     '\t\t\tint half = (int) Math.sqrt(radius * radius - dy * dy);\n'
+     '\t\t\tPix2D.hline(CENTRE_X - half, colour, CENTRE_Y + dy, half * 2 + 1);',
+     '\t\t\tPix2D.hline(CENTRE_X - radius, colour, CENTRE_Y + dy, radius * 2 + 1);'),
+    (ORB, 'the hover left looking exactly like the rest, so the button says nothing',
+     '\t\tdisc(RADIUS - 1, hover ? STONE_LIT : STONE);',
+     '\t\tdisc(RADIUS - 1, STONE);'),
 
     # ---- THE ICONS. Every one of these puts a bank somewhere there is not one.
     (ICONS, 'x and z swapped reading an icon off its tile, which crosses every river',
@@ -172,7 +201,7 @@ MUTS = [
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (WINDOW, SUPPLY, ICONS):
+    for path in (WINDOW, SUPPLY, ICONS, ORB):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     _work, inside = workspace('mapwindow')
