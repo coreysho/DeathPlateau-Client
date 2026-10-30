@@ -95,9 +95,12 @@ MUTS = [
     (SUPPLY, 'nothing ever dropped, so a map panned across the world fills the heap',
      '\t\twhile (this.age.size() > KEEP) {\n\t\t\tthis.drawn.remove(this.age.poll());\n\t\t}',
      ''),
-    (SUPPLY, 'the newest dropped rather than the oldest, so what is on screen goes first',
-     '\t\t\tthis.drawn.remove(this.age.poll());',
-     '\t\t\tthis.drawn.remove(this.age.peek());'),
+    # NOT HERE: dropping the newest rather than the oldest. The queue is declared a Queue and
+    # a Queue has no end but its head, so that one does not compile - the declaration is the
+    # check, and a mutation the compiler refuses tests nothing.
+    (SUPPLY, 'barely anything kept, so the window redraws its whole view every time it moves',
+     '\tprivate static final int KEEP = 64;',
+     '\tprivate static final int KEEP = 1;'),
     (SUPPLY, 'the square not asked for when it is missing, so nothing is ever drawn',
      '\t\tif (pixels == null) {\n\t\t\tthis.wanted.add(at);\n\t\t}',
      ''),
