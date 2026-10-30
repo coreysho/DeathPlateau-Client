@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Headless test for the loot tracker.
+"""Headless test for the clue scroll page.
 
-The client is never told that anything died, so the kill is inferred: an npc was standing on a
-tile, it is not standing there now, and loot has landed on it. Every part of that is a rule
-nobody can see working - a window a tick too short credits nothing and looks like a quiet night,
-a kill counted per item reports three kills for one drop - and every failure produces a page of
-plausible numbers.
+A clue tells a player where to stand and the page tells them how far off they are, and both of
+those are arithmetic nobody can check by looking: a direction the wrong way round, a distance
+measured as the crow flies, a step table a binary search walks past - each reads as a perfectly
+ordinary instruction and sends the player to the wrong field.
 
-So the rules live in a model with no client in it and are tested as arithmetic. The one thing a
-run cannot state, that the npcs are read before the floor, is read out of the source.
+So the rules live in a model with no client in it and are tested as arithmetic.
 
 Needs no display, no network and no cache.
 
