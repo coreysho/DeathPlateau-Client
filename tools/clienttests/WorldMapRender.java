@@ -56,6 +56,21 @@ import jagex2.io.Packet;
 
 public class WorldMapRender {
 
+	/**
+	 * A tile of this level that the map does not show.
+	 *
+	 * Bit 8 says the tile belongs to the level below and is drawn down there instead; bit 16 is
+	 * the one the client skips on the minimap outright. Together they are why a bridge is not
+	 * a hole: the span over a river is built at level 1 and marked as belonging at level 0, so
+	 * level 0 leaves its own water tile out and takes the one above. Ignore the pair and the
+	 * ground level comes out with a black gap across every bridge in the game, which reads as
+	 * a river that nothing crosses.
+	 */
+	static final int ELSEWHERE = 0x18;
+
+	/** The bit that says a tile of the level above is drawn down here. */
+	static final int BELOW = 0x8;
+
 	/** Pixels per tile, as the minimap draws it. */
 	static final int SCALE = 4;
 
@@ -117,7 +132,7 @@ public class WorldMapRender {
 		if ("all".equals(which)) {
 			renderAll(out, extent(), level, shrink);
 		} else if ("tiles".equals(which)) {
-			renderTiles(out, level);
+			renderTiles(out);
 		} else if (which.indexOf(':') >= 0) {
 			renderAll(out, box(which), level, shrink);
 		} else {
@@ -340,13 +355,31 @@ public class WorldMapRender {
 		for (int tz = 0; tz < SQUARE; tz++) {
 			int row = rowOf(tz, side);
 			for (int tx = 0; tx < SQUARE; tx++) {
-				scene.method309(pixels, row + tx * SCALE, side, level, margin + tx, margin + tz);
+				int x = margin + tx;
+				int z = margin + tz;
+				int at = row + tx * SCALE;
+				if (onThisMap(flags, level, x, z)) {
+					scene.method309(pixels, at, side, level, x, z);
+				}
+				if (fromAbove(flags, level, x, z)) {
+					scene.method309(pixels, at, side, level + 1, x, z);
+				}
 			}
 		}
-		drawLocs(scene, pixels, side, level, margin);
+		drawLocs(scene, flags, pixels, side, level, margin);
 		BufferedImage img = new BufferedImage(side, side, BufferedImage.TYPE_INT_RGB);
 		img.setRGB(0, 0, side, side, pixels, 0, side);
 		return img;
+	}
+
+	/** Whether this level's own tile is drawn here, or belongs somewhere else. */
+	static boolean onThisMap(byte[][][] flags, int level, int x, int z) {
+		return (flags[level][x][z] & ELSEWHERE) == 0;
+	}
+
+	/** Whether the tile of the level above is drawn here instead - a bridge, a walkway, a pier. */
+	static boolean fromAbove(byte[][][] flags, int level, int x, int z) {
+		return level < 3 && (flags[level + 1][x][z] & BELOW) != 0;
 	}
 
 	/**
@@ -368,41 +401,53 @@ public class WorldMapRender {
 	 * itself over the boundary. Anything that lands off the picture is dropped by dot() and by
 	 * the sprite clipping, which is the same thing the client does at the edge of its minimap.
 	 */
-	static void drawLocs(World3D scene, int[] pixels, int side, int level, int margin) {
+	static void drawLocs(World3D scene, byte[][][] flags, int[] pixels, int side, int level,
+			int margin) {
 		Pix2D.bind(side, side, pixels);
 		Pix2D.resetClipping();
 		for (int x = 1; x < SCENE - 1; x++) {
 			for (int z = 1; z < SCENE - 1; z++) {
-				int px = (x - margin) * SCALE;
-				int pz = (SQUARE - 1 - (z - margin)) * SCALE;
-
-				int wall = scene.method300(level, x, z);
-				if (wall != 0) {
-					int info = scene.method304(level, x, z, wall);
-					int id = wall >> 14 & 0x7FFF;
-					if (hasScene(id)) {
-						plotScene(id, x, z, margin);
-					} else {
-						wallFrom(pixels, side, px, pz, info, wall > 0 ? DOOR : WALL);
-					}
+				if (onThisMap(flags, level, x, z)) {
+					locsOn(scene, pixels, side, level, x, z, margin);
 				}
-
-				int decor = scene.method302(level, x, z);
-				if (decor != 0) {
-					int info = scene.method304(level, x, z, decor);
-					int id = decor >> 14 & 0x7FFF;
-					if (hasScene(id)) {
-						plotScene(id, x, z, margin);
-					} else if (shapeOf(info) == 9) {
-						diagonal(pixels, side, px, pz, rotationOf(info), decor > 0 ? DOOR : WALL);
-					}
-				}
-
-				int ground = scene.method303(level, x, z);
-				if (ground != 0 && hasScene(ground >> 14 & 0x7FFF)) {
-					plotScene(ground >> 14 & 0x7FFF, x, z, margin);
+				if (fromAbove(flags, level, x, z)) {
+					locsOn(scene, pixels, side, level + 1, x, z, margin);
 				}
 			}
+		}
+	}
+
+	/** Everything standing on one tile: its wall, whatever is fixed to the wall, and its scenery. */
+	static void locsOn(World3D scene, int[] pixels, int side, int level, int x, int z,
+			int margin) {
+		int px = (x - margin) * SCALE;
+		int pz = (SQUARE - 1 - (z - margin)) * SCALE;
+
+		int wall = scene.method300(level, x, z);
+		if (wall != 0) {
+			int info = scene.method304(level, x, z, wall);
+			int id = wall >> 14 & 0x7FFF;
+			if (hasScene(id)) {
+				plotScene(id, x, z, margin);
+			} else {
+				wallFrom(pixels, side, px, pz, info, wall > 0 ? DOOR : WALL);
+			}
+		}
+
+		int decor = scene.method302(level, x, z);
+		if (decor != 0) {
+			int info = scene.method304(level, x, z, decor);
+			int id = decor >> 14 & 0x7FFF;
+			if (hasScene(id)) {
+				plotScene(id, x, z, margin);
+			} else if (shapeOf(info) == 9) {
+				diagonal(pixels, side, px, pz, rotationOf(info), decor > 0 ? DOOR : WALL);
+			}
+		}
+
+		int ground = scene.method303(level, x, z);
+		if (ground != 0 && hasScene(ground >> 14 & 0x7FFF)) {
+			plotScene(ground >> 14 & 0x7FFF, x, z, margin);
 		}
 	}
 
@@ -574,23 +619,52 @@ public class WorldMapRender {
 		return img;
 	}
 
-	/** Every square as its own file, named for the square, which is what a pannable map reads. */
-	static void renderTiles(File dir, int level) throws Exception {
+	/**
+	 * Every square as its own file, named for the square and the level, which is what a
+	 * pannable map reads.
+	 *
+	 * ALL FOUR LEVELS, AND THE EMPTY ONES LEFT OUT. Above the ground, most of the world is
+	 * nothing at all - two of the four squares around Lumbridge have no second floor anywhere
+	 * on them - and a file of 65536 black pixels for each of those is a file a map would have
+	 * to fetch to learn there was nothing to show.
+	 */
+	static void renderTiles(File dir) throws Exception {
 		if (!dir.isDirectory() && !dir.mkdirs()) {
 			throw new IllegalStateException("cannot make " + dir);
 		}
-		int drawn = 0;
-		for (int i = 0; i < mapIndex.length; i++) {
-			int x = mapIndex[i] >> 8;
-			int z = mapIndex[i] & 0xFF;
-			BufferedImage one = safeSquare(x, z, level);
-			if (one == null) {
-				continue;
+		for (int level = 0; level < 4; level++) {
+			int drawn = 0;
+			int empty = 0;
+			for (int i = 0; i < mapIndex.length; i++) {
+				int x = mapIndex[i] >> 8;
+				int z = mapIndex[i] & 0xFF;
+				BufferedImage one = safeSquare(x, z, level);
+				if (one == null) {
+					continue;
+				}
+				if (isEmpty(one)) {
+					empty++;
+					continue;
+				}
+				ImageIO.write(one, "png", new File(dir, x + "_" + z + "_" + level + ".png"));
+				drawn++;
 			}
-			ImageIO.write(one, "png", new File(dir, x + "_" + z + "_" + level + ".png"));
-			drawn++;
+			System.out.println("level " + level + ": " + drawn + " squares, " + empty
+				+ " with nothing on them");
 		}
-		System.out.println(drawn + " of " + mapIndex.length + " squares -> " + dir);
+		System.out.println("-> " + dir);
+	}
+
+	/** Whether a square has anything on it at all, or is the black a level above the roofs is. */
+	static boolean isEmpty(BufferedImage img) {
+		for (int y = 0; y < img.getHeight(); y++) {
+			for (int x = 0; x < img.getWidth(); x++) {
+				if ((img.getRGB(x, y) & 0xFFFFFF) != 0) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/**
