@@ -10,6 +10,14 @@ the page says "No clue scroll in your inventory" while one is sitting in the bag
 arithmetic a player checks against their own feet, where being nearly right is worse than being
 absent.
 
+AND THE GENERATOR IS MUTATED TOO, which needs the content repo. Two thirds of the table is
+scraped out of scripts rather than read off a param, so a pattern that goes stale costs
+destinations without costing steps - the table still builds, just emptier. Those mutations are
+only caught by the check that regenerates and compares, and that check needs to be told where
+the content is, because this runs against a copy of the repository in a temp directory where
+nothing is beside anything. DP_CONTENT is how it is told; without a content repo at all the
+generator mutations below survive, and say so.
+
     python3 tools/clienttests/mutate_clue.py [filter]
 """
 import os
@@ -27,13 +35,15 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 STEPS = os.path.join(BUILTIN, 'ClueSteps.java')
 PLUGIN = os.path.join(BUILTIN, 'CluePlugin.java')
+MAKER = os.path.join(ROOT, 'tools/clues/make_clues.py')
 RUNNER = os.path.join(HERE, 'run_cluetest.py')
+CONTENT = os.environ.get('DP_CONTENT') or os.path.join(os.path.dirname(ROOT), 'DeathPlateau-Content')
 
 MUTS = [
     # ---- THE SEARCH AND THE ORDER IT NEEDS.
     (STEPS, 'two ids out of order, which a binary search answers -1 to rather than failing',
-     '\tstatic final int[] ID = {\n\t\t',
-     '\tstatic final int[] ID = {\n\t\t999999, '),
+     '\tpublic static final int[] ID = {\n\t\t',
+     '\tpublic static final int[] ID = {\n\t\t999999, '),
     (STEPS, 'the search half-open, so the last step in the table is never found',
      '\t\tint high = ID.length - 1;',
      '\t\tint high = ID.length - 2;'),
@@ -73,16 +83,93 @@ MUTS = [
     (PLUGIN, 'the doubled spaces left where the content broke after one',
      '\t\twhile (flat.indexOf("  ") >= 0) {\n\t\t\tflat = flat.replace("  ", " ");\n\t\t}\n',
      ''),
+
+    # ---- WHICH SCROLLS ARE SHOWN. A player carries an easy, a medium and a hard at once.
+    (PLUGIN, 'only the first scroll in the bag listed, which is what the page used to do',
+     '\t\t\t\tfound[count++] = slot;',
+     '\t\t\t\tfound[count++] = slot;\n\t\t\t\tbreak;'),
+    (PLUGIN, 'the rows numbered off by one, so every scroll draws the next slot\'s icon',
+     '\t\t\t\tfound[count++] = slot;',
+     '\t\t\t\tfound[count++] = slot + 1;'),
+    (PLUGIN, 'a row index taken on trust, which throws the frame the bag empties',
+     '\t\tif (row < 0 || row >= slots.length) {\n\t\t\treturn -1;\n\t\t}\n',
+     ''),
+    (PLUGIN, 'a slot taken on trust, which throws the frame the bag shrinks',
+     '\t\tif (slot < 0 || slot >= objIds.length) {\n\t\t\treturn -1;\n\t\t}\n',
+     ''),
+
+    # ---- DIG OR SEARCH. A player who reads "dig" at a crate wastes a spade charge.
+    (PLUGIN, 'a crate told to be dug up and a dig spot not',
+     '\t\t\tboolean dig = ClueSteps.SPOT[step] == ClueSteps.SPOT_DIG;',
+     '\t\t\tboolean dig = ClueSteps.SPOT[step] != ClueSteps.SPOT_DIG;'),
+    (PLUGIN, 'the floor ignored, so a step one storey up reads as twelve tiles of walking',
+     '\t\t\tif (ClueSteps.LEVEL[step] != plane) {\n\t\t\t\tout.append(", on another floor");\n\t\t\t}\n',
+     ''),
+
+    # ---- THE THINGS THE SCROLL DOES NOT SAY, AND THE SWITCHES THAT WITHHOLD THEM.
+    (PLUGIN, 'the answer given whether or not it was asked for',
+     '\t\tif (showAnswers && ClueSteps.ANSWER[step].length() > 0) {',
+     '\t\tif (ClueSteps.ANSWER[step].length() > 0) {'),
+    (PLUGIN, 'the person named whether or not it was asked for',
+     '\t\t} else if (showAnswers && !namesPerson(step)) {',
+     '\t\t} else if (!namesPerson(step)) {'),
+    (PLUGIN, 'the answer still on the right of the row with the switch off',
+     '\t\t\treturn showAnswers ? ClueSteps.ANSWER[step] : "";',
+     '\t\t\treturn ClueSteps.ANSWER[step];'),
+    (PLUGIN, 'the guardian warning not switchable',
+     '\t\tif (showGuardian && ClueSteps.GUARD[step].length() > 0) {',
+     '\t\tif (ClueSteps.GUARD[step].length() > 0) {'),
+    (PLUGIN, 'the guardian warning replacing where to go rather than following it',
+     '\t\t\tif (out.length() > 0) {\n\t\t\t\tout.append(" - ");\n\t\t\t}\n',
+     '\t\t\tout.setLength(0);\n'),
+    (PLUGIN, 'every step told to speak to somebody, including the ones that already say so',
+     '\t\treturn wordsOf(step).toLowerCase().indexOf(who.toLowerCase()) >= 0;',
+     '\t\treturn false;'),
+    (PLUGIN, 'no step told who it hides, because they all count as already saying it',
+     '\t\treturn wordsOf(step).toLowerCase().indexOf(who.toLowerCase()) >= 0;',
+     '\t\treturn true;'),
+    (PLUGIN, 'a placeless step given a reading, which prints as "-1, -1"',
+     '\t\tif (ClueSteps.SPOT[step] == ClueSteps.SPOT_NONE) {\n\t\t\treturn "";\n\t\t}\n',
+     ''),
+
+    # ---- THE SCRAPE. Two thirds of the table comes out of scripts rather than off a param, so
+    # a pattern that goes stale here costs destinations and still builds a table.
+    (MAKER, 'the tile pattern narrowed, so the crates and drawers lose their places',
+     r"LOC_SPOT = re.compile(r'loc_coord\s*=\s*(\d+(?:_\d+){4})\s*&\s*inv_total\(inv,\s*(trail_clue_\w+)\)')",
+     r"LOC_SPOT = re.compile(r'loc_coord = (\d+(?:_\d+){4}) & inv_total\(inv, (trail_clue_\w+)\)x')"),
+    (MAKER, "the trigger pattern narrowed, so nobody's name is scraped at all",
+     r"TRIGGER = re.compile(r'^\[(?:op|ap)npc\d,([a-z0-9_]+)\]')",
+     r"TRIGGER = re.compile(r'^\[(?:op|ap)npc\d,([a-z0-9_]+)\]x')"),
+    (MAKER, 'the npc display name dropped for the script name behind it',
+     "        who = npcs.get(people[0], '')",
+     "        who = people[0]"),
+    # NOT MUTATED: the `len(people) == 1` and `len(tiles) == 1` tie-breaks. Loosening either to
+    # >= 1 produces a byte-identical table, because no step in the content today is claimed by
+    # two scripts - measured, not assumed. They are equivalent mutants and equivalent mutants
+    # are deleted rather than chased; the guards stay because the trail is still being wired.
+    (MAKER, "the scroll's own dig spot passed over for a tile some script mentions",
+     "        if where:\n            spot = SPOT_DIG\n        else:",
+     "        if False:\n            spot = SPOT_DIG\n        else:"),
+    (MAKER, 'the guardian left off the steps that have one',
+     "            'guard': npcs.get(guardian, '') if guardian else '',",
+     "            'guard': '',"),
+    (MAKER, 'the challenge answers left off',
+     "            'answer': params.get('trail_challenge_answer', ''),",
+     "            'answer': '',"),
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (STEPS, PLUGIN):
+    for path in {m[0] for m in MUTS}:
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
-    _work, inside = workspace('loot')
+    if not os.path.isdir(CONTENT):
+        print('no content repo at %s - the generator mutations below will survive, honestly'
+              % CONTENT)
+    env = dict(os.environ, DP_CONTENT=CONTENT)
+    _work, inside = workspace('clue')
     muts = [m for m in MUTS if not only or only in m[1]]
     print('running %d of %d mutations' % (len(muts), len(MUTS)))
     bad = loose = 0
@@ -97,7 +184,7 @@ def main():
             with open(inside(path), 'w', encoding='utf-8', newline='') as f:
                 f.write(orig[path].replace(find, repl))
             r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True,
-                               timeout=900)
+                               timeout=900, env=env)
         except subprocess.TimeoutExpired:
             print('  %-5s %-76s %s' % ('HUNG', why, 'the suite never finished - not a catch'))
             loose += 1

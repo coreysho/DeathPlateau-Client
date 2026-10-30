@@ -6,7 +6,7 @@ import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 
 /**
- * The clue scroll in your bag: what it says, and where it wants you.
+ * The clue scrolls in your bag: what they say, and where they want you.
  *
  * NO SERVER CHANGE, UNLIKE THE OTHER THREE, and the reason is worth writing down. Every clue
  * step in this game is its OWN OBJECT - 107 of them - and each carries what it says and where
@@ -15,53 +15,113 @@ import jagex2.client.plugin.PluginDescriptor;
  * transmitted, and no varp was added.
  *
  * WHAT THE TABLE IS FOR. Those params are server-side - this cache has never heard of
- * trail_desc - so the text and the coordinate are generated into {@link ClueSteps} from the
- * content, and the test regenerates and compares. A clue added there and not here is a failing
- * test rather than a scroll the page has nothing to say about.
+ * trail_desc - so the text, the coordinate, the person and the answer are generated into
+ * {@link ClueSteps} from the content, and the test regenerates and compares. A clue added
+ * there and not here is a failing test rather than a scroll the page has nothing to say about.
  *
- * A HELPER AND NOT A SOLVER. It shows what the scroll already tells the player, in a place they
- * can read while walking, and for the 38 coordinate clues it works out the compass bearing and
- * distance - arithmetic on two numbers the player has both of. It does not walk anywhere, dig,
- * or click: no plugin here does, and a clue that solved itself would not be a clue.
+ * A HELPER AND NOT A SOLVER, STILL, BUT THE LINE MOVED. It shows what the scroll says, in a
+ * place a player can read while walking, and for the 65 steps with a place it works out the
+ * compass bearing and distance - arithmetic on two numbers the player has both of. It also
+ * now names the person an anagram hides and gives a challenge scroll its answer, which the
+ * scroll does NOT already say: that is the owner's call rather than this file's, and the two
+ * switches below turn each of them off. What it still does not do is act. It does not walk,
+ * dig, or click: no plugin here does, and a clue that solved itself would not be a clue.
+ *
+ * ONE ROW PER SCROLL. A player can carry an easy, a medium and a hard at once, and an earlier
+ * version of this page showed only whichever sat nearest the top left - so two thirds of what
+ * somebody was carrying was invisible, and which third showed depended on how they had shuffled
+ * their bag. They all show now, in slot order.
  */
 @PluginDescriptor(
 	name = "Clue scroll",
-	description = "What your clue says and how far off the dig spot is",
+	description = "What your clues say, where they point, and who is waiting there",
 	key = "clue-scroll",
 	apiLevel = 10
 )
 public final class CluePlugin extends Plugin {
 
 	@ConfigItem(keyName = "showDistance", name = "Show the bearing and distance",
-		description = "For coordinate clues, how far off you are and which way.")
+		description = "For steps with a place, how far off you are and which way.")
 	public boolean showDistance = true;
 
-	// ------------------------------------------------------------------ finding the scroll
+	@ConfigItem(keyName = "showAnswers", name = "Give away anagrams and challenge answers",
+		description = "The person an anagram hides, and the number a challenge scroll wants.")
+	public boolean showAnswers = true;
+
+	@ConfigItem(keyName = "showGuardian", name = "Warn about guardians",
+		description = "Whether something attacks when this one is dug up.")
+	public boolean showGuardian = true;
 
 	/**
-	 * The slot holding a clue, or -1 for none.
+	 * The bag, and the slots of it holding clues, as of the last time the page asked how many
+	 * rows there were.
 	 *
-	 * THE FIRST ONE FOUND, in slot order, which matters because a player can carry an easy, a
-	 * medium and a hard at once. Slot order is what they arranged, so the one nearest the top
-	 * left is the one they are most likely working on - and the page says which it is by name.
+	 * READ ON THE GAME THREAD AND ONLY THERE, like every ConfigList. The panel takes one
+	 * snapshot per frame - size() and then the accessors, in order - so taking both of these
+	 * in size() is what keeps row 2 the same scroll for its label as it was for its icon.
+	 * Asking the context again per accessor would let an inventory change mid-snapshot shift
+	 * the rows under themselves: a dropped scroll between label(1) and icon(1) is a row whose
+	 * words and picture are two different clues.
 	 */
-	int clueSlot() {
-		if (this.ctx == null) {
-			return -1;
-		}
-		int slots = this.ctx.getInventorySize();
-		for (int slot = 0; slot < slots; slot++) {
-			if (ClueSteps.indexOf(this.ctx.getInventoryObjId(slot)) >= 0) {
-				return slot;
+	int[] bag = new int[0];
+
+	int[] slots = new int[0];
+
+	// ------------------------------------------------------------------ finding the scrolls
+
+	/**
+	 * Every slot of a bag holding a clue, in slot order, which is the order they are shown in.
+	 *
+	 * Static and handed the bag rather than reading the context, so the test can lay out a
+	 * player's inventory without a client under it.
+	 */
+	static int[] clueSlots(int[] objIds) {
+		int[] found = new int[objIds.length];
+		int count = 0;
+		for (int slot = 0; slot < objIds.length; slot++) {
+			if (ClueSteps.indexOf(objIds[slot]) >= 0) {
+				found[count++] = slot;
 			}
 		}
-		return -1;
+		int[] out = new int[count];
+		System.arraycopy(found, 0, out, 0, count);
+		return out;
 	}
 
-	/** Where in the table this player's clue sits, or -1 when they are carrying none. */
-	int step() {
-		int slot = this.clueSlot();
-		return slot < 0 ? -1 : ClueSteps.indexOf(this.ctx.getInventoryObjId(slot));
+	/** What this player is carrying, slot by slot, or nothing at all before there is a world. */
+	int[] carrying() {
+		if (this.ctx == null) {
+			return new int[0];
+		}
+		int size = this.ctx.getInventorySize();
+		int[] objIds = new int[size];
+		for (int slot = 0; slot < size; slot++) {
+			objIds[slot] = this.ctx.getInventoryObjId(slot);
+		}
+		return objIds;
+	}
+
+	/**
+	 * Where in the table the scroll in a given row sits, or -1 when there is no such row.
+	 *
+	 * THE ROW INDEX IS NOT TRUSTED. It comes from a panel whose snapshot is a frame behind the
+	 * bag, so the row that existed when size() answered may not exist by the time its label is
+	 * asked for - and a page that throws there takes the whole sidebar with it.
+	 */
+	static int stepAt(int[] slots, int[] objIds, int row) {
+		if (row < 0 || row >= slots.length) {
+			return -1;
+		}
+		int slot = slots[row];
+		if (slot < 0 || slot >= objIds.length) {
+			return -1;
+		}
+		return ClueSteps.indexOf(objIds[slot]);
+	}
+
+	/** The same, for the rows this page last drew. */
+	int stepOf(int row) {
+		return stepAt(this.slots, this.bag, row);
 	}
 
 	// ------------------------------------------------------------------ the arithmetic
@@ -127,6 +187,90 @@ public final class CluePlugin extends Plugin {
 		return flat.trim();
 	}
 
+	// ------------------------------------------------------------------ what a step says
+
+	/** The clue's words, or what a map clue has instead of them. */
+	static String wordsOf(int step) {
+		if (step < 0) {
+			return "";
+		}
+		String text = flatten(ClueSteps.TEXT[step]);
+		if (text.length() > 0) {
+			return text;
+		}
+		// A MAP CLUE HAS NO WORDS. Its text is a picture the client is handed only when the
+		// scroll is opened, so the page says what it is and leans on the place below.
+		return "Map clue";
+	}
+
+	/**
+	 * Whether naming this step's person would only repeat its own words.
+	 *
+	 * HALF THE PEOPLE IN THE TABLE ARE ALREADY IN THE TEXT - "Speak to Ned in Draynor Village"
+	 * sits beside WHO of "Ned" - and a second line saying "speak to Ned" under it is the page
+	 * talking to itself. The ones worth printing are the ones the words hide: an anagram, or a
+	 * riddle whose answer is a pun on a name.
+	 */
+	static boolean namesPerson(int step) {
+		String who = ClueSteps.WHO[step];
+		if (who.length() == 0) {
+			return true;
+		}
+		return wordsOf(step).toLowerCase().indexOf(who.toLowerCase()) >= 0;
+	}
+
+	/**
+	 * The second line: where to go, or who to find, and what is waiting there.
+	 *
+	 * Static and fed its numbers rather than reading the context, so the test can walk a player
+	 * around a step without a client under it.
+	 */
+	static String guidance(int step, int fromX, int fromZ, int plane,
+		boolean showDistance, boolean showAnswers, boolean showGuardian) {
+		if (step < 0) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		if (showAnswers && ClueSteps.ANSWER[step].length() > 0) {
+			out.append("the answer is ").append(ClueSteps.ANSWER[step]);
+		} else if (showAnswers && !namesPerson(step)) {
+			out.append("speak to ").append(ClueSteps.WHO[step]);
+		} else if (showDistance && ClueSteps.SPOT[step] != ClueSteps.SPOT_NONE) {
+			int away = paces(fromX, fromZ, ClueSteps.X[step], ClueSteps.Z[step]);
+			String way = bearing(fromX, fromZ, ClueSteps.X[step], ClueSteps.Z[step]);
+			boolean dig = ClueSteps.SPOT[step] == ClueSteps.SPOT_DIG;
+			if ("here".equals(way)) {
+				out.append(dig ? "dig here" : "you are standing on it");
+			} else {
+				out.append(dig ? "dig " : "").append(away).append(" tiles ").append(way);
+			}
+			if (ClueSteps.LEVEL[step] != plane) {
+				out.append(", on another floor");
+			}
+		}
+		if (showGuardian && ClueSteps.GUARD[step].length() > 0) {
+			if (out.length() > 0) {
+				out.append(" - ");
+			}
+			out.append("a ").append(ClueSteps.GUARD[step]).append(" guards it");
+		}
+		return out.toString();
+	}
+
+	/** The reading on the right: the place itself, or the number a challenge wants. */
+	static String reading(int step, boolean showAnswers) {
+		if (step < 0) {
+			return "";
+		}
+		if (ClueSteps.ANSWER[step].length() > 0) {
+			return showAnswers ? ClueSteps.ANSWER[step] : "";
+		}
+		if (ClueSteps.SPOT[step] == ClueSteps.SPOT_NONE) {
+			return "";
+		}
+		return ClueSteps.X[step] + ", " + ClueSteps.Z[step];
+	}
+
 	// ------------------------------------------------------------------ the page
 
 	@Override
@@ -135,25 +279,31 @@ public final class CluePlugin extends Plugin {
 			this.addPanel("Clue", "scroll", new ConfigList() {
 
 				public int size() {
-					return CluePlugin.this.step() >= 0 ? 1 : 0;
+					CluePlugin.this.bag = CluePlugin.this.carrying();
+					CluePlugin.this.slots = clueSlots(CluePlugin.this.bag);
+					return CluePlugin.this.slots.length;
 				}
 
 				public String label(int index) {
-					return CluePlugin.this.label();
+					return wordsOf(CluePlugin.this.stepOf(index));
 				}
 
 				public String detail(int index) {
-					return CluePlugin.this.detail();
+					return CluePlugin.this.detail(index);
 				}
 
 				public String value(int index) {
-					return CluePlugin.this.value();
+					return reading(CluePlugin.this.stepOf(index), CluePlugin.this.showAnswers);
 				}
 
 				public jagex2.client.plugin.Sprite icon(int index) {
-					int slot = CluePlugin.this.clueSlot();
-					return slot < 0 ? null
-						: CluePlugin.this.ctx.getObjIcon(CluePlugin.this.ctx.getInventoryObjId(slot), 1);
+					int step = CluePlugin.this.stepOf(index);
+					if (step < 0 || CluePlugin.this.ctx == null) {
+						return null;
+					}
+					// From the snapshot's own bag, so the picture is the scroll whose words
+					// are on the same row even if the bag moved in between.
+					return CluePlugin.this.ctx.getObjIcon(ClueSteps.ID[step], 1);
 				}
 
 				public boolean removable(int index) {
@@ -169,46 +319,13 @@ public final class CluePlugin extends Plugin {
 		}
 	}
 
-	/** The clue's words, or what a map clue has instead of them. */
-	String label() {
-		int step = this.step();
-		if (step < 0) {
+	/** The second line for a row, with the player's own position filled in. */
+	String detail(int row) {
+		int step = this.stepOf(row);
+		if (step < 0 || this.ctx == null) {
 			return "";
 		}
-		String text = flatten(ClueSteps.TEXT[step]);
-		if (text.length() > 0) {
-			return text;
-		}
-		// A MAP CLUE HAS NO WORDS. Its text is a picture the client is handed only when the
-		// scroll is opened, so the page says what it is and leans on the coordinate below.
-		return "Map clue";
-	}
-
-	/** The bearing and distance, for the coordinate clues that have one. */
-	String detail() {
-		int step = this.step();
-		if (step < 0 || !this.showDistance || this.ctx == null) {
-			return "";
-		}
-		if (ClueSteps.X[step] < 0) {
-			return "";
-		}
-		int toX = ClueSteps.X[step];
-		int toZ = ClueSteps.Z[step];
-		int away = paces(this.ctx.getWorldX(), this.ctx.getWorldZ(), toX, toZ);
-		String way = bearing(this.ctx.getWorldX(), this.ctx.getWorldZ(), toX, toZ);
-		if (ClueSteps.LEVEL[step] != this.ctx.getPlane()) {
-			return away + " tiles " + way + ", on another floor";
-		}
-		return "here".equals(way) ? "you are standing on it" : away + " tiles " + way;
-	}
-
-	/** The dig spot itself, so a player can read it off rather than pace it out. */
-	String value() {
-		int step = this.step();
-		if (step < 0 || ClueSteps.X[step] < 0) {
-			return "";
-		}
-		return ClueSteps.X[step] + ", " + ClueSteps.Z[step];
+		return guidance(step, this.ctx.getWorldX(), this.ctx.getWorldZ(), this.ctx.getPlane(),
+			this.showDistance, this.showAnswers, this.showGuardian);
 	}
 }
