@@ -32,15 +32,17 @@ public class WorldMapTest {
 	static int failures = 0;
 
 	public static void main(String[] args) throws Exception {
-		layout();
-		regions();
-		shrinking();
-		walls();
 		File pack = packDir();
 		if (pack == null) {
 			System.out.println("FAIL no cache: pass -Ddp.pack=<engine>/data/pack");
 			failures++;
+		} else if (System.getProperty("dp.coldstart") != null) {
+			coldStart(pack);
 		} else {
+			layout();
+			regions();
+			shrinking();
+			walls();
 			render(pack);
 		}
 		System.out.println();
@@ -292,6 +294,16 @@ public class WorldMapTest {
 		yes("a building anchored next door is still drawn on this square ("
 			+ differences(over, bareEdges) + " pixels)", differences(over, bareEdges) > 0);
 
+		// AND NEXT DOOR IS THE RIGHT NEXT DOOR. That it reaches over at all is not enough: the
+		// nine squares go into the scene at nine offsets, and offsets that have x and z the
+		// wrong way round still put scenery over all four edges - just the wrong neighbour's,
+		// turned a quarter. So each neighbour is let in on its own, and what it spills has to
+		// land on the side it came from.
+		spill("the square to the west", 54, 51, -1, 0, WEST);
+		spill("the square to the north", 54, 51, 0, 1, NORTH);
+		spill("the square to the east", 53, 51, 1, 0, EAST);
+		spill("the square to the south", 53, 51, 0, -1, SOUTH);
+
 		// NORTH UP, ON REAL GROUND. The ground does not stop at a square boundary: the bottom
 		// row of this square and the top row of the square to the south are neighbouring tiles
 		// in the world and look like each other, while its bottom row is 64 tiles away and does
@@ -322,22 +334,85 @@ public class WorldMapTest {
 		eq("and the northern square is still the top half",
 			0, differencesAt(half, 0, 0, WorldMapRender.shrink(north, 2)));
 
-		// AND FROM THE COMMAND LINE, which is the only caller that is not this test: every
-		// check above reaches past main into the pieces, so main could stop loading the models
-		// altogether - stripping the scenery off every map anyone renders - and none of them
-		// would notice.
-		File png = File.createTempFile("worldmap", ".png");
-		png.deleteOnExit();
-		WorldMapRender.main(new String[] { pack.getPath(), png.getPath(), "50,50", "0" });
-		BufferedImage written = javax.imageio.ImageIO.read(png);
-		eq("the command line writes a square", 256, written.getWidth());
-		yes("with its scenery on it (" + exactly(written, 0xEEEEEE) + " wall pixels)",
-			exactly(written, 0xEEEEEE) > 200);
-
 		// A SQUARE THE INDEX HAS NOT GOT IS NOT A BLACK SQUARE, it is nothing at all, so that
 		// renderAll leaves the sea black rather than painting a hole over its neighbour.
 		yes("a square outside the index renders nothing",
 			WorldMapRender.renderSquare(200, 200, 0) == null);
+	}
+
+	/**
+	 * The command line, in a JVM that has done nothing else.
+	 *
+	 * EVERY OTHER CHECK REACHES PAST MAIN into the pieces, so main could stop loading the
+	 * models altogether - stripping the scenery off every map anyone rendered - and the suite
+	 * would stay green. Calling main from the middle of the suite does not catch that either:
+	 * the models are a static table, and so are the caches LocType keeps of the models it has
+	 * already built, and by then this test has filled all of them. So the runner starts a
+	 * second JVM for this one check, which is the only way to see what main finds when it is
+	 * the first thing to run.
+	 */
+	static void coldStart(File pack) throws Exception {
+		System.out.println("-- the command line, cold --");
+		File png = File.createTempFile("worldmap", ".png");
+		png.deleteOnExit();
+		WorldMapRender.main(new String[] { pack.getPath(), png.getPath(), "50,50", "0" });
+		BufferedImage written = javax.imageio.ImageIO.read(png);
+		eq("it writes a square", 256, written.getWidth());
+		yes("with its scenery on it (" + exactly(written, 0xEEEEEE) + " wall pixels)",
+			exactly(written, 0xEEEEEE) > 200);
+	}
+
+	static final int WEST = 0;
+	static final int NORTH = 1;
+	static final int EAST = 2;
+	static final int SOUTH = 3;
+
+	/**
+	 * One neighbour's scenery, let in on its own, and which edge of the picture it lands on.
+	 *
+	 * A loc is anchored at a tile and drawn from there, so a building just over the western
+	 * line paints its last column or two onto this square's western edge and nowhere else.
+	 * Four tiles is as deep as the largest of them reaches.
+	 */
+	static void spill(String where, int sx, int sz, int dx, int dz, int edge) throws Exception {
+		BufferedImage bare = onlyLocs(sx, sz, 0, 0);
+		BufferedImage with = onlyLocs(sx, sz, dx, dz);
+		int n = 0;
+		int deepest = -1;
+		for (int y = 0; y < bare.getHeight(); y++) {
+			for (int x = 0; x < bare.getWidth(); x++) {
+				if (bare.getRGB(x, y) == with.getRGB(x, y)) {
+					continue;
+				}
+				n++;
+				int depth = edge == WEST ? x
+					: edge == NORTH ? y
+					: edge == EAST ? bare.getWidth() - 1 - x
+					: bare.getHeight() - 1 - y;
+				if (depth > deepest) {
+					deepest = depth;
+				}
+			}
+		}
+		yes(where + " reaches over the line (" + n + " pixels)", n > 0);
+		yes(where + " lands on that side, " + deepest + " pixels in",
+			deepest >= 0 && deepest < 4 * WorldMapRender.SCALE);
+	}
+
+	/** The square with its own scenery and one neighbour's, and nobody else's. */
+	static BufferedImage onlyLocs(int sx, int sz, int dx, int dz) throws Exception {
+		int[] locs = WorldMapRender.mapLoc;
+		int[] mask = new int[locs.length];
+		for (int i = 0; i < locs.length; i++) {
+			int key = WorldMapRender.mapIndex[i];
+			mask[i] = key == (sx << 8) + sz || key == (sx + dx << 8) + (sz + dz) ? locs[i] : -1;
+		}
+		WorldMapRender.mapLoc = mask;
+		try {
+			return WorldMapRender.renderSquare(sx, sz, 0, 20);
+		} finally {
+			WorldMapRender.mapLoc = locs;
+		}
 	}
 
 	/** A square rendered, with a renderer that threw reported as a failure of its own. */
