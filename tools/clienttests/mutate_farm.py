@@ -120,6 +120,41 @@ MUTS = [
      '\t\t16, 17, 18, 19,               // herbs 1-4',
      '\t\t8, 9, 10, 11,                 // herbs 1-4'),
 
+    # ---- THE CROP'S PICTURE AND THE BAR.
+    (PLUGIN, 'the name tried stripped first, so Potato seed never matches the seed item',
+     '\t\tout.add(name);\n\t\tString bare = name;',
+     '\t\tString bare = name;'),
+    (PLUGIN, 'Diseased not taken off, so a sick patch shows no picture at all',
+     "\t\tfor (String prefix : new String[] { \"Diseased \", \"Dead \" }) {",
+     '\t\tfor (String prefix : new String[] {}) {'),
+    (PLUGIN, 'the plant suffix left on, so a growing crop shows nothing',
+     "\t\tfor (String suffix : new String[] { \" plant\", \" bush\", \" tree\", \" plants\" }) {",
+     '\t\tfor (String suffix : new String[] {}) {'),
+    (PLUGIN, 'the bar running past full when the minute tick is late',
+     '\t\tif (gone >= span) {\n\t\t\treturn 100;\n\t\t}',
+     ''),
+    (PLUGIN, 'a patch with nothing to measure drawn at 0 rather than with no bar',
+     '\t\tif (due <= changedAt || now < changedAt) {\n\t\t\treturn -1;\n\t\t}',
+     '\t\tif (due <= changedAt || now < changedAt) {\n\t\t\treturn 0;\n\t\t}'),
+    (PLUGIN, 'the bar measured from now rather than from the last change',
+     '\t\tlong gone = now - changedAt;',
+     '\t\tlong gone = span;'),
+
+    # ---- THE TABS. A row under the wrong tab is a real patch with a real crop, filed one
+    # family along, and the page looks perfectly fine.
+    (PLUGIN, 'the allotments counted as one family too few, shifting every tab after them',
+     '\t\tif (patch < 8) {\n\t\t\treturn 1;\n\t\t}',
+     '\t\tif (patch < 4) {\n\t\t\treturn 1;\n\t\t}'),
+    (PLUGIN, 'the family worked out in fours from zero, so herbs land under allotments',
+     '\t\treturn patch < 32 ? 2 + (patch - 8) / 4 : -1;',
+     '\t\treturn patch < 32 ? 2 + patch / 4 : -1;'),
+    (PLUGIN, 'the All tab filtering like any other, so the page opens empty',
+     '\t\treturn tab <= 0 || familyOf(patch) == tab;',
+     '\t\treturn familyOf(patch) == tab;'),
+    (PLUGIN, 'every tab showing everything, so choosing one does nothing',
+     '\t\treturn tab <= 0 || familyOf(patch) == tab;',
+     '\t\treturn true;'),
+
     # ---- THE TABLE. A wrong id reads a different patch, with no symptom but a row that never moves.
     (PLUGIN, 'a patch varbit off by one, so a row reads the patch next door',
      '\t\t708, 709, 710, 711, 712, 713, 714, 715,   // allotments 1-8',

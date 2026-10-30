@@ -53,8 +53,8 @@ MUTS = [
     # reports these two as stale the moment it does, which is how they get updated rather than
     # quietly matching nothing.
     (ICONS, 'coins missing from the known set, so nothing vouches for the name',
-     '\tpublic static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "bell", "wrench", "download", "move", "refresh", "list" };',
-     '\tpublic static final String[] KNOWN = { "chart", "bag", "sprout", "bell", "wrench", "download", "move", "refresh", "list" };'),
+     '\tpublic static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "list" };',
+     '\tpublic static final String[] KNOWN = { "chart", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "list" };'),
     (ICONS, 'bag missing from the known set, so the loot page falls through to the plain list icon',
      '\t\tif ("bag".equals(name)) {\n\t\t\treturn bag(size, colour);\n\t\t}\n',
      ''),

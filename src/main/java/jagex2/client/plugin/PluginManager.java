@@ -68,7 +68,9 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.NpcIndicatorsPlugin",
 		"jagex2.client.plugin.builtin.AgilityPlugin",
 		"jagex2.client.plugin.builtin.LootTrackerPlugin",
-		"jagex2.client.plugin.builtin.FarmPatchesPlugin"
+		"jagex2.client.plugin.builtin.FarmPatchesPlugin",
+		"jagex2.client.plugin.builtin.SlayerPlugin",
+		"jagex2.client.plugin.builtin.CluePlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */
@@ -1181,6 +1183,11 @@ public final class PluginManager {
 		public final List<ConfigList.Row> rows;
 		public final String emptyMessage;
 
+		/** The strip above the rows: pictures, their names, and which one is showing. */
+		public final java.awt.image.BufferedImage[] tabs;
+		public final String[] tabTips;
+		public final int selectedTab;
+
 		private final ConfigList list;
 
 		PanelSnapshot(Entry entry, Plugin.Panel panel) {
@@ -1190,6 +1197,20 @@ public final class PluginManager {
 			this.list = panel.list;
 			this.rows = panel.list.snapshot();
 			this.emptyMessage = panel.list.emptyMessage();
+			// Copied here for the reason ConfigList.Row gives: these come out of the cache's
+			// round-robin, this is the game thread, and the strip is painted on another.
+			this.tabs = ConfigList.toImages(panel.list.tabs());
+			this.tabTips = new String[this.tabs.length];
+			for (int i = 0; i < this.tabs.length; i++) {
+				String tip = panel.list.tabTip(i);
+				this.tabTips[i] = tip == null ? "" : tip;
+			}
+			this.selectedTab = panel.list.selectedTab();
+		}
+
+		/** Shows a tab. CALL ON THE GAME THREAD. */
+		public void selectTab(int index) {
+			this.list.onTab(index);
 		}
 
 		/** Presses a row's button. CALL ON THE GAME THREAD. */

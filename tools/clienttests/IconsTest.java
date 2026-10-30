@@ -58,6 +58,9 @@ public class IconsTest {
 		System.out.println();
 		System.out.println("3. every icon actually draws something");
 		inkTests();
+		System.out.println();
+		System.out.println("4. a tab the cache has no picture for");
+		tabFallbackTests();
 
 		if (args.length > 0) {
 			sheet(args[0]);
@@ -195,6 +198,20 @@ public class IconsTest {
 		// real name is satisfied by anything at all.
 		check(!Icons.isKnown("no-such-icon"), "and isKnown says so rather than waving it through");
 		check(!Icons.isKnown(""), "nor does it accept an empty name");
+
+		// AND NOTHING MAY TAKE THE FALLBACK AS ITS OWN. An unknown name falls through to the
+		// list icon, so a page wearing it is indistinguishable from any plugin that asks for an
+		// icon this set has not got - which is the unreadable rail all over again, and which
+		// the check above cannot see, because a fallback is not a plugin asking. The clue page
+		// asked for "list" first and this is what sent it back.
+		try {
+			for (java.util.Map.Entry<String, String> e : askedFor().entrySet()) {
+				check(!"list".equals(e.getValue()),
+					e.getKey() + " does not take the icon an unknown name falls back to");
+			}
+		} catch (Exception unreadable) {
+			check(false, "the plugins' icons could be read (" + unreadable + ")");
+		}
 	}
 
 	static void inkTests() {
@@ -211,6 +228,20 @@ public class IconsTest {
 			check(lit > SIZE * 2 && lit < SIZE * SIZE * 3 / 4,
 				name + " covers a sensible amount of its box (" + lit + " of " + SIZE * SIZE + ")");
 		}
+	}
+
+	/**
+	 * A tab whose picture the cache has not got still has to be clickable.
+	 *
+	 * The farming strip is pictures, found by asking the obj table for an item by name, and a
+	 * name this cache does not have gets no picture. A blank button is a thing a player cannot
+	 * tell from its neighbour or aim at with any confidence, so it falls back to words.
+	 */
+	static void tabFallbackTests() {
+		check("Her".equals(PanelPage.shortTip("Herb")), "a tab with no picture shows the start of its name");
+		check("All".equals(PanelPage.shortTip("All")), "...whole, when the name is short enough");
+		check("?".equals(PanelPage.shortTip("")), "...and something clickable when there is no name either");
+		check("?".equals(PanelPage.shortTip(null)), "...including when there is none at all");
 	}
 
 	/** A strip of every icon, so the set can be looked at rather than described. */

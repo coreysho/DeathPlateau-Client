@@ -377,13 +377,19 @@ public class LootTrackerTest {
 
 		// Two sources, a total, and no unattributed row because there is nothing unattributed.
 		check(plugin.rowCount() == 3, "two sources and a total");
-		check("Hill giant".equals(plugin.label(0)) && "Goblin".equals(plugin.label(1)),
+		// "Zulrah x 13": the kill count rides with the name, where the eye already is, leaving
+		// the value column for the gp.
+		check(plugin.label(0).indexOf("Hill giant") == 0 && plugin.label(1).indexOf("Goblin") == 0,
 			"the richer source is the first row");
+		check(plugin.label(0).indexOf("x 1") > 0, "...and its name carries the kill count");
 		check("500".equals(plugin.value(0)), "a row shows what that source gave");
 		check("Total".equals(plugin.label(2)) && "600".equals(plugin.value(2)), "and the last row totals them");
 		check("2 kills".equals(plugin.detail(2)), "...with the kill count under it");
 		check(plugin.detail(0).indexOf("1 kill") == 0, "one kill is singular");
-		check(plugin.detail(0).indexOf("Big bones") > 0, "...and the row names the best drop");
+		// The best drop used to be named here. It is a picture under the row now, so saying it
+		// in words as well would be the same thing twice in a column this narrow.
+		check(plugin.detail(0).indexOf("Big bones") < 0,
+			"...and does not also name the best drop, which is drawn under the row");
 
 		// The unattributed row only exists when there is something in it, and it is IN the list
 		// rather than somewhere a player reading the total would miss it.
@@ -404,13 +410,36 @@ public class LootTrackerTest {
 		check("Total".equals(plugin.label(2)), "the total is still there");
 		plugin.groupBy = "Source";
 
+		// THE DROPS AS A GRID, which is what this page was sent back to do: a row names the
+		// source and the kills, and the drops themselves are pictures under it. The icons need
+		// a cache to draw, which a headless run has none of, so what is checked here is the
+		// shape - one cell per kind of item, richest first, nothing under a total row.
+		check(plugin.gridItems(0) != null && plugin.gridItems(0).size() == 1,
+			"a source's row carries one cell per kind of item it dropped");
+		drop(loot, T, "Hill giant", 526, "Bones", 1, 100);
+		drop(loot, T, "Hill giant", 995, "Coins", 50, 1);
+		check(plugin.gridItems(0).size() == 3, "...growing as it drops more kinds");
+		check(plugin.gridItems(plugin.rowCount() - 1) == null, "the total row carries no drops");
+		check(plugin.gridItems(99) == null, "nor does a row that is not there");
+
+
 		// Removing a row forgets that source, and only in the view where a row IS a source.
 		plugin.forget(0);
-		check(plugin.sources().size() == 1 && "Goblin".equals(plugin.label(0)),
+		check(plugin.sources().size() == 1 && plugin.label(0).indexOf("Goblin") == 0,
 			"removing a row forgets that source");
 		plugin.groupBy = "Item";
 		plugin.forget(0);
 		check(plugin.sources().size() == 1, "...and does nothing in the item view, where a row is not one");
+		plugin.groupBy = "Source";
+
+		// A haul of a hundred kinds must not push the rest of the page off the bottom. Last,
+		// because filling a source up reorders the page and the checks above are about order.
+		for (int i = 0; i < LootTrackerPlugin.MAX_ICONS + 5; i++) {
+			loot.record(T, 2000 + i, "Thing " + i, 1, 5);
+		}
+		check(plugin.gridItems(0).size() <= LootTrackerPlugin.MAX_ICONS,
+			"and a row stops at " + LootTrackerPlugin.MAX_ICONS + " of them");
+		check(plugin.detail(0).indexOf("showing") > 0, "...saying so when it does");
 	}
 
 	// ------------------------------------------------------------------ 10. the order

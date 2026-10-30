@@ -51,6 +51,12 @@ public class FarmPatchesTest {
 		System.out.println("6b. the countdown the server works out");
 		serverTests();
 		System.out.println();
+		System.out.println("6c. the crop's own picture, and the bar under the row");
+		pictureTests();
+		System.out.println();
+		System.out.println("6d. the strip of tabs, and what each one shows");
+		tabTests();
+		System.out.println();
 		System.out.println("7. the line the page is drawn on");
 		sourceTests();
 
@@ -292,6 +298,93 @@ public class FarmPatchesTest {
 			"nor does a negative either side read as a time");
 		// A real pair, from the sim: world minute 959310, a potato due ten minutes on.
 		check(FarmPatchesPlugin.minutesLeft(959310, 959320) == 10, "and a real pair reads plainly");
+	}
+
+	// ------------------------------------------------------------------ 6c. picture and bar
+
+	static void pictureTests() {
+		// THE NAME AS IT STANDS COMES FIRST, because some of the cache's patch names ARE item
+		// names and anything clever would spoil them.
+		String[] seed = FarmPatchesPlugin.cropItemNames("Potato seed");
+        check(seed.length >= 1 && "Potato seed".equals(seed[0]),
+			"a seedling is tried as itself first - Potato seed is a real item");
+		String[] sapling = FarmPatchesPlugin.cropItemNames("Oak sapling");
+		check("Oak sapling".equals(sapling[0]), "...and so is an Oak sapling");
+
+		// And then with the words the patch adds taken off.
+		String[] plant = FarmPatchesPlugin.cropItemNames("Potato plant");
+		check(plant.length == 2 && "Potato".equals(plant[1]),
+			"a growing crop falls back to the item it grows");
+		String[] sick = FarmPatchesPlugin.cropItemNames("Diseased Belladonna");
+		check(sick.length == 2 && "Belladonna".equals(sick[1]), "a diseased one drops the Diseased");
+		String[] dead = FarmPatchesPlugin.cropItemNames("Dead potato plant");
+		check(dead.length == 2 && "Potato".equals(dead[1]),
+			"and a dead one drops both ends, and recapitalises what the cache lower-cased");
+		String[] plain = FarmPatchesPlugin.cropItemNames("Watermelon");
+		check(plain.length == 1, "a name that needs nothing taken off is tried once");
+		check(FarmPatchesPlugin.cropItemNames("").length == 0, "and an empty name is not tried at all");
+		check(FarmPatchesPlugin.cropItemNames(null).length == 0, "nor a missing one");
+
+		// THE BAR. Between the minute the patch last changed and the minute it next advances.
+		check(FarmPatchesPlugin.growthPercent(100, 140, 100) == 0, "a stage just begun is at 0");
+		check(FarmPatchesPlugin.growthPercent(100, 140, 120) == 50, "...halfway at halfway");
+		check(FarmPatchesPlugin.growthPercent(100, 140, 139) == 97, "...and nearly there near the end");
+		check(FarmPatchesPlugin.growthPercent(100, 140, 140) == 100, "a stage that is up reads full");
+		check(FarmPatchesPlugin.growthPercent(100, 140, 900) == 100,
+			"...and stays full rather than running past 100 when the tick is late");
+		check(FarmPatchesPlugin.growthPercent(100, 100, 100) == -1,
+			"no span to measure is no bar, rather than a bar at 0");
+		check(FarmPatchesPlugin.growthPercent(100, 90, 95) == -1, "nor is a due time already behind");
+		check(FarmPatchesPlugin.growthPercent(100, 140, 50) == -1, "nor a clock before the change");
+	}
+
+	// ------------------------------------------------------------------ 6d. the tabs
+
+	static void tabTests() {
+		check(FarmPatchesPlugin.FAMILY_NAME.length == FarmPatchesPlugin.FAMILY_ITEM.length,
+			"every family has pictures to try (" + FarmPatchesPlugin.FAMILY_NAME.length + ")");
+		check("All".equals(FarmPatchesPlugin.FAMILY_NAME[0]),
+			"the first tab is everything, so the page opens as it did before tabs existed");
+
+		// THE FAMILY OF EVERY ROW, against the order PATCH_VARBIT is written in. This is the
+		// one thing here that can be wrong and still look right: a row under the wrong tab is
+		// a real patch with a real crop, filed one family along, and the page looks fine.
+		int[] expect = new int[32];
+		for (int i = 0; i < 8; i++) {
+			expect[i] = 1;                    // allotments
+		}
+		for (int i = 8; i < 32; i++) {
+			expect[i] = 2 + (i - 8) / 4;      // herbs, hops, flowers, bushes, trees, fruit
+		}
+		int wrong = 0;
+		for (int i = 0; i < 32; i++) {
+			if (FarmPatchesPlugin.familyOf(i) != expect[i]) {
+				wrong++;
+			}
+		}
+		check(wrong == 0, "every one of the 32 rows is filed under the right family");
+		// And the families line up with the names, which is the half a loop cannot check.
+		check(FarmPatchesPlugin.familyOf(0) == 1 && "Allotment".equals(FarmPatchesPlugin.FAMILY_NAME[1]),
+			"row 0 is an allotment, and tab 1 is called Allotment");
+		check(FarmPatchesPlugin.familyOf(8) == 2 && "Herb".equals(FarmPatchesPlugin.FAMILY_NAME[2]),
+			"row 8 is a herb patch, and tab 2 is called Herb");
+		check(FarmPatchesPlugin.familyOf(28) == 7 && "Fruit tree".equals(FarmPatchesPlugin.FAMILY_NAME[7]),
+			"row 28 is a fruit tree, and tab 7 is called Fruit tree");
+		check(FarmPatchesPlugin.familyOf(-1) == -1 && FarmPatchesPlugin.familyOf(99) == -1,
+			"and a row that is not there belongs to no family");
+
+		// What each tab shows.
+		check(FarmPatchesPlugin.inTab(0, 0) && FarmPatchesPlugin.inTab(31, 0),
+			"the All tab shows every patch");
+		check(FarmPatchesPlugin.inTab(8, 2) && !FarmPatchesPlugin.inTab(0, 2),
+			"the herb tab shows herbs and not allotments");
+		check(!FarmPatchesPlugin.inTab(8, 1) && FarmPatchesPlugin.inTab(0, 1),
+			"...and the allotment tab the other way round");
+		check(FarmPatchesPlugin.inTab(5, -1),
+			"a page with no tab chosen yet shows everything rather than nothing");
+
+		// The fallback for a family whose picture the cache has not got is PanelPage's, and is
+		// checked in IconsTest, which lives in that package.
 	}
 
 	// ------------------------------------------------------------------ 7. the line
