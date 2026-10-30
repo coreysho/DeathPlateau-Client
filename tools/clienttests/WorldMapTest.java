@@ -35,6 +35,7 @@ public class WorldMapTest {
 		layout();
 		regions();
 		shrinking();
+		walls();
 		File pack = packDir();
 		if (pack == null) {
 			System.out.println("FAIL no cache: pass -Ddp.pack=<engine>/data/pack");
@@ -138,11 +139,84 @@ public class WorldMapTest {
 		yes("shrinking by 1 is the picture itself", WorldMapRender.shrink(src, 1) == src);
 	}
 
+	// ----------------------------------------------------------------- walls
+
+	/**
+	 * Which pixels of a tile a wall lights up, shape by shape and rotation by rotation.
+	 *
+	 * THE WHOLE OF A BUILDING'S SHAPE IS IN THESE SIXTEEN PIXELS. A rotation off by one turns
+	 * every room in the game inside out - the walls are all still there, all still the right
+	 * length, just on the wrong side of the tile they belong to - and the result is a map of
+	 * buildings that are each one tile adrift from their own doors. There is no looking at that
+	 * and seeing it.
+	 */
+	static void walls() {
+		System.out.println("-- walls --");
+		eq("a straight wall runs down the west edge", "0,0 0,1 0,2 0,3", wall(0, 0));
+		eq("turned once, along the north edge", "0,0 1,0 2,0 3,0", wall(0, 1));
+		eq("turned twice, down the east edge", "3,0 3,1 3,2 3,3", wall(0, 2));
+		eq("turned three times, along the south edge", "0,3 1,3 2,3 3,3", wall(0, 3));
+
+		eq("a corner post is one pixel, north-west", "0,0", wall(3, 0));
+		eq("turned once, north-east", "3,0", wall(3, 1));
+		eq("turned twice, south-east", "3,3", wall(3, 2));
+		eq("turned three times, south-west", "0,3", wall(3, 3));
+
+		// AN L IS TWO WALLS, the second a quarter turn on from the first, and the pixel they
+		// share is counted once. Seven, not eight, and not four.
+		eq("an L corner is west and north", "0,0 0,1 0,2 0,3 1,0 2,0 3,0", wall(2, 0));
+		eq("turned once, north and east", "0,0 1,0 2,0 3,0 3,1 3,2 3,3", wall(2, 1));
+		eq("turned twice, east and south", "0,3 1,3 2,3 3,0 3,1 3,2 3,3", wall(2, 2));
+		eq("turned three times, south and west", "0,0 0,1 0,2 0,3 1,3 2,3 3,3", wall(2, 3));
+
+		eq("a diagonal runs north-east to south-west", "0,3 1,2 2,1 3,0", diagonal(0));
+		eq("turned once, north-west to south-east", "0,0 1,1 2,2 3,3", diagonal(1));
+		eq("turned twice, back the first way", "0,3 1,2 2,1 3,0", diagonal(2));
+		eq("turned three times, back the other", "0,0 1,1 2,2 3,3", diagonal(3));
+
+		// A WALL AT THE EDGE OF THE SQUARE belongs to the square next door, whose locs are in
+		// the scene so that a building across the boundary is drawn on both sides of it. Its
+		// pixels have to fall off this picture rather than wrap round onto the far side.
+		int[] pixels = new int[8 * 8];
+		WorldMapRender.edge(pixels, 8, -4, 0, 0, 0xFFFFFF);
+		eq("a wall a tile off the west edge lands nowhere", "", litIn(pixels, 8));
+		WorldMapRender.edge(pixels, 8, 6, 0, 2, 0xFFFFFF);
+		eq("and one off the east edge does not wrap to the west", "", litIn(pixels, 8));
+		WorldMapRender.edge(pixels, 8, 0, -4, 1, 0xFFFFFF);
+		eq("nor one off the south edge", "", litIn(pixels, 8));
+	}
+
+	static String wall(int shape, int rotation) {
+		int[] pixels = new int[8 * 8];
+		WorldMapRender.drawWall(pixels, 8, 0, 0, rotation, shape, 0xFFFFFF);
+		return litIn(pixels, 8);
+	}
+
+	static String diagonal(int rotation) {
+		int[] pixels = new int[8 * 8];
+		WorldMapRender.diagonal(pixels, 8, 0, 0, rotation, 0xFFFFFF);
+		return litIn(pixels, 8);
+	}
+
+	/** Every pixel that was written, as "x,y" in reading order, so a miss reads as a miss. */
+	static String litIn(int[] pixels, int side) {
+		StringBuilder out = new StringBuilder();
+		for (int x = 0; x < side; x++) {
+			for (int y = 0; y < side; y++) {
+				if (pixels[y * side + x] != 0) {
+					out.append(out.length() > 0 ? " " : "").append(x).append(',').append(y);
+				}
+			}
+		}
+		return out.toString();
+	}
+
 	// ----------------------------------------------------------------- the real thing
 
 	static void render(File pack) throws Exception {
 		System.out.println("-- rendering --");
 		WorldMapRender.loadConfig(pack);
+		WorldMapRender.loadModels(pack);
 		WorldMapRender.loadIndex(pack);
 		WorldMapRender.maps = new FileStream(5, 600000,
 			new RandomAccessFile(new File(pack, "main_file_cache.dat"), "r"),
@@ -150,11 +224,19 @@ public class WorldMapTest {
 
 		int sx = 50;
 		int sz = 50;
-		BufferedImage first = WorldMapRender.renderSquare(sx, sz, 0, 20);
-		yes("a square in the index renders", first != null);
+		BufferedImage first = rendered("a square in the index renders", sx, sz, 20);
 		eq("a square is 256 pixels wide", 256, first.getWidth());
 		eq("a square is 256 pixels tall", 256, first.getHeight());
 		yes("a square is not one flat colour", colours(first) > 20);
+
+		// THE SCENERY IS ON IT. Lumbridge is a castle, a church, a general store and a mill,
+		// which is a great many walls; the doors are the few pixels painted red among them.
+		// Without the models none of it reaches the scene at all and the square is bare ground,
+		// which looks perfectly fine until you go looking for a building.
+		yes("the square has walls on it (" + exactly(first, 0xEEEEEE) + " pixels)",
+			exactly(first, 0xEEEEEE) > 200);
+		yes("and doors among them (" + exactly(first, 0xEE0000) + " pixels)",
+			exactly(first, 0xEE0000) > 10);
 
 		// THE SAME SUN TWICE. method15 walks the light a step on every call, so without the pin
 		// the map would drift from one corner to the other over seven hundred squares.
@@ -177,6 +259,17 @@ public class WorldMapTest {
 		yes("without its neighbours a square is lit differently", differences(first, alone) > 0);
 		eq("and only near its edges, which is how far the lighting reaches",
 			0, differencesInside(first, alone, 6 * WorldMapRender.SCALE));
+
+		// THE NEIGHBOURS' SCENERY, TOO. A building is anchored at one tile and can be four
+		// across, so one anchored just over the boundary has most of itself inside this square;
+		// leave the neighbours' locs out and those simply are not drawn, and the only sign is a
+		// row of half-buildings along an edge that nothing else disagrees with. Not Lumbridge
+		// for this one - nothing happens to reach over its lines - but 54,51, east of it, where
+		// three hundred pixels of next door's buildings fall on this side.
+		BufferedImage over = rendered("the square east of Lumbridge renders", 54, 51, 20);
+		BufferedImage bareEdges = withoutNeighbourLocs(54, 51);
+		yes("a building anchored next door is still drawn on this square ("
+			+ differences(over, bareEdges) + " pixels)", differences(over, bareEdges) > 0);
 
 		// NORTH UP, ON REAL GROUND. The ground does not stop at a square boundary: the bottom
 		// row of this square and the top row of the square to the south are neighbouring tiles
@@ -212,6 +305,35 @@ public class WorldMapTest {
 		// renderAll leaves the sea black rather than painting a hole over its neighbour.
 		yes("a square outside the index renders nothing",
 			WorldMapRender.renderSquare(200, 200, 0) == null);
+	}
+
+	/** A square rendered, with a renderer that threw reported as a failure of its own. */
+	static BufferedImage rendered(String what, int sx, int sz, int margin) {
+		try {
+			BufferedImage img = WorldMapRender.renderSquare(sx, sz, 0, margin);
+			yes(what, img != null);
+			return img;
+		} catch (Throwable broken) {
+			checks++;
+			failures++;
+			System.out.println("FAIL " + what + ": " + broken);
+			return new BufferedImage(256, 256, BufferedImage.TYPE_INT_RGB);
+		}
+	}
+
+	/** The square with its neighbours' ground but none of their scenery. */
+	static BufferedImage withoutNeighbourLocs(int sx, int sz) throws Exception {
+		int[] locs = WorldMapRender.mapLoc;
+		int[] only = new int[locs.length];
+		for (int i = 0; i < locs.length; i++) {
+			only[i] = WorldMapRender.mapIndex[i] == (sx << 8) + sz ? locs[i] : -1;
+		}
+		WorldMapRender.mapLoc = only;
+		try {
+			return WorldMapRender.renderSquare(sx, sz, 0, 20);
+		} finally {
+			WorldMapRender.mapLoc = locs;
+		}
 	}
 
 	/** The square with no neighbours around it, which is what the margin is there to avoid. */
@@ -283,6 +405,18 @@ public class WorldMapTest {
 		return gap;
 	}
 
+	static int exactly(BufferedImage img, int rgb) {
+		int n = 0;
+		for (int y = 0; y < img.getHeight(); y++) {
+			for (int x = 0; x < img.getWidth(); x++) {
+				if ((img.getRGB(x, y) & 0xFFFFFF) == rgb) {
+					n++;
+				}
+			}
+		}
+		return n;
+	}
+
 	static int colours(BufferedImage img) {
 		java.util.HashSet<Integer> seen = new java.util.HashSet<Integer>();
 		for (int y = 0; y < img.getHeight(); y++) {
@@ -311,6 +445,16 @@ public class WorldMapTest {
 	}
 
 	// ----------------------------------------------------------------- plumbing
+
+	static void eq(String what, String want, String got) {
+		checks++;
+		if (want.equals(got)) {
+			System.out.println("ok   " + what + " = " + (got.isEmpty() ? "nothing" : got));
+		} else {
+			failures++;
+			System.out.println("FAIL " + what + ": wanted [" + want + "], got [" + got + "]");
+		}
+	}
 
 	static void eq(String what, int want, int got) {
 		checks++;

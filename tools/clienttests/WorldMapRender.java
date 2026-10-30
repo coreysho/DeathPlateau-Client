@@ -40,12 +40,18 @@ import java.util.zip.GZIPInputStream;
 import javax.imageio.ImageIO;
 
 import jagex2.config.FloType;
+import jagex2.config.LocType;
+import jagex2.config.SeqType;
 import jagex2.dash3d.CollisionMap;
+import jagex2.dash3d.Model;
 import jagex2.dash3d.World;
 import jagex2.dash3d.World3D;
+import jagex2.graphics.Pix2D;
 import jagex2.graphics.Pix3D;
+import jagex2.graphics.Pix8;
 import jagex2.io.FileStream;
 import jagex2.io.Jagfile;
+import jagex2.io.OnDemandProvider;
 import jagex2.io.Packet;
 
 public class WorldMapRender {
@@ -69,6 +75,21 @@ public class WorldMapRender {
 	 */
 	static final int[] MARGINS = new int[] { 20, 28, 12, 34, 6 };
 
+	/** The sprites the minimap draws in place of a building, by the loc's mapscene number. */
+	static final Pix8[] mapscene = new Pix8[72];
+
+	/**
+	 * A wall the player cannot interact with: near-white.
+	 *
+	 * The client rolls these two a shade apart on every login, the same jitter it gives the sun,
+	 * and then hard-codes exactly these values where the roll is out of scope - so these are
+	 * both the middle of the range and the numbers the client itself writes down.
+	 */
+	static final int WALL = 0xEEEEEE;
+
+	/** A door, gate or anything else that opens: dark red. */
+	static final int DOOR = 0xEE0000;
+
 	static int[] mapIndex;
 	static int[] mapLand;
 	static int[] mapLoc;
@@ -87,6 +108,7 @@ public class WorldMapRender {
 		int shrink = args.length > 4 ? Integer.parseInt(args[4]) : 1;
 
 		loadConfig(pack);
+		loadModels(pack);
 		loadIndex(pack);
 		maps = new FileStream(5, 600000,
 			new RandomAccessFile(new File(pack, "main_file_cache.dat"), "r"),
@@ -113,18 +135,59 @@ public class WorldMapRender {
 	}
 
 	/**
-	 * The two tables a tile colour comes out of, loaded as the client loads them.
+	 * Everything a tile's colour comes out of, loaded as the client loads it.
 	 *
 	 * The textures are here because a textured floor - water, lava, a gravel path - is drawn on
 	 * the minimap as that texture's average colour, so without them every one of those is black.
+	 *
+	 * The mapscene sprites are the furnace, the anvil, the altar, the tree: what the minimap
+	 * draws in place of a building when the loc has one. The client tints all of them by a
+	 * random shade on every login, the same jitter it gives the sun; this does not, so the map
+	 * gets the middle of that range and gets it the same way twice.
 	 */
 	static void loadConfig(File pack) throws Exception {
 		Pix3D.unpackTextures(jagfile(pack, "textures"));
 		Pix3D.initColourTable(0.8D);
 		Pix3D.initPool(20);
-		FloType.unpack(jagfile(pack, "config"));
+		Jagfile config = jagfile(pack, "config");
+		FloType.unpack(config);
+		SeqType.unpack(config);
+		LocType.unpack(config);
+		Jagfile media = jagfile(pack, "media");
+		for (int i = 0; i < mapscene.length; i++) {
+			mapscene[i] = new Pix8(media, "mapscene", i);
+		}
 		// The scene is never looked at from inside, so nothing should be hidden from the camera.
 		World.lowMem = false;
+	}
+
+	/**
+	 * Every model in the cache, all of them, before a single square is drawn.
+	 *
+	 * WHY ALL OF THEM AND WHY UP FRONT. A loc only reaches the scene if its model can be built -
+	 * World.method21 drops a piece of scenery whose model comes back null - and in the game the
+	 * models arrive from the server as the player walks towards them, which is what the whole
+	 * on-demand machinery is for. There is no server here and no walking, so the only way to be
+	 * sure a square is drawn with everything on it is to have every model in hand first. They
+	 * are kept as the bytes they were cached as plus a table of offsets into them, so this is
+	 * tens of megabytes, not hundreds, and it happens once for a run of any length.
+	 */
+	static void loadModels(File pack) throws Exception {
+		byte[] versions = jagfile(pack, "versionlist").read("model_version", null);
+		int count = versions.length / 2;
+		Model.init(count, new OnDemandProvider());
+		FileStream models = new FileStream(2, 600000,
+			new RandomAccessFile(new File(pack, "main_file_cache.dat"), "r"),
+			new RandomAccessFile(new File(pack, "main_file_cache.idx1"), "r"));
+		int loaded = 0;
+		for (int file = 0; file < count; file++) {
+			byte[] data = inflate(models.read(file));
+			if (data != null) {
+				Model.method357(data, file, (byte) 7);
+				loaded++;
+			}
+		}
+		System.out.println("models: " + loaded + " of " + count);
 	}
 
 	static Jagfile jagfile(File pack, String name) throws Exception {
@@ -166,12 +229,21 @@ public class WorldMapRender {
 		return -1;
 	}
 
-	/** One on-demand file, inflated, or null when the cache has not got it. */
+	/** One map file, inflated, or null when the cache has not got it. */
 	static byte[] fetch(int file) throws Exception {
-		if (file < 0) {
-			return null;
-		}
-		byte[] raw = maps.read(file);
+		return file < 0 ? null : inflate(maps.read(file));
+	}
+
+	/**
+	 * A cached on-demand file, as OnDemand.cycle hands it on.
+	 *
+	 * EVERYTHING IN THE CACHE IS GZIPPED. The client caches what the server sent, compressed,
+	 * and inflates it on the way out - every archive, maps and models alike. A model handed on
+	 * still compressed does not fail: Model.method357 reads its header off the last eighteen
+	 * bytes, which in a gzip stream are a plausible-looking set of counts, and the model comes
+	 * out as offsets pointing a hundred kilobytes past the end of a two hundred byte file.
+	 */
+	static byte[] inflate(byte[] raw) throws Exception {
 		if (raw == null || raw.length == 0) {
 			return null;
 		}
@@ -239,6 +311,19 @@ public class WorldMapRender {
 		}
 
 		World3D scene = new World3D(heightmap, SCENE, 4, SCENE);
+		// THE SCENERY, AND THE NEIGHBOURS' SCENERY TOO. Not only so that a building standing
+		// across the boundary is drawn on both sides of it: a loc casts a shadow onto the tiles
+		// around it, and that shadow is part of what method15 lights the ground by, so a square
+		// built without its neighbours' scenery is a different colour along its edges.
+		for (int dx = -1; dx <= 1; dx++) {
+			for (int dz = -1; dz <= 1; dz++) {
+				byte[] locs = fetch(fileFor(sx + dx, sz + dz, 1));
+				if (locs != null) {
+					world.method27(margin + dz * SQUARE, collision, margin + dx * SQUARE,
+						scene, locs);
+				}
+			}
+		}
 		// THE SAME SUN OVER EVERY SQUARE. method15 nudges the light a step or two every time it
 		// runs and keeps the walk inside its own clamps, which is why no two logins look quite
 		// alike. Over seven hundred squares that walk wanders the full width of those clamps,
@@ -258,9 +343,151 @@ public class WorldMapRender {
 				scene.method309(pixels, row + tx * SCALE, side, level, margin + tx, margin + tz);
 			}
 		}
+		drawLocs(scene, pixels, side, level, margin);
 		BufferedImage img = new BufferedImage(side, side, BufferedImage.TYPE_INT_RGB);
 		img.setRGB(0, 0, side, side, pixels, 0, side);
 		return img;
+	}
+
+	/**
+	 * Walls, doors and mapscene icons over the ground, as Client.drawMinimapLoc draws them.
+	 *
+	 * THIS IS THE ONE PART THAT IS COPIED RATHER THAN CALLED, and only because the client's own
+	 * version is wired to one particular picture: it indexes a 512-wide minimap at a fixed
+	 * offset of 48, with the scene's 104 tiles baked into the arithmetic. None of the DECISIONS
+	 * are rewritten - which pixels a wall of each shape and rotation lights up, which colour a
+	 * door gets against a wall, where a mapscene sprite is centred on a loc bigger than a tile -
+	 * only where the picture starts.
+	 *
+	 * RED IS A DOOR AND WHITE IS A WALL, which World.method21 says by the sign of the bitset: it
+	 * sets the top bit for a loc the player cannot interact with. The two colours are random
+	 * greys in the client, a shade apart on every login; here they are the middle of that range.
+	 *
+	 * EVERY TILE IN THE SCENE, not only the square's own 64 by 64, because a loc is anchored at
+	 * one tile and a four-tile building anchored in the next square still has three tiles of
+	 * itself over the boundary. Anything that lands off the picture is dropped by dot() and by
+	 * the sprite clipping, which is the same thing the client does at the edge of its minimap.
+	 */
+	static void drawLocs(World3D scene, int[] pixels, int side, int level, int margin) {
+		Pix2D.bind(side, side, pixels);
+		Pix2D.resetClipping();
+		for (int x = 1; x < SCENE - 1; x++) {
+			for (int z = 1; z < SCENE - 1; z++) {
+				int px = (x - margin) * SCALE;
+				int pz = (SQUARE - 1 - (z - margin)) * SCALE;
+
+				int wall = scene.method300(level, x, z);
+				if (wall != 0) {
+					int info = scene.method304(level, x, z, wall);
+					int id = wall >> 14 & 0x7FFF;
+					if (hasScene(id)) {
+						plotScene(id, x, z, margin);
+					} else {
+						drawWall(pixels, side, px, pz, info >> 6 & 0x3, info & 0x1F,
+							wall > 0 ? DOOR : WALL);
+					}
+				}
+
+				int decor = scene.method302(level, x, z);
+				if (decor != 0) {
+					int info = scene.method304(level, x, z, decor);
+					int id = decor >> 14 & 0x7FFF;
+					if (hasScene(id)) {
+						plotScene(id, x, z, margin);
+					} else if ((info & 0x1F) == 9) {
+						diagonal(pixels, side, px, pz, info >> 6 & 0x3, decor > 0 ? DOOR : WALL);
+					}
+				}
+
+				int ground = scene.method303(level, x, z);
+				if (ground != 0 && hasScene(ground >> 14 & 0x7FFF)) {
+					plotScene(ground >> 14 & 0x7FFF, x, z, margin);
+				}
+			}
+		}
+	}
+
+	/** Whether a loc is drawn as a picture of itself rather than as lines on its tile edges. */
+	static boolean hasScene(int id) {
+		return LocType.method561(id).field1649 != -1;
+	}
+
+	/**
+	 * A mapscene sprite, centred on the loc rather than on the tile it is anchored at.
+	 *
+	 * A loc two tiles across is anchored at its south-west corner, so its picture starts two
+	 * tiles further north than the tile it sits on, and the sprite is usually smaller than the
+	 * space it fills. Both of those are the client's arithmetic, unchanged. A loc asking for a
+	 * sprite this media has not got is drawn as nothing, which is also what the client does.
+	 */
+	static void plotScene(int id, int x, int z, int margin) {
+		LocType loc = LocType.method561(id);
+		int wide = loc.field1655;
+		int high = loc.field1629;
+		int which = loc.field1649;
+		if (which < 0 || which >= mapscene.length || mapscene[which] == null) {
+			return;
+		}
+		Pix8 sprite = mapscene[which];
+		int offX = (wide * SCALE - sprite.wi) / 2;
+		int offZ = (high * SCALE - sprite.hi) / 2;
+		sprite.plotSprite((SQUARE - (z - margin) - high) * SCALE + offZ,
+			(x - margin) * SCALE + offX);
+	}
+
+	/**
+	 * One wall, as four pixels along whichever edge of the tile it stands on.
+	 *
+	 * Shape 0 is a straight wall, shape 3 a corner post - one pixel - and shape 2 an L, which is
+	 * a wall along two edges at once and so draws twice, the second edge a quarter turn on.
+	 */
+	static void drawWall(int[] pixels, int side, int px, int pz, int rotation, int shape,
+			int colour) {
+		if (shape == 0 || shape == 2) {
+			edge(pixels, side, px, pz, rotation, colour);
+		}
+		if (shape == 3) {
+			dot(pixels, side, rotation == 1 || rotation == 2 ? px + 3 : px,
+				rotation == 2 || rotation == 3 ? pz + 3 : pz, colour);
+		}
+		if (shape == 2) {
+			edge(pixels, side, px, pz, rotation + 1 & 0x3, colour);
+		}
+	}
+
+	/**
+	 * A wall across the corners of a tile, the one shape no straight edge fits.
+	 *
+	 * The client steps it a pixel at a time, and the two pairs of rotations run the two ways a
+	 * diagonal can lie: north-west to south-east, or south-west to north-east.
+	 */
+	static void diagonal(int[] pixels, int side, int px, int pz, int rotation, int colour) {
+		for (int i = 0; i < 4; i++) {
+			int at = rotation == 0 || rotation == 2 ? 3 - i : i;
+			dot(pixels, side, px + at, pz + i, colour);
+		}
+	}
+
+	/** The four pixels along one edge of a tile: 0 west, 1 north, 2 east, 3 south. */
+	static void edge(int[] pixels, int side, int px, int pz, int rotation, int colour) {
+		for (int i = 0; i < 4; i++) {
+			if (rotation == 0) {
+				dot(pixels, side, px, pz + i, colour);
+			} else if (rotation == 1) {
+				dot(pixels, side, px + i, pz, colour);
+			} else if (rotation == 2) {
+				dot(pixels, side, px + 3, pz + i, colour);
+			} else {
+				dot(pixels, side, px + i, pz + 3, colour);
+			}
+		}
+	}
+
+	/** One pixel, or nothing at all when it falls outside the square being drawn. */
+	static void dot(int[] pixels, int side, int px, int pz, int colour) {
+		if (px >= 0 && px < side && pz >= 0 && pz < side) {
+			pixels[pz * side + px] = colour;
+		}
 	}
 
 	/**
