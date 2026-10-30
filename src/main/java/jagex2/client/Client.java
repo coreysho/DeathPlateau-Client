@@ -430,6 +430,9 @@ public class Client extends GameShell implements PixMap.Target {
 	// plugin config pages now, which is where a panel about one feature belongs.)
 	public PluginManager plugins;
 	private static final int PLUGIN_PANEL_KEY = 1015; // F8
+
+	/** F7, the one below the sidebar's key and above nothing the client already uses. */
+	private static final int WORLD_MAP_KEY = 1014;
 	private static final int PLUGIN_PANEL_W = 400;
 	private static final int PLUGIN_PANEL_ROW_H = 15;
 	private static final int PLUGIN_PANEL_HEADER_H = 24;
@@ -1032,6 +1035,56 @@ public class Client extends GameShell implements PixMap.Target {
 					DevLog.log("PLUGIN", "sidebar attached");
 				} catch (Throwable error) {
 					DevLog.log("PLUGIN", "could not build the sidebar, using the in-game panel: " + error);
+				}
+			}
+		});
+	}
+
+	/** The player's tile in world coordinates, or -1 when they are not standing anywhere. */
+	private int playerTileX() {
+		return this.ingame && localPlayer != null && this.sceneState == 2
+			? this.sceneBaseTileX + (localPlayer.field1157 >> 7) : -1;
+	}
+
+	private int playerTileZ() {
+		return this.ingame && localPlayer != null && this.sceneState == 2
+			? this.sceneBaseTileZ + (localPlayer.field1158 >> 7) : -1;
+	}
+
+	/**
+	 * Shows the world map, building the window the first time it is asked for.
+	 *
+	 * BUILT LATE, because a window nobody opens should cost nothing, and opening it is also
+	 * when the background prefetch of the rest of the world is worth starting: a player who
+	 * never opens the map has no reason to be downloading squares they will not look at.
+	 */
+	private void toggleWorldMap() {
+		if (this.worldMap == null || super.frame == null) {
+			return;
+		}
+		this.worldMap.prefetchAll();
+		final int atX = this.playerTileX();
+		final int atZ = this.playerTileZ();
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				try {
+					if (Client.this.worldMapWindow == null) {
+						Client.this.worldMapWindow =
+							new jagex2.client.worldmap.MapWindow(Client.this.worldMap);
+					}
+					jagex2.client.worldmap.MapWindow window = Client.this.worldMapWindow;
+					if (window.isVisible()) {
+						window.setVisible(false);
+						return;
+					}
+					if (atX >= 0) {
+						window.centreOn(atX, atZ);
+					}
+					window.setVisible(true);
+					window.toFront();
+				} catch (Throwable error) {
+					DevLog.log("MAP", "could not open the world map: " + error);
 				}
 			}
 		});
@@ -2473,6 +2526,17 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.xj")
 	public OnDemand onDemand;
 
+	/**
+	 * The world map's supply of drawn squares, and the window that shows them.
+	 *
+	 * Both are null in the applet and both stay null if anything about them fails: the map is a
+	 * thing the client has in a window, like the plugin sidebar, and a client without one is
+	 * still a client.
+	 */
+	public jagex2.client.worldmap.WorldMap worldMap;
+
+	private jagex2.client.worldmap.MapWindow worldMapWindow;
+
 	@ObfuscatedName("client.se")
 	public String lastProgressMessage;
 
@@ -2937,6 +3001,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.onDemand.unpack(jagVersionlist, this);
 			AnimFrame.init(this.onDemand.getAnimCount());
 			Model.init(this.onDemand.getFileCount(0), this.onDemand);
+			this.worldMap = jagex2.client.worldmap.WorldMap.of(this.onDemand);
 
 			// The title song is requested here and starts playing the moment it arrives, which is
 			// before the title screen exists - so the toggle has to be read here as well as on the
@@ -3119,6 +3184,16 @@ public class Client extends GameShell implements PixMap.Target {
 			for (int i = 0; i < 72; i++) {
 				this.imageMapscene[i] = new Pix8(jagMedia, "mapscene", i);
 			}
+
+			// A SECOND, UNTINTED COPY FOR THE WORLD MAP. The ones above are about to be shifted
+			// by a random shade, as the client does to its map art on every login; the map pins
+			// its light so that a square drawn today matches one drawn last week, and sprites
+			// that moved with the login would undo that.
+			Pix8[] mapScenesForMap = new Pix8[72];
+			for (int i = 0; i < mapScenesForMap.length; i++) {
+				mapScenesForMap[i] = new Pix8(jagMedia, "mapscene", i);
+			}
+			jagex2.client.worldmap.MapSquare.useScenes(mapScenesForMap);
 
 			// 70 is the trading post's (Old School's Grand Exchange icon) and 71 is Aleck's Hunter
 			// Emporium (Old School's kebbit), both newer than some servers' media
@@ -3384,6 +3459,17 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 
 		this.updateOnDemand();
+
+		// ONE WORLD MAP SQUARE A FRAME. Drawing one builds and lights a scene, which is about ten
+		// milliseconds and writes statics the live game shares, so it happens here on the game
+		// thread and one at a time. Nothing is drawn unless the window has asked for it.
+		if (this.worldMap != null) {
+			this.worldMap.tick();
+			if (this.worldMapWindow != null) {
+				this.worldMapWindow.setPlayer(this.playerTileX(), this.playerTileZ(),
+					this.currentLevel);
+			}
+		}
 
 		// Plugins get the frame after the client has had it, so a handler reads state the game has
 		// already finished updating rather than something half way through a tick.
@@ -3901,6 +3987,11 @@ public class Client extends GameShell implements PixMap.Target {
 						break;
 					}
 				}
+			}
+			// The world map takes a copy of every map file that goes past, whoever asked for it:
+			// walking through a town fills its squares in for free.
+			if (req.archive == 3 && this.worldMap != null) {
+				this.worldMap.arrived(req.file, req.data);
 			}
 			if (req.archive == 93 && this.onDemand.hasMapLocFile(req.file)) {
 				World.method17(this.onDemand, new Packet(req.data));
@@ -6676,6 +6767,12 @@ public class Client extends GameShell implements PixMap.Target {
 					key = this.pollKey();
 					if (key == -1) {
 						return;
+					}
+
+					// The world map, which is a window and so is not there for the applet.
+					if (key == WORLD_MAP_KEY && this.ingame && this.worldMap != null) {
+						this.toggleWorldMap();
+						continue;
 					}
 
 					// The plugin list, on the same terms as the QoL panel below it.
