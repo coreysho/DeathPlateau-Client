@@ -465,6 +465,131 @@ public final class PluginContext {
 		return ObjType.get(id);
 	}
 
+	// ------------------------------------------------------------------ an open window
+
+	/*
+	 * THE WINDOW IN THE MIDDLE OF THE SCREEN, and the three questions a plugin drawing on one
+	 * has to ask: which window is it, what is in its grid, and where on screen is a given cell.
+	 *
+	 * ADDED FOR THE PUZZLE BOX and kept general, because none of it is about clues: the three
+	 * answers are the same shape for a bank, a shop or a trade. What a component id MEANS is
+	 * the plugin's business - the puzzle box's two ids are generated into PuzzlePieces from the
+	 * content's interface.pack, not written down here - and this answers only what is true of
+	 * the window on screen right now.
+	 */
+
+	/** Which interface is open over the game view, or -1 when the player can see the world. */
+	public int getOpenInterfaceId() {
+		return this.client.viewportInterfaceId;
+	}
+
+	/**
+	 * What is in an inventory component, slot by slot, or null when it is not one.
+	 *
+	 * -1 for an empty slot, for the reason {@link #getInventoryObjId} gives: 0 is a real obj in
+	 * this cache. The array is a copy, so a plugin holding it cannot be surprised by the next
+	 * packet, and cannot write into the client's.
+	 */
+	public int[] getInvSlots(int comId) {
+		Component com = component(comId);
+		if (!Component.holdsInv(com)) {
+			return null;
+		}
+		int[] out = new int[com.invSlotObjId.length];
+		for (int slot = 0; slot < out.length; slot++) {
+			out[slot] = decodeSlotObj(com.invSlotObjId[slot]);
+		}
+		return out;
+	}
+
+	/**
+	 * Where one cell of an open window's inventory grid is, as {x, y, width, height}.
+	 *
+	 * IN THE SAME COORDINATES AN OVERLAY DRAWS IN, which is the only reason this is worth a
+	 * method: the client draws the main interface inside draw3DEntityElements against the
+	 * viewport's raster, and the LAYER_SCREEN overlay pass runs a few lines later against the
+	 * same one. So an overlay can take these numbers and draw on the window.
+	 *
+	 * Null when nothing is open, when that component is not in what is open, or when it is not
+	 * a grid. A plugin calls this per frame and must cope with the window closing under it.
+	 */
+	public int[] getInvCellBounds(int comId, int cell) {
+		Component com = component(comId);
+		if (!Component.holdsInv(com) || com.width <= 0 || cell < 0 || cell >= com.width * com.height) {
+			return null;
+		}
+		int[] origin = this.client.mainInterfaceOrigin();
+		Component open = origin == null ? null : component(this.client.viewportInterfaceId);
+		if (open == null) {
+			return null;
+		}
+		int[] at = new int[2];
+		if (!locate(origin[1], origin[0], open, 0, comId, at)) {
+			return null;
+		}
+		int x = at[0] + (com.marginX + CELL) * (cell % com.width);
+		int y = at[1] + (com.marginY + CELL) * (cell / com.width);
+		// The first twenty cells can each be nudged off the grid - 377 uses it for the equipment
+		// window, where the slots are not in rows at all.
+		if (cell < 20 && com.invSlotOffsetX != null && com.invSlotOffsetY != null
+			&& cell < com.invSlotOffsetX.length && cell < com.invSlotOffsetY.length) {
+			x += com.invSlotOffsetX[cell];
+			y += com.invSlotOffsetY[cell];
+		}
+		return new int[] { x, y, CELL, CELL };
+	}
+
+	/** An item slot is 32 by 32, which is what the interface geometry is laid out in. */
+	private static final int CELL = 32;
+
+	/**
+	 * Walk the open window for a component, accumulating where it lands.
+	 *
+	 * THE SAME SUMS Client.drawInterfaceLayer DOES, in the same order: a child sits at its
+	 * parent's childX/childY plus its own offset, less whatever the parent is scrolled by. A
+	 * second copy of that arithmetic is a thing to keep in step, and the alternative - having
+	 * the draw record where it put everything - costs every frame to answer a question a
+	 * plugin asks once.
+	 */
+	private static boolean locate(int y, int x, Component layer, int scroll, int comId, int[] out) {
+		if (layer.type != 0 || layer.children == null) {
+			return false;
+		}
+		for (int i = 0; i < layer.children.length; i++) {
+			Component child = component(layer.children[i]);
+			if (child == null) {
+				continue;
+			}
+			int childX = layer.childX[i] + x + child.field710;
+			int childY = layer.childY[i] + y - scroll + child.field741;
+			if (child.id == comId) {
+				out[0] = childX;
+				out[1] = childY;
+				return true;
+			}
+			if (child.type == 0 && locate(childY, childX, child, child.field713, comId, out)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** A component by id, or null for one this cache has never heard of. */
+	private static Component component(int comId) {
+		Component[] types = Component.types;
+		byte[][] data = Component.data;
+		if (comId < 0 || types == null || data == null
+			|| comId >= types.length || comId >= data.length
+			|| (types[comId] == null && data[comId] == null)) {
+			return null;
+		}
+		try {
+			return Component.get(comId);
+		} catch (RuntimeException undecodable) {
+			return null;
+		}
+	}
+
 	// ------------------------------------------------------------------ chat
 
 	/**

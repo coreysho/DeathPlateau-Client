@@ -2,6 +2,8 @@ package jagex2.client.plugin.builtin;
 
 import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.ConfigList;
+import jagex2.client.plugin.Overlay;
+import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
 
@@ -27,6 +29,12 @@ import jagex2.client.plugin.PluginDescriptor;
  * switches below turn each of them off. What it still does not do is act. It does not walk,
  * dig, or click: no plugin here does, and a clue that solved itself would not be a clue.
  *
+ * AND THE PUZZLE BOX, which is the one step on a trail that is not a place or a person but a
+ * problem. It is solved in {@link SlidingPuzzle} and shown by drawing on the window itself: the
+ * piece to click next is boxed, and the three after it are numbered, so the player's eye goes
+ * to the piece rather than to a sentence about it. Clicking is still theirs - the overlay has
+ * no way to click and would not if it had.
+ *
  * ONE ROW PER SCROLL. A player can carry an easy, a medium and a hard at once, and an earlier
  * version of this page showed only whichever sat nearest the top left - so two thirds of what
  * somebody was carrying was invisible, and which third showed depended on how they had shuffled
@@ -51,6 +59,10 @@ public final class CluePlugin extends Plugin {
 	@ConfigItem(keyName = "showGuardian", name = "Warn about guardians",
 		description = "Whether something attacks when this one is dug up.")
 	public boolean showGuardian = true;
+
+	@ConfigItem(keyName = "solvePuzzle", name = "Solve puzzle boxes",
+		description = "Mark the next piece to slide on an open puzzle box.")
+	public boolean solvePuzzle = true;
 
 	/**
 	 * The bag, and the slots of it holding clues, as of the last time the page asked how many
@@ -316,6 +328,151 @@ public final class CluePlugin extends Plugin {
 			});
 		} catch (Throwable olderClient) {
 			// No rail pages in this client; nothing else here depends on one.
+		}
+		this.addOverlay(new PuzzleOverlay());
+	}
+
+	// ------------------------------------------------------------------ the puzzle box
+
+	/** The board the solution below was worked out from, or null for none. */
+	int[] solvedFor;
+
+	/** The clicks that finish that board, or null when it has none. */
+	int[] solution;
+
+	/**
+	 * The puzzle box's 25 cells as the solver wants them, or null when no box is open.
+	 *
+	 * THE OBJ IN A CELL IS THE PIECE, and which cell that piece belongs in is a param the
+	 * content puts on it ({@link PuzzlePieces}). So this is a translation and nothing more: no
+	 * counting, no assuming the ids are in order, and an obj the table does not know makes the
+	 * whole board null rather than a board with a wrong piece in it.
+	 */
+	int[] board() {
+		if (this.ctx == null || this.ctx.getOpenInterfaceId() != PuzzlePieces.WINDOW) {
+			return null;
+		}
+		int[] slots = this.ctx.getInvSlots(PuzzlePieces.GRID);
+		if (slots == null || slots.length != SlidingPuzzle.CELLS) {
+			return null;
+		}
+		return read(slots);
+	}
+
+	/** The same translation, fed the slots, so the test can lay out a board without a client. */
+	static int[] read(int[] slots) {
+		int[] board = new int[SlidingPuzzle.CELLS];
+		for (int cell = 0; cell < board.length; cell++) {
+			if (slots[cell] < 0) {
+				board[cell] = SlidingPuzzle.GAP;
+				continue;
+			}
+			int home = PuzzlePieces.homeOf(slots[cell]);
+			if (home < 0) {
+				return null;            // something in the grid that is not a puzzle piece
+			}
+			board[cell] = home;
+		}
+		return SlidingPuzzle.isBoard(board) ? board : null;
+	}
+
+	/**
+	 * Work out the clicks for this board, unless they are already worked out.
+	 *
+	 * ONE SOLVE PER MOVE, NOT PER FRAME. The board only changes when the player clicks, so the
+	 * answer is kept until it does - and when it does the whole thing is solved again rather
+	 * than the first click dropped off the front. That costs a third of a millisecond and
+	 * removes a class of bug: a player who clicks a piece the overlay did not suggest, or
+	 * closes the box and opens another, gets an answer to the board in front of them rather
+	 * than the remains of an answer to a different one.
+	 */
+	void solve(int[] board) {
+		if (board == null) {
+			this.solvedFor = null;
+			this.solution = null;
+			return;
+		}
+		if (this.solvedFor != null && java.util.Arrays.equals(this.solvedFor, board)) {
+			return;
+		}
+		this.solvedFor = board;
+		this.solution = SlidingPuzzle.solve(board);
+	}
+
+	/** The box drawn round the next piece to click: a bright edge, and a wash inside it. */
+	static final int NEXT = 0x00FF00;
+
+	/** The three after it, dimmer, so the eye goes to the first one. */
+	static final int SOON = 0xFFD37A;
+
+	/** How many clicks ahead to number. Four of two hundred is a direction, not a solution. */
+	static final int AHEAD = 4;
+
+	final class PuzzleOverlay extends Overlay {
+
+		public int layer() {
+			return Overlay.LAYER_SCREEN;
+		}
+
+		/** Drawn ON the window, so dragging it would move the numbers off the pieces. */
+		public boolean movable() {
+			return false;
+		}
+
+		public void render(OverlayGraphics g) {
+			if (!CluePlugin.this.solvePuzzle) {
+				return;
+			}
+			int[] board = CluePlugin.this.board();
+			CluePlugin.this.solve(board);
+			if (board == null) {
+				return;
+			}
+			int[] clicks = CluePlugin.this.solution;
+			// The grid's own corners rather than a guess at its size: the margins between the
+			// cells are the interface's, and a label centred on an assumed width sits off to
+			// one side the day somebody changes them.
+			int[] first = CluePlugin.this.ctx.getInvCellBounds(PuzzlePieces.GRID, 0);
+			int[] last = CluePlugin.this.ctx.getInvCellBounds(PuzzlePieces.GRID,
+				SlidingPuzzle.CELLS - 1);
+			if (first == null || last == null) {
+				return;
+			}
+			int middle = (first[0] + last[0] + last[2]) / 2;
+			int above = first[1] - 6;
+			if (clicks == null) {
+				g.setFont(OverlayGraphics.FONT_BOLD);
+				g.textCentredOutlined(middle, above, "This one cannot be solved", NEXT);
+				return;
+			}
+			if (clicks.length == 0) {
+				g.setFont(OverlayGraphics.FONT_BOLD);
+				g.textCentredOutlined(middle, above, "Solved", NEXT);
+				return;
+			}
+			// THE NEXT CLICK LOUDEST, the three after it only numbered. A cell can come up
+			// twice in four moves - a piece slid out and back - and the first number wins,
+			// because that is the one the player is about to do.
+			int shown = clicks.length < AHEAD ? clicks.length : AHEAD;
+			for (int i = shown - 1; i >= 0; i--) {
+				int[] box = CluePlugin.this.ctx.getInvCellBounds(PuzzlePieces.GRID, clicks[i]);
+				if (box == null) {
+					continue;
+				}
+				int colour = i == 0 ? NEXT : SOON;
+				if (i == 0) {
+					g.fillAlpha(box[0], box[1], box[2], box[3], colour, 48);
+				}
+				g.box(box[0], box[1], box[2], box[3], colour);
+				g.setFont(i == 0 ? OverlayGraphics.FONT_BOLD : OverlayGraphics.FONT_SMALL);
+				// Text draws from its baseline, so half the line height below the middle
+				// puts the digit in the middle of the cell rather than under it.
+				g.textCentredOutlined(box[0] + box[2] / 2,
+					box[1] + (box[3] + g.lineHeight()) / 2, Integer.toString(i + 1), colour);
+			}
+			g.setFont(OverlayGraphics.FONT_BOLD);
+			g.textCentredOutlined(middle, above,
+				clicks.length + (clicks.length == 1 ? " move left" : " moves left"), NEXT);
 		}
 	}
 

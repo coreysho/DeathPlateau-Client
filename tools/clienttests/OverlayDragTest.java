@@ -256,6 +256,28 @@ public class OverlayDragTest {
 		if (scene == null) {
 			check(false, "unreachable");
 		}
+
+		// AND THE OTHER KIND THAT MUST NOT MOVE: a screen-layer overlay drawn on top of
+		// something the client has put on screen. It cannot be refused by its layer - it has
+		// to be on the screen layer to draw over a window at all - so it says so itself, and
+		// the manager has to take its word for it.
+		PinnedOverlayPlugin pinned = install(new PinnedOverlayPlugin(), "pinned-overlay");
+		draw();
+		int pinX = PinnedOverlayPlugin.X + 4;
+		int pinY = PinnedOverlayPlugin.Y + 4;
+		check(!manager.dragWantsClick(pinX, pinY),
+			"Alt over an overlay that says it is pinned does not claim the click");
+		alt(pinX, pinY, 0);
+		alt(pinX, pinY, 1);
+		alt(pinX + 70, pinY + 50, 1);
+		alt(pinX + 70, pinY + 50, 0);
+		draw();
+		check(pinnedBoxAt(PinnedOverlayPlugin.X, PinnedOverlayPlugin.Y),
+			"...and it stays on the thing it is drawn on");
+		manager.setEnabled(entry("pinned-overlay"), false);
+		if (pinned == null) {
+			check(false, "unreachable");
+		}
 		reset();
 	}
 
@@ -390,6 +412,10 @@ public class OverlayDragTest {
 
 	static boolean sceneBoxAt(int x, int y) {
 		return pixels[y * W + x] == SceneOverlayPlugin.COLOUR;
+	}
+
+	static boolean pinnedBoxAt(int x, int y) {
+		return pixels[y * W + x] == PinnedOverlayPlugin.COLOUR;
 	}
 
 	static boolean overlapBoxAt(int x, int y) {

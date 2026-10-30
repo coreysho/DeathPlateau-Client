@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BUILTIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin')
 COMPONENT = os.path.join(ROOT, 'src/main/java/jagex2/config/Component.java')
+PUZZLE = os.path.join(BUILTIN, 'SlidingPuzzle.java')
 STEPS = os.path.join(BUILTIN, 'ClueSteps.java')
 PLUGIN = os.path.join(BUILTIN, 'CluePlugin.java')
 MAKER = os.path.join(ROOT, 'tools/clues/make_clues.py')
@@ -146,6 +147,47 @@ MUTS = [
      '\t\treturn com != null && com.invSlotObjId != null && com.invSlotObjCount != null;',
      '\t\treturn com != null && com.invSlotObjId != null;'),
 
+    # ---- THE PUZZLE BOX. Everything here is checked by playing the clicks back onto the board
+    # they came from, over two thousand boards, so a solver that goes subtly wrong fails loudly.
+    (PUZZLE, 'the solvable test inverted, so it refuses every real board and tries the rest',
+     '\t\treturn (inversions & 1) == 0;',
+     '\t\treturn (inversions & 1) == 1;'),
+    (PUZZLE, 'the last piece left out of solved, so a board one swap short reads as finished',
+     '\t\tfor (int cell = 0; cell < CELLS - 1; cell++) {\n\t\t\tif (board[cell] != cell) {\n\t\t\t\treturn false;\n\t\t\t}\n\t\t}\n\t\treturn true;\n\t}\n\n\t/**\n\t * Whether this board can be solved at all.',
+     '\t\tfor (int cell = 0; cell < CELLS - 2; cell++) {\n\t\t\tif (board[cell] != cell) {\n\t\t\t\treturn false;\n\t\t\t}\n\t\t}\n\t\treturn true;\n\t}\n\n\t/**\n\t * Whether this board can be solved at all.'),
+    (PUZZLE, 'a piece allowed to be in the board twice',
+     '\t\t\tif (piece < 0 || piece >= CELLS - 1 || seen[piece]) {',
+     '\t\t\tif (piece < 0 || piece >= CELLS - 1) {'),
+    (PUZZLE, 'the gap counted as a click, which is not a move the game has',
+     '\t\treturn dr + dc == 1;',
+     '\t\treturn dr + dc <= 1;'),
+    (PUZZLE, 'the piece left behind when the gap steps onto it, so nothing ever moves',
+     '\t\t\t\tint moved = next == at ? hole : at;',
+     '\t\t\t\tint moved = at;'),
+    (PUZZLE, 'the second of a pair left behind, which is the half that locks itself out',
+     '\t\t\t\t\tint movedSecond = next == second ? hole : second;',
+     '\t\t\t\t\tint movedSecond = second;'),
+    (PUZZLE, 'one round of the reduction skipped, leaving a 3x3 the corner cannot rotate',
+     '\t\tfor (int k = 0; k <= SIDE - 3; k++) {',
+     '\t\tfor (int k = 0; k <= SIDE - 4; k++) {'),
+    (PUZZLE, 'the last 2x2 given one rotation of the three it may need',
+     '\t\tfor (int round = 0; round < 3; round++) {',
+     '\t\tfor (int round = 0; round < 1; round++) {'),
+    (PUZZLE, 'a click recorded but not played, so the solution describes a board that never was',
+     '\t\tthis.moves[this.count++] = at;\n\t\tthis.board[this.gap] = this.board[at];',
+     '\t\tthis.moves[this.count++] = at;\n\t\tthis.board[this.gap] = this.board[this.gap];'),
+    (PUZZLE, 'the path walked forwards from the goal, so the clicks come out backwards',
+     '\t\tfor (int i = length - 1; i >= 0; i--) {\n\t\t\tthis.click(this.walk[i]);\n\t\t}\n\t\treturn true;\n\t}\n\n\t/** Walk the gap',
+     '\t\tfor (int i = 0; i < length; i++) {\n\t\t\tthis.click(this.walk[i]);\n\t\t}\n\t\treturn true;\n\t}\n\n\t/** Walk the gap'),
+
+    # ---- AND READING THE WINDOW, where a wrong piece is worse than no answer.
+    (PLUGIN, 'an obj the table does not know given a cell anyway',
+     '\t\t\tif (home < 0) {\n\t\t\t\treturn null;            // something in the grid that is not a puzzle piece\n\t\t\t}\n',
+     '\t\t\tif (home < 0) {\n\t\t\t\thome = 0;\n\t\t\t}\n'),
+    (PLUGIN, 'the board handed over without checking it is one',
+     '\t\treturn SlidingPuzzle.isBoard(board) ? board : null;',
+     '\t\treturn board;'),
+
     # ---- THE SCRAPE. Two thirds of the table comes out of scripts rather than off a param, so
     # a pattern that goes stale here costs destinations and still builds a table.
     (MAKER, 'the tile pattern narrowed, so the crates and drawers lose their places',
@@ -170,6 +212,16 @@ MUTS = [
     (MAKER, 'the challenge answers left off',
      "            'answer': params.get('trail_challenge_answer', ''),",
      "            'answer': '',"),
+    # NOT MUTATED: reading the cell as `len(pieces)` - the order the objs are packed in - rather
+    # than as the param. It writes a byte-identical table, because the content's 24 pieces are
+    # packed in the order their param numbers them. An equivalent mutant, deleted rather than
+    # chased; the param is still what is read, because the next set packed will not be.
+    (MAKER, "the puzzle pieces' cells shifted by one, which is a whole wrong solution",
+     "            pieces[ids[name]] = int(home)",
+     "            pieces[ids[name]] = int(home) + 1"),
+    (MAKER, 'the puzzle grid and the Hint button confused again, one layer up',
+     "    out.append('\\tpublic static final int GRID = %d;' % interfaces['trail_puzzle:com_2'])",
+     "    out.append('\\tpublic static final int GRID = %d;' % interfaces['trail_puzzle:com_3'])"),
 ]
 
 

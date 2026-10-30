@@ -13535,6 +13535,23 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.a(IILEWIXBTLV;II)V")
+	/**
+	 * Where the open main interface is drawn, as {x, y} in viewport coordinates, or null.
+	 *
+	 * FOR PLUGINS THAT DRAW ON A WINDOW, through PluginContext.getInvCellBounds. The numbers
+	 * are the layout's, which a plugin cannot see and should not have to: they move with the
+	 * display mode, and the whole point of the plugin seam is that a plugin written against
+	 * the fixed window keeps working in the resizable one.
+	 *
+	 * The same coordinates drawInterface is called with below, which is also the space a
+	 * LAYER_SCREEN overlay draws in - both happen inside draw3DEntityElements, against the
+	 * same raster, so a plugin can add a component's offset to these and draw on it.
+	 */
+	public int[] mainInterfaceOrigin() {
+		return this.viewportInterfaceId == -1 ? null
+			: new int[] { this.layout.mainX, this.layout.mainY };
+	}
+
 	public void drawInterface(int arg0, int arg1, Component arg2, int arg3) {
 		// the outermost call draws the tooltip a component queued (queueTooltip), after everything else
 		this.tooltipDepth++;

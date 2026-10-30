@@ -65,7 +65,10 @@ public class ClueTest {
 		System.out.println("7. the packet that logged you out");
 		transmitTests();
 		System.out.println();
-		System.out.println("8. the table against the content it came from");
+		System.out.println("8. the puzzle box");
+		puzzleTests();
+		System.out.println();
+		System.out.println("9. the table against the content it came from");
 		generatedTests();
 
 		System.out.println();
@@ -553,7 +556,170 @@ public class ClueTest {
 			"...nor a component id the cache has never heard of");
 	}
 
-	// ------------------------------------------------------------------ 8. the generator
+	// ------------------------------------------------------------------ 8. the puzzle box
+
+	/*
+	 * SOLVING IS NOT CHECKED AGAINST AN EXPECTED ANSWER, because there is no expected answer: a
+	 * row-at-a-time solve is one valid route of billions, and a test naming one would break on
+	 * every improvement to the solver while catching nothing. What is checked is the property
+	 * that matters - the clicks it hands back, played back onto the board it was given, leave
+	 * it solved - over thousands of boards shuffled the way the game shuffles them.
+	 *
+	 * AND THE PLAYBACK IS STRICT. SlidingPuzzle.after refuses a click on a cell that is not
+	 * next to the gap, which is the only move the game allows, so a solution containing one
+	 * fails here rather than reading as a pass and misleading a player at a puzzle box.
+	 */
+
+	static void puzzleTests() {
+		int[] solved = new int[SlidingPuzzle.CELLS];
+		for (int cell = 0; cell < SlidingPuzzle.CELLS - 1; cell++) {
+			solved[cell] = cell;
+		}
+		solved[SlidingPuzzle.CELLS - 1] = SlidingPuzzle.GAP;
+
+		check(SlidingPuzzle.isBoard(solved), "a full board with one gap is a board");
+		check(SlidingPuzzle.isSolved(solved), "...and that one is solved");
+		// ONE MOVE FROM SOLVED, which is the board that catches a check that stops a cell
+		// early: every piece but the last is home, and the last has swapped with the gap.
+		int[] nearly = solved.clone();
+		nearly[SlidingPuzzle.CELLS - 2] = SlidingPuzzle.GAP;
+		nearly[SlidingPuzzle.CELLS - 1] = SlidingPuzzle.CELLS - 2;
+		check(SlidingPuzzle.isBoard(nearly), "a board one move from solved is still a board");
+		check(!SlidingPuzzle.isSolved(nearly), "...and is not solved, last piece and all");
+		check(!SlidingPuzzle.isBoard(new int[] { 1, 2, 3 }), "a short array is not a board");
+		int[] twoGaps = solved.clone();
+		twoGaps[0] = SlidingPuzzle.GAP;
+		check(!SlidingPuzzle.isBoard(twoGaps), "nor is one with two gaps");
+		int[] twice = solved.clone();
+		twice[0] = 1;
+		check(!SlidingPuzzle.isBoard(twice), "nor one with the same piece in it twice");
+		int[] noGap = solved.clone();
+		noGap[SlidingPuzzle.CELLS - 1] = 0;
+		check(!SlidingPuzzle.isBoard(noGap), "nor one with no gap at all");
+
+		// ONE SWAP IS THE UNSOLVABLE BOARD. Half of all arrangements cannot be reached from
+		// solved, and swapping two pieces is how you land in the other half.
+		int[] swapped = solved.clone();
+		int keep = swapped[0];
+		swapped[0] = swapped[1];
+		swapped[1] = keep;
+		check(SlidingPuzzle.isSolvable(solved), "the solved board is solvable");
+		check(!SlidingPuzzle.isSolvable(swapped), "...and two pieces swapped is not");
+		check(SlidingPuzzle.solve(swapped) == null, "so solving it says no rather than guessing");
+		check(SlidingPuzzle.solve(solved) != null && SlidingPuzzle.solve(solved).length == 0,
+			"and a board already solved needs no clicks, which is not the same as no answer");
+
+		// A CLICK IS A SLIDE, and the game has no other move: anything else must not play back.
+		check(SlidingPuzzle.after(solved, new int[] { 19 }) != null,
+			"the cell above the gap can be slid into it");
+		check(SlidingPuzzle.after(solved, new int[] { 0 }) == null,
+			"...and a cell nowhere near it cannot");
+		check(SlidingPuzzle.after(solved, new int[] { 99 }) == null, "...nor a cell off the board");
+		check(SlidingPuzzle.after(solved, new int[] { SlidingPuzzle.CELLS - 1 }) == null,
+			"...nor the gap itself, which is not a piece to click");
+
+		// THE PROPERTY, over boards shuffled the way ~shuffle_trail_puzzle shuffles them: walk
+		// the gap at random from the solved board, which is the only way the game makes one.
+		java.util.Random rng = new java.util.Random(20261030);
+		int runs = 2000;
+		int failed = 0;
+		int wrong = 0;
+		int illegal = 0;
+		int longest = 0;
+		long total = 0;
+		for (int run = 0; run < runs; run++) {
+			int[] board = shuffle(solved, rng, 101 + rng.nextInt(400));
+			int[] clicks = SlidingPuzzle.solve(board);
+			if (clicks == null) {
+				failed++;
+				continue;
+			}
+			int[] end = SlidingPuzzle.after(board, clicks);
+			if (end == null) {
+				illegal++;
+			} else if (!SlidingPuzzle.isSolved(end)) {
+				wrong++;
+			}
+			total += clicks.length;
+			if (clicks.length > longest) {
+				longest = clicks.length;
+			}
+		}
+		check(failed == 0, "every one of " + runs + " shuffled boards got an answer (" + failed + " did not)");
+		check(illegal == 0, "...made only of moves the game would allow (" + illegal + " were not)");
+		check(wrong == 0, "...and every one of those answers leaves the board solved (" + wrong + " did not)");
+		check(longest < SlidingPuzzle.LIMIT,
+			"and none of them came near the ceiling (" + longest + " of " + SlidingPuzzle.LIMIT + ")");
+		check(total / runs < 250, "the average solve is a couple of hundred clicks (" + total / runs + ")");
+
+		// THE TABLE THE BOARD IS READ THROUGH. An obj the content does not call a puzzle piece
+		// must not be silently given a cell: a board with a wrong piece in it solves to clicks
+		// that move the wrong things.
+		check(PuzzlePieces.count() == 24, "the content's 24 pieces are in the table");
+		int outOfOrder = 0;
+		int wrongHome = 0;
+		boolean[] homes = new boolean[24];
+		for (int i = 0; i < PuzzlePieces.count(); i++) {
+			if (i > 0 && PuzzlePieces.ID[i] <= PuzzlePieces.ID[i - 1]) {
+				outOfOrder++;
+			}
+			if (PuzzlePieces.homeOf(PuzzlePieces.ID[i]) != PuzzlePieces.HOME[i]) {
+				wrongHome++;
+			}
+			homes[PuzzlePieces.HOME[i]] = true;
+		}
+		check(outOfOrder == 0, "...ascending, which is what makes the search work");
+		check(wrongHome == 0, "...and each is found at its own cell");
+		int missing = 0;
+		for (int cell = 0; cell < homes.length; cell++) {
+			if (!homes[cell]) {
+				missing++;
+			}
+		}
+		check(missing == 0, "every cell of the grid has exactly one piece that belongs in it");
+		check(PuzzlePieces.homeOf(995) < 0, "and a coin is not a puzzle piece");
+
+		// READING THE WINDOW. The grid holds obj ids; the solver wants cells.
+		int[] slots = new int[SlidingPuzzle.CELLS];
+		for (int cell = 0; cell < SlidingPuzzle.CELLS - 1; cell++) {
+			slots[cell] = PuzzlePieces.ID[cell];
+		}
+		slots[SlidingPuzzle.CELLS - 1] = -1;
+		int[] read = CluePlugin.read(slots);
+		check(read != null && SlidingPuzzle.isBoard(read), "a window full of pieces reads as a board");
+		check(read != null && SlidingPuzzle.isSolved(read),
+			"...and the pieces in their own order read as solved");
+		int[] intruder = slots.clone();
+		intruder[0] = 995;
+		check(CluePlugin.read(intruder) == null,
+			"a window with something that is not a piece in it reads as no board at all");
+		int[] gappy = slots.clone();
+		gappy[0] = -1;
+		check(CluePlugin.read(gappy) == null, "...and so does one with two gaps");
+	}
+
+	/** A board shuffled from solved by walking the gap, which is how the content makes one. */
+	static int[] shuffle(int[] solved, java.util.Random rng, int steps) {
+		int[] board = solved.clone();
+		int gap = SlidingPuzzle.CELLS - 1;
+		int[] options = new int[4];
+		for (int step = 0; step < steps; step++) {
+			int n = 0;
+			for (int side = 0; side < 4; side++) {
+				int next = SlidingPuzzle.neighbour(gap, side);
+				if (next >= 0) {
+					options[n++] = next;
+				}
+			}
+			int pick = options[rng.nextInt(n)];
+			board[gap] = board[pick];
+			board[pick] = SlidingPuzzle.GAP;
+			gap = pick;
+		}
+		return board;
+	}
+
+	// ------------------------------------------------------------------ 9. the generator
 
 	static void generatedTests() {
 		String root = System.getProperty("dp.root", ".");
