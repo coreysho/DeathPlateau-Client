@@ -29,6 +29,7 @@
 //        -cp <client jar><sep><dir of this class> CourseCam <out dir> <user> <table.tsv>
 import jagex2.client.Client;
 import jagex2.dash3d.ClientPlayer;
+import jagex2.dash3d.Sprite;
 import jagex2.dash3d.Square;
 import jagex2.dash3d.World3D;
 import sign.signlink;
@@ -371,6 +372,67 @@ public class CourseCam extends Client {
 	}
 
 	/**
+	 * WHAT THE CLIENT ACTUALLY HAS ON A TILE, across every plane.
+	 *
+	 * A failed click reports the MENU, which is several inferences downstream of the question that
+	 * matters: is the loc in the scene, and on which plane? World3D puts the scenery of a tile in
+	 * Square.field1391 with the typecodes alongside in field1392, and a typecode carries its loc id
+	 * at `>> 14 & 0x7FFF` - the same decode the client itself uses to build a loc's menu. So this
+	 * reads them straight out and tells the three cases apart: not loaded, loaded on another plane,
+	 * or there and not offering the op.
+	 */
+	static String locsAt(int worldX, int worldZ) {
+		synchronized (LOCK) {
+			World3D sc = (World3D) get("scene");
+			if (sc == null) {
+				return "no scene";
+			}
+			int x = worldX - geti("sceneBaseTileX");
+			int z = worldZ - geti("sceneBaseTileZ");
+			if (x < 0 || x > 103 || z < 0 || z > 103) {
+				return "outside the loaded scene (" + x + "," + z + ")";
+			}
+			StringBuilder sb = new StringBuilder();
+			for (int level = 0; level <= 3; level++) {
+				Square sq = sc.field1018[level][x][z];
+				if (sq == null) {
+					continue;
+				}
+				StringBuilder ids = new StringBuilder();
+				for (int i = 0; i < sq.field1390; i++) {
+					if (ids.length() > 0) {
+						ids.append(' ');
+					}
+					// THE TYPECODE IS ON THE SPRITE. Square.field1392 is the footprint edge mask
+					// World3D.method287 builds, not an id, and decoding it gave every loc as 0.
+					// Sprite.field88 IS the bitset, confirmed against Draynor: 1383255080 decodes to
+					// 18891 and 1383271343 to 18892, which are the wall and the gap the course table
+					// names. The two obvious-looking fields are not - Square.field1392 is the
+					// footprint edge mask World3D.method287 builds, and Sprite.field81 is the
+					// rotation, compared against 1664/384 angles by its caller.
+					Sprite sp = sq.field1391[i];
+					ids.append(sp == null ? "-" : String.valueOf(sp.field88 >> 14 & 0x7FFF));
+				}
+				sb.append(sb.length() > 0 ? "; " : "").append("L").append(level).append(": ");
+				sb.append(sq.field1390).append(" loc(s)");
+				if (ids.length() > 0) {
+					sb.append(" [").append(ids).append(']');
+				}
+				if (sq.field1386 != null) {
+					sb.append(" +wall");
+				}
+				if (sq.field1387 != null) {
+					sb.append(" +decor");
+				}
+				if (sq.field1385 != null || sq.field1384 != null) {
+					sb.append(" +floor");
+				}
+			}
+			return sb.length() == 0 ? "no Square on any plane" : sb.toString();
+		}
+	}
+
+	/**
 	 * WHAT IS PLAYING ON THE PLAYER RIGHT NOW, or -1 for nothing.
 	 *
 	 * field1171 is the entity's current seq; the client clears it to -1 when the sequence runs out
@@ -406,6 +468,28 @@ public class CourseCam extends Client {
 	 * tile the renderer draws nothing for: standing on it is standing in thin air, which is what
 	 * both Draynor tightropes shipped doing.
 	 */
+	/**
+	 * WHICH STOREY DRAWS THE FLOOR UNDER THIS TILE - this one, the one below, or neither (-1).
+	 *
+	 * A rooftop landing routinely has nothing on its own plane. The deck-over-roof rule strips a
+	 * rooftop tile's floor overlay wherever a roof model covers it, and that model is drawn on the
+	 * storey below, so the player stands on the roof while the renderer has their own plane empty.
+	 * Canifis is every obstacle of a course like that, and asking only about the player's plane
+	 * called a landing that a screenshot shows working "thin air".
+	 *
+	 * The storey is returned rather than a boolean so a report can say where the floor came from:
+	 * one below is normal on a roof, neither is the fault worth catching.
+	 */
+	static int floorStorey(int worldX, int worldZ, int level) {
+		if (floorAt(worldX, worldZ, level)) {
+			return level;
+		}
+		if (level > 0 && floorAt(worldX, worldZ, level - 1)) {
+			return level - 1;
+		}
+		return -1;
+	}
+
 	static boolean floorAt(int worldX, int worldZ, int level) {
 		synchronized (LOCK) {
 			World3D sc = (World3D) get("scene");
@@ -882,7 +966,12 @@ public class CourseCam extends Client {
         check("standing at " + at[0] + "," + at[1] + " L" + at[2],
 			at[0] == from[0] && at[1] == from[1] && at[2] == from[2],
 			at[0] == from[0] && at[1] == from[1] && at[2] == from[2] ? "" : "wanted " + from[0] + "," + from[1] + " L" + from[2]);
-		check("and the client draws floor under it", floorAt(at[0], at[1], at[2]), "");
+		int standFloor = floorStorey(at[0], at[1], at[2]);
+		check("and the client draws floor under it", standFloor >= 0,
+			"nothing is drawn on this storey or the one below");
+		if (standFloor >= 0 && standFloor != at[2]) {
+			say("      (the floor under it is the roof drawn on L" + standFloor + " - deck over roof)");
+		}
 		shot(course + "_" + (index + 1) + "a_before");
 
 		// 2. THE OBSTACLE IS ON SCREEN AND THE MENU HAS THE VERB ON IT. This is the check that the
@@ -926,8 +1015,12 @@ public class CourseCam extends Client {
 		if (on == null) {
 			hover(sxy[0], sxy[1]);
 			waitFrames(4);
+			say("      the client's scene at " + o.x + "," + o.z + " - " + locsAt(o.x, o.z));
+			say("      and under the player at " + tileAt()[0] + "," + tileAt()[1] + " - "
+				+ locsAt(tileAt()[0], tileAt()[1]));
 			check("the obstacle can be clicked from here ('" + o.verb + "')", false,
-				"nothing in the band above its tile offers it; over the tile itself the menu is " + menu());
+				"nothing in the band above its tile offers it; over the tile itself the menu is " + menu()
+				+ "; scene says " + locsAt(o.x, o.z));
 			return;
 		}
 		sxy = on;
@@ -1065,8 +1158,12 @@ public class CourseCam extends Client {
 		// seq that ends early and a bas that covers the rest are both fine; frames with neither
 		// are the slide. A third of the crossing is the bar, to leave room for the frame-versus-
 		// cycle slop and for the last frame or two of a landing.
+		// A TELEJUMP IS NOT A SLIDE. An obstacle that animates where it stands and then jumps the
+		// player moves them in a single frame, so "one of one moving frames had nothing on it"
+		// fails a ratio that is meant to catch being carried. Draynor's rough wall is the case:
+		// seq 737 plays for its whole length and the move is one frame at the end of it.
 		check("the player was animated for the whole crossing",
-			crossFrames == 0 || walkFrames * 3 <= crossFrames,
+			crossFrames <= 2 || walkFrames * 3 <= crossFrames,
 			walkFrames + " of " + crossFrames + " moving frames had neither a seq nor a changed"
 			+ " walk bas on the player"
 			+ (seqSeen >= 0 ? " (seq " + seqSeen + " covered " + animFrames + ")" : ""));
@@ -1084,7 +1181,12 @@ public class CourseCam extends Client {
 		// there is nothing beneath them for the length of it. Varrock's clothes line crosses eight
 		// tiles of which two are sky, and that is the obstacle working. The count is printed
 		// because a run of them in the wrong place is still worth seeing.
-		check("and the tile it left the player on has floor under it", floorAt(end[0], end[1], end[2]), "");
+		int endFloor = floorStorey(end[0], end[1], end[2]);
+		check("and the tile it left the player on has floor under it", endFloor >= 0,
+			"nothing is drawn on this storey or the one below");
+		if (endFloor >= 0 && endFloor != end[2]) {
+			say("      (the floor under it is the roof drawn on L" + endFloor + " - deck over roof)");
+		}
 		if (airborne > 0) {
 			say("      " + airborne + " of the " + path.size() + " tiles crossed had nothing drawn under them"
 				+ (airborne > 1 ? " - expected on a rope or a line, not on a roof" : ""));
