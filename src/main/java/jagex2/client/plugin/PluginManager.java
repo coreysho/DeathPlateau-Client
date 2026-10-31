@@ -903,7 +903,7 @@ public final class PluginManager {
 				continue;
 			}
 			try {
-				boolean movable = overlay.layer() == Overlay.LAYER_SCREEN;
+				boolean movable = overlay.layer() == Overlay.LAYER_SCREEN && overlay.movable();
 				this.graphics.reset(width, height, this.regions, overlay.owner,
 					movable ? this.positions.x(overlay.positionKey) : 0,
 					movable ? this.positions.y(overlay.positionKey) : 0);

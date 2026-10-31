@@ -112,8 +112,11 @@ MUTS = [
 			return;
 		}''', ''),
     (MANAGER, 'the scene layer made draggable, so a world label can be pulled off its tile',
-     'boolean movable = overlay.layer() == Overlay.LAYER_SCREEN;',
+     'boolean movable = overlay.layer() == Overlay.LAYER_SCREEN && overlay.movable();',
      'boolean movable = true;'),
+    (MANAGER, 'an overlay that says it is pinned to a window dragged off it anyway',
+     'boolean movable = overlay.layer() == Overlay.LAYER_SCREEN && overlay.movable();',
+     'boolean movable = overlay.layer() == Overlay.LAYER_SCREEN;'),
     (MANAGER, 'the topmost overlay not preferred, so the one underneath is grabbed',
      'for (int i = this.overlays.size() - 1; i >= 0; i--) {',
      'for (int i = 0; i < this.overlays.size(); i++) {'),

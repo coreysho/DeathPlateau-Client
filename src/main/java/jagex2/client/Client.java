@@ -10351,6 +10351,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.redrawSidebar = true;
 				int var71 = this.in.g2();
 				Component var72 = Component.get(var71);
+				boolean var72holds = Component.holdsInv(var72);
 				while (this.in.pos < this.psize) {
 					int var73 = this.in.gsmarts();
 					int var74 = this.in.g2();
@@ -10358,7 +10359,9 @@ public class Client extends GameShell implements PixMap.Target {
 					if (var75 == 255) {
 						var75 = this.in.g4();
 					}
-					if (var73 >= 0 && var73 < var72.invSlotObjId.length) {
+					// See Component.holdsInv: a transmit aimed at a component with no inventory
+					// is read to the end and dropped, rather than throwing the player out.
+					if (var72holds && var73 >= 0 && var73 < var72.invSlotObjId.length) {
 						var72.invSlotObjId[var73] = var74;
 						var72.invSlotObjCount[var73] = var75;
 					}
@@ -10706,18 +10709,26 @@ public class Client extends GameShell implements PixMap.Target {
 				this.redrawSidebar = true;
 				int var107 = this.in.g2();
 				Component var108 = Component.get(var107);
+				// See Component.holdsInv. The body is still read to the end either way: a
+				// packet left half-consumed desynchronises every packet after it.
+				boolean var108holds = Component.holdsInv(var108);
 				int var109 = this.in.g2();
 				for (int var110 = 0; var110 < var109; var110++) {
-					var108.invSlotObjId[var110] = this.in.g2_alt3();
+					int var110id = this.in.g2_alt3();
 					int var111 = this.in.g1_alt2();
 					if (var111 == 255) {
 						var111 = this.in.g4_alt1();
 					}
-					var108.invSlotObjCount[var110] = var111;
+					if (var108holds && var110 < var108.invSlotObjId.length) {
+						var108.invSlotObjId[var110] = var110id;
+						var108.invSlotObjCount[var110] = var111;
+					}
 				}
-				for (int var112 = var109; var112 < var108.invSlotObjId.length; var112++) {
-					var108.invSlotObjId[var112] = 0;
-					var108.invSlotObjCount[var112] = 0;
+				if (var108holds) {
+					for (int var112 = var109; var112 < var108.invSlotObjId.length; var112++) {
+						var108.invSlotObjId[var112] = 0;
+						var108.invSlotObjCount[var112] = 0;
+					}
 				}
 				if (var107 == this.bankGridCom && this.bankSearchText.length() > 0) {
 					this.applyBankSearch();
@@ -11059,7 +11070,9 @@ public class Client extends GameShell implements PixMap.Target {
 				// UPDATE_INV_STOP_TRANSMIT
 				int var173 = this.in.g2_alt1();
 				Component var174 = Component.get(var173);
-				for (int var175 = 0; var175 < var174.invSlotObjId.length; var175++) {
+				// See Component.holdsInv.
+				for (int var175 = 0; Component.holdsInv(var174)
+					&& var175 < var174.invSlotObjId.length; var175++) {
 					var174.invSlotObjId[var175] = -1;
 					var174.invSlotObjId[var175] = 0;
 				}
@@ -13522,6 +13535,23 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.a(IILEWIXBTLV;II)V")
+	/**
+	 * Where the open main interface is drawn, as {x, y} in viewport coordinates, or null.
+	 *
+	 * FOR PLUGINS THAT DRAW ON A WINDOW, through PluginContext.getInvCellBounds. The numbers
+	 * are the layout's, which a plugin cannot see and should not have to: they move with the
+	 * display mode, and the whole point of the plugin seam is that a plugin written against
+	 * the fixed window keeps working in the resizable one.
+	 *
+	 * The same coordinates drawInterface is called with below, which is also the space a
+	 * LAYER_SCREEN overlay draws in - both happen inside draw3DEntityElements, against the
+	 * same raster, so a plugin can add a component's offset to these and draw on it.
+	 */
+	public int[] mainInterfaceOrigin() {
+		return this.viewportInterfaceId == -1 ? null
+			: new int[] { this.layout.mainX, this.layout.mainY };
+	}
+
 	public void drawInterface(int arg0, int arg1, Component arg2, int arg3) {
 		// the outermost call draws the tooltip a component queued (queueTooltip), after everything else
 		this.tooltipDepth++;

@@ -24,6 +24,12 @@ SRC = os.path.join(ROOT, 'src/main/java')
 LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 TEST = os.path.join(HERE, 'ClueTest.java')
 
+# WHERE THE CONTENT REPO IS, for the check that regenerates the table and compares. Beside this
+# one, normally - but the mutation runner builds its copy in a temp directory, where "beside"
+# is nothing at all, and a generator mutation would quietly report SKIPPED rather than survive
+# visibly. DP_CONTENT lets that run say where the real one is.
+CONTENT = os.environ.get('DP_CONTENT') or os.path.join(os.path.dirname(ROOT), 'DeathPlateau-Content')
+
 
 def main():
     javac = shutil.which('javac')
@@ -58,6 +64,7 @@ def main():
                             # cwd is the temp work dir, so the source checks need to be told
                             # where the repository is.
                             '-Ddp.root=' + ROOT,
+                            '-Ddp.content=' + CONTENT,
                             '-cp', classes,
                             'jagex2.client.plugin.builtin.ClueTest'],
                            capture_output=True, text=True, cwd=work)
