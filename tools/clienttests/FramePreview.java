@@ -13,6 +13,7 @@ import javax.imageio.ImageIO;
 
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.ui.Sidebar;
+import lostcity.Theme;
 
 public class FramePreview {
 
