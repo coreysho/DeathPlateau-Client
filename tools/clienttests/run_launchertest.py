@@ -41,7 +41,55 @@ PROBE = '''public class Probe {
 }
 '''
 
+# The icons being decodable is not the same as the window wearing them. This builds the REAL
+# window out of the shipped jar and asks the frame what it is carrying, which is the only thing
+# a player sees. It lives in lostcity because LauncherWindow and its Actions are package-private.
+#
+# WHY NOT GREP THE SOURCE FOR setIconImages, which is what this check used to do: the call moved
+# from Launcher to LauncherWindow in the launcher rewrite and the grep went on reading the old
+# file, so it failed while the icons were fine. A grep for a line of code tests where the line
+# is. This tests what the window has.
+WINDOW_PROBE = '''package lostcity;
+
+import java.awt.Image;
+import java.util.List;
+import javax.swing.JFrame;
+
+public class WindowProbe implements LauncherWindow.Actions {
+
+    public void onPlay() {
+    }
+
+    public void onDev() {
+    }
+
+    public static void main(String[] args) throws Exception {
+        LauncherWindow window = new LauncherWindow("probe", "0", new WindowProbe());
+        JFrame frame = window.frame();
+        List images = frame.getIconImages();
+        StringBuilder widths = new StringBuilder();
+        for (int i = 0; i < images.size(); i++) {
+            if (i > 0) {
+                widths.append(',');
+            }
+            widths.append(((Image) images.get(i)).getWidth(null));
+        }
+        System.out.println("window=" + widths);
+        window.dispose();
+        System.exit(0);
+    }
+}
+'''
+
 fails = 0
+
+
+def display():
+    """The prefix that gives a java command a screen, or None if there is no way to."""
+    if os.environ.get('DISPLAY'):
+        return []
+    xvfb = shutil.which('xvfb-run')
+    return [xvfb, '-a'] if xvfb else None
 
 
 def check(ok, what):
@@ -149,10 +197,38 @@ def main():
         check('at16=true' in said, '...and finds one for the title bar')
 
         # And that the launcher actually puts them on its window, which no jar listing can show.
-        with open(os.path.join(ROOT, 'launcher/src/lostcity/Launcher.java'), encoding='utf-8') as f:
-            source = f.read()
-        check('frame.setIconImages(Branding.icons());' in source,
-              'the launcher window is given them')
+        # The window is a visible JFrame, so this one needs a display; without one it says so
+        # rather than counting as a pass.
+        pkg_dir = os.path.join(probe_dir, 'lostcity')
+        os.makedirs(pkg_dir)
+        with open(os.path.join(pkg_dir, 'WindowProbe.java'), 'w', encoding='utf-8') as f:
+            f.write(WINDOW_PROBE)
+        r = subprocess.run(['javac', '-nowarn', '-cp', jar, '-d', probe_dir,
+                            os.path.join(pkg_dir, 'WindowProbe.java')],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(r.stderr[-2000:])
+            raise SystemExit('run_launchertest: the window probe does not compile against the jar')
+        shown = display()
+        if shown is None:
+            print('  SKIP  no DISPLAY and no xvfb-run - cannot ask the launcher window for its '
+                  'icons')
+        else:
+            r = subprocess.run(shown + ['java', '-cp', os.pathsep.join([jar, probe_dir]),
+                                        'lostcity.WindowProbe'],
+                               capture_output=True, text=True)
+            got = None
+            for line in r.stdout.split('\n'):
+                if line.startswith('window='):
+                    got = line[len('window='):].strip()
+            want = ','.join(str(s) for s in ICON_SIZES)
+            # An empty answer and no answer are different faults - a bare window versus a probe
+            # that died - and a check that reads the same for both sends you to the wrong place.
+            if got is None:
+                said = r.stderr[-200:].strip() or 'the probe never answered'
+            else:
+                said = got or 'the window has no icons at all'
+            check(got == want, 'the launcher window is wearing every icon (%s)' % said)
 
         # THE OTHER COPY, which is the one most players will actually run. A launcher downloaded
         # months ago hands over to the newer one inside client.jar and runs it from there, so the
