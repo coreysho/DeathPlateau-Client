@@ -29,6 +29,7 @@ WINDOW = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapWindow.java
 SUPPLY = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/WorldMap.java')
 ICONS = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapIcons.java')
 ORB = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapOrb.java')
+LABELS = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapLabels.java')
 RUNNER = os.path.join(HERE, 'run_mapwindowtest.py')
 
 MUTS = [
@@ -241,13 +242,73 @@ MUTS = [
     (ICONS, 'the table reported rebuilt every frame, so every file is fed through forever',
      '\t\tint before = this.builtFor;\n\t\tthis.functions();\n\t\treturn this.builtFor != before;',
      '\t\tthis.functions();\n\t\treturn true;'),
+
+    # ---- THE NAMES OF PLACES. A label is the one thing on this map with no picture behind it,
+    # so every one of these shows a map that still looks like a map.
+    (LABELS, 'the wrong break character, so "Kingdom Of/Misthalin" stays one long line',
+     "\tpublic static final char BREAK = '/';",
+     "\tpublic static final char BREAK = '|';"),
+    (LABELS, 'a split that stops at the first slash, dropping everything after it',
+     '\t\t\tif (at == name.length() || name.charAt(at) == BREAK) {',
+     '\t\t\tif (at == name.length()) {'),
+    (LABELS, 'the slash kept in the line it ended, so every two-part name is drawn with it',
+     '\t\t\t\tout[which++] = name.substring(from, at);',
+     '\t\t\t\tout[which++] = name.substring(from, Math.min(at + 1, name.length()));'),
+    (LABELS, 'the last line never taken, so the second half of a name is null',
+     '\t\t\tif (at == name.length() || name.charAt(at) == BREAK) {',
+     '\t\t\tif (at < name.length() && name.charAt(at) == BREAK) {'),
+
+    # ---- WHICH ZOOM SHOWS WHICH. Both of these are a map that reads as a list, or a map with
+    # most of its places missing - neither throws and neither looks broken.
+    (WINDOW, 'every label shown at every zoom, so four hundred squares carry a hundred names',
+     '\t\treturn rank > MapLabels.RANK_PLACE || zoom > 1;',
+     '\t\treturn true;'),
+    (WINDOW, 'only kingdoms and towns ever named, so no guild or mine is labelled at any zoom',
+     '\t\treturn rank > MapLabels.RANK_PLACE || zoom > 1;',
+     '\t\treturn rank > MapLabels.RANK_PLACE;'),
+    (WINDOW, 'towns dropped from the far zoom along with the mines',
+     '\t\treturn rank > MapLabels.RANK_PLACE || zoom > 1;',
+     '\t\treturn rank > MapLabels.RANK_TOWN || zoom > 1;'),
+
+    # ---- THE TWO BANDS. A quarter of this map is underground and the only way into it is this
+    # arithmetic; every one of these is a button that looks like it worked.
+    (WINDOW, 'two names allowed to share pixels, which is how Falador Mine and Draynor '
+             'Basement printed over each other into one word that was neither',
+     '\t\t\tif (((Rectangle) taken.get(i)).intersects(box)) {\n\t\t\t\treturn false;',
+     '\t\t\tif (false) {\n\t\t\t\treturn false;'),
+    (WINDOW, 'only the last name placed checked against, so a third lands on the first',
+     '\t\tfor (int i = 0; i < taken.size(); i++) {\n'
+     '\t\t\tif (((Rectangle) taken.get(i)).intersects(box)) {',
+     '\t\tfor (int i = Math.max(0, taken.size() - 1); i < taken.size(); i++) {\n'
+     '\t\t\tif (((Rectangle) taken.get(i)).intersects(box)) {'),
+    (WINDOW, 'no name ever given room, so the map is drawn with nothing named at all',
+     '\t\t\tif (((Rectangle) taken.get(i)).intersects(box)) {\n\t\t\t\treturn false;',
+     '\t\t\tif (true) {\n\t\t\t\treturn false;'),
+    (WINDOW, 'the boundary a row out, which puts the last surface row underground',
+     '\t\treturn tileZ >= UNDER_FROM;',
+     '\t\treturn tileZ > UNDER_FROM;'),
+    (WINDOW, 'the band read upside down, so Varrock is a dungeon',
+     '\t\treturn tileZ >= UNDER_FROM;',
+     '\t\treturn tileZ < UNDER_FROM;'),
+    (WINDOW, 'the step taken the same way from both bands, so underground never comes back up',
+     '\t\treturn isUnderground(tileZ) ? tileZ - UNDER_STEP : tileZ + UNDER_STEP;',
+     '\t\treturn tileZ + UNDER_STEP;'),
+    (WINDOW, 'the step off by a row, so the jump lands one square north of the place',
+     '\tprivate static final int UNDER_STEP = 100 * MapSquare.SQUARE;',
+     '\tprivate static final int UNDER_STEP = 101 * MapSquare.SQUARE;'),
+    (WINDOW, 'a jump that never admits it cannot leave the band, so the button lies',
+     '\t\treturn isUnderground(to) == isUnderground(fromZ) ? -1 : to;',
+     '\t\treturn to;'),
+    (WINDOW, 'a jump that always refuses, so the button never does anything at all',
+     '\t\treturn isUnderground(to) == isUnderground(fromZ) ? -1 : to;',
+     '\t\treturn -1;'),
 ]
 
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
-    for path in (WINDOW, SUPPLY, ICONS, ORB):
+    for path in (WINDOW, SUPPLY, ICONS, ORB, LABELS):
         with open(path, encoding='utf-8', newline='') as f:
             orig[path] = f.read()
     _work, inside = workspace('mapwindow')
