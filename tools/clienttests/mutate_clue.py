@@ -188,6 +188,14 @@ MUTS = [
      '\t\treturn SlidingPuzzle.isBoard(board) ? board : null;',
      '\t\treturn board;'),
 
+    # ---- THE RING ON THE WORLD MAP, which can point at one thing and has to pick the right one.
+    (PLUGIN, 'the ring put on the first scroll in the bag rather than the first with a place',
+     '\t\t\tif (step >= 0 && ClueSteps.SPOT[step] != ClueSteps.SPOT_NONE) {',
+     '\t\t\tif (step >= 0) {'),
+    (PLUGIN, 'a bag with nowhere to point still marking somewhere',
+     '\t\t\t\treturn step;\n\t\t\t}\n\t\t}\n\t\treturn -1;\n\t}\n\n\t/** The same, for this player',
+     '\t\t\t\treturn step;\n\t\t\t}\n\t\t}\n\t\treturn 0;\n\t}\n\n\t/** The same, for this player'),
+
     # ---- THE SCRAPE. Two thirds of the table comes out of scripts rather than off a param, so
     # a pattern that goes stale here costs destinations and still builds a table.
     (MAKER, 'the tile pattern narrowed, so the crates and drawers lose their places',

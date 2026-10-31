@@ -1090,14 +1090,13 @@ public class Client extends GameShell implements PixMap.Target {
 					}
 					jagex2.client.worldmap.MapWindow window = Client.this.worldMapWindow;
 					if (window.isVisible()) {
+						// The window tells the map it has been shut - every way out of it does.
 						window.setVisible(false);
-						Client.this.worldMap.closed();
 						return;
 					}
 					if (atX >= 0) {
 						window.centreOn(atX, atZ);
 					}
-					Client.this.worldMap.opened();
 					window.setVisible(true);
 					window.toFront();
 				} catch (Throwable error) {
@@ -3501,6 +3500,8 @@ public class Client extends GameShell implements PixMap.Target {
 			if (this.worldMapWindow != null) {
 				this.worldMapWindow.setPlayer(this.playerTileX(), this.playerTileZ(),
 					this.currentLevel);
+				this.worldMapWindow.setMark(this.mapMarkX, this.mapMarkZ, this.mapMarkLevel,
+					this.mapMarkLabel);
 			}
 		}
 
@@ -13547,6 +13548,21 @@ public class Client extends GameShell implements PixMap.Target {
 	 * LAYER_SCREEN overlay draws in - both happen inside draw3DEntityElements, against the
 	 * same raster, so a plugin can add a component's offset to these and draw on it.
 	 */
+	/**
+	 * A spot a plugin has asked the world map to mark, or -1 for none.
+	 *
+	 * HELD HERE RATHER THAN IN THE WINDOW because the window does not exist until somebody
+	 * opens the map, and a plugin should not have to care: it says where the thing is whenever
+	 * it likes, and the mark is there when the map is next looked at.
+	 */
+	public int mapMarkX = -1;
+
+	public int mapMarkZ = -1;
+
+	public int mapMarkLevel;
+
+	public String mapMarkLabel = "";
+
 	public int[] mainInterfaceOrigin() {
 		return this.viewportInterfaceId == -1 ? null
 			: new int[] { this.layout.mainX, this.layout.mainY };

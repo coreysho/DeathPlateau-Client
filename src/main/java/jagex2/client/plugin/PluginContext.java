@@ -590,6 +590,35 @@ public final class PluginContext {
 		}
 	}
 
+	// ------------------------------------------------------------------ the world map
+
+	/**
+	 * Mark a spot on the world map, with a word for it.
+	 *
+	 * THE PLUGIN KNOWS WHERE, THE CLIENT KNOWS HOW TO DRAW IT, which is the same split as
+	 * everything else here. A clue scroll's dig spot is a fact about the player's bag and a
+	 * table generated from the content - neither of which the client has any business knowing -
+	 * and a ring drawn at the right pixel of a window that may not be open yet is entirely the
+	 * client's business.
+	 *
+	 * THERE IS ONE MARK. A second plugin calling this replaces the first one's, and that is
+	 * worth saying out loud rather than hiding: one is what the map has needed so far, and
+	 * keying them by plugin is the obvious thing to do on the day a second one wants one.
+	 *
+	 * Pass a negative x to take the mark away.
+	 */
+	public void markWorldMap(int x, int z, int level, String label) {
+		this.client.mapMarkX = x;
+		this.client.mapMarkZ = z;
+		this.client.mapMarkLevel = level;
+		this.client.mapMarkLabel = label == null ? "" : label;
+	}
+
+	/** Whether there is a mark on the world map at the moment, and where. */
+	public int[] getWorldMapMark() {
+		return new int[] { this.client.mapMarkX, this.client.mapMarkZ, this.client.mapMarkLevel };
+	}
+
 	// ------------------------------------------------------------------ chat
 
 	/**

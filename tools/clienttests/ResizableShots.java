@@ -683,6 +683,10 @@ public class ResizableShots extends Client {
 			mapcost(prefix);
 			return;
 		}
+		if (mode.equals("mapwindow")) {
+			mapwindow(prefix);
+			return;
+		}
 		if (mode.equals("zulrah")) {
 			zulrah(prefix);
 			return;
@@ -1091,6 +1095,201 @@ public class ResizableShots extends Client {
 				+ " squares ready, " + mapSize(map, "drawn") + " held");
 			waitFrames(300);
 		}
+	}
+
+	/**
+	 * The REAL world map window, over a real game, which is the only way to see what it costs.
+	 *
+	 * EVERYTHING ELSE THAT CHECKS THIS MAP IS BLIND TO HALF OF IT. MapWindowTest has the
+	 * arithmetic, run_mapwindowpreview has the drawing, and mapcost above has the game thread -
+	 * but the window is a JFrame with a repaint timer of its own, and what it costs the game,
+	 * what it manages to draw, and whether shutting it actually stops anything are all
+	 * properties of the two running together. This opens the real one against a real server.
+	 *
+	 * The window needs a display, not the client's frame: it is its own top-level window. Under
+	 * Xvfb that is enough.
+	 */
+	static void mapwindow(String prefix) throws Exception {
+		Object map = clientField("worldMap");
+		if (map == null) {
+			say("FAIL the client has no world map at all");
+			log.close();
+			System.exit(1);
+		}
+		// A CLUE IN THE BAG BEFORE THE WINDOW IS UP, because the window is a top-level frame of
+		// its own: once it is showing it has the keyboard, and a ::give typed at it goes into
+		// its search box. Five mangled retries and a FAIL, the first time round.
+		say(enablePlugin("clue-scroll") ? "clue plugin on" : "FAIL no clue plugin to turn on");
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		command("::give " + System.getProperty("shots.clue", "trail_clue_hard_sextant001"));
+		waitFrames(40);
+
+		Class<?> windowClass = Class.forName("jagex2.client.worldmap.MapWindow");
+		Class<?> mapClass = Class.forName("jagex2.client.worldmap.WorldMap");
+		final java.awt.Window window =
+			(java.awt.Window) windowClass.getConstructor(mapClass).newInstance(map);
+		// HANDED TO THE CLIENT, not just made: the client is what feeds the window the player's
+		// tile and whatever a plugin has asked it to mark, once a frame. A window the client
+		// does not know about draws a map with nobody on it.
+		set("worldMapWindow", window);
+
+		say(String.format("shut       %s  %s", frameCost(200), mapState(map, clientField("onDemand"))));
+
+		// VARROCK AT THE WIDEST ZOOM, which is the view the whole of the fault lives in: a
+		// square is 64 pixels there, so the window shows fifteen by eleven of them at once.
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		map.getClass().getMethod("opened").invoke(map);
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				window.setVisible(true);
+			}
+		});
+
+		for (int round = 0; round < 5; round++) {
+			waitFrames(250);
+			say(String.format("open +%2ds  %s  %s   %s", (round + 1) * 5, frameCost(100),
+				mapState(map, clientField("onDemand")), filled(window)));
+		}
+		say("the map is marked at: " + geti("mapMarkX") + ", " + geti("mapMarkZ")
+			+ " level " + geti("mapMarkLevel") + " \"" + get("mapMarkLabel") + "\"");
+		windowClass.getMethod("centreOn", int.class, int.class)
+			.invoke(window, geti("mapMarkX"), geti("mapMarkZ"));
+		setPrivate(window, "zoom", Integer.valueOf(4));
+		waitFrames(150);
+		shoot(window, prefix + "_mark");
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		waitFrames(150);
+		shoot(window, prefix + "_open");
+		holes(window, map);
+
+		// ESCAPE, which is how a player shuts a window, and is NOT the orb's toggle - the only
+		// path that tells the map nobody is looking any more.
+		press(window, KeyEvent.VK_ESCAPE);
+		waitFrames(50);
+		say("escape pressed, window visible: " + window.isVisible());
+		for (int round = 0; round < 3; round++) {
+			waitFrames(250);
+			say(String.format("shut +%2ds  %s  %s", (round + 1) * 5, frameCost(100),
+				mapState(map, clientField("onDemand"))));
+		}
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * Which of the squares on screen are black, and why each one is.
+	 *
+	 * A BLACK SQUARE IS NOT ONE THING. It is either a hole in the world - the index has no map
+	 * file for it, and black is the right answer - or a square the index HAS and the renderer
+	 * could not draw, which is a fault and is remembered as an empty picture so that it is
+	 * never retried. The two look identical on screen and have nothing in common underneath,
+	 * so a count of black squares says nothing on its own.
+	 */
+	static void holes(java.awt.Window window, Object map) throws Exception {
+		int centreX = ((Integer) getPrivate(window, "centreX")).intValue();
+		int centreZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		int zoom = ((Integer) getPrivate(window, "zoom")).intValue();
+		java.awt.Component view = (java.awt.Component) getPrivate(window, "view");
+		int wide = view.getWidth();
+		int high = view.getHeight();
+		int cell = 64 * zoom;
+		int originX = wide / 2 - centreX * zoom;
+		int originZ = high / 2 + centreZ * zoom;
+		java.lang.reflect.Method exists = map.getClass().getMethod("exists", int.class, int.class);
+		java.lang.reflect.Method square =
+			map.getClass().getMethod("square", int.class, int.class, int.class);
+
+		int onScreen = 0;
+		int missing = 0;
+		int blank = 0;
+		StringBuilder blanks = new StringBuilder();
+		for (int x = Math.floorDiv(-originX, cell); x <= Math.floorDiv(wide - originX, cell); x++) {
+			for (int z = Math.floorDiv(originZ - high, cell); z <= Math.floorDiv(originZ, cell); z++) {
+				if (x < 0 || z < 0 || x > 0xFF || z > 0xFF) {
+					continue;
+				}
+				onScreen++;
+				if (!(Boolean) exists.invoke(map, x, z)) {
+					missing++;
+					continue;
+				}
+				int[] pixels = (int[]) square.invoke(map, x, z, 0);
+				if (pixels == null) {
+					continue;
+				}
+				boolean dark = true;
+				for (int i = 0; i < pixels.length && dark; i++) {
+					dark = pixels[i] == 0;
+				}
+				if (dark) {
+					blank++;
+					if (blanks.length() < 200) {
+						blanks.append(x).append(',').append(z).append(' ');
+					}
+				}
+			}
+		}
+		say("  " + onScreen + " squares on screen: " + missing + " the world has none for, "
+			+ blank + " the world HAS and the map drew as nothing");
+		if (blank > 0) {
+			say("  drew as nothing: " + blanks.toString().trim());
+		}
+	}
+
+	static Object getPrivate(Object target, String name) throws Exception {
+		java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+		f.setAccessible(true);
+		return f.get(target);
+	}
+
+	/** How many of the squares the window can show it has actually scaled and can draw. */
+	static String filled(java.awt.Window window) throws Exception {
+		java.lang.reflect.Field f = window.getClass().getDeclaredField("scaled");
+		f.setAccessible(true);
+		java.util.Map<?, ?> scaled = (java.util.Map<?, ?>) f.get(window);
+		return "window holds " + scaled.size() + " scaled squares";
+	}
+
+	/** A key press delivered to the window, the way a player's would be. */
+	static void press(final java.awt.Window window, final int code) throws Exception {
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				java.awt.Component to = window.getFocusOwner();
+				if (to == null) {
+					to = window;
+				}
+				to.dispatchEvent(new KeyEvent(to, KeyEvent.KEY_PRESSED,
+					System.currentTimeMillis(), 0, code, (char) 0));
+			}
+		});
+	}
+
+	/** A picture of the window itself, which is the half only an eye can judge. */
+	static void shoot(final java.awt.Window window, final String name) throws Exception {
+		final java.awt.image.BufferedImage shot = new java.awt.image.BufferedImage(
+			Math.max(1, window.getWidth()), Math.max(1, window.getHeight()),
+			java.awt.image.BufferedImage.TYPE_INT_RGB);
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				window.printAll(shot.getGraphics());
+			}
+		});
+		javax.imageio.ImageIO.write(shot, "png", new File(out, name + ".png"));
+		say("shot " + name + ".png " + shot.getWidth() + "x" + shot.getHeight());
+	}
+
+	static void setPrivate(Object target, String name, Object value) throws Exception {
+		java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+		f.setAccessible(true);
+		f.set(target, value);
 	}
 
 	/** Milliseconds a frame, averaged over the next so many frames. */
