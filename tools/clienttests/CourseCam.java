@@ -245,6 +245,18 @@ public class CourseCam extends Client {
 		}
 	}
 
+	/** The client's own idea of the player's Agility, which is what ::setstat has to move. */
+	static int agilityLevel() {
+		synchronized (LOCK) {
+			try {
+				int[] levels = (int[]) get("skillLevel");
+				return levels == null || levels.length <= 16 ? -1 : levels[16];
+			} catch (Throwable t) {
+				return -1;
+			}
+		}
+	}
+
 	/** A :: command, typed into the chatbox the way a player types it. */
 	static void command(String cmd) throws Exception {
 		type(cmd);
@@ -1373,9 +1385,23 @@ public class CourseCam extends Client {
 		// the fall checks - it "landed on 2709,3489 L0", which IS ^seers_fall_rope - and the next
 		// obstacle could not be reached from the street, so one roll cost two FAIL lines.
 		int runLevel = Math.max(courseLevel, failStop);
-		command("::setstat agility " + runLevel);
-		waitFrames(20);
-		if (runLevel != courseLevel) {
+		// AND CHECK IT ARRIVED. A typed command is one character a frame and a dropped frame
+		// leaves half of it behind - ::tele has been wrapped in a retry for that since the first
+		// week. ::setstat was not, and the cost is a whole course: Varrock came back 39 ok and 9
+		// FAIL because the level never took, ~varrock_blocked returned at the first obstacle, and
+		// the cam had already PRINTED that it set the level.
+		int gotLevel = -1;
+		for (int tryn = 0; tryn < 4 && gotLevel != runLevel; tryn++) {
+			command("::setstat agility " + runLevel);
+			for (int f = 0; f < 60 && gotLevel != runLevel; f++) {
+				waitFrames(2);
+				gotLevel = agilityLevel();
+			}
+		}
+		check("agility is " + gotLevel + " for the run", gotLevel == runLevel,
+			gotLevel == runLevel ? "" : "::setstat agility " + runLevel + " never took, and every"
+				+ " obstacle below is gated on it - the course's own level is " + courseLevel);
+		if (runLevel != courseLevel && gotLevel == runLevel) {
 			say("(agility " + runLevel + " for the run, not the course's own " + courseLevel
 				+ ": that is where this course stops being failable, and a lap that can fail an"
 				+ " obstacle at random is not a lap anybody can compare)");
@@ -1491,7 +1517,15 @@ public class CourseCam extends Client {
 				at[0] == o.fallX && at[1] == o.fallZ && at[2] == o.fallLevel,
 				at[0] == o.fallX && at[1] == o.fallZ && at[2] == o.fallLevel
 					? "" : "wanted " + o.fallX + "," + o.fallZ + " L" + o.fallLevel);
+			// WAIT FOR THE ANSWER, not for a frame count. sceneState is 2 and tileAt() is right
+			// before the squares around the player have been filled in, so a floorStorey read
+			// straight after a teleport can come back empty on a tile that is perfectly solid -
+			// 3212,3414 passed this check twice and then failed it once, having moved nowhere.
 			int storey = floorStorey(o.fallX, o.fallZ, o.fallLevel);
+			for (int f = 0; f < 120 && storey < 0; f++) {
+				waitFrames(2);
+				storey = floorStorey(o.fallX, o.fallZ, o.fallLevel);
+			}
 			check("and the client draws floor under the fall tile", storey >= 0,
 				storey >= 0 ? "" : "nothing is drawn on this storey or the one below - a player who"
 					+ " fails this obstacle lands in thin air");
@@ -1615,6 +1649,8 @@ public class CourseCam extends Client {
 		// click to it in one run and Pollnivneach's basket lost one in the next, each with the
 		// right verb on the menu a moment earlier. The obstacle is found again between attempts,
 		// because a stray "Walk here" walks the player a tile and moves where it is on the screen.
+		// WHERE THEY SET OUT FROM, read before the click: see the seed below.
+		int[] preClick = tileAt();
 		boolean ran = false;
 		int tries = 0;
 		while (!ran && tries < 3) {
@@ -1665,7 +1701,26 @@ public class CourseCam extends Client {
 		// 4. WATCH IT PLAY OUT, frame by frame, in DRAWN position - which is where the player sees
 		// himself, glide and all, rather than where the server has put him.
 		List<String> path = new ArrayList<String>();
+		// PER TILE, THE TWO THINGS THE PATH ALONE CANNOT SAY: whether the player reached it on
+		// foot or mid-crossing, and whether anything at all is drawn under it.
+		List<Boolean> onFoot = new ArrayList<Boolean>();
+		List<Boolean> hasFloor = new ArrayList<Boolean>();
+		List<Boolean> onGround = new ArrayList<Boolean>();
 		int airborne = 0;
+		// THE TILE THEY SET OUT FROM, seeded rather than sampled.
+		//
+		// This loop records the player's DRAWN position frame by frame, and a telejump can land
+		// before its first sample: Ardougne's first gap reported "the crossing is 0 tiles - the
+		// player never moved" with the path holding nothing but the landing, on an obstacle whose
+		// landing check had just passed. The loop will not add a tile equal to the last one, so
+		// seeding costs nothing when the sampling does catch the start.
+		path.add(preClick[0] + "," + preClick[1] + "L" + preClick[2]);
+		onFoot.add(Boolean.TRUE);
+		hasFloor.add(Boolean.valueOf(floorStorey(preClick[0], preClick[1], preClick[2]) >= 0));
+		onGround.add(Boolean.valueOf(terrainAt(preClick[0], preClick[1], preClick[2])));
+		if (!terrainAt(preClick[0], preClick[1], preClick[2])) {
+			airborne++;
+		}
 		double[] last = drawnAt();
 		int still = 0;
 		boolean shotMid = false;
@@ -1699,9 +1754,26 @@ public class CourseCam extends Client {
 			waitFrames(1);
 			double[] d = drawnAt();
 			int[] t = tileAt();
+			// READ THE ANIMATION FIRST. The label below asks whether a crossing was under way when
+			// the player reached this tile, and reading the seq after recording it gets the very
+			// frame a crossing starts wrong - which is one false "walked tile with nothing drawn"
+			// per run, on whichever obstacle happens to land on that frame.
+			int seqNow = animNow();
+			boolean carried = crossing || seqNow >= 0;
 			String tile = t[0] + "," + t[1] + "L" + t[2];
 			if (path.isEmpty() || !path.get(path.size() - 1).equals(tile)) {
 				path.add(tile);
+				// a tile added while no seq has been seen was reached by walking - but see the
+				// leap guard below, which has the final say.
+				onFoot.add(Boolean.valueOf(!carried));
+				// floorStorey, not terrainAt: a walked tile may be the top of a market stall or a
+				// basket, which is a loc with no ground of its own and is still something to
+				// stand on. It already looks a storey down for the deck-over-roof case.
+				hasFloor.add(Boolean.valueOf(floorStorey(t[0], t[1], t[2]) >= 0));
+				// AND THE TERRAIN ANSWER SEPARATELY, because the vault-versus-slide test below is
+				// a question about open air and a loc is not air. Keeping one list and using it
+				// for both is how the pole-vault got failed.
+				onGround.add(Boolean.valueOf(terrainAt(t[0], t[1], t[2])));
 				// terrainAt, not floorStorey: this counts OPEN AIR, and a loc is not air. It
 				// already looks a storey down, because on a rooftop the ground is routinely drawn
 				// on the storey below and asking only about the player's own plane calls solid roof
@@ -1710,7 +1782,6 @@ public class CourseCam extends Client {
 					airborne++;
 				}
 			}
-			int seqNow = animNow();
 			if (seqNow >= 0 && seqSeen < 0) {
 				seqSeen = seqNow;
 				crossing = true;
@@ -1834,9 +1905,52 @@ public class CourseCam extends Client {
 		if (endFloor >= 0 && endFloor != end[2]) {
 			say("      (the floor under it is the roof drawn on L" + endFloor + " - deck over roof)");
 		}
+		// WALKED OVER A HOLE IS A FAULT; GLIDED OVER ONE IS THE OBSTACLE WORKING.
+		//
+		// These used to be one printed number over the whole path. A player who is being carried
+		// by p_exactmove across a rope, a washing line or a street SHOULD have nothing under them
+		// for the length of it - Varrock's clothes line crosses eight tiles of which two are sky.
+		// A player putting one foot in front of the other should not.
+		//
+		// The split is by animation, not geometry: an exactmove glide draws the player on every
+		// tile in between, so Draynor's sixth obstacle is nine CONTIGUOUS tiles of which four are
+		// over the gap, and looking for a jump in the coordinates finds nothing to split on.
+		// AND NOTHING AFTER A LEAP IS WALKED, whatever the animation was doing. A step of more
+		// than one tile is a telejump or an exactmove arriving, and everything from there on is
+		// the crossing - Al Kharid's cable throws the player eight tiles and the first tile of
+		// the throw was being held to the standard of a footstep.
+		int firstLeap = path.size();
+		for (int i = 1; i < path.size(); i++) {
+			int[] a = tileOf(path.get(i - 1));
+			int[] b = tileOf(path.get(i));
+			if (Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) > 1) {
+				firstLeap = i;
+				break;
+			}
+		}
+		List<String> walkedHoles = new ArrayList<String>();
+		int airborneCross = 0;
+		for (int i = 0; i < path.size(); i++) {
+			boolean foot = i < firstLeap && i < onFoot.size() && onFoot.get(i).booleanValue();
+			boolean floor = i < hasFloor.size() && hasFloor.get(i).booleanValue();
+			if (foot) {
+				if (!floor) {
+					walkedHoles.add(path.get(i));
+				}
+			} else if (i < onGround.size() && !onGround.get(i).booleanValue()) {
+				airborneCross++;
+			}
+		}
+		check("every tile the player walked to has floor under it", walkedHoles.isEmpty(),
+			walkedHoles.isEmpty() ? "" : walkedHoles.size() + " walked tile(s) with nothing drawn: "
+				+ String.join(", ", walkedHoles));
+		if (airborneCross > 0) {
+			say("      " + airborneCross + " of the " + path.size() + " tiles were crossed with nothing"
+				+ " drawn under them - which is what a rope, a line or a gap is");
+		}
 		if (airborne > 0) {
-			say("      " + airborne + " of the " + path.size() + " tiles crossed had nothing drawn under them"
-				+ (airborne > 1 ? " - expected on a rope or a line, not on a roof" : ""));
+			say("      (" + airborne + " of the " + path.size() + " are open air by TERRAIN alone, locs"
+				+ " not counted - that is the vault-versus-slide measure below, not a fault)");
 		}
 		check("the crossing is " + (path.size() - 1) + " tiles", path.size() >= 2,
 			path.size() < 2 ? "the player never moved" : "");
@@ -1898,6 +2012,14 @@ public class CourseCam extends Client {
 			// obstacles failed a rule built on that, the vault among them. What the tiles are
 			// standing on is the only thing that tells them apart, which is why airborne is counted
 			// off terrainAt rather than floorAt.
+			// THE WHOLE PATH'S TERRAIN COUNT, and it has to stay that way.
+			//
+			// I narrowed this to the crossing's own tiles, on the reasoning that a hole on the
+			// approach should not excuse a slide. It failed the Canifis pole-vault immediately.
+			// Whether an air tile is recorded at all depends on the client happening to sample the
+			// player over the street mid-glide - the vault's path went 3480,3484 straight to
+			// 3490,3477 with nothing in between - so narrowing the window just loses the evidence.
+			// The case it was meant to catch has never once been seen.
 			boolean overAir = airborne > 0;
 			check("and the crossing itself went in a straight line", straight || overAir,
 				straight || overAir ? "" : "the glide from " + start[0] + "," + start[1]
