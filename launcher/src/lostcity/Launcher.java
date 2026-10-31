@@ -104,7 +104,21 @@ public final class Launcher {
      *      the icons - which the client jar has, because launcher/src and src/main/resources are
      *      both compiled into it
      */
-    private static final int VERSION = 7;
+    /**
+     * BUMP THIS WHENEVER THE LAUNCHER CHANGES, and never reset it.
+     *
+     * It is not a product version, it is the hand-over's only input: handOver() reads the stamp
+     * out of the launcher inside client.jar and compares it with this number, so the number has
+     * to identify the code. Two different launchers both calling themselves 7 would mean a jar on
+     * disk declining to hand over to a newer one that happens to share its number, which is how a
+     * player gets stuck on an old launcher with no way to be moved off it.
+     *
+     * It also must only ever go up. handOver refuses to hand over to anything lower precisely so
+     * that two launchers cannot pass a player back and forth for ever, which means a reset to 1
+     * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
+     * that it is the newer one.
+     */
+    private static final int VERSION = 8;
 
     /**
      * The first launcher version whose client writes the window marker (see awaitClientWindow).
@@ -174,14 +188,33 @@ public final class Launcher {
     }
 
     private void run(boolean check) {
-        if (!check) {
-            window();
-        }
         if (!dir.isDirectory() && !dir.mkdirs()) {
             fail("Could not create " + dir);
             return;
         }
         migrate();
+
+        // HAND OVER BEFORE PUTTING ANYTHING ON SCREEN, if the client we already have carries a
+        // newer launcher than this one.
+        //
+        // The jar a player double-clicks is whatever they downloaded once, and it is never
+        // replaced - the newer launcher travels inside client.jar and is handed to at startup. So
+        // a player on an old jar saw that old launcher's window first and the real one a second
+        // later, every single run, which looks like the thing started twice. (Observed here on
+        // 2026-10-31: launcher 6's window, then launcher 7's.)
+        //
+        // The check costs a zip entry read and needs no network, because the stamp is in the
+        // client.jar already on disk. Only when there is no newer launcher there does this one go
+        // on to show a window and check for updates. The second attempt further down stays: a
+        // download that has just arrived may itself carry a newer launcher, and that case cannot
+        // be known before the download.
+        if (!check && handOver()) {
+            System.exit(0);
+        }
+
+        if (!check) {
+            window();
+        }
 
         if (System.getProperty(HANDOFF) != null) {
             // the launcher that handed over checked and downloaded a moment ago
@@ -424,7 +457,10 @@ public final class Launcher {
             List<String> cmd = new ArrayList<>();
             cmd.add(javaBinary());
             for (String key : System.getProperties().stringPropertyNames()) {
-                if (key.startsWith("lostcity.")) {
+                // The world is added once, below. Skipped here because launch() now passes it to
+                // every client, so a launcher that was itself started by a client restart has it
+                // set - and without this it went on the command line twice.
+                if (key.startsWith("lostcity.") && !key.equals("lostcity.world")) {
                     cmd.add("-D" + key + "=" + System.getProperty(key));
                 }
             }
@@ -678,9 +714,19 @@ public final class Launcher {
 
     private void message(String text) {
         log(text.replace('\n', ' '));
-        if (ui != null) {
-            run(() -> JOptionPane.showMessageDialog(ui.frame(), text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
-        }
+        run(() -> JOptionPane.showMessageDialog(owner(), text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
+    }
+
+    /**
+     * The window to hang a dialog on, or null for one that stands on its own.
+     *
+     * THERE IS NOW A STRETCH WITH NO WINDOW AT ALL - the directory check and the early hand-over
+     * both run before window() - and a launcher that cannot create its own folder has to be able
+     * to say so. A dialog with no owner is untidy and visible; no dialog is a program that exits
+     * without a word.
+     */
+    private java.awt.Frame owner() {
+        return ui == null ? null : ui.frame();
     }
 
     /** Something is happening and nothing is waiting on the player: the bar, not the button. */
@@ -723,9 +769,7 @@ public final class Launcher {
     private void fail(String text) {
         log("error: " + text);
         closeSplash();
-        if (ui != null) {
-            run(() -> JOptionPane.showMessageDialog(ui.frame(), text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
-        }
+        run(() -> JOptionPane.showMessageDialog(owner(), text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
         System.exit(1);
     }
 
