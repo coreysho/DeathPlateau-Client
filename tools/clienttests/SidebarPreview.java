@@ -11,6 +11,7 @@ import javax.swing.JFrame;
 
 import jagex2.client.Client;
 import jagex2.client.plugin.PluginManager;
+import lostcity.Theme;
 
 public class SidebarPreview {
 

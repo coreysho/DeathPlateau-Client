@@ -8,7 +8,7 @@ and calls the real draw methods, which makes the colours something that can be c
 than imagined.
 
 It also asserts the thing that is a fact rather than taste: that neither panel carries a colour
-literal any more. They are themed from jagex2.client.plugin.ui.Theme, the same palette as the
+literal any more. They are themed from lostcity.Theme, the same palette as the
 sidebar and the window frame, and a hardcoded colour is how one surface quietly drifts from the
 other two.
 

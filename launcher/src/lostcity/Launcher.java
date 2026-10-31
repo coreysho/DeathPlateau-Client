@@ -45,8 +45,10 @@ import javax.swing.SwingUtilities;
 // Any -Dlostcity.* property given to the launcher (lostcity.host, .port, .webhost, .webport) is passed on to
 // the client. Java 8, no dependencies: the one thing a player needs is the Java they already have.
 //
-// WHICH WORLD. The window has two buttons, World 1 and the dev world. Nobody has to press either: after
-// a few seconds World 1 starts on its own, as it always has, and pressing World 1 starts it at once. The
+// WHICH WORLD. The window waits to be told: Play starts World 1, and nothing starts by itself. It used
+// to count down from three seconds and then start World 1 unasked, which was reasonable beside two small
+// buttons and is not beside a button this size - a window whose one control presses itself while you are
+// still reading it. The ways to skip the window entirely are unchanged and are below. The
 // dev world (World 2, node 11) is a second server in the same container, for staff only - the server
 // turns everybody else away with "This world is full". It has its own game and web ports, found by
 // devEndpoint(): the server's own ports plus one when lostcity.host points straight at it (the LAN, or
@@ -67,8 +69,6 @@ public final class Launcher {
 
     // the 377 client's own node ids: World 1 is 10, the dev world 11 ("World 2" in the friends list)
     private static final int DEV_NODE_ID = 11;
-    // how long World 1 waits for somebody to pick the dev world instead
-    private static final long CHOICE_MILLIS = 3000;
     private static final String WORLD_1 = "1", DEV = "dev";
 
     // SELF-UPDATE. The launcher is compiled into client.jar as well as into its own jar (build.gradle),
@@ -104,7 +104,32 @@ public final class Launcher {
      *      the icons - which the client jar has, because launcher/src and src/main/resources are
      *      both compiled into it
      */
-    private static final int VERSION = 6;
+    /**
+     * BUMP THIS WHENEVER THE LAUNCHER CHANGES, and never reset it.
+     *
+     * It is not a product version, it is the hand-over's only input: handOver() reads the stamp
+     * out of the launcher inside client.jar and compares it with this number, so the number has
+     * to identify the code. Two different launchers both calling themselves 7 would mean a jar on
+     * disk declining to hand over to a newer one that happens to share its number, which is how a
+     * player gets stuck on an old launcher with no way to be moved off it.
+     *
+     * It also must only ever go up. handOver refuses to hand over to anything lower precisely so
+     * that two launchers cannot pass a player back and forth for ever, which means a reset to 1
+     * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
+     * that it is the newer one.
+     */
+    private static final int VERSION = 9;
+
+    /**
+     * The first launcher version whose client writes the window marker (see awaitClientWindow).
+     *
+     * launcher/src is compiled into client.jar as well, so the stamp inside the client says which
+     * launcher it was built beside - which is also whether its ViewBox knows to touch the file.
+     * Asking it is better than waiting out a timeout on every old client: the two are released
+     * together, so the only way to be running an older one is to have been offline when the
+     * update check ran.
+     */
+    private static final int READY_SINCE = 7;
     private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
     @SuppressWarnings("unused") // read out of the compiled class, not called
     private static final String STAMP = STAMP_PREFIX + VERSION;
@@ -116,18 +141,20 @@ public final class Launcher {
     // where launchers before the rename kept the client - moved out of by migrate()
     private final File oldDir = new File(System.getProperty("user.home"), ".lostcity");
     private final File jar = new File(dir, ASSET);
+    /**
+     * Touched by the client the moment its window is on screen - see ViewBox - so this launcher
+     * knows when to get out of the way. Named here, passed as -Dlostcity.ready.
+     */
+    private final File ready = new File(dir, "client.ready");
     private final File version = new File(dir, "client.version");
 
-    private JFrame frame;
-    private JLabel label;
-    private JProgressBar bar;
-    private JButton world1Button, devButton;
+    private LauncherWindow ui;
+    /** Up from the first instruction of main() until the real window has something to show. */
+    private Splash splash;
 
     // WORLD_1, DEV, or null while nobody has chosen - guarded by choiceLock
     private final Object choiceLock = new Object();
     private String choice;
-    private long windowShownAt;
-    private boolean devFailed;
 
     public static void main(String[] args) {
         Launcher launcher = new Launcher();
@@ -142,6 +169,13 @@ public final class Launcher {
                 launcher.choice = world(arg.substring("--world=".length()));
             }
         }
+        // BEFORE run(), whose first act is a call to GitHub: until this existed the desktop stayed
+        // empty for however long that took, which looks like a program that did not start - and
+        // the answer to that is to double-click it again, which is a second launcher. Not for
+        // --check, which is a test switch and has no window of its own to precede.
+        if (!check) {
+            launcher.splash = Splash.show();
+        }
         launcher.run(check);
     }
 
@@ -154,14 +188,33 @@ public final class Launcher {
     }
 
     private void run(boolean check) {
-        if (!check) {
-            window();
-        }
         if (!dir.isDirectory() && !dir.mkdirs()) {
             fail("Could not create " + dir);
             return;
         }
         migrate();
+
+        // HAND OVER BEFORE PUTTING ANYTHING ON SCREEN, if the client we already have carries a
+        // newer launcher than this one.
+        //
+        // The jar a player double-clicks is whatever they downloaded once, and it is never
+        // replaced - the newer launcher travels inside client.jar and is handed to at startup. So
+        // a player on an old jar saw that old launcher's window first and the real one a second
+        // later, every single run, which looks like the thing started twice. (Observed here on
+        // 2026-10-31: launcher 6's window, then launcher 7's.)
+        //
+        // The check costs a zip entry read and needs no network, because the stamp is in the
+        // client.jar already on disk. Only when there is no newer launcher there does this one go
+        // on to show a window and check for updates. The second attempt further down stays: a
+        // download that has just arrived may itself carry a newer launcher, and that case cannot
+        // be known before the download.
+        if (!check && handOver()) {
+            System.exit(0);
+        }
+
+        if (!check) {
+            window();
+        }
 
         if (System.getProperty(HANDOFF) != null) {
             // the launcher that handed over checked and downloaded a moment ago
@@ -197,6 +250,23 @@ public final class Launcher {
             System.exit(0);
         }
 
+        // BACK TO THE BUTTON. The checking is done and the window is about to wait for a click, so
+        // something has to put it back from the progress bar - and nothing else does. The countdown
+        // used to, incidentally: it called choosing() every second, and clearing the busy state was
+        // a side effect of drawing "Starting World 1 in 2...". Taking the countdown out took that
+        // with it and left the window sitting on "Checking for updates..." for ever, with no Play
+        // button to press. Shipped in client-146; found by running it.
+        //
+        // Not when a world is already chosen (--dev, --world=, lostcity.world): awaitChoice returns
+        // at once there and the button would show for a single frame on its way past.
+        boolean waiting;
+        synchronized (choiceLock) {
+            waiting = choice == null;
+        }
+        if (waiting) {
+            choosing(null);
+        }
+
         for (;;) {
             String world = awaitChoice();
             String[] dev = null;
@@ -208,6 +278,9 @@ public final class Launcher {
                         + "Start the launcher with -Dlostcity.host=<the server's address> (the LAN or Tailscale),\n"
                         + "or give -Dlostcity.dev.host, .port, .webhost and .webport.");
                     choose(null);
+                    // Back to the button, and say so: the dialog has just been dismissed and
+                    // without a word here the window looks like it did nothing.
+                    choosing("The dev world is out of reach - Play starts World 1.");
                     continue;
                 }
             }
@@ -222,52 +295,41 @@ public final class Launcher {
         }
     }
 
-    // The world to start: one chosen already (--dev, lostcity.world), else whichever button is pressed
-    // first - and World 1 if neither is within CHOICE_MILLIS of the window opening, so a player who never
-    // looks at the buttons starts the game just as before. After a dev world that could not be reached,
-    // nothing starts by itself: it waits for a button.
+    /**
+     * The world to start: one chosen already (--dev, --world=, lostcity.world), else whichever the
+     * player clicks. It waits for as long as that takes.
+     *
+     * NOTHING STARTS BY ITSELF ANY MORE. This used to give the window three seconds and then take
+     * World 1 if nobody had said otherwise, so that a player who ignored the two buttons still got
+     * into the game. With one large Play button that reads as the window pressing its own control
+     * while you are still looking at it, and it made the dev world a race rather than a choice.
+     *
+     * Nothing here touches the window, deliberately: status() hands work to the Swing thread, and
+     * the Swing thread takes choiceLock in choose(), so saying anything from inside this lock is a
+     * deadlock. There is nothing to say in any case - the caption already explains what Play does.
+     */
     private String awaitChoice() {
-        for (;;) {
-            long left;
-            boolean waitForButton;
-            synchronized (choiceLock) {
-                if (choice != null) {
-                    return choice;
-                }
-                left = windowShownAt + CHOICE_MILLIS - System.currentTimeMillis();
-                waitForButton = devFailed;
-                if (!waitForButton && left <= 0) {
-                    choice = WORLD_1;
-                    return choice;
+        synchronized (choiceLock) {
+            while (choice == null) {
+                try {
+                    choiceLock.wait();
+                } catch (InterruptedException ignored) {
+                    // round again. An interrupt is not somebody choosing a world.
                 }
             }
-            // not while holding the lock: status() waits for the Swing thread, which takes it in choose()
-            status(waitForButton ? "Choose a world." : "Starting World 1 in " + ((left + 999) / 1000) + "...   (or choose the dev world)");
-            synchronized (choiceLock) {
-                if (choice == null) {
-                    try {
-                        choiceLock.wait(waitForButton ? 0 : Math.max(1, Math.min(left, 1000)));
-                    } catch (InterruptedException e) {
-                        choice = WORLD_1;
-                    }
-                }
-            }
+            return choice;
         }
     }
 
     // a button (on the Swing thread), or null to take the choice back after a dev world that failed
     private void choose(String world) {
         synchronized (choiceLock) {
-            if (world == null) {
-                devFailed = true;
-            }
             choice = world;
             choiceLock.notifyAll();
         }
         run(() -> {
-            if (world1Button != null) {
-                world1Button.setEnabled(world == null);
-                devButton.setEnabled(world == null);
+            if (ui != null) {
+                ui.setChoosable(world == null);
             }
         });
     }
@@ -339,7 +401,10 @@ public final class Launcher {
     // Into a temp file, checked to be a real jar, then moved over the old one - so a download cut off
     // halfway leaves the previous client working rather than a broken one.
     private void download(String url, String tag) throws IOException {
-        status("Downloading update " + tag + "...");
+        // The tag goes to the log, not to the bar: it is drawn inside a 268px button-sized track
+        // with a percentage after it, and "Downloading update client-1482... 7%" does not fit.
+        log("downloading " + tag + " from " + url);
+        status("Downloading the client...");
         File tmp = new File(dir, ASSET + ".part");
         HttpURLConnection c = open(url);
         long size = c.getContentLengthLong();
@@ -409,7 +474,10 @@ public final class Launcher {
             List<String> cmd = new ArrayList<>();
             cmd.add(javaBinary());
             for (String key : System.getProperties().stringPropertyNames()) {
-                if (key.startsWith("lostcity.")) {
+                // The world is added once, below. Skipped here because launch() now passes it to
+                // every client, so a launcher that was itself started by a client restart has it
+                // set - and without this it went on the command line twice.
+                if (key.startsWith("lostcity.") && !key.equals("lostcity.world")) {
                     cmd.add("-D" + key + "=" + System.getProperty(key));
                 }
             }
@@ -501,22 +569,42 @@ public final class Launcher {
             }
             // for the dev world, the address settings are replaced below rather than passed on
             String name = key.substring("lostcity.".length());
-            if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev.") || name.equals("world"))) {
+            // ...and this one is this launch's, set fresh below. A client told to update restarts
+            // the launcher with its own -Dlostcity.* settings (Client.relaunchForUpdate), so
+            // without this the second launch would carry the first one's marker back in.
+            if (name.equals("ready")) {
+                continue;
+            }
+            // The world this launch picked is added once, below, whichever it is - so a stale one
+            // passed in is dropped here rather than appearing twice on the command line.
+            if (name.equals("world")) {
+                continue;
+            }
+            if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev."))) {
                 continue;
             }
             cmd.add("-D" + key + "=" + System.getProperty(key));
         }
         if (dev != null) {
             // Where the client connects (its SERVER_HOST, GAME_PORT, WEB_HOST, WEB_PORT). The same four
-            // again as lostcity.dev.*, with lostcity.world: a dev client that is told to update restarts
-            // this launcher with its -Dlostcity.* settings (Client.relaunchForUpdate), and they bring it
-            // straight back here.
+            // again as lostcity.dev.*: a dev client that is told to update restarts this launcher with
+            // its -Dlostcity.* settings (Client.relaunchForUpdate), and they bring it straight back here.
             for (int i = 0; i < names.length; i++) {
                 cmd.add("-Dlostcity." + names[i] + "=" + dev[i]);
                 cmd.add("-Dlostcity.dev." + names[i] + "=" + dev[i]);
             }
-            cmd.add("-Dlostcity.world=" + DEV);
         }
+        // WHICH WORLD THIS IS - now for World 1 as well, not just for dev, and that is not tidying.
+        // "RuneScape has been updated" restarts this launcher through the client (relaunchForUpdate),
+        // which passes every -Dlostcity.* back; the world used to be among them only on dev, because
+        // World 1 needed no help - the countdown started it. With the countdown gone, a World 1
+        // client that updated itself would come back to a launcher sitting and waiting for a click
+        // nobody is expecting to have to make.
+        cmd.add("-Dlostcity.world=" + (dev != null ? DEV : WORLD_1));
+        // Gone before the client starts, so the file that appears is this launch's and not one
+        // left behind by the last.
+        ready.delete();
+        cmd.add("-Dlostcity.ready=" + ready.getAbsolutePath());
         cmd.add("-jar");
         cmd.add(jar.getAbsolutePath());
         if (dev != null) {
@@ -549,22 +637,26 @@ public final class Launcher {
         // which is how a Zul-andra teleport presented on 2026-09-29, with the stack trace going to a
         // stderr nobody was reading. Redirected here, so the next one can be read afterwards.
         // The redirect is the child's own, set by the OS, so it keeps working once this exits.
-        startClient(cmd);
-        // ...and this window goes now, not whenever the JVM gets round to exiting: the game's own
-        // window takes a few seconds to appear, and a launcher still on screen beside it looks like a
-        // second client (reported from play 2026-09-27)
+        Process game = startClient(cmd);
+        // ...and this window goes when the game's window arrives, not before and not after.
+        //
+        // BOTH WAYS ROUND ARE WRONG WITHOUT THIS WAIT. Closing at once leaves the desktop empty
+        // for the few seconds a JVM takes to start and read a cache - the same hole the splash
+        // fills at the other end, and the reason a player thinks nothing happened. Leaving it up
+        // until this process exits puts a launcher on screen beside the game, which was reported
+        // from play on 2026-09-27 as looking like a second client. So: wait for the client to say
+        // its window is up, then go.
+        awaitClientWindow(game);
         hide();
     }
 
     // take the window down at once, from whichever thread
     private void hide() {
-        JFrame f = frame;
-        frame = null;
-        if (f != null) {
-            run(() -> {
-                f.setVisible(false);
-                f.dispose();
-            });
+        closeSplash();
+        LauncherWindow going = ui;
+        ui = null;
+        if (going != null) {
+            run(going::dispose);
         }
     }
 
@@ -607,58 +699,81 @@ public final class Launcher {
 
     private void window() {
         run(() -> {
-            frame = new JFrame("Death Plateau Launcher");
-            // The first window a player sees, so it gets the badge too. Dialogs opened with this
-            // frame as their owner inherit it, which covers every message box below.
-            frame.setIconImages(Branding.icons());
-            label = new JLabel("Starting...");
-            bar = new JProgressBar(0, 1000);
-            bar.setIndeterminate(true);
-            label.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
-            bar.setBorder(BorderFactory.createEmptyBorder(0, 12, 12, 12));
+            ui = new LauncherWindow("Death Plateau Launcher", String.valueOf(VERSION), new LauncherWindow.Actions() {
 
-            world1Button = new JButton("World 1");
-            devButton = new JButton("Dev world (staff only)");
-            world1Button.addActionListener(e -> choose(WORLD_1));
-            devButton.addActionListener(e -> choose(DEV));
+                public void onPlay() {
+                    choose(WORLD_1);
+                }
+
+                public void onDev() {
+                    choose(DEV);
+                }
+            });
             boolean open;
             synchronized (choiceLock) {
                 open = choice == null;
             }
-            world1Button.setEnabled(open);
-            devButton.setEnabled(open);
-            JPanel worlds = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
-            worlds.add(world1Button);
-            worlds.add(devButton);
-
-            frame.getContentPane().add(label, BorderLayout.NORTH);
-            frame.getContentPane().add(worlds, BorderLayout.CENTER);
-            frame.getContentPane().add(bar, BorderLayout.SOUTH);
-            frame.getRootPane().setDefaultButton(world1Button); // Enter plays World 1
-            frame.setResizable(false); // the game's window is fixed; two resizable windows read as two clients
-            frame.setPreferredSize(new Dimension(360, 140));
-            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.pack();
-            frame.setLocationRelativeTo(null);
-            frame.setVisible(true);
-            world1Button.requestFocusInWindow();
-            windowShownAt = System.currentTimeMillis();
+            ui.setChoosable(open);
+            // Only now, with the window painted: closing it first leaves a gap of bare desktop
+            // between the two, which is the thing the splash is there to avoid.
+            closeSplash();
         });
+    }
+
+    /** Takes the splash down, from any thread, once or never. */
+    private void closeSplash() {
+        Splash going = splash;
+        splash = null;
+        if (going != null) {
+            run(going::close);
+        }
     }
 
     private void message(String text) {
         log(text.replace('\n', ' '));
-        if (frame != null) {
-            run(() -> JOptionPane.showMessageDialog(frame, text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
-        }
+        run(() -> JOptionPane.showMessageDialog(owner(), text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
     }
 
+    /**
+     * The window to hang a dialog on, or null for one that stands on its own.
+     *
+     * THERE IS NOW A STRETCH WITH NO WINDOW AT ALL - the directory check and the early hand-over
+     * both run before window() - and a launcher that cannot create its own folder has to be able
+     * to say so. A dialog with no owner is untidy and visible; no dialog is a program that exits
+     * without a word.
+     */
+    private java.awt.Frame owner() {
+        return ui == null ? null : ui.frame();
+    }
+
+    /** Something is happening and nothing is waiting on the player: the bar, not the button. */
     private void status(String text) {
         log(text);
         run(() -> {
-            if (label != null) {
-                label.setText(text);
-                bar.setIndeterminate(true);
+            if (ui != null) {
+                ui.setBusy(text);
+            }
+            // --check has no window, and the splash is still the only thing on screen while the
+            // first update check runs.
+            if (splash != null) {
+                splash.setStatus(text);
+            }
+        });
+    }
+
+    /**
+     * Waiting on the player: the Play button, with text under it or none.
+     *
+     * Null means "nothing to say" - the window falls back to its own caption - and there is
+     * nothing to write in the log either, the line that matters having been logged already.
+     */
+    private void choosing(String text) {
+        if (text != null) {
+            log(text);
+        }
+        run(() -> {
+            if (ui != null) {
+                ui.setChoosing(text);
             }
         });
     }
@@ -669,18 +784,16 @@ public final class Launcher {
         }
         int v = (int) (done * 1000 / size);
         run(() -> {
-            if (bar != null) {
-                bar.setIndeterminate(false);
-                bar.setValue(v);
+            if (ui != null) {
+                ui.setProgress(v);
             }
         });
     }
 
     private void fail(String text) {
         log("error: " + text);
-        if (frame != null) {
-            run(() -> JOptionPane.showMessageDialog(frame, text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
-        }
+        closeSplash();
+        run(() -> JOptionPane.showMessageDialog(owner(), text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
         System.exit(1);
     }
 
@@ -735,7 +848,7 @@ public final class Launcher {
      * Kept apart from the plain ProcessBuilder call the hand-over uses: that one starts another
      * LAUNCHER, which writes launcher.log itself and would interleave two runs into one file.
      */
-    private void startClient(List<String> cmd) throws IOException {
+    private Process startClient(List<String> cmd) throws IOException {
         File out = new File(dir, "client.log");
         try {
             if (out.length() > LOG_MAX) {
@@ -744,12 +857,60 @@ public final class Launcher {
                 out.renameTo(old);
             }
             append(out, System.lineSeparator() + "---- " + stamp() + "  " + cmd + System.lineSeparator());
-            new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
+            return new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
         } catch (Throwable e) {
             // A log is never worth not starting the game for.
             log("could not redirect the game's output (" + e + ") - starting it anyway");
-            new ProcessBuilder(cmd).directory(dir).start();
+            return new ProcessBuilder(cmd).directory(dir).start();
         }
+    }
+
+    /** Longest this window stays up waiting to be told the game is drawing. */
+    private static final long READY_TIMEOUT_MS = 45000;
+
+    /**
+     * Holds the launcher on screen until the client's window is up, or until waiting is pointless.
+     *
+     * THE CLIENT IS ASKED FIRST whether it will say anything at all - a client.jar older than
+     * READY_SINCE never writes the marker, and waiting on one would put this window beside the
+     * game for the whole timeout, which is the exact complaint the hand-over exists to fix.
+     *
+     * THE TIMEOUT IS ONLY FOR A CLIENT THAT SHOULD HAVE SPOKEN AND DID NOT - its window failed in
+     * a way that left the process alive, say. It is not long, and deliberately: overshooting puts
+     * a launcher beside the game, while cutting it short only gives back today's behaviour, where
+     * the launcher closes and the desktop is briefly empty. The cheaper mistake wins.
+     */
+    private void awaitClientWindow(Process game) {
+        // Both of these answer with null / -1 rather than throwing when the jar cannot be read.
+        int stamp = stampIn(entry(jar, "lostcity/Launcher.class"));
+        if (stamp < READY_SINCE) {
+            log("client.jar is launcher version " + stamp + ", older than " + READY_SINCE
+                + ": it writes no window marker, so not waiting for one");
+            return;
+        }
+        long until = System.currentTimeMillis() + READY_TIMEOUT_MS;
+        while (System.currentTimeMillis() < until) {
+            if (ready.isFile()) {
+                log("the client's window is up");
+                ready.delete();
+                return;
+            }
+            if (game != null) {
+                try {
+                    // Throws while it is still running, which is the case we want to keep waiting in.
+                    log("the client exited before its window appeared (" + game.exitValue() + ")");
+                    return;
+                } catch (IllegalThreadStateException running) {
+                    // still going
+                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        log("gave up waiting for the client's window after " + READY_TIMEOUT_MS + "ms");
     }
 
     private static void append(File file, String line) throws IOException {

@@ -12,6 +12,7 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 
 import javax.swing.JComponent;
+import lostcity.Theme;
 
 /**
  * The on/off pill on each plugin row.

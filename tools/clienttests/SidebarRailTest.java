@@ -18,7 +18,7 @@ import java.awt.Dimension;
 
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.ui.Sidebar;
-import jagex2.client.plugin.ui.Theme;
+import lostcity.Theme;
 
 public class SidebarRailTest {
 

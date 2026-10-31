@@ -67,7 +67,7 @@ import java.util.Date;
 import java.util.zip.CRC32;
 import jagex2.client.plugin.PluginManager;
 import jagex2.client.plugin.event.SettingsMenuOpening;
-import jagex2.client.plugin.ui.Theme;
+import lostcity.Theme;
 import sign.signlink;
 
 public class Client extends GameShell implements PixMap.Target {

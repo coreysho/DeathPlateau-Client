@@ -13,6 +13,7 @@ import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
 
 import javax.swing.JComponent;
+import lostcity.TitleBar;
 
 public class FrameChromeTest {
 

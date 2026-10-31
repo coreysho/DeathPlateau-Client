@@ -57,7 +57,7 @@ import javax.swing.JTextField;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
 
-import jagex2.client.plugin.ui.Theme;
+import lostcity.Theme;
 
 public final class MapWindow extends JFrame {
 

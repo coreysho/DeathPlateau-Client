@@ -22,6 +22,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.plaf.basic.BasicScrollBarUI;
 
 import jagex2.client.plugin.PluginManager;
+import lostcity.Theme;
 
 /**
  * The plugin sidebar: a Swing panel bolted to the side of the game window, the way RuneLite's is.

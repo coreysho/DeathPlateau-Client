@@ -1,6 +1,8 @@
 package lostcity;
 
+import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,6 +61,85 @@ public final class Branding {
 		}
 		icons = loaded;
 		return icons;
+	}
+
+	/** Loaded once each, for the same reason as the icons: they are drawn, not re-read. */
+	private static Image sigil, wordmark;
+
+	/**
+	 * The ring-and-monogram mark, 468 square, or null.
+	 *
+	 * THE BIG ART IS NOT THE ICON. icon-128 is a badge: the mark cropped to a rounded square with
+	 * alpha cut round it, which is what a taskbar wants. These two are the artwork as drawn -
+	 * black background included, no alpha - so they belong on a dark panel and nowhere else.
+	 * The launcher's face is black, so that is exactly where they go.
+	 */
+	public static synchronized Image sigil() {
+		if (sigil == null) {
+			sigil = floatOnDark(read("/deathplateau/sigil.png"));
+		}
+		return sigil;
+	}
+
+	/** The "DEATH PLATEAU" lettering, 419x87, or null. */
+	public static synchronized Image wordmark() {
+		if (wordmark == null) {
+			wordmark = floatOnDark(read("/deathplateau/wordmark.png"));
+		}
+		return wordmark;
+	}
+
+	/**
+	 * Gives artwork drawn on black the alpha it never had, so it sits on a backdrop instead of in
+	 * a black box.
+	 *
+	 * BOTH FILES ARE RGB WITH NO ALPHA - the mark painted on a black field - which is correct on
+	 * a black page and a hard-edged rectangle on anything else. Drawn over the launcher's red
+	 * vignette they were two obvious boxes.
+	 *
+	 * Cutting out "the black bits" by a threshold would hack the glow and the darker steel off
+	 * the edges of the lettering. This instead unpremultiplies against black: alpha becomes the
+	 * brightest channel and the colour is scaled back up by the same amount, so compositing over
+	 * black reproduces the original pixel for pixel (out = colour*a + 0*(1-a) = the original),
+	 * and over anything else the backdrop shows through in proportion to how dark the art is.
+	 * Nothing is thresholded, so the soft edges stay soft.
+	 */
+	private static Image floatOnDark(Image source) {
+		if (source == null) {
+			return null;
+		}
+		try {
+			int w = source.getWidth(null);
+			int h = source.getHeight(null);
+			if (w <= 0 || h <= 0) {
+				return source;
+			}
+			BufferedImage flat = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+			Graphics2D g = flat.createGraphics();
+			g.drawImage(source, 0, 0, null);
+			g.dispose();
+
+			BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					int rgb = flat.getRGB(x, y);
+					int r = (rgb >> 16) & 0xFF;
+					int gr = (rgb >> 8) & 0xFF;
+					int b = rgb & 0xFF;
+					int max = r > gr ? (r > b ? r : b) : (gr > b ? gr : b);
+					if (max == 0) {
+						continue;              // pure black: nothing of the mark is here
+					}
+					out.setRGB(x, y, (max << 24)
+						| ((r * 255 / max) << 16)
+						| ((gr * 255 / max) << 8)
+						| (b * 255 / max));
+				}
+			}
+			return out;
+		} catch (Throwable error) {
+			return source;                     // the boxed version is better than no mark at all
+		}
 	}
 
 	/** The smallest icon at least this wide, for drawing in the title bar. Null if there are none. */

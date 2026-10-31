@@ -25,6 +25,7 @@ import javax.swing.SwingUtilities;
 import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginManager;
+import lostcity.Theme;
 
 /**
  * One plugin's settings: a row per {@link jagex2.client.plugin.ConfigItem}, with a back arrow to
