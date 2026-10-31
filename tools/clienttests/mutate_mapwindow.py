@@ -162,8 +162,12 @@ MUTS = [
      '\t\tthis.wanted.clear();\n\t\tthis.waiting.clear();',
      ''),
     (SUPPLY, 'a loc file arriving without its icons being read, so the key stays empty',
-     '\t\t\tthis.icons.add(of[file] >> 8, of[file] & 0xFF, data);',
+     '\t\tif (data != null && file >= 0 && file < of.length && of[file] >= 0) {\n'
+     '\t\t\tthis.icons.add(of[file] >> 8, of[file] & 0xFF, data);\n\t\t}\n',
      ''),
+    (SUPPLY, 'the files already in hand never fed through once the loc table arrives',
+     '\t\tif (!this.icons.refresh()) {\n\t\t\treturn;\n\t\t}\n',
+     '\t\tif (true) {\n\t\t\treturn;\n\t\t}\n'),
     (SUPPLY, "the square's files looked up the other way round, land for scenery",
      '\t\treturn table[(((x << 8) + z) << 1) + type];',
      '\t\treturn table[(((x << 8) + z) << 1) + 1 - type];'),
@@ -211,6 +215,21 @@ MUTS = [
     (SUPPLY, 'a square that is not in the world reported as being in it',
      '\t\treturn this.fileOf(x, z, 0) >= 0;',
      '\t\treturn true;'),
+    # ---- THE TABLE THE ICONS ARE READ AGAINST, and when it is built. This is what made every
+    # real player's map iconless: built from nothing before the loc configs loaded, then kept.
+    (ICONS, 'the table built once and kept, which is the bug itself: the loc configs load after '
+            'the map files do, so it was built from nothing and never named a loc again',
+     '\t\tif (this.functionOf == null || this.builtFor != count) {',
+     '\t\tif (this.functionOf == null) {'),
+    (ICONS, 'a rebuilt table leaving the old reads in place, so nothing is read a second time',
+     '\t\t\tthis.read.clear();\n',
+     ''),
+    (ICONS, 'a rebuild not announced, so the files already in hand are never fed through',
+     '\t\tint before = this.builtFor;\n\t\tthis.functions();\n\t\treturn this.builtFor != before;',
+     '\t\tthis.functions();\n\t\treturn false;'),
+    (ICONS, 'the table reported rebuilt every frame, so every file is fed through forever',
+     '\t\tint before = this.builtFor;\n\t\tthis.functions();\n\t\treturn this.builtFor != before;',
+     '\t\tthis.functions();\n\t\treturn true;'),
 ]
 
 

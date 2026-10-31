@@ -6,6 +6,8 @@ import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
+import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.ClientTick;
 
 /**
  * The clue scrolls in your bag: what they say, and where they want you.
@@ -63,6 +65,10 @@ public final class CluePlugin extends Plugin {
 	@ConfigItem(keyName = "solvePuzzle", name = "Solve puzzle boxes",
 		description = "Mark the next piece to slide on an open puzzle box.")
 	public boolean solvePuzzle = true;
+
+	@ConfigItem(keyName = "markOnMap", name = "Mark the step on the world map",
+		description = "A ring where the clue in your bag wants you.")
+	public boolean markOnMap = true;
 
 	/**
 	 * The bag, and the slots of it holding clues, as of the last time the page asked how many
@@ -330,6 +336,58 @@ public final class CluePlugin extends Plugin {
 			// No rail pages in this client; nothing else here depends on one.
 		}
 		this.addOverlay(new PuzzleOverlay());
+	}
+
+	// ------------------------------------------------------------------ the world map
+
+	/**
+	 * Put a ring on the world map where the clue in the bag wants the player.
+	 *
+	 * THE FIRST SCROLL WITH A PLACE, not the first scroll: a player carrying a challenge
+	 * scroll and a dig spot wants the dig spot marked, and a step whose answer is a person has
+	 * no tile to put a ring on. The page lists them all; the map can only point at one.
+	 *
+	 * Once a tick rather than once a frame, and only when it changes, because the map is drawn
+	 * on another thread and a value written every frame is a value being read as it is written.
+	 */
+	@Subscribe
+	public void onClientTick(ClientTick event) {
+		if (this.ctx == null) {
+			return;
+		}
+		int step = this.markable();
+		int x = step < 0 ? -1 : ClueSteps.X[step];
+		int z = step < 0 ? -1 : ClueSteps.Z[step];
+		int level = step < 0 ? 0 : ClueSteps.LEVEL[step];
+		String label = step < 0 ? ""
+			: ClueSteps.SPOT[step] == ClueSteps.SPOT_DIG ? "Dig here" : "Search here";
+		int[] was = this.ctx.getWorldMapMark();
+		if (was[0] == x && was[1] == z && was[2] == level) {
+			return;
+		}
+		this.ctx.markWorldMap(x, z, level, label);
+	}
+
+	/**
+	 * The step in a bag whose place should be marked, or -1 when none of them has one.
+	 *
+	 * Static and handed the bag, like the rest of this file, so the choice can be checked
+	 * without a client: which of several scrolls gets the ring is the whole of the decision.
+	 */
+	static int markable(int[] objIds) {
+		int[] slots = clueSlots(objIds);
+		for (int row = 0; row < slots.length; row++) {
+			int step = stepAt(slots, objIds, row);
+			if (step >= 0 && ClueSteps.SPOT[step] != ClueSteps.SPOT_NONE) {
+				return step;
+			}
+		}
+		return -1;
+	}
+
+	/** The same, for this player's bag, or -1 with the marking switched off. */
+	int markable() {
+		return this.markOnMap ? markable(this.carrying()) : -1;
 	}
 
 	// ------------------------------------------------------------------ the puzzle box

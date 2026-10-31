@@ -457,6 +457,15 @@ public class ResizableShots extends Client {
 		Client.membersWorld = true;
 		signlink.storeid = 33;              // its own cache folder, never the player's
 		signlink.startpriv(InetAddress.getLocalHost());
+		// WAIT FOR THE FILE STORE, or this races it. signlink opens main_file_cache.dat on its own
+		// thread; the client copies that handle into fileStreams the first time it talks to the
+		// server, and whichever gets there first decides whether this run has a cache at all. A run
+		// that loses the race behaves like a player's first ever launch - nothing cached, so the
+		// world map's background fetch refuses to mark anything - and reports it as the client's
+		// behaviour rather than as a hundred milliseconds of its own.
+		for (int waited = 0; waited < 200 && sign.signlink.cache_dat == null; waited++) {
+			Thread.sleep(25L);
+		}
 
 		app = new ResizableShots();
 		app.setSize(w, h);
@@ -670,6 +679,14 @@ public class ResizableShots extends Client {
 			puzzle(prefix);
 			return;
 		}
+		if (mode.equals("mapcost")) {
+			mapcost(prefix);
+			return;
+		}
+		if (mode.equals("mapwindow")) {
+			mapwindow(prefix);
+			return;
+		}
 		if (mode.equals("zulrah")) {
 			zulrah(prefix);
 			return;
@@ -858,6 +875,449 @@ public class ResizableShots extends Client {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * What the world map costs the game, and how much of the world it actually has.
+	 *
+	 * THE TWO FAULTS THIS IS FOR ARE BOTH INVISIBLE TO EVERY OTHER TEST HERE. MapWindowTest
+	 * checks the arithmetic, run_mapwindowpreview checks the drawing, and the worldmap mode
+	 * below checks that map files reach the map at all - and a client reporting all three green
+	 * was still missing most of the world and costing frames after the window was shut. The
+	 * difference is a CACHE ON DISK: without one the client's prefetch refuses to mark anything,
+	 * so the background fetch that fills the world in - and whatever it costs - never starts.
+	 * This mode is meant to be run twice on the same home directory, so the second run has one.
+	 *
+	 * It measures rather than asserts, because what the right numbers are is the thing in
+	 * question: frame time with the map shut, with it open, and after it is shut again, against
+	 * how many squares and icons the map has at each point.
+	 */
+	static void mapcost(String prefix) throws Exception {
+		Object map = clientField("worldMap");
+		if (map == null) {
+			say("FAIL the client has no world map at all");
+			log.close();
+			System.exit(1);
+		}
+		Object od = clientField("onDemand");
+		boolean cached = clientField("fileStreams") != null
+			&& java.lang.reflect.Array.get(clientField("fileStreams"), 0) != null;
+		say("cache on disk: " + cached + (cached ? "" : "  (run this twice on one home directory)"));
+
+		say(String.format("shut     %s  %s", frameCost(200), mapState(map, od)));
+		dumpFiles(map);
+
+		map.getClass().getMethod("opened").invoke(map);
+		waitFrames(50);
+		sweepSquares(map);
+		thrash(map);
+		say(String.format("opened   %s  %s", frameCost(200), mapState(map, od)));
+
+		// LONG ENOUGH FOR THE BACKGROUND FETCH TO BE DOING ITS WORK, which is the state a player
+		// is in for minutes after opening the map once.
+		for (int round = 0; round < 4; round++) {
+			say(String.format("  +%ds   %s  %s", (round + 1) * 10, frameCost(500), mapState(map, od)));
+		}
+
+		map.getClass().getMethod("closed").invoke(map);
+		waitFrames(50);
+		say(String.format("closed   %s  %s", frameCost(200), mapState(map, od)));
+		for (int round = 0; round < 4; round++) {
+			say(String.format("  +%ds   %s  %s", (round + 1) * 10, frameCost(500), mapState(map, od)));
+		}
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * Which files the map has, and whether it recognises each one as somebody's scenery.
+	 *
+	 * THE ICON COUNT IS A COUNT OF LOC FILES IT UNDERSTOOD, so a map with files and no icons is
+	 * either getting land only or failing to match what it gets against its own table. Those are
+	 * different bugs and the count cannot tell them apart.
+	 */
+	static void dumpFiles(Object map) throws Exception {
+		java.lang.reflect.Field ff = map.getClass().getDeclaredField("files");
+		ff.setAccessible(true);
+		java.util.Map<?, ?> files = (java.util.Map<?, ?>) ff.get(map);
+		java.lang.reflect.Method of = map.getClass().getDeclaredMethod("squareOfLocFile");
+		of.setAccessible(true);
+		int[] table = (int[]) of.invoke(map);
+		java.util.List<Integer> keys = new java.util.ArrayList<Integer>();
+		for (Object k : files.keySet()) {
+			keys.add((Integer) k);
+		}
+		java.util.Collections.sort(keys);
+		int loc = 0;
+		int empty = 0;
+		StringBuilder sb = new StringBuilder();
+		for (Integer k : keys) {
+			boolean known = k >= 0 && k < table.length && table[k] >= 0;
+			if (known) {
+				loc++;
+			}
+			byte[] data = (byte[]) files.get(k);
+			if (data == null || data.length == 0) {
+				empty++;
+			}
+			if (sb.length() < 240) {
+				sb.append(k).append(known ? "L" : "-").append(data == null ? "?"
+					: data.length == 0 ? "0" : "").append(' ');
+			}
+		}
+		say("  files the map holds: " + keys.size() + ", of which " + loc
+			+ " are scenery it can place and " + empty + " came back empty");
+		say("  " + sb.toString().trim());
+		say("  loc files the table knows: " + count(table));
+		// THE FUNCTION TABLE IS MEMOISED ON FIRST USE, so when it was first used matters: a loc
+		// whose field1660 is -1 has no map icon, and a table built before the loc configs were
+		// loaded is -1 the whole way across and stays that way for the session.
+		Object icons = map.getClass().getMethod("icons").invoke(map);
+		java.lang.reflect.Field fo = icons.getClass().getDeclaredField("functionOf");
+		fo.setAccessible(true);
+		int[] fn = (int[]) fo.get(icons);
+		say("  loc function table: " + (fn == null ? "not built yet"
+			: fn.length + " locs, " + count(fn) + " of them with a map icon")
+			+ "   (LocType.field1662 is now " + jagex2.config.LocType.field1662 + ")");
+		// THE FIRST BYTES SAY WHETHER IT IS INFLATED. Everything in this cache is gzipped and the
+		// on-demand thread inflates it on the way past; a file that reaches the map still starting
+		// 1f 8b never went through that, and every reader downstream is parsing a compressed
+		// stream as if it were scenery.
+		for (Integer k : keys) {
+			byte[] data = (byte[]) files.get(k);
+			if (data != null && data.length > 4) {
+				say(String.format("  file %d: %d bytes, starts %02x %02x %02x %02x%s", k, data.length,
+					data[0] & 0xFF, data[1] & 0xFF, data[2] & 0xFF, data[3] & 0xFF,
+					(data[0] & 0xFF) == 0x1f && (data[1] & 0xFF) == 0x8b ? "   <-- STILL GZIPPED" : ""));
+				break;
+			}
+		}
+	}
+
+	static int count(int[] table) {
+		int n = 0;
+		for (int i = 0; i < table.length; i++) {
+			if (table[i] >= 0) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/**
+	 * Ask the map for squares all over the world, the way panning does, and see how many arrive.
+	 *
+	 * THIS IS THE "MOST OF THE MAP IS MISSING" FAULT, asked directly. The window draws a square
+	 * by calling square(), which hands back pixels or queues the square and returns null; what a
+	 * player sees as a hole is a square that stays null. Squares every player knows are asked
+	 * for here - Lumbridge, Varrock, Falador, Ardougne, Camelot, Draynor, Al Kharid, Karamja,
+	 * Wilderness - and then the game is left to run for a while, because the answer is allowed
+	 * to take time; what is not allowed is never.
+	 */
+	static void sweepSquares(Object map) throws Exception {
+		int[][] places = {
+			{50, 50}, {48, 54}, {47, 51}, {40, 51}, {41, 53}, {50, 54}, {51, 50}, {46, 46}, {48, 58},
+		};
+		String[] names = {
+			"Lumbridge", "Varrock", "Falador", "Ardougne", "Camelot", "Draynor", "Al Kharid",
+			"Karamja", "Wilderness",
+		};
+		java.lang.reflect.Method square = map.getClass().getMethod("square", int.class, int.class, int.class);
+		java.lang.reflect.Method exists = map.getClass().getMethod("exists", int.class, int.class);
+		int known = 0;
+		for (int i = 0; i < places.length; i++) {
+			if ((Boolean) exists.invoke(map, places[i][0], places[i][1])) {
+				known++;
+			}
+			square.invoke(map, places[i][0], places[i][1], 0);
+		}
+		say("  asked for " + places.length + " squares all over the world, " + known
+			+ " of which the index says exist");
+		for (int round = 0; round < 6; round++) {
+			waitFrames(100);
+			StringBuilder got = new StringBuilder();
+			int drew = 0;
+            for (int i = 0; i < places.length; i++) {
+				boolean here = square.invoke(map, places[i][0], places[i][1], 0) != null;
+				if (here) {
+					drew++;
+				} else {
+					got.append(names[i]).append(' ');
+				}
+			}
+			say("    after " + ((round + 1) * 100) + " frames: " + drew + " of " + places.length
+				+ " drawn" + (drew == places.length ? "" : ", still missing " + got.toString().trim()));
+			if (drew == places.length) {
+				return;
+			}
+		}
+	}
+
+	/**
+	 * Ask for a zoomed-out window's worth of squares, over and over, as the window does.
+	 *
+	 * THE WINDOW REPAINTS EVERY 120ms AND ASKS FOR EVERY SQUARE IT CAN SEE, so a square that has
+	 * been drawn and then thrown away is asked for again, drawn again, and thrown away again -
+	 * for as long as the map is up. That is both faults at once: the holes, because a square
+	 * thrown away before the window scaled it is a hole, and the cost, because the game thread
+	 * is building a 104-tile scene every frame forever.
+	 *
+	 * The view is 900x680, and zoomed right out a square is 64 pixels, so it shows 15 by 11 of
+	 * them. This asks for exactly that, in the same order, and counts how many are ready each
+	 * time round. A cache big enough settles at all of them; one that is not never does.
+	 */
+	static void thrash(Object map) throws Exception {
+		java.lang.reflect.Method square = map.getClass().getMethod("square", int.class, int.class, int.class);
+		int acrossSquares = 15;
+		int downSquares = 11;
+		int baseX = 42;
+		int baseZ = 48;
+		say("  a zoomed-out window shows " + acrossSquares + "x" + downSquares + " = "
+			+ (acrossSquares * downSquares) + " squares at once");
+		for (int round = 0; round < 8; round++) {
+			int ready = 0;
+			int real = 0;
+			for (int x = 0; x < acrossSquares; x++) {
+				for (int z = 0; z < downSquares; z++) {
+					if (!(Boolean) map.getClass().getMethod("exists", int.class, int.class)
+							.invoke(map, baseX + x, baseZ + z)) {
+						continue;
+					}
+					real++;
+					if (square.invoke(map, baseX + x, baseZ + z, 0) != null) {
+						ready++;
+					}
+				}
+			}
+			say("    pass " + (round + 1) + ": " + ready + " of " + real
+				+ " squares ready, " + mapSize(map, "drawn") + " held");
+			waitFrames(300);
+		}
+	}
+
+	/**
+	 * The REAL world map window, over a real game, which is the only way to see what it costs.
+	 *
+	 * EVERYTHING ELSE THAT CHECKS THIS MAP IS BLIND TO HALF OF IT. MapWindowTest has the
+	 * arithmetic, run_mapwindowpreview has the drawing, and mapcost above has the game thread -
+	 * but the window is a JFrame with a repaint timer of its own, and what it costs the game,
+	 * what it manages to draw, and whether shutting it actually stops anything are all
+	 * properties of the two running together. This opens the real one against a real server.
+	 *
+	 * The window needs a display, not the client's frame: it is its own top-level window. Under
+	 * Xvfb that is enough.
+	 */
+	static void mapwindow(String prefix) throws Exception {
+		Object map = clientField("worldMap");
+		if (map == null) {
+			say("FAIL the client has no world map at all");
+			log.close();
+			System.exit(1);
+		}
+		// A CLUE IN THE BAG BEFORE THE WINDOW IS UP, because the window is a top-level frame of
+		// its own: once it is showing it has the keyboard, and a ::give typed at it goes into
+		// its search box. Five mangled retries and a FAIL, the first time round.
+		say(enablePlugin("clue-scroll") ? "clue plugin on" : "FAIL no clue plugin to turn on");
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		command("::give " + System.getProperty("shots.clue", "trail_clue_hard_sextant001"));
+		waitFrames(40);
+
+		Class<?> windowClass = Class.forName("jagex2.client.worldmap.MapWindow");
+		Class<?> mapClass = Class.forName("jagex2.client.worldmap.WorldMap");
+		final java.awt.Window window =
+			(java.awt.Window) windowClass.getConstructor(mapClass).newInstance(map);
+		// HANDED TO THE CLIENT, not just made: the client is what feeds the window the player's
+		// tile and whatever a plugin has asked it to mark, once a frame. A window the client
+		// does not know about draws a map with nobody on it.
+		set("worldMapWindow", window);
+
+		say(String.format("shut       %s  %s", frameCost(200), mapState(map, clientField("onDemand"))));
+
+		// VARROCK AT THE WIDEST ZOOM, which is the view the whole of the fault lives in: a
+		// square is 64 pixels there, so the window shows fifteen by eleven of them at once.
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		map.getClass().getMethod("opened").invoke(map);
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				window.setVisible(true);
+			}
+		});
+
+		for (int round = 0; round < 5; round++) {
+			waitFrames(250);
+			say(String.format("open +%2ds  %s  %s   %s", (round + 1) * 5, frameCost(100),
+				mapState(map, clientField("onDemand")), filled(window)));
+		}
+		say("the map is marked at: " + geti("mapMarkX") + ", " + geti("mapMarkZ")
+			+ " level " + geti("mapMarkLevel") + " \"" + get("mapMarkLabel") + "\"");
+		windowClass.getMethod("centreOn", int.class, int.class)
+			.invoke(window, geti("mapMarkX"), geti("mapMarkZ"));
+		setPrivate(window, "zoom", Integer.valueOf(4));
+		waitFrames(150);
+		shoot(window, prefix + "_mark");
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		waitFrames(150);
+		shoot(window, prefix + "_open");
+		holes(window, map);
+
+		// ESCAPE, which is how a player shuts a window, and is NOT the orb's toggle - the only
+		// path that tells the map nobody is looking any more.
+		press(window, KeyEvent.VK_ESCAPE);
+		waitFrames(50);
+		say("escape pressed, window visible: " + window.isVisible());
+		for (int round = 0; round < 3; round++) {
+			waitFrames(250);
+			say(String.format("shut +%2ds  %s  %s", (round + 1) * 5, frameCost(100),
+				mapState(map, clientField("onDemand"))));
+		}
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/**
+	 * Which of the squares on screen are black, and why each one is.
+	 *
+	 * A BLACK SQUARE IS NOT ONE THING. It is either a hole in the world - the index has no map
+	 * file for it, and black is the right answer - or a square the index HAS and the renderer
+	 * could not draw, which is a fault and is remembered as an empty picture so that it is
+	 * never retried. The two look identical on screen and have nothing in common underneath,
+	 * so a count of black squares says nothing on its own.
+	 */
+	static void holes(java.awt.Window window, Object map) throws Exception {
+		int centreX = ((Integer) getPrivate(window, "centreX")).intValue();
+		int centreZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		int zoom = ((Integer) getPrivate(window, "zoom")).intValue();
+		java.awt.Component view = (java.awt.Component) getPrivate(window, "view");
+		int wide = view.getWidth();
+		int high = view.getHeight();
+		int cell = 64 * zoom;
+		int originX = wide / 2 - centreX * zoom;
+		int originZ = high / 2 + centreZ * zoom;
+		java.lang.reflect.Method exists = map.getClass().getMethod("exists", int.class, int.class);
+		java.lang.reflect.Method square =
+			map.getClass().getMethod("square", int.class, int.class, int.class);
+
+		int onScreen = 0;
+		int missing = 0;
+		int blank = 0;
+		StringBuilder blanks = new StringBuilder();
+		for (int x = Math.floorDiv(-originX, cell); x <= Math.floorDiv(wide - originX, cell); x++) {
+			for (int z = Math.floorDiv(originZ - high, cell); z <= Math.floorDiv(originZ, cell); z++) {
+				if (x < 0 || z < 0 || x > 0xFF || z > 0xFF) {
+					continue;
+				}
+				onScreen++;
+				if (!(Boolean) exists.invoke(map, x, z)) {
+					missing++;
+					continue;
+				}
+				int[] pixels = (int[]) square.invoke(map, x, z, 0);
+				if (pixels == null) {
+					continue;
+				}
+				boolean dark = true;
+				for (int i = 0; i < pixels.length && dark; i++) {
+					dark = pixels[i] == 0;
+				}
+				if (dark) {
+					blank++;
+					if (blanks.length() < 200) {
+						blanks.append(x).append(',').append(z).append(' ');
+					}
+				}
+			}
+		}
+		say("  " + onScreen + " squares on screen: " + missing + " the world has none for, "
+			+ blank + " the world HAS and the map drew as nothing");
+		if (blank > 0) {
+			say("  drew as nothing: " + blanks.toString().trim());
+		}
+	}
+
+	static Object getPrivate(Object target, String name) throws Exception {
+		java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+		f.setAccessible(true);
+		return f.get(target);
+	}
+
+	/** How many of the squares the window can show it has actually scaled and can draw. */
+	static String filled(java.awt.Window window) throws Exception {
+		java.lang.reflect.Field f = window.getClass().getDeclaredField("scaled");
+		f.setAccessible(true);
+		java.util.Map<?, ?> scaled = (java.util.Map<?, ?>) f.get(window);
+		return "window holds " + scaled.size() + " scaled squares";
+	}
+
+	/** A key press delivered to the window, the way a player's would be. */
+	static void press(final java.awt.Window window, final int code) throws Exception {
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				java.awt.Component to = window.getFocusOwner();
+				if (to == null) {
+					to = window;
+				}
+				to.dispatchEvent(new KeyEvent(to, KeyEvent.KEY_PRESSED,
+					System.currentTimeMillis(), 0, code, (char) 0));
+			}
+		});
+	}
+
+	/** A picture of the window itself, which is the half only an eye can judge. */
+	static void shoot(final java.awt.Window window, final String name) throws Exception {
+		final java.awt.image.BufferedImage shot = new java.awt.image.BufferedImage(
+			Math.max(1, window.getWidth()), Math.max(1, window.getHeight()),
+			java.awt.image.BufferedImage.TYPE_INT_RGB);
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				window.printAll(shot.getGraphics());
+			}
+		});
+		javax.imageio.ImageIO.write(shot, "png", new File(out, name + ".png"));
+		say("shot " + name + ".png " + shot.getWidth() + "x" + shot.getHeight());
+	}
+
+	static void setPrivate(Object target, String name, Object value) throws Exception {
+		java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+		f.setAccessible(true);
+		f.set(target, value);
+	}
+
+	/** Milliseconds a frame, averaged over the next so many frames. */
+	static String frameCost(int frames) throws Exception {
+		drawNanos = 0;
+		drawCount = 0;
+		waitFrames(frames);
+		return String.format("%5.2f ms/frame", drawNanos / 1e6 / Math.max(1, drawCount));
+	}
+
+	/** What the map is holding, and what the on-demand thread still has to do. */
+	static String mapState(Object map, Object od) throws Exception {
+		return String.format("icons %4d  drawn %3d  files %4d  prefetch left %4d  in flight %2d",
+			iconCount(map), mapSize(map, "drawn"), mapSize(map, "files"),
+			odInt(od, "totalPrefetchFiles") - odInt(od, "loadedPrefetchFiles"),
+			odInt(od, "requestCount"));
+	}
+
+	/** The size of one of the world map's own collections, by name. */
+	static int mapSize(Object map, String field) {
+		try {
+			java.lang.reflect.Field f = map.getClass().getDeclaredField(field);
+			f.setAccessible(true);
+			Object value = f.get(map);
+			return (Integer) value.getClass().getMethod("size").invoke(value);
+		} catch (Exception broken) {
+			return -1;
+		}
 	}
 
 	/** A constant off the generated puzzle table, which knows the content's interface ids. */

@@ -476,6 +476,24 @@ public class ClueTest {
 			"...and they come back in slot order, which is the order they are drawn");
 		check(CluePlugin.clueSlots(new int[0]).length == 0, "an empty bag is no rows");
 
+		// WHICH SCROLL GETS THE RING ON THE WORLD MAP. The map can point at one place and the
+		// page lists them all, so the one marked is the first in the bag that HAS a place - a
+		// challenge scroll in the top slot must not take the ring away from the dig spot below
+		// it, and a bag of steps that are all people gets no ring at all.
+		int placed = firstSpot(ClueSteps.SPOT_DIG, false);
+		int answered = firstAnswer();
+		int[] bothKinds = new int[28];
+		java.util.Arrays.fill(bothKinds, -1);
+		bothKinds[0] = ClueSteps.ID[answered];
+		bothKinds[3] = ClueSteps.ID[placed];
+		check(CluePlugin.markable(bothKinds) == placed,
+			"the ring goes on the first scroll with a place, not the first scroll");
+		int[] noPlace = new int[28];
+		java.util.Arrays.fill(noPlace, -1);
+		noPlace[0] = ClueSteps.ID[answered];
+		check(CluePlugin.markable(noPlace) < 0, "...and a bag with no place in it gets no ring");
+		check(CluePlugin.markable(new int[0]) < 0, "...nor does an empty one");
+
 		// AND A ROW INDEX IS NOT TRUSTED, because the panel's snapshot and the bag are a frame
 		// apart: the scroll in row 2 can be gone by the time its label is asked for, and a page
 		// that throws there takes the whole sidebar down with it.

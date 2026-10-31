@@ -72,6 +72,9 @@ public final class MapWindow extends JFrame {
 	/** The yellow of the you-are-here cross, and of a ring round a search result. */
 	private static final Color MARKER = new Color(0xFF, 0xE0, 0x00);
 
+	/** The marked spot's colour, which is not the player's: two the same read as two players. */
+	private static final Color MARK = new Color(0x40, 0xFF, 0x60);
+
 	private final WorldMap map;
 	private final View view = new View();
 	private final JTextField search = new JTextField(14);
@@ -99,6 +102,12 @@ public final class MapWindow extends JFrame {
 	/** The player's tile, or -1 when they are not in the game. Written from the game thread. */
 	private volatile int playerX = -1;
 	private volatile int playerZ = -1;
+
+	/** The marked spot, or -1 for none. Written from the game thread, like the player's. */
+	private volatile int markX = -1;
+	private volatile int markZ = -1;
+	private volatile int markLevel;
+	private volatile String markLabel = "";
 
 	/** What the search is showing, and which of them the view is on. */
 	private List matches;
@@ -242,6 +251,27 @@ public final class MapWindow extends JFrame {
 	// ------------------------------------------------------------------ what the game tells it
 
 	/** Puts the map over a world tile, which is how the game says "here is the player". */
+	/**
+	 * Showing or hiding the window, and telling the map which it is.
+	 *
+	 * EVERY WAY OUT OF THIS WINDOW HAS TO COUNT, and until now only one did. The orb and F7 go
+	 * through Client.toggleWorldMap, which said closed() itself - but Escape calls setVisible
+	 * straight (see the view's key handler) and the title bar's X is HIDE_ON_CLOSE, and neither
+	 * told the map anything. A map that has not been told nobody is looking keeps its wanted
+	 * list, and every file that arrives afterwards wakes the whole list up again.
+	 *
+	 * So it is the WINDOW that says so, because the window is the thing that knows: there is
+	 * one way to become visible and one to stop being, and both of them are here.
+	 */
+	public void setVisible(boolean showing) {
+		super.setVisible(showing);
+		if (showing) {
+			this.map.opened();
+		} else {
+			this.map.closed();
+		}
+	}
+
 	public void centreOn(int tileX, int tileZ) {
 		this.centreX = tileX;
 		this.centreZ = tileZ;
@@ -249,6 +279,20 @@ public final class MapWindow extends JFrame {
 	}
 
 	/** Where to draw the you-are-here cross, or -1 to draw none. Any thread. */
+	/**
+	 * A mark somewhere in the world, with a word for it, or x below zero for none.
+	 *
+	 * ONE MARK, not a set, because one is what there is to show: where the clue in your bag
+	 * wants you. A second thing worth marking is the moment to key these by whoever put them
+	 * there - until then, a single one is honest about what it is.
+	 */
+	public void setMark(int tileX, int tileZ, int level, String label) {
+		this.markX = tileX;
+		this.markZ = tileZ;
+		this.markLevel = level;
+		this.markLabel = label == null ? "" : label;
+	}
+
 	public void setPlayer(int tileX, int tileZ, int level) {
 		this.playerX = tileX;
 		this.playerZ = tileZ;
@@ -433,6 +477,7 @@ public final class MapWindow extends JFrame {
 			MapWindow.this.drawIcons(g, originX, originZ, at,
 				firstX * MapSquare.SQUARE, firstZ * MapSquare.SQUARE,
 				(lastX + 1) * MapSquare.SQUARE, (lastZ + 1) * MapSquare.SQUARE);
+			MapWindow.this.drawMark(g, originX, originZ, at);
 			MapWindow.this.drawPlayer(g, originX, originZ, at);
 		}
 	}
@@ -500,6 +545,41 @@ public final class MapWindow extends JFrame {
 	 * dot the size of a tile is lost on a town. It is drawn with a dark outline for the same
 	 * reason: yellow on sand is yellow on yellow.
 	 */
+	/**
+	 * The marked spot: a ring and a flag, and its word under it.
+	 *
+	 * DELIBERATELY NOT THE PLAYER'S CROSS. Two crosses on one map is a map with two players on
+	 * it; what this says is "the thing you are looking for is here", so it is a different shape
+	 * and a different colour, and it carries its own label because a ring on its own could be
+	 * anything.
+	 */
+	private void drawMark(Graphics2D g, int originX, int originZ, int at) {
+		if (this.markX < 0 || this.markLevel != this.level) {
+			return;
+		}
+		int px = acrossOf(originX, this.markX, at) + at / 2;
+		int pz = downOf(originZ, this.markZ, at) + at / 2;
+		int ring = at < 4 ? 7 : 10;
+		g.setStroke(new java.awt.BasicStroke(3f));
+		g.setColor(new Color(0x20, 0x18, 0x00));
+		g.drawOval(px - ring, pz - ring, ring * 2, ring * 2);
+		g.setStroke(new java.awt.BasicStroke(2f));
+		g.setColor(MARK);
+		g.drawOval(px - ring, pz - ring, ring * 2, ring * 2);
+		g.drawLine(px, pz - ring, px, pz + ring);
+		g.drawLine(px - ring, pz, px + ring, pz);
+		g.setStroke(new java.awt.BasicStroke(1f));
+		if (this.markLabel.length() > 0) {
+			int width = g.getFontMetrics().stringWidth(this.markLabel);
+			int tx = px - width / 2;
+			int ty = pz + ring + 14;
+			g.setColor(new Color(0x20, 0x18, 0x00));
+			g.drawString(this.markLabel, tx + 1, ty + 1);
+			g.setColor(MARK);
+			g.drawString(this.markLabel, tx, ty);
+		}
+	}
+
 	private void drawPlayer(Graphics2D g, int originX, int originZ, int at) {
 		int x = this.playerX;
 		int z = this.playerZ;
