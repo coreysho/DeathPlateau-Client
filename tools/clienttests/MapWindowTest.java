@@ -186,6 +186,38 @@ public class MapWindowTest {
 	static void icons() {
 		System.out.println("-- icons --");
 
+		/*
+		 * A SQUARE READ BEFORE THERE WAS A TABLE TO READ IT AGAINST MUST BE READ AGAIN.
+		 *
+		 * This is the fault that made every real player's map iconless, and no check here could
+		 * see it because every check here hands in its own table. The index builds its table out
+		 * of the loc configs the first time a square arrives - and for anybody with a file store
+		 * on disk, the map files are already there at login and the loc configs are not, so the
+		 * table was built from nothing, kept, and never named a single loc again. 0 icons out of
+		 * 1,404 map files, measured on a real client against a real server; the driver that said
+		 * 55 had a fresh home directory and no file store, so it was the one configuration where
+		 * the race is won.
+		 *
+		 * So: no table means the square is not marked read, and a table arriving later clears
+		 * what was read against the old one and says so, which is how the files already in hand
+		 * get fed through again.
+		 */
+		TestIcons early = new TestIcons(new int[0]);
+		byte[] bankSquare = locFile(new int[][] { { BANK_ICON, 10, 20, 0 } });
+		early.add(50, 60, bankSquare);
+		eq("a square read before the loc configs load finds nothing", 0, early.all().size());
+		early.functions = bankOnly();
+		yes("...and the table says so the moment the configs land", early.refresh());
+		yes("...once, and not every frame after", !early.refresh());
+		early.add(50, 60, bankSquare);
+		eq("...and the same square read again now finds its icon", 1, early.all().size());
+
+		TestIcons told = new TestIcons(bankOnly());
+		told.add(1, 1, bankSquare);
+		told.add(1, 1, bankSquare);
+		eq("and a square that arrives twice against one table is read once", 1,
+			told.all().size());
+
 		// One loc file by hand: square-local x=10, z=20, ground; and x=1, z=2, first floor.
 		MapIcons found = withBank();
 		found.add(50, 60, locFile(new int[][] {
@@ -286,9 +318,32 @@ public class MapWindowTest {
 	 * in a table of their own and need no cache at all.
 	 */
 	static MapIcons withBank() {
-		MapIcons icons = new MapIcons();
-		icons.useFunctions(bankOnly());
-		return icons;
+		return new TestIcons(bankOnly());
+	}
+
+	/**
+	 * A MapIcons that answers for itself what the cache would normally answer.
+	 *
+	 * The real one reads every loc type's mapfunction out of the cache. These checks are about
+	 * where an icon lands and what it is called, not about what the cache holds - but they go
+	 * through the SAME build-and-rebuild path the game does, because when that path builds its
+	 * table is the whole of the fault it was written for.
+	 */
+	static final class TestIcons extends MapIcons {
+
+		int[] functions;
+
+		TestIcons(int[] functions) {
+			this.functions = functions;
+		}
+
+		protected int locCount() {
+			return this.functions.length;
+		}
+
+		protected int locFunction(int id) {
+			return this.functions[id];
+		}
 	}
 
 	/** The loc that marks an altar, so the checks have two kinds and not just one. */
@@ -455,12 +510,31 @@ public class MapWindowTest {
 		Pretend post = new Pretend();
 		post.has(50, 50);
 		WorldMap byPost = over(post);
-		byPost.icons().useFunctions(bankOnly());
+		byPost.useIcons(new TestIcons(bankOnly()));
 		yes("nothing is indexed before anything arrives", byPost.icons().all().isEmpty());
 		byPost.arrived(Pretend.file(50, 50, 1),
 			locFile(new int[][] { { BANK_ICON, 10, 20, 0 } }));
 		eq("a loc file going past puts its icons on the map", 1,
 			byPost.icons().all().size());
+
+		// AND ONE THAT ARRIVED BEFORE THE LOC CONFIGS DID is read again out of the file the map
+		// already holds, the frame after they load. This is the half of the fault that lives
+		// here rather than in the index: with a file store on disk the squares round wherever
+		// you log in all arrive first, so without this nothing would ever trigger the re-read.
+		Pretend soon = new Pretend();
+		soon.has(50, 50);
+		WorldMap beforeConfigs = over(soon);
+		TestIcons late = new TestIcons(new int[0]);
+		beforeConfigs.useIcons(late);
+		beforeConfigs.arrived(Pretend.file(50, 50, 1),
+			locFile(new int[][] { { BANK_ICON, 10, 20, 0 } }));
+		eq("a loc file arriving before the loc configs indexes nothing", 0, late.all().size());
+		late.functions = bankOnly();
+		beforeConfigs.tick();
+		eq("...and is read again, from the file already held, once they load", 1,
+			late.all().size());
+		beforeConfigs.tick();
+		eq("...and not once more every frame after that", 1, late.all().size());
 		MapIcons.Icon posted = (MapIcons.Icon) byPost.icons().all().get(0);
 		eq("in the right square", 50 * 64 + 10, posted.x);
 		byPost.arrived(Pretend.file(50, 50, 0), new byte[] { 0 });

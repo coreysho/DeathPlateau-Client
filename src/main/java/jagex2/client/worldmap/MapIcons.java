@@ -29,7 +29,9 @@ import jagex2.config.LocType;
 import jagex2.graphics.Pix32;
 import jagex2.io.Packet;
 
-public final class MapIcons {
+// NOT final: {@link #locCount()} and {@link #locFunction(int)} are the seam the checks override,
+// because the real pair read the loc configs out of a cache a headless check has not got.
+public class MapIcons {
 
 	/**
 	 * The pictures, handed in by whoever loaded the media.
@@ -94,20 +96,46 @@ public final class MapIcons {
 	}
 
 	/**
-	 * The mapfunction of every loc type, read once.
+	 * The mapfunction of every loc type, and how many types it was built for.
 	 *
 	 * LocType.method561 is a cache of twenty that the game is also using, and a world has a
 	 * million and a half locs in it. Asking it once per loc would be a million and a half
 	 * evictions of something the game wanted; asking it once per TYPE is twenty thousand.
-	 *
-	 * HANDED IN, OR READ FROM LocType IF NOT. The game has the config loaded and leaves this
-	 * alone; anything driving the map without one - the checks, which are about where an icon
-	 * lands rather than about what the cache says - supplies its own.
 	 */
 	private int[] functionOf;
 
-	public void useFunctions(int[] functionOfLocType) {
-		this.functionOf = functionOfLocType;
+	private int builtFor = -1;
+
+	/**
+	 * How many loc types the cache knows, which is 0 until the loc configs have loaded.
+	 *
+	 * A SEAM, because the checks have no cache to ask and this is the number the whole of
+	 * {@link #functions()} turns on. Overridden by a MapIcons the checks make for themselves.
+	 */
+	protected int locCount() {
+		return LocType.field1662;
+	}
+
+	/** One loc type's mapfunction, or -1 for a loc that is not marked on the map. The same seam. */
+	protected int locFunction(int id) {
+		return LocType.method561(id).field1660;
+	}
+
+	/**
+	 * Build the table if the cache's count of loc types has changed, and say whether it did.
+	 *
+	 * ASKED ONCE A FRAME by whoever holds the loc files, because a true means everything read
+	 * before now was read against a table that could not name it and should go through again.
+	 *
+	 * IT ASKS RATHER THAN BEING TOLD, which is the whole point: the table is built when a
+	 * square arrives, and a client whose squares ALL arrived before the loc configs did - which
+	 * is every client with a file store, for the squares around wherever it logs in - would
+	 * otherwise have nothing left to trigger it. The check is an int comparison.
+	 */
+	public boolean refresh() {
+		int before = this.builtFor;
+		this.functions();
+		return this.builtFor != before;
 	}
 
 	private final List icons = new ArrayList();
@@ -126,12 +154,15 @@ public final class MapIcons {
 		if (locData == null || locData.length == 0) {
 			return;
 		}
+		// THE TABLE FIRST, because building it empties `read` - a square parsed against the
+		// table that was there before found whatever that one could name, which before the loc
+		// configs load is nothing at all.
+		int[] function = this.functions();
 		Integer square = Integer.valueOf((sx << 8) + sz);
 		if (this.read.contains(square)) {
 			return;
 		}
 		this.read.add(square);
-		int[] function = this.functions();
 		Packet buf = new Packet(locData);
 		int id = -1;
 		while (true) {
@@ -157,16 +188,40 @@ public final class MapIcons {
 		}
 	}
 
+	/**
+	 * The mapfunction of every loc type, rebuilt whenever the cache's count of them changes.
+	 *
+	 * IT USED TO BE BUILT ON FIRST USE AND KEPT WHATEVER THAT GAVE, and what that gave depended
+	 * on a race nobody wins twice the same way. A loc file reaching the map is what triggers
+	 * this, and with a file store on disk the map files are there at login - before the loc
+	 * configs are. {@link #locCount()} is 0 until they load, so the table was built with no
+	 * entries at all, memoised, and every id thereafter fell outside it: the map drew not one
+	 * icon for the rest of the session.
+	 *
+	 * A PLAYER ALWAYS HAS A FILE STORE, so a player always lost that race - and the driver that
+	 * checked this had a fresh home directory and no store, so it always won it and reported 55
+	 * icons. Measured on a real client against a real server: 0 icons out of 1,404 map files
+	 * before this, 641 after.
+	 *
+	 * ONE MECHANISM, NOT THREE. An earlier pass of this fix also refused to read a square while
+	 * the table was empty and refused to memoise an empty table, and the mutation runner showed
+	 * both for what they were - the count check below already covers them, and three guards
+	 * over one invariant means two of them are never the one that fires.
+	 */
 	private int[] functions() {
-		if (this.functionOf == null) {
-			int[] all = new int[LocType.field1662];
-			for (int id = 0; id < all.length; id++) {
-				all[id] = LocType.method561(id).field1660;
+		int count = this.locCount();
+		if (this.functionOf == null || this.builtFor != count) {
+			int[] all = new int[count];
+			for (int id = 0; id < count; id++) {
+				all[id] = this.locFunction(id);
 			}
 			this.functionOf = all;
+			this.builtFor = count;
+			this.read.clear();
 		}
 		return this.functionOf;
 	}
+
 
 	/** Every icon known, in the order they were read. */
 	public List all() {

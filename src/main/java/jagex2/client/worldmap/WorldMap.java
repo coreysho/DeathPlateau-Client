@@ -96,7 +96,15 @@ public final class WorldMap {
 	private boolean prefetched;
 
 	/** Every icon in every square whose scenery has arrived. */
-	private final MapIcons icons = new MapIcons();
+	private MapIcons icons = new MapIcons();
+
+	/**
+	 * Replaces the icon index, for the checks: the real one reads the loc configs out of the
+	 * cache and they have none. Not final for that reason and no other.
+	 */
+	public void useIcons(MapIcons replacement) {
+		this.icons = replacement;
+	}
 
 	/** Which square each square's loc file belongs to, so an arrival can be placed. */
 	private int[] squareOfLocFile;
@@ -214,6 +222,7 @@ public final class WorldMap {
 	 * every frame asking the same question.
 	 */
 	public void tick() {
+		this.refeedIcons();
 		for (int looked = 0; looked < LOOK_AT; looked++) {
 			Integer at = (Integer) this.wanted.poll();
 			if (at == null) {
@@ -250,6 +259,31 @@ public final class WorldMap {
 			}
 			this.keep(at, pixels);
 			return;
+		}
+	}
+
+	/**
+	 * Feed the icon index everything that arrived before it could read any of it.
+	 *
+	 * THE LOC CONFIGS LOAD AFTER THE MAP FILES DO, for anybody with a file store on disk: the
+	 * map files are on the disk already and the configs still have to come down. So the first
+	 * few hundred squares reach the index while it has no table to read them against, and it
+	 * says so rather than marking them read. The frame after the table is built, they go
+	 * through again - out of the files this already holds, so nothing is re-fetched.
+	 */
+	private void refeedIcons() {
+		if (!this.icons.refresh()) {
+			return;
+		}
+		int[] of = this.squareOfLocFile();
+		java.util.Iterator it = this.files.entrySet().iterator();
+		while (it.hasNext()) {
+			java.util.Map.Entry entry = (java.util.Map.Entry) it.next();
+			int file = ((Integer) entry.getKey()).intValue();
+			byte[] data = (byte[]) entry.getValue();
+			if (data != null && data.length > 0 && file >= 0 && file < of.length && of[file] >= 0) {
+				this.icons.add(of[file] >> 8, of[file] & 0xFF, data);
+			}
 		}
 	}
 
