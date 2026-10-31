@@ -87,8 +87,25 @@ public final class WorldMap {
 	/** The order they were drawn in, so the oldest can go when there are too many. */
 	private final Queue age = new ArrayDeque();
 
-	/** Squares the window has asked for. Written by its thread, drained by the game's. */
+	/**
+	 * Squares the window has asked for. Written by its thread, drained by the game's.
+	 *
+	 * ASKED FOR ONCE, HOWEVER OFTEN IT IS ASKED. The window repaints eight times a second and
+	 * asks for every square it can see that it has not got yet, so a square it is waiting on
+	 * is asked for eight times a second until it arrives. As a plain queue that is a duplicate
+	 * every time: a window the size of a screen showed FIVE HUNDRED squares and the queue grew
+	 * to seventeen thousand entries, all but a few hundred of them the same squares over and
+	 * over. tick() looks at thirty-two of them a frame, so it spent every frame stepping past
+	 * copies of squares it had already drawn and drew nothing - the map stopped filling in,
+	 * and the game thread kept paying for it.
+	 *
+	 * The set is what makes an ask idempotent; the queue is what keeps them in the order they
+	 * were asked for. A square leaves the set when it leaves the queue, so a square that is
+	 * still missing after its turn can be asked for again.
+	 */
 	private final Queue wanted = new ConcurrentLinkedQueue();
+
+	private final java.util.Set queued = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
 	/** Wanted squares whose data has not all arrived, held back until some of it does. */
 	private final List waiting = new ArrayList();
@@ -176,7 +193,7 @@ public final class WorldMap {
 		Integer at = Integer.valueOf(key(x, z, level));
 		int[] pixels = (int[]) this.drawn.get(at);
 		if (pixels == null) {
-			this.wanted.add(at);
+			this.ask(at);
 		}
 		return pixels;
 	}
@@ -228,6 +245,7 @@ public final class WorldMap {
 			if (at == null) {
 				return;
 			}
+			this.queued.remove(at);
 			if (this.drawn.containsKey(at)) {
 				continue;
 			}
@@ -307,7 +325,7 @@ public final class WorldMap {
 				Integer which = Integer.valueOf(file);
 				byte[] data = (byte[]) this.files.get(which);
 				if (data == null) {
-					this.ask(which);
+					this.askFile(which);
 					complete = false;
 				} else {
 					nine[dx + 1][dz + 1] = data;
@@ -317,7 +335,14 @@ public final class WorldMap {
 		return complete ? nine : null;
 	}
 
-	private void ask(Integer file) {
+	/** Queue a square unless it is already queued. Called from both threads. */
+	private void ask(Integer at) {
+		if (this.queued.add(at)) {
+			this.wanted.add(at);
+		}
+	}
+
+	private void askFile(Integer file) {
 		if (this.asked.add(file)) {
 			this.supply.request(file.intValue());
 		}
@@ -353,7 +378,9 @@ public final class WorldMap {
 		}
 		// Everything set aside goes back in the queue: working out which of them wanted this
 		// particular file costs more than simply asking all of them again.
-		this.wanted.addAll(this.waiting);
+		for (int i = 0; i < this.waiting.size(); i++) {
+			this.ask((Integer) this.waiting.get(i));
+		}
 		this.waiting.clear();
 	}
 
@@ -436,6 +463,7 @@ public final class WorldMap {
 	 */
 	public void closed() {
 		this.wanted.clear();
+		this.queued.clear();
 		this.waiting.clear();
 	}
 

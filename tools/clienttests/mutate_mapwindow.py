@@ -159,7 +159,7 @@ MUTS = [
 
     (SUPPLY, "a closed map still wanting what it asked for, which grinds for as long as the "
              "client is up",
-     '\t\tthis.wanted.clear();\n\t\tthis.waiting.clear();',
+     '\t\tthis.wanted.clear();\n\t\tthis.queued.clear();\n\t\tthis.waiting.clear();',
      ''),
     (SUPPLY, 'a loc file arriving without its icons being read, so the key stays empty',
      '\t\tif (data != null && file >= 0 && file < of.length && of[file] >= 0) {\n'
@@ -187,7 +187,7 @@ MUTS = [
      '\t\t\tthis.waiting.add(at);\n\t\t\tbyte[][][] land = this.gather(x, z, 0);',
      '\t\t\tbyte[][][] land = this.gather(x, z, 0);'),
     (SUPPLY, 'nothing woken when a file arrives, so a square waits for one already in hand',
-     '\t\tthis.wanted.addAll(this.waiting);\n\t\tthis.waiting.clear();',
+     '\t\tfor (int i = 0; i < this.waiting.size(); i++) {\n\t\t\tthis.ask((Integer) this.waiting.get(i));\n\t\t}\n\t\tthis.waiting.clear();',
      ''),
     (SUPPLY, 'the drawn square not kept, so the map redraws everything every frame',
      '\t\tthis.drawn.put(at, pixels);\n',
@@ -202,7 +202,7 @@ MUTS = [
      '\tprivate static final int KEEP = 64;',
      '\tprivate static final int KEEP = 1;'),
     (SUPPLY, 'the square not asked for when it is missing, so nothing is ever drawn',
-     '\t\tif (pixels == null) {\n\t\t\tthis.wanted.add(at);\n\t\t}',
+     '\t\tif (pixels == null) {\n\t\t\tthis.ask(at);\n\t\t}',
      ''),
     (SUPPLY, 'only the square itself gathered, not the eight around it that light its edges',
      '\t\tfor (int dx = -1; dx <= 1; dx++) {\n\t\t\tfor (int dz = -1; dz <= 1; dz++) {\n'
@@ -215,6 +215,17 @@ MUTS = [
     (SUPPLY, 'a square that is not in the world reported as being in it',
      '\t\treturn this.fileOf(x, z, 0) >= 0;',
      '\t\treturn true;'),
+    # ---- THE QUEUE OF SQUARES, which the window refills eight times a second.
+    (SUPPLY, 'a square queued again every time it is asked for, so the queue grows without end',
+     '\t\tif (this.queued.add(at)) {\n\t\t\tthis.wanted.add(at);\n\t\t}',
+     '\t\tthis.wanted.add(at);'),
+    (SUPPLY, 'a drawn square left in the set, so it can never be asked for again',
+     '\t\t\tthis.queued.remove(at);\n',
+     ''),
+    (SUPPLY, 'the set left full when the map closes, so nothing is ever queued again',
+     '\t\tthis.wanted.clear();\n\t\tthis.queued.clear();',
+     '\t\tthis.wanted.clear();'),
+
     # ---- THE TABLE THE ICONS ARE READ AGAINST, and when it is built. This is what made every
     # real player's map iconless: built from nothing before the loc configs loaded, then kept.
     (ICONS, 'the table built once and kept, which is the bug itself: the loc configs load after '
