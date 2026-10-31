@@ -49,17 +49,30 @@ def read_courses(engine):
             if 'COURSES' in src and 'obstacles:' in src:
                 break
     out = []
-    for m in re.finditer(r"\{\s*key:\s*'(\w+)',\s*(?:\w+:\s*[^,\n]+,\s*)*?title:\s*(?:'([^']*)'|\"([^\"]*)\"),\s*"
-                         r"(?:\w+:\s*[^,\n]+,\s*)*?level:\s*(\d+),\s*lapXp:\s*(\d+),\s*start:\s*\[(\d+),\s*(\d+),\s*(\d+)\],\s*"
-                         r"obstacles:\s*\[(.*?)\n\s*\]", src, re.S):
+    # ANY NUMBER OF FIELDS BETWEEN THE ONES WE WANT, and `[^\n]` rather than `[^,\n]` so a
+    # field whose value is a list gets skipped too. failStop/failRoll went in between `start` and
+    # `obstacles` and the old pattern - which required them adjacent, and could not step over
+    # `failRoll: [177, 299],` in any case - matched ONE course of the nine. A cam that runs a ninth
+    # of the obstacles and reports ALL PASS is worse than one that crashes.
+    for m in re.finditer(r"\{\s*key:\s*'(\w+)',\s*(?:\w+:\s*[^\n]+,\s*)*?title:\s*(?:'([^']*)'|\"([^\"]*)\"),\s*"
+                         r"(?:\w+:\s*[^\n]+,\s*)*?level:\s*(\d+),\s*lapXp:\s*(\d+),\s*start:\s*\[(\d+),\s*(\d+),\s*(\d+)\],\s*"
+                         r"(?:\w+:\s*[^\n]+,\s*)*?obstacles:\s*\[(.*?)\n\s*\]", src, re.S):
         key, t1, t2, level, lapxp, sx, sz, sl, body = m.groups()
         obs = []
         for o in re.finditer(r"\{\s*name:\s*'([^']*)',\s*loc:\s*'(\w+)',\s*x:\s*(\d+),\s*z:\s*(\d+),\s*"
-                             r"level:\s*(\d+),\s*land:\s*'(\w+)',\s*xp:\s*'(\w+)'", body):
+                             r"level:\s*(\d+),\s*land:\s*'(\w+)',\s*xp:\s*'(\w+)'"
+                             r"(?:[^}]*?fail:\s*\{\s*land:\s*'(\w+)',\s*dmg:\s*\[(\d+),\s*(\d+)\]\s*\})?", body):
             obs.append(dict(name=o.group(1), loc=o.group(2), x=int(o.group(3)), z=int(o.group(4)),
-                            level=int(o.group(5)), land=o.group(6), xp=o.group(7)))
+                            level=int(o.group(5)), land=o.group(6), xp=o.group(7),
+                            # the eleven Old School lets you fail; the constant naming the street
+                            # tile they drop you on, derived by Engine-TS/tools/sim/coursefall.ts
+                            fall=o.group(8), dmg=(int(o.group(9)), int(o.group(10))) if o.group(8) else None))
+        stop = re.search(r"failStop:\s*(\d+)", m.group(0))
         out.append(dict(key=key, title=t1 or t2, level=int(level), lapXp=int(lapxp),
-                        start=(int(sx), int(sz), int(sl)), obstacles=obs))
+                        start=(int(sx), int(sz), int(sl)), obstacles=obs,
+                        # the Agility level at which this course stops being failable, so the cam
+                        # can run its lap where a roll cannot throw it off
+                        failStop=int(stop.group(1)) if stop else 0))
     return out
 
 
@@ -125,8 +138,10 @@ def write_table(path, course, consts, verbs, pack):
     """The tsv CourseCam reads: one header line, then one line per obstacle."""
     with open(path, 'w', encoding='utf-8') as f:
         f.write('# written by run_coursecam.py from rooftops.ts, the course constants and the loc configs\n')
-        f.write('course\t%s\t%d\t%d\t%d\t%d\n' % (course['key'], course['level'],
-                                                  course['start'][0], course['start'][1], course['start'][2]))
+        # AND THE LEVEL THE COURSE STOPS BEING FAILABLE AT, so the cam can run its lap above it.
+        f.write('course\t%s\t%d\t%d\t%d\t%d\t%d\n' % (course['key'], course['level'],
+                                                      course['start'][0], course['start'][1], course['start'][2],
+                                                      course.get('failStop') or 0))
         missing = []
         for o in course['obstacles']:
             land = consts.get(o['land'])
@@ -136,9 +151,14 @@ def write_table(path, course, consts, verbs, pack):
             if land is None or pid is None:
                 missing.append(o['name'] + (' (no landing constant)' if land is None else ' (not in loc.pack)'))
                 continue
-            f.write('%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\n' % (
+            # AND WHERE A FAILURE DROPS YOU, or "-" for the sixty-two that cannot be failed.
+            fall = consts.get(o['fall']) if o.get('fall') else None
+            if o.get('fall') and fall is None:
+                missing.append(o['name'] + ' (no fall constant ^' + o['fall'] + ')')
+            f.write('%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n' % (
                 o['name'], pid, o['x'], o['z'], o['level'], land[0], land[1], land[2], verb,
-                consts.get(o['xp'], 0), info[1], info[2]))
+                consts.get(o['xp'], 0), info[1], info[2],
+                fall[0] if fall else '-', fall[1] if fall else '-', fall[2] if fall else '-'))
         return missing
 
 
@@ -191,7 +211,7 @@ def java(out, classes, rsan, port, webport, user, table, props=(), home=None):
             print('   ' + l)
     if r.returncode != 0 and 'FAIL' not in r.stdout:
         print(r.stdout[-3000:] + r.stderr[-2000:])
-    return r.stdout
+    return r.stdout, r.returncode
 
 
 def main():
@@ -250,11 +270,21 @@ def main():
         for m in missing:
             print('   SKIPPED ' + m)
         user = a.user or ('cam' + str(int(time.time()) % 100000))
-        sout = java(out, classes, rsan, a.port, a.webport, user, table, home=a.home)
+        sout, code = java(out, classes, rsan, a.port, a.webport, user, table, home=a.home)
         # COUNT THEM. This looked for the word FAIL in the output, and the run's own summary line
         # reads "62 ok, 0 FAIL" - so a course with nothing wrong with it reported a failure, and a
         # nine-course run with four clean courses ended "9 course(s) with failures above".
         bad += len([ln for ln in sout.splitlines() if ln.strip().startswith('FAIL')])
+        # AND A COURSE THAT NEVER FINISHED IS NOT A PASS. The cam exits non-zero when it throws, and
+        # a throw prints a stack trace and no FAIL line - so without this a run whose every login
+        # was refused ends "ALL PASS" having tested nothing. It happened.
+        if not [ln for ln in sout.splitlines() if ' ok, ' in ln and 'FAIL' in ln]:
+            print('   %s: THE CAM NEVER REACHED ITS SUMMARY (exit %d) - nothing here was tested'
+                  % (c['key'], code))
+            bad += 1
+        elif code != 0 and not [ln for ln in sout.splitlines() if ln.strip().startswith('FAIL')]:
+            print('   %s: the cam exited %d with no FAIL line' % (c['key'], code))
+            bad += 1
         shots = [('%d %s' % (i + 1, o['name']), os.path.join(out, '%s_%dc_after.png' % (c['key'], i + 1)))
                  for i, o in enumerate(c['obstacles'])]
         sheet(out, c['key'], shots)

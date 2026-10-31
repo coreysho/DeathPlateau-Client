@@ -1248,10 +1248,17 @@ public class CourseCam extends Client {
 		int landLevel;
 		String verb;
 		int xp;
+		// WHERE A FAILURE DROPS YOU, or level -1 when Old School does not let you fail this one.
+		// Eleven of the seventy-three can be failed; see tools/sim/courses.ts.
+		int fallX;
+		int fallZ;
+		int fallLevel = -1;
 	}
 
 	static String course;
 	static int courseLevel;
+	/** The level this course stops being failable at, or 0 when nothing on it can be failed. */
+	static int failStop;
 	static int[] start = new int[3];
 	static List<Ob> obstacles = new ArrayList<Ob>();
 
@@ -1270,6 +1277,9 @@ public class CourseCam extends Client {
 				start[0] = Integer.parseInt(f[3]);
 				start[1] = Integer.parseInt(f[4]);
 				start[2] = Integer.parseInt(f[5]);
+				if (f.length > 6) {
+					failStop = Integer.parseInt(f[6]);
+				}
 				continue;
 			}
 			Ob o = new Ob();
@@ -1286,6 +1296,11 @@ public class CourseCam extends Client {
 			if (f.length > 11) {
 				o.w = Integer.parseInt(f[10]);
 				o.l = Integer.parseInt(f[11]);
+			}
+			if (f.length > 14 && !f[14].equals("-")) {
+				o.fallX = Integer.parseInt(f[12]);
+				o.fallZ = Integer.parseInt(f[13]);
+				o.fallLevel = Integer.parseInt(f[14]);
 			}
 			obstacles.add(o);
 		}
@@ -1345,8 +1360,26 @@ public class CourseCam extends Client {
 		// A quiet spot first, so the account is out of the tutorial before anything is measured.
 		command("::setvar tutorial 1000");
 		waitFrames(20);
-		command("::setstat agility " + courseLevel);
+		// ABOVE THE FAIL CUTOFF, not at the entry level.
+		//
+		// Eleven rooftop obstacles can be failed, and the entry level is where they are MOST
+		// failable - about one attempt in eight. The engine-side suites pin nextDouble for this;
+		// a client over a socket cannot, so it runs the lap at the level the course stops being
+		// failable at instead. Nothing here depends on the level: what is drawn, what can be
+		// clicked and where a crossing ends are the same at 60 and at 79, and the fall tiles are
+		// checked by standing on them rather than by failing into them.
+		//
+		// Without this the lap is a coin toss. Seers' failed its tightrope on the run that added
+		// the fall checks - it "landed on 2709,3489 L0", which IS ^seers_fall_rope - and the next
+		// obstacle could not be reached from the street, so one roll cost two FAIL lines.
+		int runLevel = Math.max(courseLevel, failStop);
+		command("::setstat agility " + runLevel);
 		waitFrames(20);
+		if (runLevel != courseLevel) {
+			say("(agility " + runLevel + " for the run, not the course's own " + courseLevel
+				+ ": that is where this course stops being failable, and a lap that can fail an"
+				+ " obstacle at random is not a lap anybody can compare)");
+		}
 		pinCamera = true;
 
 		say("");
@@ -1394,10 +1427,79 @@ public class CourseCam extends Client {
 			from = new int[] { now[0], now[1], now[2] };
 		}
 
+		doFalls();
+
 		say("");
 		say(ok + " ok, " + bad + " FAIL");
 		log.close();
 		System.exit(bad > 0 ? 1 : 0);
+	}
+
+	/**
+	 * THE TILES A FAILED OBSTACLE DROPS YOU ON, which until this course had any, nothing checked.
+	 *
+	 * Old School drops you off the roof when you fail - "failing the obstacle will drop the player
+	 * below, requiring them to start the course over" - and the reason this build had no fall tiles
+	 * is written in the courses themselves: "a fall needs a street tile per obstacle and that is
+	 * guesswork". coursefall.ts derives them from the map and roofall.ts proves the mechanic with
+	 * the roll pinned, but neither of those can see what the RENDERER draws, and a fall tile is a
+	 * street tile under a grafted roof - which is the likeliest place in this build for a hole.
+	 * Nineteen of the fifty-eight ordinary landings were in thin air with every engine check green.
+	 *
+	 * Same two questions as a stand tile, then: is the player really there, and does the client
+	 * draw a floor under them.
+	 */
+	static void doFalls() throws Exception {
+		List<Ob> falls = new ArrayList<Ob>();
+		for (int i = 0; i < obstacles.size(); i++) {
+			if (obstacles.get(i).fallLevel >= 0) {
+				falls.add(obstacles.get(i));
+			}
+		}
+		if (falls.isEmpty()) {
+			return;
+		}
+		pinYaw = DEF_YAW;
+		pinPitch = DEF_PITCH;
+		pinZoom = DEF_ZOOM;
+		say("");
+		say("---------------- where a failure drops you (" + falls.size() + " of " + obstacles.size()
+			+ " obstacles can be failed)");
+		for (int i = 0; i < falls.size(); i++) {
+			Ob o = falls.get(i);
+			say("");
+			say(" " + o.name + " falls to " + o.fallX + "," + o.fallZ + " L" + o.fallLevel);
+			int[] at = tileAt();
+			for (int tryn = 0; tryn < 3; tryn++) {
+				if (at[0] == o.fallX && at[1] == o.fallZ && at[2] == o.fallLevel) {
+					break;
+				}
+				command("::tele " + teleArg(o.fallX, o.fallZ, o.fallLevel));
+				waitFor("the scene", 30000, () -> geti("sceneState") == 2);
+				// BY ITS RESULT, not by a frame count: while the scene is rebuilding,
+				// sceneBaseTileX and the player's local offset disagree and tileAt() answers with
+				// a tile nowhere near the course.
+				boolean there = false;
+				for (int f = 0; f < 120 && !there; f++) {
+					waitFrames(2);
+					int[] t = tileAt();
+					there = t[0] == o.fallX && t[1] == o.fallZ && t[2] == o.fallLevel;
+				}
+				at = tileAt();
+			}
+			check("the player is standing at " + at[0] + "," + at[1] + " L" + at[2],
+				at[0] == o.fallX && at[1] == o.fallZ && at[2] == o.fallLevel,
+				at[0] == o.fallX && at[1] == o.fallZ && at[2] == o.fallLevel
+					? "" : "wanted " + o.fallX + "," + o.fallZ + " L" + o.fallLevel);
+			int storey = floorStorey(o.fallX, o.fallZ, o.fallLevel);
+			check("and the client draws floor under the fall tile", storey >= 0,
+				storey >= 0 ? "" : "nothing is drawn on this storey or the one below - a player who"
+					+ " fails this obstacle lands in thin air");
+			if (storey >= 0 && storey != o.fallLevel) {
+				say("      (the floor under it is drawn on L" + storey + ")");
+			}
+			shot(course + "_fall_" + (i + 1) + "_" + o.name.replace(' ', '_'));
+		}
 	}
 
 	/** level,mapsquareX,mapsquareZ,localX,localZ - what ::tele takes. */
