@@ -654,6 +654,43 @@ public class MapWindowTest {
 		nine.tick();
 		eq("and not asked for again by the floors above", 18, town.asked.size());
 
+		/*
+		 * AND THE QUEUE OF SQUARES DOES NOT GROW WHILE IT WAITS.
+		 *
+		 * The window repaints eight times a second and asks for every square it can see that
+		 * it has not got yet, so a square it is waiting on is asked for eight times a second.
+		 * As a plain queue that was a duplicate every time: a window the size of a screen
+		 * shows five hundred squares, and the queue measured SEVENTEEN THOUSAND entries - all
+		 * but a few hundred of them the same squares again. tick() looks at thirty-two a
+		 * frame, so it spent every frame stepping past copies of squares it had already drawn.
+		 * The map stopped filling in and the game thread went on paying for it, and both of
+		 * those got worse the bigger the window: at the default size it kept up, which is why
+		 * every check and every picture here had said it was fine.
+		 */
+		Pretend over = new Pretend();
+		over.has(50, 50);
+		WorldMap asking = over(over);
+		for (int again = 0; again < 200; again++) {
+			asking.square(50, 50, 0);
+			asking.square(51, 51, 0);
+		}
+		eq("asking for two squares two hundred times queues two", 2, queued(asking));
+		asking.tick();
+		asking.tick();
+		eq("...and drawing them empties the queue", 0, queued(asking));
+		asking.square(50, 50, 0);
+		eq("a square already drawn is not queued again", 0, queued(asking));
+		asking.square(60, 60, 0);
+		yes("but one that is not drawn still is", queued(asking) > 0);
+		asking.closed();
+		eq("and closing the map empties it", 0, queued(asking));
+		// AND EMPTIES WHAT IT REMEMBERS OF IT, or the map is shut for good: a square that was
+		// queued when it closed would be remembered as queued forever, and asking for it on
+		// the next open would quietly do nothing.
+		asking.square(60, 60, 0);
+		yes("...and the same square can be asked for again on the next open",
+			queued(asking) > 0);
+
 		// A FILE THAT IS NOT COMING IS ASKED FOR ONCE. Its square is set aside, but every
 		// arrival of anything wakes it up again, and each waking gathers again. Without a
 		// memory of what has been asked for that is a request per waking, at a server, for a
@@ -737,6 +774,17 @@ public class MapWindowTest {
 		} else {
 			failures++;
 			System.out.println("FAIL " + what + ": wanted [" + want + "], got [" + got + "]");
+		}
+	}
+
+	/** How many squares the map has queued to draw, duplicates and all. */
+	static int queued(WorldMap map) {
+		try {
+			java.lang.reflect.Field f = WorldMap.class.getDeclaredField("wanted");
+			f.setAccessible(true);
+			return ((java.util.Collection) f.get(map)).size();
+		} catch (Exception broken) {
+			throw new RuntimeException(broken);
 		}
 	}
 

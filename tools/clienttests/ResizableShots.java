@@ -1135,11 +1135,46 @@ public class ResizableShots extends Client {
 		set("worldMapWindow", window);
 
 		say(String.format("shut       %s  %s", frameCost(200), mapState(map, clientField("onDemand"))));
+		// EVERY SQUARE THE CLIENT BELIEVES IN, written out so it can be held against the ones
+		// the content has. A square the content packed and the client's index does not list
+		// would be counted below as "the world has none for" - which is exactly how a packing
+		// fault would hide inside a clean-looking result.
+		java.lang.reflect.Field supplyField = map.getClass().getDeclaredField("supply");
+		supplyField.setAccessible(true);
+		Object supply = supplyField.get(map);
+		// THROUGH THE INTERFACE, not the implementing class: the supply is an anonymous class
+		// and reflection cannot call a public method on one from outside its package.
+		java.lang.reflect.Method asked =
+			Class.forName("jagex2.client.worldmap.WorldMap$Supply").getMethod("squares");
+		int[] known = (int[]) asked.invoke(supply);
+		StringBuilder list = new StringBuilder();
+		for (int i = 0; i < known.length; i++) {
+			list.append(known[i] >> 8).append('_').append(known[i] & 0xFF).append(' ');
+		}
+		java.io.PrintWriter dump = new java.io.PrintWriter(new File(out, prefix + "-squares.txt"));
+		dump.println(list.toString().trim());
+		dump.close();
+		say("the client's index lists " + known.length + " squares (written to "
+			+ prefix + "-squares.txt)");
 
 		// VARROCK AT THE WIDEST ZOOM, which is the view the whole of the fault lives in: a
 		// square is 64 pixels there, so the window shows fifteen by eleven of them at once.
-		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		// MAXIMISED, which is how the fault shows: the view's own preferred size is 900x680
+		// and a player drags the window out to their screen. Everything that asks the map for
+		// squares scales with the view's area, and nothing else here had ever made it bigger.
+		String[] size = System.getProperty("shots.mapsize", "900,680").split(",");
+		java.awt.Component theView = (java.awt.Component) getPrivate(window, "view");
+		theView.setPreferredSize(new java.awt.Dimension(
+			Integer.parseInt(size[0].trim()), Integer.parseInt(size[1].trim())));
+		windowClass.getMethod("pack").invoke(window);
+		say("view is " + size[0].trim() + "x" + size[1].trim());
+
+		String[] at = System.getProperty("shots.mapat", "3220,3420").split(",");
+		int atX = Integer.parseInt(at[0].trim());
+		int atZ = Integer.parseInt(at[1].trim());
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, atX, atZ);
 		setPrivate(window, "zoom", Integer.valueOf(1));
+		say("centred on " + atX + "," + atZ + " (square " + (atX / 64) + "," + (atZ / 64) + ")");
 		map.getClass().getMethod("opened").invoke(map);
 		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
 
@@ -1161,10 +1196,12 @@ public class ResizableShots extends Client {
 		waitFrames(150);
 		shoot(window, prefix + "_mark");
 		setPrivate(window, "zoom", Integer.valueOf(1));
-		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, 3220, 3420);
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, atX, atZ);
 		waitFrames(150);
 		shoot(window, prefix + "_open");
 		holes(window, map);
+
+		panWest(window, map, prefix);
 
 		// ESCAPE, which is how a player shuts a window, and is NOT the orb's toggle - the only
 		// path that tells the map nobody is looking any more.
@@ -1248,12 +1285,64 @@ public class ResizableShots extends Client {
 		return f.get(target);
 	}
 
+	/**
+	 * Drag the map west, the way a player does, and look at what arrives at each stop.
+	 *
+	 * THE WHOLE WORLD DOES NOT FIT ON ONE SCREEN. The widest zoom is one pixel a tile, so a
+	 * 900x680 view shows fifteen squares by eleven out of a world thirty-one wide - about two
+	 * screens across and three down. Anything past the edge has to be dragged to, and dragging
+	 * is the one thing none of the checks here had ever done: every picture so far has been of
+	 * a window that was told where to look before it was shown.
+	 */
+	static void panWest(java.awt.Window window, Object map, String prefix) throws Exception {
+		java.awt.Component view = (java.awt.Component) getPrivate(window, "view");
+		for (int step = 1; step <= 4; step++) {
+			// LEFT TO RIGHT drags the map rightwards, which brings what is to the WEST into
+			// view: pannedX subtracts the pixels moved, so a positive move lowers the centre.
+			drag(view, 100, 300, 700, 300);
+			waitFrames(300);
+			say("  dragged west " + step + ": centre now "
+				+ getPrivate(window, "centreX") + "," + getPrivate(window, "centreZ"));
+			holes(window, map);
+		}
+		shoot(window, prefix + "_panned");
+	}
+
+	/** A press, a move and a release on a component, as a mouse would send them. */
+	static void drag(final java.awt.Component on, final int fromX, final int fromY,
+		final int toX, final int toY) throws Exception {
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				long when = System.currentTimeMillis();
+				on.dispatchEvent(new java.awt.event.MouseEvent(on,
+					java.awt.event.MouseEvent.MOUSE_PRESSED, when, 0, fromX, fromY, 1, false));
+				// IN STEPS, because a drag is a stream of moves and the window works out where
+				// it has got to from where it started: one jump is a different gesture.
+				for (int i = 1; i <= 10; i++) {
+					int x = fromX + (toX - fromX) * i / 10;
+					int y = fromY + (toY - fromY) * i / 10;
+					on.dispatchEvent(new java.awt.event.MouseEvent(on,
+						java.awt.event.MouseEvent.MOUSE_DRAGGED, when + i, 0, x, y, 0, false));
+				}
+				on.dispatchEvent(new java.awt.event.MouseEvent(on,
+					java.awt.event.MouseEvent.MOUSE_RELEASED, when + 20, 0, toX, toY, 1, false));
+			}
+		});
+	}
+
 	/** How many of the squares the window can show it has actually scaled and can draw. */
 	static String filled(java.awt.Window window) throws Exception {
 		java.lang.reflect.Field f = window.getClass().getDeclaredField("scaled");
 		f.setAccessible(true);
 		java.util.Map<?, ?> scaled = (java.util.Map<?, ?>) f.get(window);
-		return "window holds " + scaled.size() + " scaled squares";
+		java.lang.reflect.Field mf = window.getClass().getDeclaredField("map");
+		mf.setAccessible(true);
+		Object map = mf.get(window);
+		java.lang.reflect.Field wf = map.getClass().getDeclaredField("wanted");
+		wf.setAccessible(true);
+		java.util.Collection<?> wanted = (java.util.Collection<?>) wf.get(map);
+		return "window holds " + scaled.size() + " scaled, " + wanted.size() + " squares queued";
 	}
 
 	/** A key press delivered to the window, the way a player's would be. */
