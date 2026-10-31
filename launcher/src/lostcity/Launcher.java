@@ -45,8 +45,10 @@ import javax.swing.SwingUtilities;
 // Any -Dlostcity.* property given to the launcher (lostcity.host, .port, .webhost, .webport) is passed on to
 // the client. Java 8, no dependencies: the one thing a player needs is the Java they already have.
 //
-// WHICH WORLD. The window has two buttons, World 1 and the dev world. Nobody has to press either: after
-// a few seconds World 1 starts on its own, as it always has, and pressing World 1 starts it at once. The
+// WHICH WORLD. The window waits to be told: Play starts World 1, and nothing starts by itself. It used
+// to count down from three seconds and then start World 1 unasked, which was reasonable beside two small
+// buttons and is not beside a button this size - a window whose one control presses itself while you are
+// still reading it. The ways to skip the window entirely are unchanged and are below. The
 // dev world (World 2, node 11) is a second server in the same container, for staff only - the server
 // turns everybody else away with "This world is full". It has its own game and web ports, found by
 // devEndpoint(): the server's own ports plus one when lostcity.host points straight at it (the LAN, or
@@ -67,8 +69,6 @@ public final class Launcher {
 
     // the 377 client's own node ids: World 1 is 10, the dev world 11 ("World 2" in the friends list)
     private static final int DEV_NODE_ID = 11;
-    // how long World 1 waits for somebody to pick the dev world instead
-    private static final long CHOICE_MILLIS = 3000;
     private static final String WORLD_1 = "1", DEV = "dev";
 
     // SELF-UPDATE. The launcher is compiled into client.jar as well as into its own jar (build.gradle),
@@ -141,8 +141,6 @@ public final class Launcher {
     // WORLD_1, DEV, or null while nobody has chosen - guarded by choiceLock
     private final Object choiceLock = new Object();
     private String choice;
-    private long windowShownAt;
-    private boolean devFailed;
 
     public static void main(String[] args) {
         Launcher launcher = new Launcher();
@@ -230,6 +228,9 @@ public final class Launcher {
                         + "Start the launcher with -Dlostcity.host=<the server's address> (the LAN or Tailscale),\n"
                         + "or give -Dlostcity.dev.host, .port, .webhost and .webport.");
                     choose(null);
+                    // Back to the button, and say so: the dialog has just been dismissed and
+                    // without a word here the window looks like it did nothing.
+                    choosing("The dev world is out of reach - Play starts World 1.");
                     continue;
                 }
             }
@@ -244,45 +245,35 @@ public final class Launcher {
         }
     }
 
-    // The world to start: one chosen already (--dev, lostcity.world), else whichever button is pressed
-    // first - and World 1 if neither is within CHOICE_MILLIS of the window opening, so a player who never
-    // looks at the buttons starts the game just as before. After a dev world that could not be reached,
-    // nothing starts by itself: it waits for a button.
+    /**
+     * The world to start: one chosen already (--dev, --world=, lostcity.world), else whichever the
+     * player clicks. It waits for as long as that takes.
+     *
+     * NOTHING STARTS BY ITSELF ANY MORE. This used to give the window three seconds and then take
+     * World 1 if nobody had said otherwise, so that a player who ignored the two buttons still got
+     * into the game. With one large Play button that reads as the window pressing its own control
+     * while you are still looking at it, and it made the dev world a race rather than a choice.
+     *
+     * Nothing here touches the window, deliberately: status() hands work to the Swing thread, and
+     * the Swing thread takes choiceLock in choose(), so saying anything from inside this lock is a
+     * deadlock. There is nothing to say in any case - the caption already explains what Play does.
+     */
     private String awaitChoice() {
-        for (;;) {
-            long left;
-            boolean waitForButton;
-            synchronized (choiceLock) {
-                if (choice != null) {
-                    return choice;
-                }
-                left = windowShownAt + CHOICE_MILLIS - System.currentTimeMillis();
-                waitForButton = devFailed;
-                if (!waitForButton && left <= 0) {
-                    choice = WORLD_1;
-                    return choice;
+        synchronized (choiceLock) {
+            while (choice == null) {
+                try {
+                    choiceLock.wait();
+                } catch (InterruptedException ignored) {
+                    // round again. An interrupt is not somebody choosing a world.
                 }
             }
-            // not while holding the lock: status() waits for the Swing thread, which takes it in choose()
-            choosing(waitForButton ? "Choose a world below." : "Starting World 1 in " + ((left + 999) / 1000) + "...");
-            synchronized (choiceLock) {
-                if (choice == null) {
-                    try {
-                        choiceLock.wait(waitForButton ? 0 : Math.max(1, Math.min(left, 1000)));
-                    } catch (InterruptedException e) {
-                        choice = WORLD_1;
-                    }
-                }
-            }
+            return choice;
         }
     }
 
     // a button (on the Swing thread), or null to take the choice back after a dev world that failed
     private void choose(String world) {
         synchronized (choiceLock) {
-            if (world == null) {
-                devFailed = true;
-            }
             choice = world;
             choiceLock.notifyAll();
         }
@@ -531,22 +522,32 @@ public final class Launcher {
             if (name.equals("ready")) {
                 continue;
             }
-            if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev.") || name.equals("world"))) {
+            // The world this launch picked is added once, below, whichever it is - so a stale one
+            // passed in is dropped here rather than appearing twice on the command line.
+            if (name.equals("world")) {
+                continue;
+            }
+            if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev."))) {
                 continue;
             }
             cmd.add("-D" + key + "=" + System.getProperty(key));
         }
         if (dev != null) {
             // Where the client connects (its SERVER_HOST, GAME_PORT, WEB_HOST, WEB_PORT). The same four
-            // again as lostcity.dev.*, with lostcity.world: a dev client that is told to update restarts
-            // this launcher with its -Dlostcity.* settings (Client.relaunchForUpdate), and they bring it
-            // straight back here.
+            // again as lostcity.dev.*: a dev client that is told to update restarts this launcher with
+            // its -Dlostcity.* settings (Client.relaunchForUpdate), and they bring it straight back here.
             for (int i = 0; i < names.length; i++) {
                 cmd.add("-Dlostcity." + names[i] + "=" + dev[i]);
                 cmd.add("-Dlostcity.dev." + names[i] + "=" + dev[i]);
             }
-            cmd.add("-Dlostcity.world=" + DEV);
         }
+        // WHICH WORLD THIS IS - now for World 1 as well, not just for dev, and that is not tidying.
+        // "RuneScape has been updated" restarts this launcher through the client (relaunchForUpdate),
+        // which passes every -Dlostcity.* back; the world used to be among them only on dev, because
+        // World 1 needed no help - the countdown started it. With the countdown gone, a World 1
+        // client that updated itself would come back to a launcher sitting and waiting for a click
+        // nobody is expecting to have to make.
+        cmd.add("-Dlostcity.world=" + (dev != null ? DEV : WORLD_1));
         // Gone before the client starts, so the file that appears is this launch's and not one
         // left behind by the last.
         ready.delete();
@@ -663,7 +664,6 @@ public final class Launcher {
             // Only now, with the window painted: closing it first leaves a gap of bare desktop
             // between the two, which is the thing the splash is there to avoid.
             closeSplash();
-            windowShownAt = System.currentTimeMillis();
         });
     }
 
