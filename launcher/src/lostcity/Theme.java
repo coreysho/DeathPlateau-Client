@@ -1,4 +1,4 @@
-package jagex2.client.plugin.ui;
+package lostcity;
 
 import java.awt.Color;
 import java.awt.Font;

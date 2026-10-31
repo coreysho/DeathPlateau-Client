@@ -24,6 +24,7 @@ import jagex2.client.plugin.hub.Hub;
 import jagex2.client.plugin.hub.HubClient;
 import jagex2.client.plugin.hub.HubEntry;
 import jagex2.client.plugin.hub.HubIndex;
+import lostcity.Theme;
 
 /**
  * The hub: plugins available to install, from the index.

@@ -16,6 +16,7 @@ import javax.swing.JPanel;
 
 import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.PluginManager;
+import lostcity.Theme;
 
 /**
  * A plugin's own page, reached from its icon on the rail.

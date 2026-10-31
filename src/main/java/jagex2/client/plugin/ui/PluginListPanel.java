@@ -20,6 +20,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 import jagex2.client.plugin.PluginManager;
+import lostcity.Theme;
 
 /**
  * The list of installed plugins: a search box, then a row per plugin with a cog and an on/off

@@ -104,7 +104,18 @@ public final class Launcher {
      *      the icons - which the client jar has, because launcher/src and src/main/resources are
      *      both compiled into it
      */
-    private static final int VERSION = 6;
+    private static final int VERSION = 7;
+
+    /**
+     * The first launcher version whose client writes the window marker (see awaitClientWindow).
+     *
+     * launcher/src is compiled into client.jar as well, so the stamp inside the client says which
+     * launcher it was built beside - which is also whether its ViewBox knows to touch the file.
+     * Asking it is better than waiting out a timeout on every old client: the two are released
+     * together, so the only way to be running an older one is to have been offline when the
+     * update check ran.
+     */
+    private static final int READY_SINCE = 7;
     private static final String STAMP_PREFIX = "DP-LAUNCHER-VERSION:";
     @SuppressWarnings("unused") // read out of the compiled class, not called
     private static final String STAMP = STAMP_PREFIX + VERSION;
@@ -116,12 +127,16 @@ public final class Launcher {
     // where launchers before the rename kept the client - moved out of by migrate()
     private final File oldDir = new File(System.getProperty("user.home"), ".lostcity");
     private final File jar = new File(dir, ASSET);
+    /**
+     * Touched by the client the moment its window is on screen - see ViewBox - so this launcher
+     * knows when to get out of the way. Named here, passed as -Dlostcity.ready.
+     */
+    private final File ready = new File(dir, "client.ready");
     private final File version = new File(dir, "client.version");
 
-    private JFrame frame;
-    private JLabel label;
-    private JProgressBar bar;
-    private JButton world1Button, devButton;
+    private LauncherWindow ui;
+    /** Up from the first instruction of main() until the real window has something to show. */
+    private Splash splash;
 
     // WORLD_1, DEV, or null while nobody has chosen - guarded by choiceLock
     private final Object choiceLock = new Object();
@@ -141,6 +156,13 @@ public final class Launcher {
             } else if (arg.startsWith("--world=")) {
                 launcher.choice = world(arg.substring("--world=".length()));
             }
+        }
+        // BEFORE run(), whose first act is a call to GitHub: until this existed the desktop stayed
+        // empty for however long that took, which looks like a program that did not start - and
+        // the answer to that is to double-click it again, which is a second launcher. Not for
+        // --check, which is a test switch and has no window of its own to precede.
+        if (!check) {
+            launcher.splash = Splash.show();
         }
         launcher.run(check);
     }
@@ -242,7 +264,7 @@ public final class Launcher {
                 }
             }
             // not while holding the lock: status() waits for the Swing thread, which takes it in choose()
-            status(waitForButton ? "Choose a world." : "Starting World 1 in " + ((left + 999) / 1000) + "...   (or choose the dev world)");
+            choosing(waitForButton ? "Choose a world below." : "Starting World 1 in " + ((left + 999) / 1000) + "...");
             synchronized (choiceLock) {
                 if (choice == null) {
                     try {
@@ -265,9 +287,8 @@ public final class Launcher {
             choiceLock.notifyAll();
         }
         run(() -> {
-            if (world1Button != null) {
-                world1Button.setEnabled(world == null);
-                devButton.setEnabled(world == null);
+            if (ui != null) {
+                ui.setChoosable(world == null);
             }
         });
     }
@@ -339,7 +360,10 @@ public final class Launcher {
     // Into a temp file, checked to be a real jar, then moved over the old one - so a download cut off
     // halfway leaves the previous client working rather than a broken one.
     private void download(String url, String tag) throws IOException {
-        status("Downloading update " + tag + "...");
+        // The tag goes to the log, not to the bar: it is drawn inside a 268px button-sized track
+        // with a percentage after it, and "Downloading update client-1482... 7%" does not fit.
+        log("downloading " + tag + " from " + url);
+        status("Downloading the client...");
         File tmp = new File(dir, ASSET + ".part");
         HttpURLConnection c = open(url);
         long size = c.getContentLengthLong();
@@ -501,6 +525,12 @@ public final class Launcher {
             }
             // for the dev world, the address settings are replaced below rather than passed on
             String name = key.substring("lostcity.".length());
+            // ...and this one is this launch's, set fresh below. A client told to update restarts
+            // the launcher with its own -Dlostcity.* settings (Client.relaunchForUpdate), so
+            // without this the second launch would carry the first one's marker back in.
+            if (name.equals("ready")) {
+                continue;
+            }
             if (dev != null && (java.util.Arrays.asList(names).contains(name) || name.startsWith("dev.") || name.equals("world"))) {
                 continue;
             }
@@ -517,6 +547,10 @@ public final class Launcher {
             }
             cmd.add("-Dlostcity.world=" + DEV);
         }
+        // Gone before the client starts, so the file that appears is this launch's and not one
+        // left behind by the last.
+        ready.delete();
+        cmd.add("-Dlostcity.ready=" + ready.getAbsolutePath());
         cmd.add("-jar");
         cmd.add(jar.getAbsolutePath());
         if (dev != null) {
@@ -549,22 +583,26 @@ public final class Launcher {
         // which is how a Zul-andra teleport presented on 2026-09-29, with the stack trace going to a
         // stderr nobody was reading. Redirected here, so the next one can be read afterwards.
         // The redirect is the child's own, set by the OS, so it keeps working once this exits.
-        startClient(cmd);
-        // ...and this window goes now, not whenever the JVM gets round to exiting: the game's own
-        // window takes a few seconds to appear, and a launcher still on screen beside it looks like a
-        // second client (reported from play 2026-09-27)
+        Process game = startClient(cmd);
+        // ...and this window goes when the game's window arrives, not before and not after.
+        //
+        // BOTH WAYS ROUND ARE WRONG WITHOUT THIS WAIT. Closing at once leaves the desktop empty
+        // for the few seconds a JVM takes to start and read a cache - the same hole the splash
+        // fills at the other end, and the reason a player thinks nothing happened. Leaving it up
+        // until this process exits puts a launcher on screen beside the game, which was reported
+        // from play on 2026-09-27 as looking like a second client. So: wait for the client to say
+        // its window is up, then go.
+        awaitClientWindow(game);
         hide();
     }
 
     // take the window down at once, from whichever thread
     private void hide() {
-        JFrame f = frame;
-        frame = null;
-        if (f != null) {
-            run(() -> {
-                f.setVisible(false);
-                f.dispose();
-            });
+        closeSplash();
+        LauncherWindow going = ui;
+        ui = null;
+        if (going != null) {
+            run(going::dispose);
         }
     }
 
@@ -607,58 +645,65 @@ public final class Launcher {
 
     private void window() {
         run(() -> {
-            frame = new JFrame("Death Plateau Launcher");
-            // The first window a player sees, so it gets the badge too. Dialogs opened with this
-            // frame as their owner inherit it, which covers every message box below.
-            frame.setIconImages(Branding.icons());
-            label = new JLabel("Starting...");
-            bar = new JProgressBar(0, 1000);
-            bar.setIndeterminate(true);
-            label.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
-            bar.setBorder(BorderFactory.createEmptyBorder(0, 12, 12, 12));
+            ui = new LauncherWindow("Death Plateau Launcher", String.valueOf(VERSION), new LauncherWindow.Actions() {
 
-            world1Button = new JButton("World 1");
-            devButton = new JButton("Dev world (staff only)");
-            world1Button.addActionListener(e -> choose(WORLD_1));
-            devButton.addActionListener(e -> choose(DEV));
+                public void onPlay() {
+                    choose(WORLD_1);
+                }
+
+                public void onDev() {
+                    choose(DEV);
+                }
+            });
             boolean open;
             synchronized (choiceLock) {
                 open = choice == null;
             }
-            world1Button.setEnabled(open);
-            devButton.setEnabled(open);
-            JPanel worlds = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
-            worlds.add(world1Button);
-            worlds.add(devButton);
-
-            frame.getContentPane().add(label, BorderLayout.NORTH);
-            frame.getContentPane().add(worlds, BorderLayout.CENTER);
-            frame.getContentPane().add(bar, BorderLayout.SOUTH);
-            frame.getRootPane().setDefaultButton(world1Button); // Enter plays World 1
-            frame.setResizable(false); // the game's window is fixed; two resizable windows read as two clients
-            frame.setPreferredSize(new Dimension(360, 140));
-            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.pack();
-            frame.setLocationRelativeTo(null);
-            frame.setVisible(true);
-            world1Button.requestFocusInWindow();
+            ui.setChoosable(open);
+            // Only now, with the window painted: closing it first leaves a gap of bare desktop
+            // between the two, which is the thing the splash is there to avoid.
+            closeSplash();
             windowShownAt = System.currentTimeMillis();
         });
     }
 
-    private void message(String text) {
-        log(text.replace('\n', ' '));
-        if (frame != null) {
-            run(() -> JOptionPane.showMessageDialog(frame, text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
+    /** Takes the splash down, from any thread, once or never. */
+    private void closeSplash() {
+        Splash going = splash;
+        splash = null;
+        if (going != null) {
+            run(going::close);
         }
     }
 
+    private void message(String text) {
+        log(text.replace('\n', ' '));
+        if (ui != null) {
+            run(() -> JOptionPane.showMessageDialog(ui.frame(), text, "Death Plateau", JOptionPane.INFORMATION_MESSAGE));
+        }
+    }
+
+    /** Something is happening and nothing is waiting on the player: the bar, not the button. */
     private void status(String text) {
         log(text);
         run(() -> {
-            if (label != null) {
-                label.setText(text);
-                bar.setIndeterminate(true);
+            if (ui != null) {
+                ui.setBusy(text);
+            }
+            // --check has no window, and the splash is still the only thing on screen while the
+            // first update check runs.
+            if (splash != null) {
+                splash.setStatus(text);
+            }
+        });
+    }
+
+    /** Waiting on the player, or counting down to World 1: the button stays, the line under it changes. */
+    private void choosing(String text) {
+        log(text);
+        run(() -> {
+            if (ui != null) {
+                ui.setChoosing(text);
             }
         });
     }
@@ -669,17 +714,17 @@ public final class Launcher {
         }
         int v = (int) (done * 1000 / size);
         run(() -> {
-            if (bar != null) {
-                bar.setIndeterminate(false);
-                bar.setValue(v);
+            if (ui != null) {
+                ui.setProgress(v);
             }
         });
     }
 
     private void fail(String text) {
         log("error: " + text);
-        if (frame != null) {
-            run(() -> JOptionPane.showMessageDialog(frame, text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
+        closeSplash();
+        if (ui != null) {
+            run(() -> JOptionPane.showMessageDialog(ui.frame(), text, "Death Plateau", JOptionPane.ERROR_MESSAGE));
         }
         System.exit(1);
     }
@@ -735,7 +780,7 @@ public final class Launcher {
      * Kept apart from the plain ProcessBuilder call the hand-over uses: that one starts another
      * LAUNCHER, which writes launcher.log itself and would interleave two runs into one file.
      */
-    private void startClient(List<String> cmd) throws IOException {
+    private Process startClient(List<String> cmd) throws IOException {
         File out = new File(dir, "client.log");
         try {
             if (out.length() > LOG_MAX) {
@@ -744,12 +789,60 @@ public final class Launcher {
                 out.renameTo(old);
             }
             append(out, System.lineSeparator() + "---- " + stamp() + "  " + cmd + System.lineSeparator());
-            new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
+            return new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(out)).start();
         } catch (Throwable e) {
             // A log is never worth not starting the game for.
             log("could not redirect the game's output (" + e + ") - starting it anyway");
-            new ProcessBuilder(cmd).directory(dir).start();
+            return new ProcessBuilder(cmd).directory(dir).start();
         }
+    }
+
+    /** Longest this window stays up waiting to be told the game is drawing. */
+    private static final long READY_TIMEOUT_MS = 45000;
+
+    /**
+     * Holds the launcher on screen until the client's window is up, or until waiting is pointless.
+     *
+     * THE CLIENT IS ASKED FIRST whether it will say anything at all - a client.jar older than
+     * READY_SINCE never writes the marker, and waiting on one would put this window beside the
+     * game for the whole timeout, which is the exact complaint the hand-over exists to fix.
+     *
+     * THE TIMEOUT IS ONLY FOR A CLIENT THAT SHOULD HAVE SPOKEN AND DID NOT - its window failed in
+     * a way that left the process alive, say. It is not long, and deliberately: overshooting puts
+     * a launcher beside the game, while cutting it short only gives back today's behaviour, where
+     * the launcher closes and the desktop is briefly empty. The cheaper mistake wins.
+     */
+    private void awaitClientWindow(Process game) {
+        // Both of these answer with null / -1 rather than throwing when the jar cannot be read.
+        int stamp = stampIn(entry(jar, "lostcity/Launcher.class"));
+        if (stamp < READY_SINCE) {
+            log("client.jar is launcher version " + stamp + ", older than " + READY_SINCE
+                + ": it writes no window marker, so not waiting for one");
+            return;
+        }
+        long until = System.currentTimeMillis() + READY_TIMEOUT_MS;
+        while (System.currentTimeMillis() < until) {
+            if (ready.isFile()) {
+                log("the client's window is up");
+                ready.delete();
+                return;
+            }
+            if (game != null) {
+                try {
+                    // Throws while it is still running, which is the case we want to keep waiting in.
+                    log("the client exited before its window appeared (" + game.exitValue() + ")");
+                    return;
+                } catch (IllegalThreadStateException running) {
+                    // still going
+                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        log("gave up waiting for the client's window after " + READY_TIMEOUT_MS + "ms");
     }
 
     private static void append(File file, String line) throws IOException {

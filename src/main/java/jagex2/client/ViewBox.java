@@ -16,11 +16,12 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
-import jagex2.client.plugin.ui.Theme;
+import lostcity.Theme;
 import lostcity.Branding;
 
 import deob.ObfuscatedName;
 import sign.signlink;
+import lostcity.TitleBar;
 
 public class ViewBox extends JFrame implements TitleBar.Actions {
 
@@ -58,6 +59,37 @@ public class ViewBox extends JFrame implements TitleBar.Actions {
 
 		this.setVisible(true);
 		this.toFront();
+		signalReady();
+	}
+
+	/**
+	 * Tells the launcher the game is on screen, so it can take its own window down.
+	 *
+	 * THE LAUNCHER CANNOT SEE THIS WINDOW. It starts the client as a separate process and has no
+	 * way to ask whether that process has drawn anything yet, so it used to close the moment the
+	 * process was spawned - leaving the desktop empty for the few seconds a JVM takes to come up
+	 * and read a cache. It now waits for this file instead, and gives up after ninety seconds so
+	 * an older client, which writes nothing, still ends with the launcher gone.
+	 *
+	 * Nothing here throws: a marker that could not be written costs a launcher that waits out its
+	 * timeout, which is untidy. Anything louder would be a client that will not start because it
+	 * could not reassure a program that has already done its job.
+	 */
+	private static void signalReady() {
+		try {
+			String path = System.getProperty("lostcity.ready");
+			if (path == null || path.length() == 0) {
+				return;
+			}
+			java.io.FileOutputStream out = new java.io.FileOutputStream(path);
+			try {
+				out.write('1');
+			} finally {
+				out.close();
+			}
+		} catch (Throwable ignored) {
+			// started by hand, read-only directory, no property: all of them mean "no launcher".
+		}
 	}
 
 	/**
@@ -114,32 +146,6 @@ public class ViewBox extends JFrame implements TitleBar.Actions {
 				focused ? Theme.BORDER_FOCUSED : Theme.BORDER),
 			BorderFactory.createMatteBorder(gutter, gutter, gutter, gutter, Theme.TITLE_BAR)));
 		content.repaint();
-	}
-
-	/**
-	 * Keeps a maximised undecorated window off the taskbar.
-	 *
-	 * A decorated window maximises to the desktop's working area because the window manager
-	 * puts it there. An undecorated one is handed the whole screen and covers the taskbar, so
-	 * the working area has to be worked out and set as the limit - from the screen this window
-	 * is actually on, not the primary one, or it maximises to the wrong size on a second
-	 * monitor.
-	 */
-	static void limitMaximisedBounds(JFrame frame) {
-		try {
-			GraphicsConfiguration gc = frame.getGraphicsConfiguration();
-			if (gc == null) {
-				return;
-			}
-			Rectangle screen = gc.getBounds();
-			Insets taken = Toolkit.getDefaultToolkit().getScreenInsets(gc);
-			frame.setMaximizedBounds(new Rectangle(
-				screen.x + taken.left, screen.y + taken.top,
-				screen.width - taken.left - taken.right,
-				screen.height - taken.top - taken.bottom));
-		} catch (Throwable ignored) {
-			// No insets to be had: maximise over the whole screen rather than not at all.
-		}
 	}
 
 	/**
@@ -300,7 +306,7 @@ public class ViewBox extends JFrame implements TitleBar.Actions {
 					ViewBox.this.applyMinimumSize();
 					ViewBox.this.setLocationRelativeTo(null);
 					if (maximized) {
-						limitMaximisedBounds(ViewBox.this);
+						TitleBar.limitMaximisedBounds(ViewBox.this);
 						ViewBox.this.setExtendedState(ViewBox.this.getExtendedState() | Frame.MAXIMIZED_BOTH);
 					}
 				} else {

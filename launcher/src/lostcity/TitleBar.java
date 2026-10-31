@@ -1,4 +1,4 @@
-package jagex2.client;
+package lostcity;
 
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
@@ -7,9 +7,13 @@ import java.awt.Dimension;
 import java.awt.Frame;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsConfiguration;
 import java.awt.Image;
+import java.awt.Insets;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Toolkit;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
@@ -20,9 +24,6 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-
-import jagex2.client.plugin.ui.Theme;
-import lostcity.Branding;
 
 /**
  * The window's own title bar, drawn rather than asked for.
@@ -117,10 +118,17 @@ public final class TitleBar extends JPanel {
 		buttons.setLayout(new BoxLayout(buttons, BoxLayout.X_AXIS));
 		buttons.setOpaque(false);
 		// Ours first, then the window's own three. Nobody expects close to move.
-		buttons.add(new Button(SCREENSHOT));
-		this.sidebar = new Button(SIDEBAR);
-		this.sidebar.setVisible(false);          // until there is a sidebar to show or hide
-		buttons.add(this.sidebar);
+		// NO ACTIONS MEANS NO GAME BEHIND THE BAR. The launcher uses this same bar and has
+		// nothing to photograph and no sidebar to fold away, so those two buttons are the
+		// game's and are simply absent there - rather than present and dead, which is worse.
+		if (this.actions == null) {
+			this.sidebar = null;
+		} else {
+			buttons.add(new Button(SCREENSHOT));
+			this.sidebar = new Button(SIDEBAR);
+			this.sidebar.setVisible(false);      // until there is a sidebar to show or hide
+			buttons.add(this.sidebar);
+		}
 		buttons.add(new Button(MINIMISE));
 		this.maximise = new Button(MAXIMISE);
 		buttons.add(this.maximise);
@@ -139,6 +147,9 @@ public final class TitleBar extends JPanel {
 
 	/** Shows the sidebar chevron, once the window has a sidebar for it to act on. */
 	public void setSidebarAvailable(boolean available) {
+		if (this.sidebar == null) {
+			return;
+		}
 		this.sidebar.setVisible(available);
 		this.revalidate();
 		this.repaint();
@@ -146,7 +157,9 @@ public final class TitleBar extends JPanel {
 
 	/** Repaints the chevron after the sidebar is shown or hidden by any other route, F8 included. */
 	public void sidebarChanged() {
-		this.sidebar.repaint();
+		if (this.sidebar != null) {
+			this.sidebar.repaint();
+		}
 	}
 
 	// ------------------------------------------------------------------ moving the window
@@ -207,14 +220,39 @@ public final class TitleBar extends JPanel {
 		if (isMaximised(this.frame)) {
 			this.frame.setExtendedState(Frame.NORMAL);
 		} else {
-			ViewBox.limitMaximisedBounds(this.frame);
+			limitMaximisedBounds(this.frame);
 			this.frame.setExtendedState(this.frame.getExtendedState() | Frame.MAXIMIZED_BOTH);
 		}
 		this.maximise.repaint();
 	}
 
-	static boolean isMaximised(JFrame frame) {
+	public static boolean isMaximised(JFrame frame) {
 		return (frame.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH;
+	}
+
+	/**
+	 * Keeps a maximised window off the taskbar's strip of screen.
+	 *
+	 * HERE RATHER THAN IN ViewBox, which is where it was written, because the bar is what calls
+	 * it and the bar is now shared with the launcher - a class in the client jar alone is not
+	 * reachable from here. Nothing in it is about the game: a frame, its screen and the insets
+	 * the desktop reserves.
+	 */
+	public static void limitMaximisedBounds(JFrame frame) {
+		try {
+			GraphicsConfiguration gc = frame.getGraphicsConfiguration();
+			if (gc == null) {
+				return;
+			}
+			Rectangle screen = gc.getBounds();
+			Insets taken = Toolkit.getDefaultToolkit().getScreenInsets(gc);
+			frame.setMaximizedBounds(new Rectangle(
+				screen.x + taken.left, screen.y + taken.top,
+				screen.width - taken.left - taken.right,
+				screen.height - taken.top - taken.bottom));
+		} catch (Throwable ignored) {
+			// No insets to be had: maximise over the whole screen rather than not at all.
+		}
 	}
 
 	// ------------------------------------------------------------------ the three buttons

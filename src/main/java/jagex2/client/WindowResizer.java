@@ -9,6 +9,7 @@ import java.awt.event.MouseEvent;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
+import lostcity.TitleBar;
 
 /**
  * Dragging the edges of an undecorated window to resize it.
