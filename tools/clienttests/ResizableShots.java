@@ -666,6 +666,10 @@ public class ResizableShots extends Client {
 			worldmap(prefix);
 			return;
 		}
+		if (mode.equals("puzzle")) {
+			puzzle(prefix);
+			return;
+		}
 		if (mode.equals("zulrah")) {
 			zulrah(prefix);
 			return;
@@ -724,6 +728,150 @@ public class ResizableShots extends Client {
 		say("done");
 		log.close();
 		System.exit(0);
+	}
+
+	/**
+	 * A treasure trail puzzle box, opened in a real game.
+	 *
+	 * THE ONE THING NEITHER A TEST NOR A PREVIEW CAN SAY. ClueTest proves the solver solves, and
+	 * run_puzzlepreview proves the overlay draws on a grid - but both build the window
+	 * themselves. Whether the SERVER fills the grid the client is looking at only a real login
+	 * can answer, and for as long as the puzzle box has existed the answer was no: the content
+	 * transmitted the pieces to trail_puzzle:com_3, the Hint button, which is a model and has no
+	 * inventory array. The client wrote into it anyway, readPacket threw, and its catch calls
+	 * logout(). So the check that matters here is "still logged in", and it is a check that
+	 * fails by the client being gone.
+	 *
+	 * Run it against an engine packed from the FIXED content and the window fills; run it
+	 * against one packed from the old line and this run ends on the login screen.
+	 */
+	static void puzzle(String prefix) throws Exception {
+		String box = System.getProperty("shots.box", "trail_clue_hard_riddle014_puzzlebox");
+		// SIGNLINK'S ERROR REPORT BLOCKS FOREVER IN THIS DRIVER, and that matters here because
+		// the thing being watched for is what the client does AFTER a packet throws. The catch
+		// at the bottom of readPacket calls signlink.reporterror and then logout(); reporterror
+		// hands the URL to signlink's own thread and spins until that thread takes it - and in
+		// this driver that thread died at startup on a MidiPlayer it has no audio device for.
+		// So the game thread stops inside the report and logout() is never reached, which is
+		// the harness, not the client. Turned off, the report returns at once the way it does
+		// in a real client that cannot reach the error page, and what follows is the client's.
+		sign.signlink.reporterror = false;
+		set("selectedTab", Integer.valueOf(3));
+		set("redrawSidebar", Boolean.TRUE);
+		set("redrawSideicons", Boolean.TRUE);
+		waitFrames(20);
+		// A fresh account starts in the tutorial and login.rs2 only hands out the tabs once
+		// %tutorial has reached ^tutorial_complete, so this run sets it and the next one works.
+		command("::setvar tutorial 1000");
+		waitFrames(30);
+		if (tabInterface(3) == -1) {
+			say("account set up (tutorial marked complete) - run again to open a puzzle box");
+			log.close();
+			System.exit(0);
+		}
+
+		// THE CLUE PLUGIN IS OFF BY DEFAULT, like eleven of the sixteen: a built-in only starts
+		// itself if its descriptor says enabledByDefault, and this one does not. Without this
+		// the window opens with no numbers on it and the picture proves half of nothing.
+		say(enablePlugin("clue-scroll") ? "clue plugin on" : "FAIL no clue plugin to turn on");
+		waitFrames(10);
+
+		command("::give " + box);
+		waitFrames(30);
+		int[] at = invSlotAt(-1);
+		if (at == null) {
+			say("FAIL ::give " + box + " put nothing in the inventory");
+			say("done");
+			log.close();
+			System.exit(1);
+		}
+		shot(prefix + "_bag");
+
+		click(at[0], at[1], false);
+		waitFrames(40);
+
+		// LOGGED IN IS THE FIRST QUESTION, because the bug's symptom is not a bad window - it is
+		// no client. Everything below only means anything if this passed.
+		boolean here = ((Boolean) get("ingame")).booleanValue();
+		say((here ? "ok  " : "FAIL") + " still logged in after opening the box");
+		if (!here) {
+			say("        the packet that filled the window threw and readPacket logged out:"
+				+ " this engine is packed from content that transmits to the wrong component");
+			shot(prefix + "_loggedout");
+			say("done");
+			log.close();
+			System.exit(1);
+		}
+
+		// A CLIENT FROM BEFORE THE SOLVER HAS NO SUCH TABLE, and this mode is run against one on
+		// purpose - to see what the old line did to the client players actually have. Without
+		// it the two checks below cannot be asked, and saying so is the honest answer.
+		int window;
+		try {
+			window = puzzleInt("WINDOW");
+		} catch (ClassNotFoundException older) {
+			say("this client build has no puzzle table, so the window and grid are not checked");
+			shot(prefix + "_open");
+			say("done");
+			log.close();
+			System.exit(0);
+			return;
+		}
+		int open = geti("viewportInterfaceId");
+		say((open == window ? "ok  " : "FAIL") + " the puzzle window is open (" + open
+			+ ", wanted " + window + ")");
+
+		// AND THE GRID HAS THE PIECES IN IT, which is the half the transmit decides. A window
+		// that opens with twenty-five empty cells is exactly what the old line produced on any
+		// client that survived the packet.
+		int[] slots = gridSlots();
+		int filled = 0;
+		for (int i = 0; slots != null && i < slots.length; i++) {
+			if (slots[i] > 0) {
+				filled++;
+			}
+		}
+		say((filled == 24 ? "ok  " : "FAIL") + " the server filled the grid (" + filled
+			+ " of 24 cells hold a piece)");
+
+		waitFrames(25);
+		shot(prefix + "_open");
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/** Turns a plugin on through the manager the client is already running. */
+	static boolean enablePlugin(String key) throws Exception {
+		Object manager = clientField("plugins");
+		if (manager == null) {
+			return false;
+		}
+		java.util.List<?> entries =
+			(java.util.List<?>) manager.getClass().getMethod("getPlugins").invoke(manager);
+		for (Object entry : entries) {
+			if (key.equals(entry.getClass().getField("key").get(entry))) {
+				manager.getClass()
+					.getMethod("setEnabled", entry.getClass(), boolean.class)
+					.invoke(manager, entry, Boolean.TRUE);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** A constant off the generated puzzle table, which knows the content's interface ids. */
+	static int puzzleInt(String name) throws Exception {
+		return Class.forName("jagex2.client.plugin.builtin.PuzzlePieces")
+			.getField(name).getInt(null);
+	}
+
+	/** The puzzle grid's slots as the client has them, obj id plus one, 0 for empty. */
+	static int[] gridSlots() throws Exception {
+		Class<?> comp = Class.forName("jagex2.config.Component");
+		Object com = comp.getMethod("get", int.class)
+			.invoke(null, Integer.valueOf(puzzleInt("GRID")));
+		return com == null ? null : (int[]) comp.getField("invSlotObjId").get(com);
 	}
 
 	/**

@@ -724,6 +724,26 @@ public class Component {
 	}
 
 	@ObfuscatedName("EWIXBTLV.a(ZI)V")
+	/**
+	 * Whether the server can transmit an inventory to this component.
+	 *
+	 * ONLY THE TWO INVENTORY TYPES HAVE THE ARRAY. {@link #decode} allocates invSlotObjId under
+	 * `type == 2` and `type == 7` and nowhere else, so on a layer, a model or a label it is
+	 * null - and the three UPDATE_INV packets wrote straight into it without asking. A content
+	 * script that named the wrong component therefore did not show an empty window: the write
+	 * threw inside readPacket, the catch at the bottom of readPacket calls logout(), and the
+	 * player was thrown out of the game.
+	 *
+	 * That is exactly what opening a treasure trail puzzle box did, for as long as the puzzle
+	 * box existed: trail_puzzle.rs2 transmitted the pieces to com_3, the Hint button, instead of
+	 * com_2, the 5x5 grid. The content is fixed and has a check of its own now
+	 * (tools/invtransmit.py there), but the client should not be one typo away from logging
+	 * everybody out, so the packets ask this first and ignore a transmit they cannot land.
+	 */
+	public static boolean holdsInv(Component com) {
+		return com != null && com.invSlotObjId != null && com.invSlotObjCount != null;
+	}
+
 	public static void unloadCom(int arg1) {
 		if (arg1 == -1) {
 			return;

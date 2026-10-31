@@ -38,7 +38,8 @@ TEST = os.path.join(HERE, 'OverlayDragTest.java')
 # Compiled with it: the plugins the test drags around, in the plugin package so the
 # manager's package-private seams are reachable the way GroundItemsTest reaches its own.
 HELPERS = [os.path.join(HERE, name) for name in
-           ('DragTestPlugin.java', 'SceneOverlayPlugin.java', 'OverlapTestPlugin.java')]
+           ('DragTestPlugin.java', 'SceneOverlayPlugin.java', 'OverlapTestPlugin.java',
+            'PinnedOverlayPlugin.java')]
 
 
 def main():

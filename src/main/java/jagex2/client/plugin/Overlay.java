@@ -44,6 +44,20 @@ public abstract class Overlay {
 	}
 
 	/**
+	 * Whether a player can drag this overlay somewhere else. True for the ones that float.
+	 *
+	 * FALSE FOR AN OVERLAY THAT IS ATTACHED TO SOMETHING. A panel in a corner belongs wherever
+	 * its owner puts it, and the drag is a feature. An overlay drawn ON a window - numbers on
+	 * the cells of a puzzle box, say - is not a panel: dragging it moves the numbers off the
+	 * pieces they label, and there is nothing useful on the other side of that drag. Such an
+	 * overlay says so here and the manager stops offering, which also keeps it out of the way
+	 * of the ones a player does want to move.
+	 */
+	public boolean movable() {
+		return true;
+	}
+
+	/**
 	 * Drawn with the scene, UNDER the player names, hitsplats and headicons the client draws over
 	 * it. Where a label about something in the world belongs: the ground item names have always
 	 * been here, because a pile of bones should not cover the name of the person standing on it.

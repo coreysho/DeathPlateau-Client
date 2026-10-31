@@ -15,6 +15,56 @@ import jagex2.client.plugin.PluginManager;
 public class SidebarPreview {
 
 	/** A sample index on localhost: one installable plugin, one served over plain http. */
+	/**
+	 * A bag with four clue scrolls in it, and a player standing in Lumbridge to read them.
+	 *
+	 * ONE OF EACH SHAPE, because the four rows are the point of the picture: a sextant
+	 * coordinate with a guardian behind it, a crate to search, an anagram with somebody's name
+	 * hidden in it, and a challenge scroll with a sum. Picked by their own words rather than by
+	 * obj id, so the content renumbering moves the picture rather than breaking it.
+	 */
+	private static void primeClues(Client client) {
+		// The inventory is read off the interface component the server transmits it to, so the
+		// preview builds that component by hand: 28 slots, each holding an obj id PLUS ONE.
+		jagex2.config.Component.types = new jagex2.config.Component[3215];
+		jagex2.config.Component.data = new byte[3215][];
+		jagex2.config.Component inv = new jagex2.config.Component();
+		inv.invSlotObjId = new int[28];
+		inv.invSlotObjCount = new int[28];
+		jagex2.config.Component.types[3214] = inv;
+
+		int[] steps = {
+			stepSaying("degrees"),                      // a sextant coordinate, and a guardian
+			stepSaying("Duke of Lumbridge's bedroom"),  // a crate to search, at a known tile
+			stepSaying("This anagram reveals"),         // somebody's name, scrambled
+			stepSaying("What is 19 to the power of 3"), // a challenge scroll, with a sum
+		};
+		for (int i = 0; i < steps.length; i++) {
+			if (steps[i] >= 0) {
+				inv.invSlotObjId[i] = jagex2.client.plugin.builtin.ClueSteps.ID[steps[i]] + 1;
+				inv.invSlotObjCount[i] = 1;
+			}
+		}
+
+		// In Lumbridge, so the distances on the rows are a walk somebody could picture.
+		client.currentLevel = 0;
+		client.sceneBaseTileX = 3200 - 64;
+		client.sceneBaseTileZ = 3200 - 64;
+		Client.localPlayer = new jagex2.dash3d.ClientPlayer();
+		Client.localPlayer.field1157 = 64 * 128;
+		Client.localPlayer.field1158 = 64 * 128;
+	}
+
+	/** The first step in the table whose words contain this, or -1. */
+	private static int stepSaying(String words) {
+		for (int i = 0; i < jagex2.client.plugin.builtin.ClueSteps.count(); i++) {
+			if (jagex2.client.plugin.builtin.ClueSteps.TEXT[i].indexOf(words) >= 0) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
 	/** A player, some loot around them, and names and prices for it. */
 	private static void primeLoot(Client client) {
 		int base = 900;
@@ -128,6 +178,24 @@ public class SidebarPreview {
 				Thread.sleep(250);
 				if (!sidebar.openPanel(entry.key)) {
 					throw new IllegalStateException("no rail tab for ground-items");
+				}
+				manager.onClientTick(0);
+				Thread.sleep(250);
+			}
+		}
+		// The Clue scroll page: four scrolls in one bag, which is the whole shape of it. Each
+		// row is a scroll, with its words, where it wants the player and what is waiting there.
+		if (args.length > 1 && args[1].equals("clue")) {
+			primeClues(client);
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("clue-scroll")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException("no rail tab for clue-scroll");
 				}
 				manager.onClientTick(0);
 				Thread.sleep(250);
