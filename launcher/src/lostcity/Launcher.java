@@ -118,7 +118,7 @@ public final class Launcher {
      * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
      * that it is the newer one.
      */
-    private static final int VERSION = 8;
+    private static final int VERSION = 9;
 
     /**
      * The first launcher version whose client writes the window marker (see awaitClientWindow).
@@ -248,6 +248,23 @@ public final class Launcher {
 
         if (handOver()) {
             System.exit(0);
+        }
+
+        // BACK TO THE BUTTON. The checking is done and the window is about to wait for a click, so
+        // something has to put it back from the progress bar - and nothing else does. The countdown
+        // used to, incidentally: it called choosing() every second, and clearing the busy state was
+        // a side effect of drawing "Starting World 1 in 2...". Taking the countdown out took that
+        // with it and left the window sitting on "Checking for updates..." for ever, with no Play
+        // button to press. Shipped in client-146; found by running it.
+        //
+        // Not when a world is already chosen (--dev, --world=, lostcity.world): awaitChoice returns
+        // at once there and the button would show for a single frame on its way past.
+        boolean waiting;
+        synchronized (choiceLock) {
+            waiting = choice == null;
+        }
+        if (waiting) {
+            choosing(null);
         }
 
         for (;;) {
@@ -744,9 +761,16 @@ public final class Launcher {
         });
     }
 
-    /** Waiting on the player, or counting down to World 1: the button stays, the line under it changes. */
+    /**
+     * Waiting on the player: the Play button, with text under it or none.
+     *
+     * Null means "nothing to say" - the window falls back to its own caption - and there is
+     * nothing to write in the log either, the line that matters having been logged already.
+     */
     private void choosing(String text) {
-        log(text);
+        if (text != null) {
+            log(text);
+        }
         run(() -> {
             if (ui != null) {
                 ui.setChoosing(text);
