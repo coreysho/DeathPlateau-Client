@@ -79,6 +79,21 @@ public final class Launcher {
     // The handed-over launcher carries this property, so it never hands over again.
     private static final String HANDOFF = "lostcity.launcherhandoff";
     /**
+     * ...and this one says the update check is already done, which is NOT the same thing.
+     *
+     * It used to be. A hand-over only ever happened after the check, so "you were handed to" and
+     * "somebody has just checked for you" were one flag and HANDOFF carried both meanings. Then the
+     * hand-over moved to before the window, to stop players seeing an old launcher's window first -
+     * and that one has checked nothing. The handed-to launcher skipped the check anyway, so the
+     * whole chain checked for updates NEVER: client.version sat three releases behind while the
+     * launcher started the game, and the server rejected the login with "has been updated".
+     *
+     * An older launcher hands over with HANDOFF and not this, so the new one checks. That is one
+     * redundant call to GitHub on the hand-over that follows a check, and it is how a player stuck
+     * behind the bug above gets out of it.
+     */
+    private static final String CHECKED = "lostcity.updatechecked";
+    /**
      * Bump this whenever the launcher changes in a way players should get. It is the ONLY thing that
      * moves them onto a new launcher, so a change left unbumped simply never reaches them (which is
      * where they stood before any of this - nothing breaks).
@@ -118,7 +133,7 @@ public final class Launcher {
      * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
      * that it is the newer one.
      */
-    private static final int VERSION = 10;
+    private static final int VERSION = 11;
 
     /**
      * The first launcher version whose client writes the window marker (see awaitClientWindow).
@@ -208,7 +223,7 @@ public final class Launcher {
         // on to show a window and check for updates. The second attempt further down stays: a
         // download that has just arrived may itself carry a newer launcher, and that case cannot
         // be known before the download.
-        if (!check && handOver()) {
+        if (!check && handOver(false)) {
             System.exit(0);
         }
 
@@ -216,9 +231,9 @@ public final class Launcher {
             window();
         }
 
-        if (System.getProperty(HANDOFF) != null) {
+        if (System.getProperty(CHECKED) != null) {
             // the launcher that handed over checked and downloaded a moment ago
-            log("handed over to: skipping the update check");
+            log("handed over to after a check: skipping the update check");
         } else try {
             status("Checking for updates...");
             String json = fetch(API);
@@ -246,7 +261,7 @@ public final class Launcher {
             System.exit(0);
         }
 
-        if (handOver()) {
+        if (handOver(true)) {
             System.exit(0);
         }
 
@@ -452,7 +467,7 @@ public final class Launcher {
      * no starting it - and this one simply carries on, because a launcher that cannot start the game is
      * the one failure a player cannot fix for themselves.
      */
-    private boolean handOver() {
+    private boolean handOver(boolean checked) {
         if (System.getProperty(HANDOFF) != null) {
             return false; // already the newest: it was handed to us
         }
@@ -489,6 +504,11 @@ public final class Launcher {
                 cmd.add("-Dlostcity.world=" + world); // --dev / --world=, as a property it reads back
             }
             cmd.add("-D" + HANDOFF + "=1");
+            if (checked) {
+                // Only the hand-over that happens after the update check may tell the next
+                // launcher not to bother. The early one has checked nothing.
+                cmd.add("-D" + CHECKED + "=1");
+            }
             cmd.add("-cp");
             cmd.add(copy.getAbsolutePath());
             cmd.add("lostcity.Launcher");
