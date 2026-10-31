@@ -1202,6 +1202,7 @@ public class ResizableShots extends Client {
 		holes(window, map);
 
 		panWest(window, map, prefix);
+		places(window, map, prefix, atX, atZ);
 
 		// ESCAPE, which is how a player shuts a window, and is NOT the orb's toggle - the only
 		// path that tells the map nobody is looking any more.
@@ -1220,13 +1221,138 @@ public class ResizableShots extends Client {
 	}
 
 	/**
+	 * The place names, the jump underground, and the way back to the player.
+	 *
+	 * ALL THREE ARE THINGS ONLY A REAL WINDOW CAN ANSWER. MapWindowTest has the arithmetic of
+	 * the jump and the splitting of a name, but whether pressing the button moves the map,
+	 * whether the band it lands in has any ground in it, and whether the names come out over
+	 * the right country are properties of the window, the supply and the content together.
+	 */
+	static void places(java.awt.Window window, Object map, String prefix, int atX, int atZ)
+			throws Exception {
+		Class<?> windowClass = window.getClass();
+		Class<?> labels = Class.forName("jagex2.client.worldmap.MapLabels");
+		String[] names = (String[]) labels.getField("NAME").get(null);
+		say("  the client knows " + names.length + " place names");
+
+		// THE NAMES AT BOTH ZOOMS, which is the whole of what rank is for: zoomed right out
+		// only the kingdoms and towns are named, a step in and the guilds and mines are too.
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, atX, atZ);
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		waitFrames(150);
+		shoot(window, prefix + "_names_far");
+		setPrivate(window, "zoom", Integer.valueOf(4));
+		waitFrames(150);
+		shoot(window, prefix + "_names_near");
+		setPrivate(window, "zoom", Integer.valueOf(1));
+		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, atX, atZ);
+		waitFrames(100);
+
+		java.lang.reflect.Method under =
+			windowClass.getMethod("isUnderground", int.class);
+		int wasZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		say("  on the surface at z " + wasZ + ": underground = "
+			+ under.invoke(null, Integer.valueOf(wasZ)));
+
+		// DOWN. The button's word says where it goes, so the one to press is the one that
+		// says Underground - and after it, the one that says Surface.
+		click(window, "Underground");
+		waitFrames(200);
+		int downZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		int downX = ((Integer) getPrivate(window, "centreX")).intValue();
+		boolean isUnder = ((Boolean) under.invoke(null, Integer.valueOf(downZ))).booleanValue();
+		say((isUnder ? "  ok   " : "  FAIL ") + "pressing it put the map underground, at "
+			+ downX + "," + downZ);
+		boolean ground = ((Boolean) map.getClass().getMethod("exists", int.class, int.class)
+			.invoke(map, Integer.valueOf(downX / 64), Integer.valueOf(downZ / 64))).booleanValue();
+		say((ground ? "  ok   " : "  FAIL ") + "...on a square the world actually has ("
+			+ (downX / 64) + "," + (downZ / 64) + ")");
+		waitFrames(250);
+		shoot(window, prefix + "_under");
+		holes(window, map);
+
+		// AND BACK UP, to where it started: the step is the same both ways.
+		click(window, "Surface");
+		waitFrames(200);
+		int upZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		say((upZ == wasZ ? "  ok   " : "  FAIL ") + "and back up is where it started: " + upZ
+			+ (upZ == wasZ ? "" : " (wanted " + wasZ + ")"));
+
+		// THE WAY HOME. Drag the map a long way off and press Me; the centre has to be the
+		// player's own tile, which nothing else in this window puts it at.
+		java.awt.Component theView = (java.awt.Component) getPrivate(window, "view");
+		drag(theView, 700, 500, 200, 150);
+		waitFrames(150);
+		int strayX = ((Integer) getPrivate(window, "centreX")).intValue();
+		say("  dragged away to " + strayX + ","
+			+ ((Integer) getPrivate(window, "centreZ")).intValue());
+		// THE PLAYER'S TILE AS THE WINDOW HAS IT, which is what the client feeds in once a
+		// frame - read off the window rather than recomputed, so this compares the button
+		// against the same number the cross is drawn at.
+		int playerX = ((Integer) getPrivate(window, "playerX")).intValue();
+		int playerZ = ((Integer) getPrivate(window, "playerZ")).intValue();
+		click(window, "Me");
+		waitFrames(150);
+		int homeX = ((Integer) getPrivate(window, "centreX")).intValue();
+		int homeZ = ((Integer) getPrivate(window, "centreZ")).intValue();
+		if (playerX < 0) {
+			say("  FAIL the client is not feeding the window a player tile at all");
+		} else {
+			say((homeX == playerX && homeZ == playerZ ? "  ok   " : "  FAIL ")
+				+ "Me put the map back over the player: " + homeX + "," + homeZ
+				+ " (player at " + playerX + "," + playerZ + ")");
+		}
+		say("  the map moved by " + Math.abs(homeX - strayX) + " tiles when Me was pressed");
+		shoot(window, prefix + "_home");
+	}
+
+	/** Presses a button in the window by the word on it, on the thread Swing wants. */
+	static void click(java.awt.Window window, final String word) throws Exception {
+		final javax.swing.JButton button = (javax.swing.JButton) byText(window, word);
+		if (button == null) {
+			say("  FAIL there is no button saying \"" + word + "\"");
+			return;
+		}
+		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+
+			public void run() {
+				button.doClick();
+			}
+		});
+	}
+
+	/** The first button in the tree with this word on it, or null. */
+	static java.awt.Component byText(java.awt.Container in, String word) {
+		java.awt.Component[] kids = in.getComponents();
+		for (int i = 0; i < kids.length; i++) {
+			if (kids[i] instanceof javax.swing.JButton
+					&& word.equals(((javax.swing.JButton) kids[i]).getText())) {
+				return kids[i];
+			}
+			if (kids[i] instanceof java.awt.Container) {
+				java.awt.Component found = byText((java.awt.Container) kids[i], word);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Which of the squares on screen are black, and why each one is.
 	 *
-	 * A BLACK SQUARE IS NOT ONE THING. It is either a hole in the world - the index has no map
-	 * file for it, and black is the right answer - or a square the index HAS and the renderer
-	 * could not draw, which is a fault and is remembered as an empty picture so that it is
-	 * never retried. The two look identical on screen and have nothing in common underneath,
-	 * so a count of black squares says nothing on its own.
+	 * A BLACK SQUARE IS NOT ONE THING. It is a hole in the world - the index has no map file
+	 * for it, and black is the right answer - or a square whose ground at THIS level is solid
+	 * rock while the place itself is built a storey or two up, which is also right - or a
+	 * square the index has, with ground on this level, that the renderer could not draw, which
+	 * is a fault. All three look identical on screen and have nothing in common underneath, so
+	 * a count of black squares says nothing on its own.
+	 *
+	 * THE MIDDLE CASE WAS MISSING and it cost an investigation: square 50,148 reported as a
+	 * render failure underground, and it is the Tears of Guthix cave, whose every coordinate
+	 * in the content is at level 1 or 2. Level 0 there is rock. The map was right and this
+	 * was wrong.
 	 */
 	static void holes(java.awt.Window window, Object map) throws Exception {
 		int centreX = ((Integer) getPrivate(window, "centreX")).intValue();
@@ -1245,7 +1371,9 @@ public class ResizableShots extends Client {
 		int onScreen = 0;
 		int missing = 0;
 		int blank = 0;
+		int upstairs = 0;
 		StringBuilder blanks = new StringBuilder();
+		java.util.List<int[]> suspect = new java.util.ArrayList<int[]>();
 		for (int x = Math.floorDiv(-originX, cell); x <= Math.floorDiv(wide - originX, cell); x++) {
 			for (int z = Math.floorDiv(originZ - high, cell); z <= Math.floorDiv(originZ, cell); z++) {
 				if (x < 0 || z < 0 || x > 0xFF || z > 0xFF) {
@@ -1260,23 +1388,61 @@ public class ResizableShots extends Client {
 				if (pixels == null) {
 					continue;
 				}
-				boolean dark = true;
-				for (int i = 0; i < pixels.length && dark; i++) {
-					dark = pixels[i] == 0;
+				if (!dark(pixels)) {
+					continue;
 				}
-				if (dark) {
-					blank++;
-					if (blanks.length() < 200) {
-						blanks.append(x).append(',').append(z).append(' ');
-					}
+				// BLACK HERE, BUT IS IT BLACK ANYWHERE? Asked in a second pass below, because
+				// asking is not the same as being told: square() hands back null for a level
+				// nobody has drawn yet and quietly queues it, so a question asked and read in
+				// the same breath always answers "nothing" - which is how this first reported
+				// the Tears of Guthix cave as a render failure.
+				suspect.add(new int[] { x, z });
+			}
+		}
+		// THE SECOND PASS. Ask every suspect for its other three storeys, give the game thread
+		// time to draw them - one square a frame - and only then decide which of them are
+		// rock under a cave and which are the renderer failing.
+		if (!suspect.isEmpty()) {
+			for (int i = 0; i < suspect.size(); i++) {
+				for (int level = 1; level < 4; level++) {
+					square.invoke(map, suspect.get(i)[0], suspect.get(i)[1], level);
+				}
+			}
+			waitFrames(40 + suspect.size() * 12);
+			for (int i = 0; i < suspect.size(); i++) {
+				int x = suspect.get(i)[0];
+				int z = suspect.get(i)[1];
+				boolean anywhere = false;
+				for (int level = 1; level < 4 && !anywhere; level++) {
+					int[] up = (int[]) square.invoke(map, x, z, level);
+					anywhere = up != null && !dark(up);
+				}
+				if (anywhere) {
+					upstairs++;
+					continue;
+				}
+				blank++;
+				if (blanks.length() < 200) {
+					blanks.append(x).append(',').append(z).append(' ');
 				}
 			}
 		}
 		say("  " + onScreen + " squares on screen: " + missing + " the world has none for, "
+			+ upstairs + " rock at this level but built higher up, "
 			+ blank + " the world HAS and the map drew as nothing");
 		if (blank > 0) {
 			say("  drew as nothing: " + blanks.toString().trim());
 		}
+	}
+
+	/** Whether a drawn square is entirely black, which is the only thing a count can see. */
+	static boolean dark(int[] pixels) {
+		for (int i = 0; i < pixels.length; i++) {
+			if (pixels[i] != 0) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	static Object getPrivate(Object target, String name) throws Exception {

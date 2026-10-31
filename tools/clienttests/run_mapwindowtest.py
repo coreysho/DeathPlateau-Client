@@ -78,13 +78,24 @@ def main():
         # AND THE KEY'S NAMES AGAINST THE CONTENT. MapIconNames is generated from the content's
         # .loc files; an icon added there and not regenerated here is a blank row in the key,
         # which looks like an icon nobody bothered to name rather than like a stale file.
-        gen = os.path.join(ROOT, 'tools/worldmap/make_icons.py')
-        r = subprocess.run([sys.executable, gen, '--check'], capture_output=True, text=True)
-        for line in (r.stdout + r.stderr).split('\n'):
-            if line.strip():
-                print(('ok   ' if r.returncode == 0 else 'FAIL ') + line.strip())
-        if r.returncode == 1:
-            bad = 1
+        # AND THE PLACE NAMES, for the same reason and one more: make_labels also holds every
+        # label against the map squares the content packs, so a place whose coordinates put it
+        # in the sea fails here. A label is the one thing on this map with no picture behind
+        # it - an icon in the sea is obviously wrong, a name in the sea just looks like a
+        # place - so that check has nowhere else it could live.
+        for gen in ('tools/worldmap/make_icons.py', 'tools/worldmap/make_labels.py'):
+            r = subprocess.run([sys.executable, os.path.join(ROOT, gen), '--check'],
+                               capture_output=True, text=True)
+            # 2 IS "NO CONTENT REPO BESIDE ME", which is a skip and not a failure: this suite
+            # runs inside a throwaway copy of the repository with nothing next to it. Printed
+            # as FAIL it became the first failing line of every mutation run, and a mutation
+            # caught by nothing but that line read as caught.
+            for line in (r.stdout + r.stderr).split('\n'):
+                if line.strip():
+                    print(('ok   ' if r.returncode == 0
+                           else 'SKIP ' if r.returncode == 2 else 'FAIL ') + line.strip())
+            if r.returncode == 1:
+                bad = 1
         return bad
     finally:
         shutil.rmtree(work, ignore_errors=True)

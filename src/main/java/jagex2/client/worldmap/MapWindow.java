@@ -28,8 +28,10 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -41,6 +43,7 @@ import java.awt.event.MouseMotionAdapter;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +78,29 @@ public final class MapWindow extends JFrame {
 	/** The marked spot's colour, which is not the player's: two the same read as two players. */
 	private static final Color MARK = new Color(0x40, 0xFF, 0x60);
 
+	/**
+	 * The cream the content letters its own maps in (playermap_east.if), so the names on this
+	 * map match the names on the ones the game draws itself.
+	 */
+	private static final Color LABEL = new Color(0xFA, 0xD7, 0x82);
+
+	/**
+	 * Where underground stops being underground.
+	 *
+	 * THE WORLD IS TWO BANDS, not one map. Of this build's 702 squares, 523 are surface in rows
+	 * 40 to 85 and 179 are underground in rows 142 to 161, with fifty-six empty rows between
+	 * them - so a quarter of the map could be drawn perfectly and still never be seen, because
+	 * reaching it meant dragging through nothing.
+	 *
+	 * AND THE TWO BANDS LINE UP. 175 of those 179 underground squares sit exactly a hundred
+	 * rows north of the surface square they are under, which is what makes a toggle possible
+	 * rather than a menu: the place under here is at the same x, this z plus six thousand four
+	 * hundred. The other four have no twin, and those fall back to the nearest square there is.
+	 */
+	private static final int UNDER_FROM = 140 * MapSquare.SQUARE;
+
+	private static final int UNDER_STEP = 100 * MapSquare.SQUARE;
+
 	private final WorldMap map;
 	private final View view = new View();
 	private final JTextField search = new JTextField(14);
@@ -83,6 +109,21 @@ public final class MapWindow extends JFrame {
 	private final JLabel floor = new JLabel("level 0");
 	private final KeyPanel key = new KeyPanel();
 	private final JScrollPane keyScroll;
+
+	/** The two buttons whose words depend on where the map is, and whether anyone is in it. */
+	private JButton depth;
+	private JButton here;
+
+	/**
+	 * Three sizes of lettering, one per rank, from the window's own font family.
+	 *
+	 * A KINGDOM AND A COW PEN CANNOT BE WRITTEN THE SAME SIZE or the map has no shape to it:
+	 * what a player reads first should be the biggest thing they are looking at. Derived from
+	 * Theme rather than named outright so the map letters in the same face as everything else.
+	 */
+	private final Font regionFont = Theme.FONT_BOLD.deriveFont(15f);
+	private final Font townFont = Theme.FONT_BOLD.deriveFont(13f);
+	private final Font placeFont = Theme.FONT_SMALL;
 
 	/** Pixels per tile. */
 	private int zoom = ZOOMS[DEFAULT_ZOOM];
@@ -102,6 +143,7 @@ public final class MapWindow extends JFrame {
 	/** The player's tile, or -1 when they are not in the game. Written from the game thread. */
 	private volatile int playerX = -1;
 	private volatile int playerZ = -1;
+	private volatile int playerLevel;
 
 	/** The marked spot, or -1 for none. Written from the game thread, like the player's. */
 	private volatile int markX = -1;
@@ -162,6 +204,9 @@ public final class MapWindow extends JFrame {
 				if (MapWindow.this.isVisible()) {
 					MapWindow.this.view.repaint();
 					MapWindow.this.key.refresh();
+					// A DRAG CAN CROSS THE BAND, and logging in is what gives Me anything to
+					// do, so neither button's word is set once and left.
+					MapWindow.this.refreshButtons();
 				}
 			}
 		}).start();
@@ -218,6 +263,30 @@ public final class MapWindow extends JFrame {
 				MapWindow.this.zoomBy(1);
 			}
 		}));
+
+		// THE WAY INTO THE OTHER HALF OF THE MAP. Its word says where it will take you and not
+		// where you are, because a button labelled with the view it is already showing reads as
+		// a statement rather than as something to press.
+		this.depth = this.flat("Underground", new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.toggleDepth();
+			}
+		});
+		this.depth.setToolTipText("Jump between the surface and the dungeons under it");
+		row.add(this.depth);
+
+		// AND THE WAY BACK. Panning is how this map is read, and a map with no way home is one
+		// a player closes and reopens to recentre - which is exactly what the orb does, so the
+		// want is already proven.
+		this.here = this.flat("Me", new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				MapWindow.this.centreOnPlayer();
+			}
+		});
+		this.here.setToolTipText("Put the map back over your character (Home)");
+		row.add(this.here);
 
 		this.where.setForeground(Theme.TEXT_DIM);
 		this.where.setFont(Theme.FONT_SMALL);
@@ -296,6 +365,9 @@ public final class MapWindow extends JFrame {
 	public void setPlayer(int tileX, int tileZ, int level) {
 		this.playerX = tileX;
 		this.playerZ = tileZ;
+		// KEPT, NOT JUST ACTED ON: the Me button has to know which storey to put the map back
+		// to, and by the time it is pressed this has been called four hundred times.
+		this.playerLevel = level;
 		if (tileX >= 0 && this.level != level) {
 			this.setLevel(level);
 		}
@@ -383,6 +455,63 @@ public final class MapWindow extends JFrame {
 		return fromZ + byPixels / zoom;
 	}
 
+	/** Whether a world z is in the underground band rather than on the surface. */
+	public static boolean isUnderground(int tileZ) {
+		return tileZ >= UNDER_FROM;
+	}
+
+	/**
+	 * The same place in the other band: under here if we are above, above here if we are under.
+	 *
+	 * One step either way rather than two functions, because the map has exactly two bands and
+	 * this is the content's own relation between them - six thousand four hundred tiles.
+	 */
+	public static int twinOf(int tileZ) {
+		return isUnderground(tileZ) ? tileZ - UNDER_STEP : tileZ + UNDER_STEP;
+	}
+
+	/**
+	 * Where the jump out of this band lands, or -1 if one step would not leave it.
+	 *
+	 * A STEP IS NOT ALWAYS A BAND CHANGE, which is the hole a round-trip check over every z
+	 * found: the underground band starts at row 140 and the step is a hundred rows, so from
+	 * row 240 and up - far north of the last square the world has, but reachable by dragging -
+	 * taking a hundred rows off still leaves you underground. A button that reads "Surface"
+	 * and then does not surface is worse than one that admits it has to go somewhere else, so
+	 * this says -1 and the caller falls back to the nearest square in the band it wants.
+	 */
+	public static int jumpTo(int fromZ) {
+		int to = twinOf(fromZ);
+		return isUnderground(to) == isUnderground(fromZ) ? -1 : to;
+	}
+
+	/**
+	 * Whether a label's box can go down without touching one already placed.
+	 *
+	 * TOUCHING AND NOT MERELY OVERLAPPING: two names whose boxes share an edge are two names
+	 * with no gap between them, which reads as one longer name.
+	 */
+	public static boolean roomFor(List taken, Rectangle box) {
+		for (int i = 0; i < taken.size(); i++) {
+			if (((Rectangle) taken.get(i)).intersects(box)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Whether a label of this rank is worth drawing at this zoom.
+	 *
+	 * ALL HUNDRED AND NINETEEN AT ONCE IS NOT A MAP, it is a list with ground behind it. Zoomed
+	 * right out a window shows four hundred squares, so only the kingdoms and the towns get a
+	 * name there - thirty of them - and the guilds, mines and camps appear as soon as there is
+	 * room to read them.
+	 */
+	public static boolean labelShown(int rank, int zoom) {
+		return rank > MapLabels.RANK_PLACE || zoom > 1;
+	}
+
 	/** The world tile under a window pixel, which is what the readout at the bottom says. */
 	public static int tileAcross(int px, int originX, int zoom) {
 		return Math.floorDiv(px - originX, zoom);
@@ -438,6 +567,8 @@ public final class MapWindow extends JFrame {
 					if (code >= KeyEvent.VK_1 && code <= KeyEvent.VK_4) {
 						MapWindow.this.setLevel(code - KeyEvent.VK_1);
 						View.this.repaint();
+					} else if (code == KeyEvent.VK_HOME) {
+						MapWindow.this.centreOnPlayer();
 					} else if (code == KeyEvent.VK_ESCAPE) {
 						MapWindow.this.setVisible(false);
 					}
@@ -477,6 +608,16 @@ public final class MapWindow extends JFrame {
 			MapWindow.this.drawIcons(g, originX, originZ, at,
 				firstX * MapSquare.SQUARE, firstZ * MapSquare.SQUARE,
 				(lastX + 1) * MapSquare.SQUARE, (lastZ + 1) * MapSquare.SQUARE);
+			// LABELS OVER THE ICONS, which is the way round the picture settled. Under them
+			// was the first guess and it argued itself well - a bank icon with the word
+			// Varrock across it is a bank you cannot find - but the view that needs names
+			// most is the one zoomed right out, and there eight hundred icons cover the
+			// county so thickly that half the towns had no readable name at all. A word is
+			// thin and carries its own shadow; what it crosses is still legible around the
+			// letters, and an icon is findable by zooming in, which a name is not.
+			MapWindow.this.drawLabels(g, originX, originZ, at,
+				firstX * MapSquare.SQUARE, firstZ * MapSquare.SQUARE,
+				(lastX + 1) * MapSquare.SQUARE, (lastZ + 1) * MapSquare.SQUARE);
 			MapWindow.this.drawMark(g, originX, originZ, at);
 			MapWindow.this.drawPlayer(g, originX, originZ, at);
 		}
@@ -508,6 +649,152 @@ public final class MapWindow extends JFrame {
 		}
 		this.scaled.put(which, out);
 		return out;
+	}
+
+	/**
+	 * The names of places, over the ground they name.
+	 *
+	 * ANTIALIASED, unlike everything else in this window. The squares are drawn nearest
+	 * neighbour on purpose - a map scaled smoothly is a map of nowhere in particular - but
+	 * lettering at eleven points with no antialiasing is lettering nobody can read, so the
+	 * hint goes on for the text and comes straight back off.
+	 *
+	 * CENTRED ON THE PLACE AND NOT HUNG OFF IT, with each line under the last, which is what
+	 * the slash in the content's names is for.
+	 */
+	private void drawLabels(Graphics2D g, int originX, int originZ, int at,
+			int x0, int z0, int x1, int z1) {
+		Object was = g.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		// BIGGEST FIRST, so that when two names want the same pixels the kingdom keeps them
+		// and the mine gives way. Underground, where Falador Mine and Draynor Basement are
+		// nineteen tiles apart, the two overprinted into one unreadable word.
+		List taken = new ArrayList();
+		for (int rank = MapLabels.RANK_REGION; rank >= MapLabels.RANK_PLACE; rank--) {
+			if (!labelShown(rank, at)) {
+				continue;
+			}
+			for (int i = 0; i < MapLabels.NAME.length; i++) {
+				if (MapLabels.RANK[i] != rank) {
+					continue;
+				}
+				int x = MapLabels.X[i];
+				int z = MapLabels.Z[i];
+				if (x < x0 || x > x1 || z < z0 || z > z1) {
+					continue;
+				}
+				g.setFont(rank == MapLabels.RANK_REGION ? MapWindow.this.regionFont
+					: rank == MapLabels.RANK_TOWN ? MapWindow.this.townFont
+					: MapWindow.this.placeFont);
+				String[] lines = MapLabels.lines(MapLabels.NAME[i]);
+				int line = g.getFontMetrics().getHeight();
+				int widest = 0;
+				for (int part = 0; part < lines.length; part++) {
+					widest = Math.max(widest, g.getFontMetrics().stringWidth(lines[part]));
+				}
+				int px = acrossOf(originX, x, at) + at / 2;
+				int pz = downOf(originZ, z, at) + at / 2 - (lines.length - 1) * line / 2;
+				Rectangle box = new Rectangle(px - widest / 2, pz - line,
+					widest, lines.length * line);
+				if (!roomFor(taken, box)) {
+					continue;
+				}
+				taken.add(box);
+				for (int part = 0; part < lines.length; part++) {
+					int wide = g.getFontMetrics().stringWidth(lines[part]);
+					int tx = px - wide / 2;
+					int ty = pz + part * line;
+					// A DARK COPY UNDER IT, because this lettering lands on grass, sand,
+					// stone and water in the same window and no one colour reads on all four.
+					g.setColor(Color.BLACK);
+					g.drawString(lines[part], tx + 1, ty + 1);
+					g.setColor(LABEL);
+					g.drawString(lines[part], tx, ty);
+				}
+			}
+		}
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+			was == null ? RenderingHints.VALUE_ANTIALIAS_DEFAULT : was);
+	}
+
+	/**
+	 * Jumps to the same place in the other band, or to the nearest thing there is to it.
+	 *
+	 * THE NEAREST SQUARE RATHER THAN NOTHING. Four of the underground squares have no surface
+	 * twin and the empty rows between the bands have no squares at all, so a jump that insisted
+	 * on an exact twin would do nothing at all on a map centred a few tiles off - which reads
+	 * as a broken button, not as an honest refusal.
+	 */
+	private void toggleDepth() {
+		boolean wantUnder = !isUnderground(this.centreZ);
+		int wantZ = jumpTo(this.centreZ);
+		if (wantZ >= 0
+				&& this.map.exists(this.centreX / MapSquare.SQUARE, wantZ / MapSquare.SQUARE)) {
+			this.centreOn(this.centreX, wantZ);
+			this.refreshButtons();
+			return;
+		}
+		int near = this.nearest(this.centreX, wantZ < 0 ? this.centreZ : wantZ, wantUnder);
+		if (near < 0) {
+			return;
+		}
+		// The middle of that square rather than its corner, so the jump lands on ground.
+		this.centreOn((near >> 8) * MapSquare.SQUARE + MapSquare.SQUARE / 2,
+			(near & 0xFF) * MapSquare.SQUARE + MapSquare.SQUARE / 2);
+		this.refreshButtons();
+	}
+
+	/** The nearest square the world has in one band, as (x &lt;&lt; 8) + z, or -1 if it has none. */
+	private int nearest(int tileX, int tileZ, boolean underground) {
+		int fromX = tileX / MapSquare.SQUARE;
+		int fromZ = tileZ / MapSquare.SQUARE;
+		int firstZ = underground ? UNDER_FROM / MapSquare.SQUARE : 0;
+		int lastZ = underground ? 0xFF : UNDER_FROM / MapSquare.SQUARE - 1;
+		int best = -1;
+		long nearest = Long.MAX_VALUE;
+		for (int x = 0; x <= 0xFF; x++) {
+			for (int z = firstZ; z <= lastZ; z++) {
+				if (!this.map.exists(x, z)) {
+					continue;
+				}
+				long acrossBy = x - fromX;
+				long downBy = z - fromZ;
+				long away = acrossBy * acrossBy + downBy * downBy;
+				if (away < nearest) {
+					nearest = away;
+					best = (x << 8) + z;
+				}
+			}
+		}
+		return best;
+	}
+
+	/** Puts the map back over the player, on their storey. Does nothing if nobody is in. */
+	public void centreOnPlayer() {
+		int x = this.playerX;
+		int z = this.playerZ;
+		if (x < 0) {
+			return;
+		}
+		this.setLevel(this.playerLevel);
+		this.centreOn(x, z);
+		this.refreshButtons();
+	}
+
+	/**
+	 * What the two buttons say, which depends on the map and not on the press.
+	 *
+	 * Only when it changes: this runs eight times a second, and setText on a Swing button
+	 * revalidates the row it is in.
+	 */
+	private void refreshButtons() {
+		String word = isUnderground(this.centreZ) ? "Surface" : "Underground";
+		if (this.depth != null && !word.equals(this.depth.getText())) {
+			this.depth.setText(word);
+		}
+		if (this.here != null && this.here.isEnabled() != (this.playerX >= 0)) {
+			this.here.setEnabled(this.playerX >= 0);
+		}
 	}
 
 	private void drawIcons(Graphics2D g, int originX, int originZ, int at,

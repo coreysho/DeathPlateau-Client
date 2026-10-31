@@ -26,6 +26,7 @@ import java.util.List;
 
 import jagex2.client.worldmap.MapIconNames;
 import jagex2.client.worldmap.MapIcons;
+import jagex2.client.worldmap.MapLabels;
 import jagex2.client.worldmap.MapOrb;
 import jagex2.client.worldmap.MapSquare;
 import jagex2.client.worldmap.MapWindow;
@@ -44,6 +45,8 @@ public class MapWindowTest {
 		supply();
 		drawing();
 		keeping();
+		labels();
+		bands();
 		System.out.println();
 		System.out.println(checks + " checks, " + failures + " failures");
 		if (failures > 0) {
@@ -763,6 +766,174 @@ public class MapWindowTest {
 		}
 		yes("and one that was dropped is drawn again when it is asked for",
 			map.square(gone >> 8, gone & 0xFF, 0) != null);
+	}
+
+	// ----------------------------------------------------------------- the names of places
+
+	/**
+	 * The place names, and which zoom shows which.
+	 *
+	 * WHERE EACH ONE IS is checked by the generator instead, against the squares the content
+	 * packs - a label in the sea is the fault worth catching and only the content can say
+	 * where the sea is. What is checked here is everything the window does with the table
+	 * after that: splitting a name, and deciding whether it has room for one.
+	 */
+	static void labels() {
+		System.out.println();
+		System.out.println("-- the names of places --");
+
+		// THE FOUR COLUMNS ARE ONE TABLE, and a generator that lost a row from one of them
+		// would put every name after it over the wrong place. Read against each other rather
+		// than against a number, so adding a place does not touch this test.
+		eq("as many x as names", MapLabels.NAME.length, MapLabels.X.length);
+		eq("as many z as names", MapLabels.NAME.length, MapLabels.Z.length);
+		eq("as many ranks as names", MapLabels.NAME.length, MapLabels.RANK.length);
+		yes("there are places to name at all", MapLabels.NAME.length > 0);
+
+		int outside = 0;
+		int unranked = 0;
+		int empty = 0;
+		for (int i = 0; i < MapLabels.NAME.length; i++) {
+			if (MapLabels.X[i] < 0 || MapLabels.Z[i] < 0
+					|| MapLabels.X[i] > 0xFF * MapSquare.SQUARE
+					|| MapLabels.Z[i] > 0xFF * MapSquare.SQUARE) {
+				outside++;
+			}
+			if (MapLabels.RANK[i] < MapLabels.RANK_PLACE
+					|| MapLabels.RANK[i] > MapLabels.RANK_REGION) {
+				unranked++;
+			}
+			if (MapLabels.NAME[i].length() == 0) {
+				empty++;
+			}
+		}
+		eq("every place is somewhere in the world", 0, outside);
+		eq("every place is a region, a town or a place", 0, unranked);
+		eq("no place is nameless", 0, empty);
+
+		// A SLASH IS A LINE BREAK. "Kingdom Of/Misthalin" written on one line is a word and a
+		// half across a kingdom; the point of the convention is that it does not have to be.
+		String[] two = MapLabels.lines("Kingdom Of/Misthalin");
+		eq("a slashed name is two lines", 2, two.length);
+		eq("...the first being", "Kingdom Of", two[0]);
+		eq("...and the second", "Misthalin", two[1]);
+		eq("an unslashed name is one line", 1, MapLabels.lines("Varrock").length);
+		eq("...which is the name", "Varrock", MapLabels.lines("Varrock")[0]);
+		eq("two slashes are three lines", 3, MapLabels.lines("a/b/c").length);
+		eq("...and the middle one survives", "b", MapLabels.lines("a/b/c")[1]);
+
+		// AND NOTHING COMES BACK STILL CARRYING ONE, which is what a split on the wrong
+		// character, or one that stops at the first, would leave behind.
+		int unsplit = 0;
+		for (int i = 0; i < MapLabels.NAME.length; i++) {
+			String[] parts = MapLabels.lines(MapLabels.NAME[i]);
+			for (int part = 0; part < parts.length; part++) {
+				if (parts[part].indexOf('/') >= 0) {
+					unsplit++;
+				}
+			}
+		}
+		eq("no line still has a slash in it", 0, unsplit);
+
+		// WHICH ZOOM SHOWS WHICH. Zoomed right out the window shows four hundred squares, and
+		// a name on every guild and cow pen in four hundred squares is a list with ground
+		// behind it.
+		yes("zoomed right out, a kingdom is named",
+			MapWindow.labelShown(MapLabels.RANK_REGION, 1));
+		yes("...and so is a town", MapWindow.labelShown(MapLabels.RANK_TOWN, 1));
+		yes("...but not every mine and guild",
+			!MapWindow.labelShown(MapLabels.RANK_PLACE, 1));
+		yes("a step in and the mines are named too",
+			MapWindow.labelShown(MapLabels.RANK_PLACE, 2));
+		yes("...and at the closest zoom", MapWindow.labelShown(MapLabels.RANK_PLACE, 4));
+
+		// AND TWO NAMES NEVER SHARE PIXELS. Underground, Falador Mine and Draynor Basement
+		// are nineteen tiles apart, which at the far zoom is nineteen pixels: the two printed
+		// over each other into one word that was neither.
+		List placed = new ArrayList();
+		java.awt.Rectangle first = new java.awt.Rectangle(100, 100, 60, 14);
+		yes("the first name always has room", MapWindow.roomFor(placed, first));
+		placed.add(first);
+		yes("one right on top of it does not",
+			!MapWindow.roomFor(placed, new java.awt.Rectangle(100, 100, 60, 14)));
+		yes("one overlapping a corner of it does not",
+			!MapWindow.roomFor(placed, new java.awt.Rectangle(150, 110, 60, 14)));
+		yes("one clear of it does",
+			MapWindow.roomFor(placed, new java.awt.Rectangle(100, 130, 60, 14)));
+		yes("...and one just past its edge does",
+			MapWindow.roomFor(placed, new java.awt.Rectangle(160, 100, 60, 14)));
+
+		// THE RULE HAS TO SEE EVERY BOX ALREADY DOWN, not just the last one: a third name can
+		// clear the second and still land on the first.
+		placed.add(new java.awt.Rectangle(300, 300, 60, 14));
+		yes("a name clear of the newest but not the oldest is still refused",
+			!MapWindow.roomFor(placed, new java.awt.Rectangle(110, 105, 20, 8)));
+	}
+
+	// ----------------------------------------------------------------- the two bands
+
+	/**
+	 * Surface and underground, and the jump between them.
+	 *
+	 * THE WORLD IS TWO BANDS WITH FIFTY-SIX EMPTY ROWS BETWEEN THEM, so a quarter of the map
+	 * can be drawn perfectly and never be seen. The arithmetic of the jump is the whole of
+	 * whether it can be: one step of a hundred rows, the same step back.
+	 */
+	static void bands() {
+		System.out.println();
+		System.out.println("-- surface and underground --");
+
+		yes("Varrock is on the surface", !MapWindow.isUnderground(3450));
+		yes("the Varrock sewers are not", MapWindow.isUnderground(9833));
+
+		// THE BOUNDARY ITSELF, because an off-by-one here puts the last surface row
+		// underground, and row 139 is empty so nothing would ever look wrong.
+		int boundary = 140 * MapSquare.SQUARE;
+		yes("the row below the boundary is surface", !MapWindow.isUnderground(boundary - 1));
+		yes("the boundary row itself is underground", MapWindow.isUnderground(boundary));
+
+		// A HUNDRED ROWS, which is where 175 of the 179 underground squares sit relative to
+		// the surface square they are under.
+		eq("under Varrock is a hundred rows north", 3450 + 100 * MapSquare.SQUARE,
+			MapWindow.twinOf(3450));
+		eq("and back again", 3450, MapWindow.twinOf(MapWindow.twinOf(3450)));
+
+		// THE SAME STEP BOTH WAYS, so the button is one button. Over every z in the map's
+		// whole range and not just the rows the world has squares in, because panning is not
+		// stopped at the last square and the button has to mean something wherever it is
+		// pressed.
+		int wrong = 0;
+		int unmoved = 0;
+		int admitted = 0;
+		for (int z = 0; z <= 0xFF * MapSquare.SQUARE; z += 37) {
+			int to = MapWindow.jumpTo(z);
+			if (to < 0) {
+				// The one honest refusal: a step from here would not leave the band, so the
+				// button goes to the nearest square instead of lying about it.
+				admitted++;
+				continue;
+			}
+			if (MapWindow.isUnderground(to) == MapWindow.isUnderground(z)) {
+				unmoved++;
+			}
+			if (MapWindow.jumpTo(to) != z) {
+				wrong++;
+			}
+		}
+		eq("a jump that says where it lands always changes band", 0, unmoved);
+		eq("...and jumping back is where you started", 0, wrong);
+		yes("...and from the empty north it says it cannot, rather than not moving",
+			admitted > 0);
+
+		// AND THE ROWS THE WORLD ACTUALLY HAS all jump cleanly, which is the case a player is
+		// ever in: rows 40 to 85 on the surface, 142 to 161 underground.
+		int refused = 0;
+		for (int row = 40; row <= 161; row++) {
+			if (MapWindow.jumpTo(row * MapSquare.SQUARE + 32) < 0) {
+				refused++;
+			}
+		}
+		eq("every row the world has can be jumped out of", 0, refused);
 	}
 
 	// ----------------------------------------------------------------- plumbing
