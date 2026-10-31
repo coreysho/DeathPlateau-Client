@@ -448,9 +448,14 @@ final class LauncherWindow {
 			g2.setColor(new Color(0x26, 0x18, 0x17));
 			g2.drawLine(24, FOOTER_RULE, w - 24, FOOTER_RULE);
 
+			// THE SLOGAN, NOT A WEB ADDRESS. There was a made-up domain here - deathplateau.com -
+			// which is in none of these repositories and does not resolve, invented because the
+			// layout had a slot shaped like a link. It shipped in client-144 and players were
+			// shown it for three releases. If there is ever a real site it belongs here; until
+			// then this says something true, and in the colour the branding already chose for it.
 			g2.setFont(Theme.FONT_SMALL);
-			g2.setColor(Theme.ACCENT_BRIGHT);
-			g2.drawString("deathplateau.com", 24, FOOTER_BASELINE);
+			g2.setColor(new Color(Branding.SLOGAN_COLOUR));
+			g2.drawString(Branding.SLOGAN, 24, FOOTER_BASELINE);
 
 			g2.setColor(new Color(0x5E, 0x50, 0x4E));
 			String right = "Launcher v" + LauncherWindow.this.version;

@@ -118,7 +118,7 @@ public final class Launcher {
      * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
      * that it is the newer one.
      */
-    private static final int VERSION = 9;
+    private static final int VERSION = 10;
 
     /**
      * The first launcher version whose client writes the window marker (see awaitClientWindow).

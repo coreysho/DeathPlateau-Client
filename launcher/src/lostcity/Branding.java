@@ -39,6 +39,18 @@ import javax.imageio.ImageIO;
  */
 public final class Branding {
 
+	/**
+	 * The server's name and slogan, in the one place both jars can read them.
+	 *
+	 * HERE RATHER THAN IN Client, which is where they were written, for the reason this whole class
+	 * is here: the launcher is compiled on its own and cannot see a thing in jagex2. Client still
+	 * declares SERVER_NAME and SLOGAN and every one of its own uses is unchanged - they just point
+	 * at these now, so the name is written once.
+	 */
+	public static final String SERVER_NAME = "Death Plateau";
+	public static final String SLOGAN = "The true golden era.";
+	public static final int SLOGAN_COLOUR = 0xE8C35A;
+
 	private static final int[] SIZES = { 16, 24, 32, 48, 64, 128 };
 
 	/** Loaded once - these go to the window manager at startup and never change. */

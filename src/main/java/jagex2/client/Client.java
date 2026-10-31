@@ -1469,9 +1469,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 	// The server's name and slogan, wherever the client says them: the window, the login screen and
 	// the loading and error messages. (The logo is an image, content/title/logo.png.)
-	public static final String SERVER_NAME = "Death Plateau";
-	public static final String SLOGAN = "The true golden era.";
-	public static final int SLOGAN_COLOUR = 0xE8C35A;
+	//
+	// The strings themselves moved to lostcity.Branding, which is the one source tree compiled into
+	// both this jar and the launcher's, so the launcher can say them too. These stay as the names
+	// the client has always used them by.
+	public static final String SERVER_NAME = lostcity.Branding.SERVER_NAME;
+	public static final String SLOGAN = lostcity.Branding.SLOGAN;
+	public static final int SLOGAN_COLOUR = lostcity.Branding.SLOGAN_COLOUR;
 
 	// Server address the standalone client connects to. Override at launch with -Dlostcity.host /
 	// lostcity.port / lostcity.webhost / lostcity.webport (or the LOSTCITY_HOST, LOSTCITY_PORT,
