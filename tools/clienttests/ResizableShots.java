@@ -1159,6 +1159,16 @@ public class ResizableShots extends Client {
 
 		// VARROCK AT THE WIDEST ZOOM, which is the view the whole of the fault lives in: a
 		// square is 64 pixels there, so the window shows fifteen by eleven of them at once.
+		// MAXIMISED, which is how the fault shows: the view's own preferred size is 900x680
+		// and a player drags the window out to their screen. Everything that asks the map for
+		// squares scales with the view's area, and nothing else here had ever made it bigger.
+		String[] size = System.getProperty("shots.mapsize", "900,680").split(",");
+		java.awt.Component theView = (java.awt.Component) getPrivate(window, "view");
+		theView.setPreferredSize(new java.awt.Dimension(
+			Integer.parseInt(size[0].trim()), Integer.parseInt(size[1].trim())));
+		windowClass.getMethod("pack").invoke(window);
+		say("view is " + size[0].trim() + "x" + size[1].trim());
+
 		String[] at = System.getProperty("shots.mapat", "3220,3420").split(",");
 		int atX = Integer.parseInt(at[0].trim());
 		int atZ = Integer.parseInt(at[1].trim());
@@ -1326,7 +1336,13 @@ public class ResizableShots extends Client {
 		java.lang.reflect.Field f = window.getClass().getDeclaredField("scaled");
 		f.setAccessible(true);
 		java.util.Map<?, ?> scaled = (java.util.Map<?, ?>) f.get(window);
-		return "window holds " + scaled.size() + " scaled squares";
+		java.lang.reflect.Field mf = window.getClass().getDeclaredField("map");
+		mf.setAccessible(true);
+		Object map = mf.get(window);
+		java.lang.reflect.Field wf = map.getClass().getDeclaredField("wanted");
+		wf.setAccessible(true);
+		java.util.Collection<?> wanted = (java.util.Collection<?>) wf.get(map);
+		return "window holds " + scaled.size() + " scaled, " + wanted.size() + " squares queued";
 	}
 
 	/** A key press delivered to the window, the way a player's would be. */
