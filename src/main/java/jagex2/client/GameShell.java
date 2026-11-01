@@ -3,6 +3,7 @@ package jagex2.client;
 import deob.ObfuscatedName;
 import jagex2.graphics.Pix32;
 import jagex2.graphics.PixMap;
+import lostcity.Branding;
 
 import java.applet.Applet;
 import java.awt.Color;
@@ -240,6 +241,23 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 				}
 			}
 
+			// Given up on: keep the window alive and keep saying so, rather than leaving the loop
+			// and letting the last frame sit there looking like the game. Once a second, because
+			// an exposed or resized window would otherwise lose the message.
+			if (this.crashed != null) {
+				this.drawCrash();
+
+				try {
+					Thread.sleep(1000L);
+				} catch (InterruptedException ignore) {
+				}
+
+				continue;
+			}
+
+			// whether this frame got through update() and draw() without throwing
+			boolean clean = true;
+
 			int lastRatio = ratio;
 			int lastDelta = delta;
 
@@ -301,7 +319,13 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 				}
 
 				this.mapInput();
-				this.update();
+
+				try {
+					this.update();
+				} catch (Throwable error) {
+					clean = false;
+					this.fault("update", error);
+				}
 
 				// Anything update() left in the latch is still unclaimed - hold it for draw(). The
 				// readers that consume a click in update() zero the button as they take it, so a
@@ -339,7 +363,19 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 			}
 
 			this.mapInput();
-			this.draw();
+
+			try {
+				this.draw();
+			} catch (Throwable error) {
+				clean = false;
+				this.fault("draw", error);
+			}
+
+			// A frame that got all the way through puts the count back: what is being counted is a
+			// fault that keeps happening, not a fault that happened once.
+			if (clean) {
+				this.faults = 0;
+			}
 
 			if (this.debug) {
 				System.out.println("ntime:" + ntime);
@@ -743,6 +779,125 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		Thread t = new Thread(thread);
 		t.start();
 		t.setPriority(priority);
+	}
+
+	// ------------------------------------------------------------------ when a frame throws
+	//
+	// WHY THIS EXISTS (2026-11-01). update() and draw() were called bare. Either one throwing
+	// ended the loop thread, and nothing above it caught anything - so the window stayed up
+	// showing the last frame it painted, the game never moved again, and the client could not
+	// say a word about it. It is indistinguishable from a scene loading slowly and never
+	// finishing, which is exactly how it presented on 2026-09-29: a teleport to Zul-andra, a
+	// stack trace going to a stderr nobody was reading, and a player left looking at a picture.
+	//
+	// A ONE-OFF IS SURVIVED, A REPEAT IS NOT. Most of what reaches here is one bad frame - a
+	// packet that did not say what the handler expected, something half-built being drawn - and
+	// the next frame is fine. Those are logged and skipped, which is strictly better than dying.
+	// What must not happen is spinning for ever on a fault that comes back every frame, so after
+	// MAX_FAULTS in a row with no clean frame between them the client stops and says so.
+
+	/** Frames in a row in which update() or draw() threw. Any clean frame puts it back to zero. */
+	private int faults;
+
+	/** The fault it gave up on, or null while the game is running. */
+	private Throwable crashed;
+
+	/**
+	 * How many frames in a row may throw before the client gives up.
+	 *
+	 * Ten rather than one because a single bad frame is common and recoverable, and ten rather
+	 * than a hundred because at this frame rate a hundred is two seconds of a frozen picture
+	 * before anybody is told anything.
+	 */
+	private static final int MAX_FAULTS = 10;
+
+	private void fault(String where, Throwable error) {
+		this.faults++;
+		// stderr, because the launcher redirects it into ~/.deathplateau/client.log - which is
+		// the whole reason there is anything to send afterwards.
+		System.err.println("client: " + where + "() threw on frame " + this.faults + " in a row");
+		error.printStackTrace();
+
+		if (this.faults >= MAX_FAULTS && this.crashed == null) {
+			this.crashed = error;
+			System.err.println("client: giving up after " + MAX_FAULTS + " faulting frames in a row");
+		}
+	}
+
+	/** One line naming the fault, for the player to quote. */
+	private static String describe(Throwable error) {
+		if (error == null) {
+			return "unknown";
+		}
+		String text = error.getClass().getName();
+		if (error.getMessage() != null) {
+			text = text + ": " + error.getMessage();
+		}
+		StackTraceElement[] stack = error.getStackTrace();
+		if (stack != null && stack.length > 0) {
+			text = text + "  at " + stack[0];
+		}
+		return text;
+	}
+
+	/**
+	 * Cuts a line down until it fits, measured rather than counted.
+	 *
+	 * A character count was wrong the first time it was looked at: a monospaced 12 is about seven
+	 * pixels wide, so 110 characters is 770 and the line ran off the side of a 765-wide window.
+	 * The window can also be wider than that, and then a fixed count throws away text that fitted.
+	 */
+	private String fit(String text, Font font, int width) {
+		FontMetrics metrics = this.getBaseComponent().getFontMetrics(font);
+		if (metrics.stringWidth(text) <= width) {
+			return text;
+		}
+		String tail = "...";
+		int room = width - metrics.stringWidth(tail);
+		int end = text.length();
+		while (end > 0 && metrics.stringWidth(text.substring(0, end)) > room) {
+			end--;
+		}
+		return text.substring(0, end) + tail;
+	}
+
+	/**
+	 * The stopped screen, drawn with plain AWT on purpose.
+	 *
+	 * Nothing here touches the game's own renderer, its fonts or its sprites. Whatever broke, it
+	 * may well have been one of those, and a message that needs the broken thing to draw itself
+	 * is no message at all.
+	 */
+	private void drawCrash() {
+		try {
+			Graphics g = this.acquireGraphics();
+			if (g == null) {
+				return;
+			}
+			int w = Math.max(765, this.canvasWidth);
+			int h = Math.max(503, this.canvasHeight);
+			g.setColor(Color.black);
+			g.fillRect(0, 0, w, h);
+
+			g.setFont(new Font("Helvetica", Font.BOLD, 16));
+			g.setColor(Color.yellow);
+			g.drawString(Branding.SERVER_NAME + " has stopped.", 30, 40);
+
+			g.setFont(new Font("Helvetica", Font.PLAIN, 13));
+			g.setColor(Color.white);
+			g.drawString("It is not loading and it is not lagging - waiting will not help.", 30, 80);
+			g.drawString("Close this window and start the launcher again; nothing has been lost.", 30, 105);
+			g.drawString("What went wrong was written down in client.log, in your .deathplateau folder.", 30, 145);
+			g.drawString("Please send that file with your report. It begins with the line below.", 30, 170);
+
+			Font mono = new Font("Monospaced", Font.PLAIN, 12);
+			g.setFont(mono);
+			g.setColor(new Color(Branding.SLOGAN_COLOUR));
+			g.drawString(this.fit(describe(this.crashed), mono, w - 60), 30, 210);
+		} catch (Throwable ignored) {
+			// The window has gone, or AWT will not give us a Graphics. There is nothing left to
+			// try and nowhere left to say so.
+		}
 	}
 
 	@ObfuscatedName("JWWAIQPI.a(IZLjava/lang/String;)V")
