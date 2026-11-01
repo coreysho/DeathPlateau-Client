@@ -31,20 +31,42 @@ public class HandOverTest {
         check("a newer launcher (stamped 99) reads as 99", stampIn.invoke(null, entry.invoke(null, newerJar, "lostcity/Launcher.class")), 99);
 
         Constructor<?> ctor = c.getDeclaredConstructor(); ctor.setAccessible(true);
-        Method handOver = c.getDeclaredMethod("handOver"); handOver.setAccessible(true);
+        Method handOver = c.getDeclaredMethod("handOver", boolean.class); handOver.setAccessible(true);
+        Method command = c.getDeclaredMethod("handOverCommand", File.class, boolean.class);
+        command.setAccessible(true);
         File home = new File(sandbox, ".deathplateau"); home.mkdirs();
         File installed = new File(home, "client.jar");
 
         Files.copy(clientJar.toPath(), installed.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        check("the same version: stays put", handOver.invoke(ctor.newInstance()), false);
+        check("the same version: stays put", handOver.invoke(ctor.newInstance(), false), false);
         Files.copy(olderJar.toPath(), installed.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        check("an OLDER launcher in the jar: stays put (never hands back)", handOver.invoke(ctor.newInstance()), false);
+        check("an OLDER launcher in the jar: stays put (never hands back)", handOver.invoke(ctor.newInstance(), false), false);
         installed.delete();
-        check("no client.jar at all: stays put", handOver.invoke(ctor.newInstance()), false);
+        check("no client.jar at all: stays put", handOver.invoke(ctor.newInstance(), false), false);
         Files.copy(newerJar.toPath(), installed.toPath(), StandardCopyOption.REPLACE_EXISTING);
         System.setProperty("lostcity.launcherhandoff", "1");
-        check("already handed over once: stays put, whatever the jar holds", handOver.invoke(ctor.newInstance()), false);
+        check("already handed over once: stays put, whatever the jar holds", handOver.invoke(ctor.newInstance(), true), false);
         System.clearProperty("lostcity.launcherhandoff");
+
+        // WHICH FLAGS A HAND-OVER CARRIES, which is the whole of the bug that shipped as
+        // "the jar doesn't search for an update before trying to play, and then it tells you
+        // there's an update". HANDOFF means "you were handed to, do not hand over again" and
+        // CHECKED means "somebody has just checked for you". They were one flag, and moving the
+        // hand-over to before the window made the second meaning false while the first stayed
+        // true: the launcher that was handed to skipped the check it had never had.
+        @SuppressWarnings("unchecked")
+        java.util.List<String> after = (java.util.List<String>) command.invoke(ctor.newInstance(), installed, true);
+        @SuppressWarnings("unchecked")
+        java.util.List<String> before = (java.util.List<String>) command.invoke(ctor.newInstance(), installed, false);
+        check("a hand-over says it handed over", after.contains("-Dlostcity.launcherhandoff=1"), true);
+        check("...and the early one does too", before.contains("-Dlostcity.launcherhandoff=1"), true);
+        check("a hand-over AFTER a check says the check is done",
+              after.contains("-Dlostcity.updatechecked=1"), true);
+        check("...and the one BEFORE any check does not, or the next launcher skips a check "
+              + "nobody did", before.contains("-Dlostcity.updatechecked=1"), false);
+        check("both of them start the launcher out of the jar they copied",
+              after.get(after.size() - 1) + " " + before.get(before.size() - 1),
+              "lostcity.Launcher lostcity.Launcher");
 
         System.out.println("\n" + ok + " ok, " + bad + " failed");
         System.exit(bad == 0 ? 0 : 1);
