@@ -407,8 +407,18 @@ public final class TitleScreen {
 		if (head == null) {
 			return;
 		}
+		// BIND THE SCANLINE TABLE TO THE SCREEN WE ARE ON. Pix3D.lineOffset says where row y
+		// begins in the raster, and it is built per raster size: load() makes four of them and
+		// leaves the field holding the last, the 512-wide viewport. In the game something rebinds
+		// it before every 3D draw. The title screen never did, because until now it drew nothing
+		// in 3D - so the first version of this wrote a head through a table for a raster 253
+		// pixels narrower than the one underneath it, which puts every row in the wrong place and
+		// draws nothing you can recognise. Taken from the bound raster rather than from 765x503,
+		// because a resizable window letterboxes the title into something larger.
+		int[] keepOffset = Pix3D.lineOffset;
 		int keepX = Pix3D.centerX;
 		int keepY = Pix3D.centerY;
+		Pix3D.lineOffset = offsetsFor(Pix2D.width2d, Pix2D.height2d);
 		Pix3D.centerX = x + FACE / 2;
 		Pix3D.centerY = y + FACE / 2 + FACE_LIFT;
 		try {
@@ -418,9 +428,35 @@ public final class TitleScreen {
 		} catch (Throwable ignored) {
 			// A head that will not draw is a blank frame, not a login screen that will not come up.
 		} finally {
+			Pix3D.lineOffset = keepOffset;
 			Pix3D.centerX = keepX;
 			Pix3D.centerY = keepY;
 		}
+	}
+
+	private static int[] rasterOffsets;
+	private static int rasterW;
+	private static int rasterH;
+
+	/**
+	 * Row starts for a raster this size, built once and kept.
+	 *
+	 * Pix3D.init3D would do it, but it also overwrites centerX and centerY - which the caller is
+	 * about to set to the middle of a portrait - and it allocates every time it is called. This
+	 * is the same table, made once per window size.
+	 */
+	private static int[] offsetsFor(int width, int height) {
+		if (rasterOffsets != null && rasterW == width && rasterH == height) {
+			return rasterOffsets;
+		}
+		int[] offsets = new int[Math.max(1, height)];
+		for (int y = 0; y < offsets.length; y++) {
+			offsets[y] = width * y;
+		}
+		rasterOffsets = offsets;
+		rasterW = width;
+		rasterH = height;
+		return offsets;
 	}
 
 	/** Heads already built, by account. Building one per card per frame is not what this is for. */
@@ -451,9 +487,16 @@ public final class TitleScreen {
 			built = null;
 		}
 		if (built == null) {
+			// Said once per account, to client.log. Without it a portrait that does not appear
+			// is the same picture whether the face was never saved, the kit is not in the cache,
+			// or the head drew somewhere off the screen - and those are three different faults.
+			if (!headFailed.containsKey(p.username)) {
+				System.err.println("title: no head for " + p.username + " - getHeadModel gave nothing");
+			}
 			headFailed.put(p.username, Long.valueOf(System.currentTimeMillis()));
 			return null;
 		}
+		System.err.println("title: head built for " + p.username);
 		heads.put(p.username, built);
 		return built;
 	}

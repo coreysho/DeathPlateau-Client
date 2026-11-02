@@ -177,6 +177,8 @@ public final class LoginProfiles {
 			}
 			profiles.set(i, new Profile(p.username, p.secret, p.lastUsed, look.clone()));
 			save();
+			// To client.log, so "no portrait" can be told apart from "no face was ever saved".
+			System.err.println("profiles: kept the face for " + p.username);
 			return;
 		}
 	}
