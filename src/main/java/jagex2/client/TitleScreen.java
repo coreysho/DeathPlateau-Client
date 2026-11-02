@@ -482,7 +482,14 @@ public final class TitleScreen {
 		}
 		try {
 			ClientPlayer who = ClientPlayer.fromFace(p.look);
-			built = who == null ? null : who.getHeadModel();
+			if (who != null) {
+				// ASK FOR THE PARTS BEFORE ASKING FOR THE HEAD. getHeadModel only checks whether
+				// they are there; on a freshly started client nothing has ever requested this
+				// player's kit, so without this the check says no for ever and the frame stays
+				// empty on the one login screen that matters - the one you start the game at.
+				who.requestHeadParts();
+				built = who.getHeadModel();
+			}
 		} catch (Throwable ignored) {
 			built = null;
 		}

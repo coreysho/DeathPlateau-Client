@@ -506,6 +506,50 @@ public class ClientPlayer extends ClientEntity {
 		}
 	}
 
+	/**
+	 * Asks the update server for the models this head is built from.
+	 *
+	 * getHeadModel CHECKS whether the parts are ready - IdkType.method579, ObjType.method220, both
+	 * of them Model.method360 - and gives up when they are not. It never asks for them. In the
+	 * world that is fine: the player's own kit came down with the player. At the login screen
+	 * nothing has asked for anything, so the check answers no for ever and the portrait on a
+	 * freshly started client stays empty - which is the one place it is wanted, since a login
+	 * screen seen after a logout is not the one anybody starts the game at.
+	 *
+	 * Model.tryGet queues a request when it misses and returns null, so asking is simply reading.
+	 * The answers arrive on the update stream and the next attempt at the head finds them.
+	 */
+	public void requestHeadParts() {
+		for (int i = 0; i < 12; i++) {
+			int part = this.field1674[i];
+			if (part >= 256 && part < 512) {
+				IdkType idk = IdkType.field1699[part - 256];
+				if (idk == null) {
+					continue;
+				}
+				for (int m = 0; m < idk.field1704.length; m++) {
+					if (idk.field1704[m] != -1) {
+						Model.tryGet(idk.field1704[m]);
+					}
+				}
+			} else if (part >= 512) {
+				ObjType obj = ObjType.get(part - 512);
+				if (obj == null) {
+					continue;
+				}
+				// The same pair method220 checks, and which pair depends on the body.
+				int worn = this.field1677 == 1 ? obj.field857 : obj.field816;
+				int extra = this.field1677 == 1 ? obj.field844 : obj.field843;
+				if (worn != -1) {
+					Model.tryGet(worn);
+				}
+				if (extra != -1) {
+					Model.tryGet(extra);
+				}
+			}
+		}
+	}
+
 	/** The appearance as LoginProfiles keeps it: twelve slots, five recolours, then the body. */
 	public int[] faceForLogin() {
 		int[] look = new int[LoginProfiles.LOOK_LEN];
