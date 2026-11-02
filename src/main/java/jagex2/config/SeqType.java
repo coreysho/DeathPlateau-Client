@@ -34,6 +34,15 @@ public class SeqType {
 	@ObfuscatedName("FHWCLIAS.r")
 	public int field789 = 2;
 
+	// WHICH ANIMATION SURVIVES WHEN THE TWO STAND ON DIFFERENT SKELETONS - seq config opcode 13,
+	// which 377 never had because there was one player skeleton then and nothing for it to disagree
+	// with. Model.method368 only walk-merges two frames built on the same skeleton; an animation
+	// imported from Old School is not, so one of the two has to be dropped. 0 keeps the movement
+	// frame, which is right for a gesture - eating while walking must not leave the player sliding
+	// along the ground. 1 keeps this animation, which is right for a special attack: a swing that
+	// vanishes the moment you step is worse than legs that pause for the one tick it takes.
+	public int crossskeleton = 0;
+
 	@ObfuscatedName("FHWCLIAS.c")
 	public static int field774;
 
@@ -159,6 +168,8 @@ public class SeqType {
 				this.field789 = arg1.g1();
 			} else if (var4 == 12) {
 				this.field790 = arg1.g4();
+			} else if (var4 == 13) {
+				this.crossskeleton = arg1.g1();
 			} else {
 				System.out.println("Error unrecognised seq config code: " + var4);
 			}
