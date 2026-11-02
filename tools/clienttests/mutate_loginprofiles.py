@@ -57,8 +57,8 @@ MUTS = [
      '\t\t\tif (profiles.get(i).username.equalsIgnoreCase(name)) {\n\t\t\t\tprofiles.remove(i);',
      '\t\t\tif (profiles.get(i).username.equals(name)) {\n\t\t\t\tprofiles.remove(i);'),
     (STORE, 'the newest login appended rather than put first',
-     '\t\tprofiles.add(0, new Profile(name, secret, System.currentTimeMillis()));',
-     '\t\tprofiles.add(new Profile(name, secret, System.currentTimeMillis()));'),
+     '\t\tprofiles.add(0, new Profile(name, secret, System.currentTimeMillis(), look));',
+     '\t\tprofiles.add(new Profile(name, secret, System.currentTimeMillis(), look));'),
     (STORE, 'the cap removed, so the row overflows the title area',
      '\t\twhile (profiles.size() > MAX) {\n\t\t\tprofiles.remove(profiles.size() - 1);\n\t\t}\n',
      ''),
@@ -66,8 +66,8 @@ MUTS = [
      '\t\t\tprofiles.remove(profiles.size() - 1);',
      '\t\t\tprofiles.remove(0);'),
     (STORE, 'the login stamp never set, so the order cannot be trusted',
-     'new Profile(name, secret, System.currentTimeMillis())',
-     'new Profile(name, secret, 0L)'),
+     'new Profile(name, secret, System.currentTimeMillis(), look)',
+     'new Profile(name, secret, 0L, look)'),
 
     # ---- THE REST OF THE CONTRACT.
     (STORE, 'a name longer than the login field accepts saved anyway',
