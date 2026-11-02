@@ -35,6 +35,7 @@ Needs a display: the client opens its real window and is driven through its real
 import argparse
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -165,8 +166,12 @@ def start_engine(engine, log, port, webport, mgmtport, extra_env=None):
     env.update({'NODE_PORT': str(port), 'WEB_PORT': str(webport), 'WEB_MANAGEMENT_PORT': str(mgmtport)})
     env.update(extra_env or {})
     out = open(log, 'w', encoding='utf-8')
+    # ITS OWN PROCESS GROUP, where there is such a thing. npx runs the engine as a child, and
+    # terminate() signals only what Popen holds - so on Linux the wrapper died and node carried on
+    # holding all three ports, which the next engine then could not bind.
     proc = subprocess.Popen(['npx', 'tsx', 'src/app.ts'], cwd=engine, env=env,
-                            stdout=out, stderr=subprocess.STDOUT, shell=(os.name == 'nt'))
+                            stdout=out, stderr=subprocess.STDOUT, shell=(os.name == 'nt'),
+                            start_new_session=(os.name != 'nt'))
 
     # WAIT FOR "World ready", not for a fixed number of seconds. The world loads a map and twelve
     # thousand npcs first, and how long that takes is a property of the machine.
@@ -296,7 +301,8 @@ def main():
         # AND AGAIN, AGAINST A LOGIN SERVER. Only when this run started the engine: with --port
         # there is one engine, somebody else's, and its authority is whatever they configured.
         if not args.port and args.authority == 'both':
-            stop_engine(engine)
+            # And the ports with it: the second engine wants the same three.
+            stop_engine(engine, (port, webport, mgmtport))
             engine = None
             log = os.path.join(work, 'engine-loginserver.log')
             print()
@@ -373,22 +379,39 @@ def run_phases(java, classes, rsan, work, port, webport, label):
     return failed
 
 
-def stop_engine(proc):
-    """THE WHOLE TREE. npx runs the engine as a grandchild through cmd.exe, and terminating what
-    Popen holds kills the wrapper and leaves node sitting on the port - so the next run dies with
-    EADDRINUSE and the orphan has to be hunted down by hand. taskkill /T takes the children with
-    it. Called between the two passes as well as at the end, because the second engine takes the
-    first one's ports."""
+def stop_engine(proc, free=()):
+    """THE WHOLE TREE. npx runs the engine as a grandchild - through cmd.exe on Windows, as a
+    plain child on everything else - and terminating what Popen holds kills the wrapper and leaves
+    node sitting on the ports. So: taskkill /T there, the process GROUP here, and then a wait on
+    the ports themselves, because a process that has gone is not the same thing as a socket that
+    has been released. `free` is the ports the caller is about to need; the second pass needs all
+    three of the first one's, and starting before they are free fails the port guard."""
     if proc is None:
         return
     if os.name == 'nt':
         subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True, text=True)
     else:
-        proc.terminate()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except OSError:
+            proc.terminate()
     try:
         proc.wait(timeout=30)
     except Exception:
+        if os.name != 'nt':
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
         proc.kill()
+
+    giveUp = time.time() + 30
+    for p in free:
+        while in_use(p) and time.time() < giveUp:
+            time.sleep(1)
+        if in_use(p):
+            raise SystemExit('run_logintokentest: port %d is still held after the engine was '
+                             'stopped - something else is on it' % p)
 
 
 if __name__ == '__main__':

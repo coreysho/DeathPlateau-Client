@@ -96,12 +96,15 @@ jobs:
         cache-dependency-path: Engine-TS/package-lock.json
 
     # The key is per-machine and never committed, so this one is made here and thrown away with
-    # the runner; the suite reads the modulus out of it and tells the client.
+    # the runner; the suite reads the modulus out of it and tells the client. The migrations are
+    # not optional either: a clone has no db.sqlite, and a world with no account table refuses
+    # every login - which is how the first run of this job failed, in all five phases at once.
     - name: Pack the client cache
       working-directory: Engine-TS
       run: |
         npm ci
         npm run rsa
+        npm run sqlite:migrate
         npm run build
 
     # Eleven of the thirty construct a Swing window or an Applet, which needs a display.
