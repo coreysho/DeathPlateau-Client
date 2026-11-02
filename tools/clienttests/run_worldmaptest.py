@@ -34,10 +34,15 @@ TEST = os.path.join(HERE, 'WorldMapTest.java')
 # WHERE THE CACHE USUALLY IS. The engine packs it and .gitignore keeps it out of the repository,
 # so there is nothing to check in and nothing to download: it is beside the checkout or it is
 # named on the command line.
+# UNDER EITHER NAME. DeathPlateau-Engine is what the engine is called now and Engine-TS is what it
+# was; a working checkout can be either, and leaving one out is a suite that skips on a machine with
+# the cache sitting right beside it.
 GUESSES = [
     os.environ.get('DP_PACK'),
     os.path.join(os.path.dirname(ROOT), 'DeathPlateau-Engine/data/pack'),
+    os.path.join(os.path.dirname(ROOT), 'Engine-TS/data/pack'),
     os.path.join(ROOT, '../DeathPlateau-Engine/data/pack'),
+    os.path.join(ROOT, '../Engine-TS/data/pack'),
 ]
 
 

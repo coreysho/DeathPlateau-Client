@@ -30,7 +30,11 @@ TEST = os.path.join(HERE, 'MapIconTest.java')
 def _engine():
     beside = os.path.dirname(ROOT)
     for name in ('DeathPlateau-Engine', 'Engine-TS'):
-        if os.path.isdir(os.path.join(beside, name, 'data', 'pack', 'client', 'media')):
+        # isFILE, not isdir: media is an archive and isdir on it is always false, so this loop
+        # could never match and every run fell through to the name below. That is why this
+        # suite had never run anywhere - skipped on CI for want of an engine checkout, skipped
+        # here for want of a directory that was never a directory.
+        if os.path.isfile(os.path.join(beside, name, 'data', 'pack', 'client', 'media')):
             return os.path.join(beside, name)
     return os.path.join(beside, 'DeathPlateau-Engine')
 
