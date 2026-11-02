@@ -3500,6 +3500,12 @@ public class Client extends GameShell implements PixMap.Target {
 		// milliseconds and writes statics the live game shares, so it happens here on the game
 		// thread and one at a time. Nothing is drawn unless the window has asked for it.
 		if (this.worldMap != null) {
+			// WARMED THE MOMENT THE PLAYER IS IN THE WORLD, not when they open the map: the
+			// background fetch is seven hundred squares and used to start on the first open,
+			// with the player watching it arrive.
+			if (this.ingame) {
+				this.worldMap.warm();
+			}
 			this.worldMap.tick();
 			if (this.worldMapWindow != null) {
 				this.worldMapWindow.setPlayer(this.playerTileX(), this.playerTileZ(),
