@@ -235,7 +235,10 @@ def main():
     # An engine that is not there fails loudly enough, but one whose pack is broken sends the
     # client to 404 and 30%, and one whose pack is merely STALE does not fail at all - it serves
     # the previous build, and the shots come out looking right. See enginecheck.
-    enginecheck.require(a.port, a.webport)
+    # a.engine, NOT the default. This checked the sibling Engine-TS whatever --engine said, so a
+    # run against a scratchpad worktree compared the worktree's served cache to a completely
+    # different checkout's data/pack and refused every time, naming a staleness that was not there.
+    enginecheck.require(a.port, a.webport, a.engine)
 
     global JAR
     if a.jar:
