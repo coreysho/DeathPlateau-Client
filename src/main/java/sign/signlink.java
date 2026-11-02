@@ -3,6 +3,7 @@ package sign;
 import javax.sound.midi.MidiSystem;
 import javax.sound.sampled.*;
 import java.applet.Applet;
+import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -44,8 +45,6 @@ public class signlink implements Runnable {
 
 	public static String midi = "none";
 
-	public static String wave = "none";
-
 	public static boolean reporterror = true;
 
 	public static String errorname = "";
@@ -66,8 +65,6 @@ public class signlink implements Runnable {
 
 	public static int uid;
 
-	public static int wavepos;
-
 	public static int wavevol = 50;
 
 	public static InetAddress socketip;
@@ -77,8 +74,6 @@ public class signlink implements Runnable {
 	public static boolean midiplay;
 
 	public static boolean sunjava;
-
-	public static boolean waveplay;
 
 	public static void startpriv(InetAddress arg0) {
 		threadliveid = (int) (Math.random() * 9.9999999E7D);
@@ -175,10 +170,6 @@ public class signlink implements Runnable {
 						var7.close();
 					} catch (Exception var11) {
 					}
-				}
-				if (waveplay) {
-					wave = var1 + savereq;
-					waveplay = false;
 				}
 				if (midiplay) {
 					midi = var1 + savereq;
@@ -299,29 +290,129 @@ public class signlink implements Runnable {
 		threadreq = arg0;
 	}
 
+	// SOUND EFFECTS PLAY AT ONCE, AND FROM MEMORY (2026-11-02).
+	//
+	// WHAT THEY USED TO DO. A sound went through the same savereq/savebuf machinery as a midi: the
+	// signlink thread wrote it to one of five rotating files on disk, then played it back on that
+	// SAME THREAD, synchronously, writing the whole wave into a SourceDataLine and draining it
+	// before returning. So one sound at a time, and while it played the signlink thread could not
+	// open a socket, resolve a name, start a thread or accept another sound.
+	//
+	// That is three separate ways to lose a sound, and they were all firing:
+	//
+	//   - wavesave refused outright while a save was pending, so anything asked for during a sound
+	//     was dropped on the floor;
+	//   - Client.updateAudio only played a sound if it would outlast the one already going, so a
+	//     short sound landing during a long one was dropped as well;
+	//   - and five rotating filenames mean the sixth sound overwrites the file the player thread
+	//     may still be reading, which truncates it.
+	//
+	// Reported as "KBD sounds are getting cut short" and, on a two-tick blowpipe, hearing a
+	// monster's defend sound twice with the first one cut off.
+	//
+	// Now a sound is a byte[] on a queue and there are WAVE_VOICES of them playing at once, each on
+	// its own line, so they MIX the way they are supposed to rather than taking turns. Nothing
+	// touches the disk and nothing blocks the signlink thread. Midi is untouched: it still goes
+	// through savereq, because exactly one piece of music plays at a time and that is correct.
+	private static final int WAVE_VOICES = 4;
+	private static final java.util.concurrent.BlockingQueue<byte[]> wavequeue = new java.util.concurrent.ArrayBlockingQueue<byte[]>(24);
+	private static byte[] lastwave = null;
+	private static boolean wavevoicesstarted = false;
+
 	public static synchronized boolean wavesave(byte[] arg0, int arg1) {
-		if (arg1 > 2000000) {
-			return false;
-		} else if (savereq == null) {
-			wavepos = (wavepos + 1) % 5;
-			savelen = arg1;
-			savebuf = arg0;
-			waveplay = true;
-			savereq = "sound" + wavepos + ".wav";
-			return true;
-		} else {
+		if (arg0 == null || arg1 <= 0 || arg1 > 2000000) {
 			return false;
 		}
+		// Copied because the caller reuses its buffer, and a voice may still be reading this one.
+		byte[] wav = new byte[arg1];
+		System.arraycopy(arg0, 0, wav, 0, arg1);
+		lastwave = wav;
+		return wavequeue.offer(wav) | startwavevoices();
 	}
 
 	public static synchronized boolean wavereplay() {
-		if (savereq == null) {
-			savebuf = null;
-			waveplay = true;
-			savereq = "sound" + wavepos + ".wav";
-			return true;
-		} else {
+		if (lastwave == null) {
 			return false;
+		}
+		return wavequeue.offer(lastwave) | startwavevoices();
+	}
+
+	/** Always true: a full queue means two dozen sounds are already waiting, which is a storm, and
+	 *  dropping the newest is better than growing without limit. The client only needs to know the
+	 *  sound was accepted, and the alternative it takes on false is to ask again next frame. */
+	private static synchronized boolean startwavevoices() {
+		if (wavevoicesstarted) {
+			return true;
+		}
+		wavevoicesstarted = true;
+		for (int i = 0; i < WAVE_VOICES; i++) {
+			Thread voice = new Thread(new Runnable() {
+				public void run() {
+					while (true) {
+						byte[] wav;
+						try {
+							wav = wavequeue.take();
+						} catch (InterruptedException stop) {
+							return;
+						}
+						playwave(wav);
+					}
+				}
+			});
+			voice.setDaemon(true);
+			voice.setPriority(Thread.MIN_PRIORITY);
+			voice.start();
+		}
+		return true;
+	}
+
+	/** One sound on one line. Everything here is per-call, so two voices never share state. */
+	private static void playwave(byte[] wav) {
+		AudioInputStream in = null;
+		SourceDataLine line = null;
+		try {
+			in = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wav));
+			AudioFormat format = in.getFormat();
+			line = (SourceDataLine) AudioSystem.getLine(new DataLine.Info(SourceDataLine.class, format));
+			line.open(format);
+			// THE VOLUME SLIDER DID NOTHING. wavevol is 128/96/64/32 for the four levels the
+			// Options tab offers and was written by setWaveVolume and read by absolutely nothing -
+			// so sound effects played at full volume whatever it was set to. Decibels, because
+			// MASTER_GAIN is in decibels and a linear fraction of it is not a linear loudness.
+			if (line.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+				FloatControl gain = (FloatControl) line.getControl(FloatControl.Type.MASTER_GAIN);
+				int vol = wavevol < 0 ? 0 : (wavevol > 128 ? 128 : wavevol);
+				float db = vol == 0 ? gain.getMinimum() : (float) (20.0 * Math.log10((double) vol / 128.0));
+				if (db < gain.getMinimum()) {
+					db = gain.getMinimum();
+				}
+				if (db > gain.getMaximum()) {
+					db = gain.getMaximum();
+				}
+				gain.setValue(db);
+			}
+			line.start();
+			byte[] buf = new byte[8192];
+			int n;
+			while ((n = in.read(buf, 0, buf.length)) >= 0) {
+				line.write(buf, 0, n);
+			}
+			line.drain();
+		} catch (Throwable ignore) {
+			// A machine with no mixer, or one line too many: the game carries on without the sound.
+		} finally {
+			if (line != null) {
+				try {
+					line.close();
+				} catch (Throwable ignore) {
+				}
+			}
+			if (in != null) {
+				try {
+					in.close();
+				} catch (Throwable ignore) {
+				}
+			}
 		}
 	}
 
@@ -357,12 +448,6 @@ public class signlink implements Runnable {
 	public boolean midiFadingIn = false;
 	public boolean midiFadingOut = false;
 	public int midiFadeVol = 0;
-	private final Position curPosition = Position.NORMAL;
-
-	enum Position {
-		LEFT, RIGHT, NORMAL
-	}
-
 	public void playMidi(String music) {
 		if (midiFadingOut) {
 			return;
@@ -421,54 +506,5 @@ public class signlink implements Runnable {
 			}
 		}
 
-		if (!wave.equals("none")) {
-			AudioInputStream audioInputStream;
-
-			try {
-				audioInputStream = AudioSystem.getAudioInputStream(new File(wave));
-			} catch (Exception ignore) {
-				return;
-			}
-
-			AudioFormat format = audioInputStream.getFormat();
-			SourceDataLine auline;
-			DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
-
-			try {
-				auline = (SourceDataLine) AudioSystem.getLine(info);
-				auline.open(format);
-			} catch (Exception ignore) {
-				return;
-			}
-
-			if (auline.isControlSupported(FloatControl.Type.PAN)) {
-				FloatControl pan = (FloatControl) auline.getControl(FloatControl.Type.PAN);
-				if (curPosition == Position.RIGHT) {
-					pan.setValue(1.0f);
-				} else if (curPosition == Position.LEFT) {
-					pan.setValue(-1.0f);
-				}
-			}
-
-			auline.start();
-			int nBytesRead = 0;
-			int EXTERNAL_BUFFER_SIZE = 524288;
-			byte[] abData = new byte[EXTERNAL_BUFFER_SIZE];
-
-			try {
-				while (nBytesRead != -1) {
-					nBytesRead = audioInputStream.read(abData, 0, abData.length);
-					if (nBytesRead >= 0) {
-						auline.write(abData, 0, nBytesRead);
-					}
-				}
-			} catch (IOException ignore) {
-			} finally {
-				auline.drain();
-				auline.close();
-			}
-
-			wave = "none";
-		}
 	}
 }
