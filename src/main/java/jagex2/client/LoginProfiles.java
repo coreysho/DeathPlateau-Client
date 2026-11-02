@@ -66,6 +66,17 @@ public final class LoginProfiles {
 	private LoginProfiles() {
 	}
 
+	/**
+	 * What a character looks like, kept so the login screen can draw their face: the twelve
+	 * appearance slots the engine sends, then the five recolours, then 1 for a female body.
+	 *
+	 * It is written down because the client cannot work it out. Appearance arrives with the
+	 * player once they are IN the world, and the login screen is the one place it is needed and
+	 * the one place it has never been - so the only way to show a face beside a name is to have
+	 * kept the last one seen.
+	 */
+	public static final int LOOK_LEN = 18;
+
 	/** One saved account. `secret` is "" when only the name was kept. */
 	public static final class Profile {
 
@@ -73,15 +84,24 @@ public final class LoginProfiles {
 		public final String secret;
 		public final long lastUsed;
 
-		Profile(String username, String secret, long lastUsed) {
+		/** LOOK_LEN numbers, or null for an account not yet seen in the world. */
+		public final int[] look;
+
+		Profile(String username, String secret, long lastUsed, int[] look) {
 			this.username = username;
 			this.secret = secret == null ? "" : secret;
 			this.lastUsed = lastUsed;
+			this.look = look != null && look.length == LOOK_LEN ? look : null;
 		}
 
 		/** Whether clicking this one can sign in directly, or only fills the name in. */
 		public boolean canSignIn() {
 			return this.secret.length() > 0;
+		}
+
+		/** Whether there is a face to draw, or only the empty frame. */
+		public boolean hasFace() {
+			return this.look != null;
 		}
 	}
 
@@ -119,12 +139,67 @@ public final class LoginProfiles {
 		// Same account signing in again replaces its entry rather than adding a second one. Matched
 		// without case because the server lowercases a name into base37 and "Corey" and "corey" are
 		// one account; the spelling kept is the one just typed.
+		// The face this account had last time is carried over. remember() runs when the login is
+		// accepted, which is before the world has said what the player looks like - so taking the
+		// entry out and putting a fresh one back would blank the face on every single login and
+		// it would only reappear a moment later.
+		int[] look = lookOf(name);
 		removeByName(name);
-		profiles.add(0, new Profile(name, secret, System.currentTimeMillis()));
+		profiles.add(0, new Profile(name, secret, System.currentTimeMillis(), look));
 		while (profiles.size() > MAX) {
 			profiles.remove(profiles.size() - 1);
 		}
 		save();
+	}
+
+	/**
+	 * Called once the world has said what this player looks like, which is after remember().
+	 *
+	 * Does nothing unless the face has actually changed, because this is reached on every
+	 * appearance update - every time the player changes clothes - and rewriting the file to say
+	 * the same thing is a file write per wardrobe change.
+	 */
+	public static synchronized void rememberFace(String username, int[] look) {
+		if (!loaded) {
+			load();
+		}
+		if (username == null || look == null || look.length != LOOK_LEN) {
+			return;
+		}
+		String name = username.trim();
+		for (int i = 0; i < profiles.size(); i++) {
+			Profile p = profiles.get(i);
+			if (!p.username.equalsIgnoreCase(name)) {
+				continue;
+			}
+			if (same(p.look, look)) {
+				return;
+			}
+			profiles.set(i, new Profile(p.username, p.secret, p.lastUsed, look.clone()));
+			save();
+			return;
+		}
+	}
+
+	private static boolean same(int[] a, int[] b) {
+		if (a == null || b == null || a.length != b.length) {
+			return false;
+		}
+		for (int i = 0; i < a.length; i++) {
+			if (a[i] != b[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static int[] lookOf(String name) {
+		for (int i = 0; i < profiles.size(); i++) {
+			if (profiles.get(i).username.equalsIgnoreCase(name)) {
+				return profiles.get(i).look;
+			}
+		}
+		return null;
 	}
 
 	/** The × on a profile. Removes the account from this machine, not from the server. */
@@ -181,7 +256,7 @@ public final class LoginProfiles {
 				} catch (Exception ignored) {
 				}
 				if (!containsName(name)) {
-					profiles.add(new Profile(name, secret, last));
+					profiles.add(new Profile(name, secret, last, parseLook(p.getProperty("profile." + i + ".look"))));
 				}
 			}
 		} catch (Exception ignored) {
@@ -194,6 +269,43 @@ public final class LoginProfiles {
 			} catch (Exception ignored) {
 			}
 		}
+	}
+
+	/**
+	 * A face out of the file, or null for anything that is not exactly what was written.
+	 *
+	 * Anything wrong here costs a picture and nothing else - the account, its name and its
+	 * password are all still read. A face is the one part of a profile that can be thrown away
+	 * without the player losing something they would notice as missing.
+	 */
+	private static int[] parseLook(String text) {
+		if (text == null) {
+			return null;
+		}
+		String[] parts = text.trim().split(",");
+		if (parts.length != LOOK_LEN) {
+			return null;
+		}
+		int[] look = new int[LOOK_LEN];
+		for (int i = 0; i < LOOK_LEN; i++) {
+			try {
+				look[i] = Integer.parseInt(parts[i].trim());
+			} catch (Exception malformed) {
+				return null;
+			}
+		}
+		return look;
+	}
+
+	private static String writeLook(int[] look) {
+		StringBuilder text = new StringBuilder();
+		for (int i = 0; i < look.length; i++) {
+			if (i > 0) {
+				text.append(',');
+			}
+			text.append(look[i]);
+		}
+		return text.toString();
 	}
 
 	private static boolean containsName(String name) {
@@ -219,6 +331,9 @@ public final class LoginProfiles {
 				p.setProperty("profile." + i + ".name", profile.username);
 				p.setProperty("profile." + i + ".secret", encrypt(profile.secret));
 				p.setProperty("profile." + i + ".last", "" + profile.lastUsed);
+				if (profile.look != null) {
+					p.setProperty("profile." + i + ".look", writeLook(profile.look));
+				}
 			}
 			// Narrowed before the write, not after, so the secrets are never briefly world
 			// readable. These return false on filesystems that do not carry the bits, which is

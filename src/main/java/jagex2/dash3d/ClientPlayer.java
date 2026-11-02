@@ -3,6 +3,7 @@ package jagex2.dash3d;
 import deob.ObfuscatedName;
 import jagex2.client.ChatIcons;
 import jagex2.client.Client;
+import jagex2.client.LoginProfiles;
 import jagex2.config.IdkType;
 import jagex2.config.NpcType;
 import jagex2.config.ObjType;
@@ -488,5 +489,55 @@ public class ClientPlayer extends ClientEntity {
 		}
 		this.field1676 <<= 0x1;
 		this.field1676 += this.field1677;
+
+		// THE FACE THE LOGIN SCREEN DRAWS. This is the only moment the client is ever told what a
+		// player looks like, and the login screen - where it is wanted - runs long before it. So
+		// the local player's appearance is written down here as it arrives, for the NEXT start.
+		//
+		// At the end of the method on purpose: the two swaps above are a temporary rearrangement
+		// for the hash and are undone again, so this is the arrangement getHeadModel reads.
+		// rememberFace drops it unless it has changed, so wearing a different hat is not a file
+		// write, and nothing here can fail in a way that matters - a face is decoration.
+		if (this == Client.localPlayer) {
+			try {
+				LoginProfiles.rememberFace(this.name, this.faceForLogin());
+			} catch (Throwable ignored) {
+			}
+		}
+	}
+
+	/** The appearance as LoginProfiles keeps it: twelve slots, five recolours, then the body. */
+	public int[] faceForLogin() {
+		int[] look = new int[LoginProfiles.LOOK_LEN];
+		for (int i = 0; i < 12; i++) {
+			look[i] = this.field1674[i];
+		}
+		for (int i = 0; i < 5; i++) {
+			look[12 + i] = this.field1682[i];
+		}
+		look[17] = this.field1677;
+		return look;
+	}
+
+	/**
+	 * Puts a kept face back on, so a head can be built for a player who is not here.
+	 *
+	 * The login screen has a name and eighteen numbers and no player behind them; this makes a
+	 * ClientPlayer that is enough of one for getHeadModel and nothing else.
+	 */
+	public static ClientPlayer fromFace(int[] look) {
+		if (look == null || look.length != LoginProfiles.LOOK_LEN) {
+			return null;
+		}
+		ClientPlayer player = new ClientPlayer();
+		for (int i = 0; i < 12; i++) {
+			player.field1674[i] = look[i];
+		}
+		for (int i = 0; i < 5; i++) {
+			player.field1682[i] = look[12 + i];
+		}
+		player.field1677 = look[17];
+		player.field1680 = true;
+		return player;
 	}
 }
