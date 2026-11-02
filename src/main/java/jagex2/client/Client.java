@@ -4081,6 +4081,10 @@ public class Client extends GameShell implements PixMap.Target {
 			int forget = TitleScreen.forgetAt(x, y, count);
 			if (forget >= 0) {
 				LoginProfiles.forget(saved.get(forget).username);
+				// ...and the face with it. The heads are cached by account name, so an account
+				// removed and later saved again would otherwise come back wearing the kit it had
+				// the last time this client drew it.
+				TitleScreen.forgetHeads();
 				this.titleHover = -1;
 				this.redrawFrame = true;
 				return;

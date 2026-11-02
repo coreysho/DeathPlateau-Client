@@ -70,7 +70,12 @@ public class TitlePreview {
 
 	/** Profile's constructor is package-private, which is why this preview lives in the package. */
 	static LoginProfiles.Profile profile(String name, boolean withSecret) {
-		return new LoginProfiles.Profile(name, withSecret ? "x" : "", 0L);
+		// A face on record, so the portrait frame is in the picture. Nothing will be drawn INSIDE
+		// it here: a head is built from the cache and this preview deliberately has none, which is
+		// the same reason there is no text. The frame and its place in the card are what this can
+		// show, and the head has to be checked against a running client.
+		int[] look = new int[LoginProfiles.LOOK_LEN];
+		return new LoginProfiles.Profile(name, withSecret ? "x" : "", 0L, look);
 	}
 
 	/**

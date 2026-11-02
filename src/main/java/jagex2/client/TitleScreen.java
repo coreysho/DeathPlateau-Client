@@ -6,7 +6,10 @@ import java.util.List;
 
 import javax.imageio.ImageIO;
 
+import jagex2.dash3d.ClientPlayer;
+import jagex2.dash3d.Model;
 import jagex2.graphics.Pix2D;
+import jagex2.graphics.Pix3D;
 import jagex2.graphics.Pix32;
 import jagex2.graphics.PixFont;
 import jagex2.jstring.JString;
@@ -75,12 +78,30 @@ public final class TitleScreen {
 	private static final int BAR_Y = BUTTON_Y;
 	private static final int BAR_H = 22;
 
-	private static final int PROFILE_Y = 423;
-	private static final int PROFILE_H = 44;
-	private static final int PROFILE_W = 128;
-	private static final int PROFILE_GAP = 10;
-	private static final int ADD_W = 42;
-	private static final int FORGET_W = 16;
+	// THE SAVED ACCOUNTS, a row of cards above the footer. Each one carries the character's own
+	// face, which is why the card grew: a name on its own told you which account it was only if
+	// you could remember which name was which, and the whole point of a saved login is not
+	// having to. The row is bounded above by the links at LINK_Y and below by FOOTER_Y, and the
+	// card is as tall as that gap allows.
+	static final int PROFILE_Y = 404;
+	static final int PROFILE_H = 62;
+	static final int PROFILE_W = 152;
+	static final int PROFILE_GAP = 10;
+	static final int ADD_W = 42;
+	static final int FORGET_W = 16;
+
+	/** The portrait, square, inset from the card's top left. */
+	private static final int FACE = 48;
+	private static final int FACE_INSET = 7;
+
+	// HOW A HEAD SITS IN ITS BOX. A head model is built with its origin at the neck and y running
+	// negative upwards, so drawing it on the box's centre hangs it above the middle - the same
+	// correction the interface renderer makes for obj icons. These three are the only numbers in
+	// here that were not measured against something, because a face cannot be rendered without a
+	// cache and the login preview has none: tune them against a real client, not a drawing.
+	private static final int FACE_ZOOM = 260;
+	private static final int FACE_TILT = 0;
+	private static final int FACE_LIFT = 14;
 	private static final int FOOTER_Y = 479;
 
 	private static final int SIGIL_ALPHA = 92;          // 36% of 256, the mockup's opacity
@@ -349,15 +370,98 @@ public final class TitleScreen {
 				Pix2D.fillRectTrans(0x0E0909, PROFILE_Y, PROFILE_W, PROFILE_H, 217, x);
 				Pix2D.drawRect(PROFILE_Y, PROFILE_H, 0x382324, x, PROFILE_W);
 			}
-			text(font, p.username, lit ? STONE : STONE_DIM, x + 10, PROFILE_Y + 19);
-			text(font, p.canSignIn() ? "saved" : "name only", STONE_FAINT, x + 10, PROFILE_Y + 34);
+			face(p, x + FACE_INSET, PROFILE_Y + FACE_INSET);
+
+			int textX = x + FACE_INSET + FACE + 10;
+			text(font, p.username, lit ? STONE : STONE_DIM, textX, PROFILE_Y + 26);
+			text(font, p.canSignIn() ? "saved" : "name only", STONE_FAINT, textX, PROFILE_Y + 42);
 			// The x. Drawn dim because removing an account is not what the card is for.
-			text(font, "x", STONE_FAINT, x + PROFILE_W - FORGET_W, PROFILE_Y + 19);
+			text(font, "x", STONE_FAINT, x + PROFILE_W - FORGET_W, PROFILE_Y + 17);
 			x += PROFILE_W + PROFILE_GAP;
 		}
 
 		Pix2D.drawRect(PROFILE_Y, PROFILE_H, FIELD_RULE, x, ADD_W);
 		text(font, "+", STONE_DIM, x + ADD_W / 2 - 3, PROFILE_Y + PROFILE_H / 2 + 5);
+
+		// Only with nothing saved. A standing instruction above an empty row is a help; the same
+		// line above three cards that plainly work is clutter telling you what you already did.
+		if (count == 0 && font != null) {
+			String hint = "Tick \"Remember me\" when you sign in to keep an account here";
+			text(font, hint, STONE_FAINT, CX - font.stringWid(hint) / 2, PROFILE_Y - 10);
+		}
+	}
+
+	/**
+	 * The character's own head in the card, or an empty frame for an account not yet seen.
+	 *
+	 * EVERY EXISTING PROFILE STARTS EMPTY and there is nothing to be done about it: what a player
+	 * looks like is only ever sent once they are in the world, so an account saved before this
+	 * existed has no face on record until its next login. The frame is drawn either way, so a
+	 * blank one reads as "not yet" rather than as something missing.
+	 */
+	private static void face(LoginProfiles.Profile p, int x, int y) {
+		Pix2D.fillRectTrans(0x060404, y, FACE, FACE, 190, x);
+		Pix2D.drawRect(y, FACE, 0x2A1A1B, x, FACE);
+
+		Model head = headOf(p);
+		if (head == null) {
+			return;
+		}
+		int keepX = Pix3D.centerX;
+		int keepY = Pix3D.centerY;
+		Pix3D.centerX = x + FACE / 2;
+		Pix3D.centerY = y + FACE / 2 + FACE_LIFT;
+		try {
+			int sin = Pix3D.sinTable[FACE_TILT] * FACE_ZOOM >> 16;
+			int cos = Pix3D.cosTable[FACE_TILT] * FACE_ZOOM >> 16;
+			head.method380(0, 0, 0, FACE_TILT, 0, sin, cos);
+		} catch (Throwable ignored) {
+			// A head that will not draw is a blank frame, not a login screen that will not come up.
+		} finally {
+			Pix3D.centerX = keepX;
+			Pix3D.centerY = keepY;
+		}
+	}
+
+	/** Heads already built, by account. Building one per card per frame is not what this is for. */
+	private static final java.util.HashMap<String, Model> heads = new java.util.HashMap<String, Model>();
+
+	/** When each account last failed to build, so a retry is occasional rather than per frame. */
+	private static final java.util.HashMap<String, Long> headFailed = new java.util.HashMap<String, Long>();
+
+	private static Model headOf(LoginProfiles.Profile p) {
+		if (!p.hasFace()) {
+			return null;
+		}
+		Model built = heads.get(p.username);
+		if (built != null) {
+			return built;
+		}
+		// NOT BLACKLISTED FOR GOOD on a failure. getHeadModel answers null while any part of the
+		// kit is still missing, which on a first run is every part, for as long as the cache
+		// takes - and a card that gave up in that window would stay blank until a restart.
+		Long failed = headFailed.get(p.username);
+		if (failed != null && System.currentTimeMillis() - failed.longValue() < 2000L) {
+			return null;
+		}
+		try {
+			ClientPlayer who = ClientPlayer.fromFace(p.look);
+			built = who == null ? null : who.getHeadModel();
+		} catch (Throwable ignored) {
+			built = null;
+		}
+		if (built == null) {
+			headFailed.put(p.username, Long.valueOf(System.currentTimeMillis()));
+			return null;
+		}
+		heads.put(p.username, built);
+		return built;
+	}
+
+	/** Dropped when the saved accounts change, so a forgotten account's head goes with it. */
+	public static void forgetHeads() {
+		heads.clear();
+		headFailed.clear();
 	}
 
 	/**
@@ -454,7 +558,10 @@ public final class TitleScreen {
 	 * card: tested the other way round, removing an account would sign into it instead.
 	 */
 	public static int forgetAt(int x, int y, int count) {
-		if (y < PROFILE_Y || y > PROFILE_Y + 26) {
+		// The top band of the card only, where the x is drawn. The card got taller when it grew a
+		// portrait, and a forget box that grew with it would have covered the face - where the
+		// click means "sign in as this one", which is the opposite.
+		if (y < PROFILE_Y || y > PROFILE_Y + 24) {
 			return -1;
 		}
 		int at = rowStart(count);

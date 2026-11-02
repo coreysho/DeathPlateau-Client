@@ -70,7 +70,7 @@ MUTS = [
      '\t\t\tif (x >= at + PROFILE_W - FORGET_W - 4 && x <= at + PROFILE_W) {',
      '\t\t\tif (x >= at && x <= at + PROFILE_W) {'),
     (SCREEN, 'the x spreading down the whole card height',
-     '\t\tif (y < PROFILE_Y || y > PROFILE_Y + 26) {',
+     '\t\tif (y < PROFILE_Y || y > PROFILE_Y + 24) {',
      '\t\tif (y < PROFILE_Y || y > PROFILE_Y + PROFILE_H) {'),
 
     # ---- THE PLAYER COUNT. This one shipped: the live client's footer read "-1 PLAYERS ONLINE"

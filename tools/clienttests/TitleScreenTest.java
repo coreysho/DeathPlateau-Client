@@ -97,8 +97,15 @@ public class TitleScreenTest {
 		check(!TitleScreen.inRemember(CX, 200, null), "and not the field above it");
 	}
 
+	// WHERE TO PROBE, taken from the screen rather than written out a second time. These were
+	// literals, and a card that grew a portrait moved every one of them: the suite then
+	// failed saying the x was unreachable when the x was fine and these were stale.
+	private static final int CARD_MID_Y = TitleScreen.PROFILE_Y + TitleScreen.PROFILE_H / 2;
+	private static final int FORGET_Y = TitleScreen.PROFILE_Y + 10;
+	private static final int CARD_BOTTOM_Y = TitleScreen.PROFILE_Y + TitleScreen.PROFILE_H - 6;
+
 	static int rowStart(int count) {
-		return CX - (count * 128 + count * 10 + 42) / 2;
+		return CX - (count * TitleScreen.PROFILE_W + count * TitleScreen.PROFILE_GAP + TitleScreen.ADD_W) / 2;
 	}
 
 	static void rowTests() {
@@ -107,40 +114,40 @@ public class TitleScreenTest {
 			boolean allFound = true;
 			for (int i = 0; i < count; i++) {
 				int mid = at + 64;
-				if (TitleScreen.profileAt(mid, 445, count) != i) {
+				if (TitleScreen.profileAt(mid, CARD_MID_Y, count) != i) {
 					allFound = false;
 				}
-				at += 138;
+				at += TitleScreen.PROFILE_W + TitleScreen.PROFILE_GAP;
 			}
 			check(allFound, "with " + count + " saved, every card answers as itself");
-			check(TitleScreen.inAdd(at + 20, 445, count), "and the add button sits after them");
-			check(TitleScreen.profileAt(at + 20, 445, count) == -1, "which is not a card");
+			check(TitleScreen.inAdd(at + 20, CARD_MID_Y, count), "and the add button sits after them");
+			check(TitleScreen.profileAt(at + 20, CARD_MID_Y, count) == -1, "which is not a card");
 		}
 
 		check(TitleScreen.profileAt(CX, 300, 3) == -1, "no card above the row");
 		check(TitleScreen.profileAt(CX, 490, 3) == -1, "none below it");
-		check(TitleScreen.profileAt(rowStart(3) - 20, 445, 3) == -1, "none left of the first");
+		check(TitleScreen.profileAt(rowStart(3) - 20, CARD_MID_Y, 3) == -1, "none left of the first");
 
 		// The gap between cards belongs to neither, so a click there does nothing rather than
 		// signing into whichever card is nearer.
-		check(TitleScreen.profileAt(rowStart(3) + 133, 445, 3) == -1, "nor in the gap between two");
+		check(TitleScreen.profileAt(rowStart(3) + TitleScreen.PROFILE_W + 5, CARD_MID_Y, 3) == -1, "nor in the gap between two");
 	}
 
 	static void forgetTests() {
 		int count = 3;
 		int at = rowStart(count);
 		for (int i = 0; i < count; i++) {
-			int x = at + 128 - 8;
-			check(TitleScreen.forgetAt(x, 430, count) == i, "the x on card " + i + " is reachable");
+			int x = at + TitleScreen.PROFILE_W - 8;
+			check(TitleScreen.forgetAt(x, FORGET_Y, count) == i, "the x on card " + i + " is reachable");
 			// THE ORDERING RULE. The x is inside the card, so profileAt also claims this pixel -
 			// the caller must ask forgetAt first, and this is the check that says so out loud.
-			check(TitleScreen.profileAt(x, 430, count) == i,
+			check(TitleScreen.profileAt(x, FORGET_Y, count) == i,
 				"and the card claims that pixel too, so forgetAt must be asked first");
-			at += 138;
+			at += TitleScreen.PROFILE_W + TitleScreen.PROFILE_GAP;
 		}
-		check(TitleScreen.forgetAt(rowStart(count) + 20, 430, count) == -1,
+		check(TitleScreen.forgetAt(rowStart(count) + 20, FORGET_Y, count) == -1,
 			"the left of a card is not its x");
-		check(TitleScreen.forgetAt(rowStart(count) + 120, 460, count) == -1,
+		check(TitleScreen.forgetAt(rowStart(count) + TitleScreen.PROFILE_W - 8, CARD_BOTTOM_Y, count) == -1,
 			"nor the bottom of it, where the timestamp is");
 	}
 
@@ -159,7 +166,7 @@ public class TitleScreenTest {
 		check(TitleScreen.forgetAt(10, 10, 0) == -1, "and to no x");
 		check(!TitleScreen.inEnter(10, 10), "and to no button");
 		check(TitleScreen.fieldAt(10, 10) == -1, "and to no field");
-		check(TitleScreen.profileAt(CX, 445, 0) == -1, "with nothing saved, the row holds no cards");
-		check(TitleScreen.inAdd(rowStart(0) + 20, 445, 0), "but the add button is still there");
+		check(TitleScreen.profileAt(CX, CARD_MID_Y, 0) == -1, "with nothing saved, the row holds no cards");
+		check(TitleScreen.inAdd(rowStart(0) + 20, CARD_MID_Y, 0), "but the add button is still there");
 	}
 }
