@@ -146,7 +146,13 @@ jobs:
             # summary into the log to find out what, and the suites have already said it: these
             # print named checks, and the last lines are the answer nearly every time. %0A is a
             # newline to the annotation parser, and a literal % has to go first or it eats one.
-            why=$(tail -n 14 "/tmp/$name.out" | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            # THE LINES THAT FAILED, not the ones that happened last: a suite with several
+            # phases ends on whichever ran last, which is as likely as not one that passed. The
+            # first run of this printed a green phase directly under the word "failed", with
+            # "2 PHASE(S) FAILED" the only hint that anything had. Headings and FAILs when there
+            # are any, the tail when there are none.
+            why=$( { grep -E '^====|^phase:|FAIL' "/tmp/$name.out" || tail -n 14 "/tmp/$name.out"; } \
+                   | tail -n 24 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$name::$name failed%0A$why"
             failed="$failed $name"
           fi
