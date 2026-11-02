@@ -88,8 +88,11 @@ jobs:
         for f in tools/clienttests/run_*test*.py; do
           name=$(basename "$f" .py)
           echo "::group::$name"
-          timeout 900 python3 "$f"
-          rc=$?
+          # `|| rc=$?` AND NOT A BARE CALL: a run: step is bash -e, so a suite returning
+          # non-zero ends the whole step there and then - the first skip killed the job one
+          # suite short of the end, with the reason printed and nothing to read it.
+          rc=0
+          timeout 900 python3 "$f" || rc=$?
           echo "::endgroup::"
           # 2 IS "I COULD NOT RUN" AND IS NOT A FAILURE. run_worldmaptest and run_mapicontest
           # draw real squares out of the engine's packed cache, which no runner has; without
