@@ -56,9 +56,13 @@ def main():
 
     pack = find_pack(sys.argv[1:])
     if not pack:
-        raise SystemExit('run_worldmaptest: no cache found. Pack the engine (npm run build in '
-                         'DeathPlateau-Engine), or pass the path to its data/pack, or set '
-                         'DP_PACK.')
+        # EXIT 2 IS "I COULD NOT RUN", not "the client is broken". This draws real map squares
+        # out of a packed cache, which only exists where the engine has been built, so on a
+        # machine or a CI runner without one there is nothing to say - and saying it with exit
+        # 1 makes a missing checkout look exactly like a renderer that stopped working.
+        print('run_worldmaptest: SKIP - no packed cache. Pack the engine (npm run build in '
+              'DeathPlateau-Engine), or pass the path to its data/pack, or set DP_PACK.')
+        return 2
 
     work = tempfile.mkdtemp(prefix='worldmaptest')
     try:

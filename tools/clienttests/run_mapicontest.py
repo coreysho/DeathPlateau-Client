@@ -24,7 +24,18 @@ ROOT = os.path.dirname(os.path.dirname(HERE))          # the javaclient repo
 SRC = os.path.join(ROOT, 'src/main/java')
 LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 TEST = os.path.join(HERE, 'MapIconTest.java')
-ENGINE = os.path.join(os.path.dirname(ROOT), 'Engine-TS')
+# THE ENGINE, UNDER EITHER NAME. It is DeathPlateau-Engine now; Engine-TS is what it used to
+# be called, and the default still pointed only there - which passes on a machine that happens
+# to have both checked out and fails on any that does not, including every CI runner.
+def _engine():
+    beside = os.path.dirname(ROOT)
+    for name in ('DeathPlateau-Engine', 'Engine-TS'):
+        if os.path.isdir(os.path.join(beside, name, 'data', 'pack', 'client', 'media')):
+            return os.path.join(beside, name)
+    return os.path.join(beside, 'DeathPlateau-Engine')
+
+
+ENGINE = _engine()
 
 
 def main():
@@ -35,7 +46,10 @@ def main():
 
     media = os.path.join(a.engine, 'data', 'pack', 'client', 'media')
     if not os.path.exists(media):
-        raise SystemExit('run_mapicontest: no %s - build the cache first' % media)
+        # Exit 2 is "I could not run", not "the client is broken" - see run_worldmaptest.
+        print('run_mapicontest: SKIP - no %s, so there is no cache to read the icons out of'
+              % media)
+        return 2
 
     javac, java = shutil.which('javac'), shutil.which('java')
     if not javac or not java:
