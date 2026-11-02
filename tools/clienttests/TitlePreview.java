@@ -51,7 +51,7 @@ public class TitlePreview {
 		profiles.add(profile("Faken", true));
 		profiles.add(profile("Iron_Sgt", false));
 
-		TitleScreen.paint(canvas, null, null, "Corey", "hunter2", 1, true, "", profiles,
+		TitleScreen.paint(canvas, null, null, "Corey", "hunter2", 1, true, "", "", profiles,
 			hover, 142, 10);
 
 		if (guides) {

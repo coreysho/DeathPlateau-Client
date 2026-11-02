@@ -48,6 +48,12 @@ public class TitleScreenTest {
 		System.out.println();
 		System.out.println("6. the player count, which the client does not always have");
 		footerTests();
+		System.out.println();
+		System.out.println("7. the login server's reply, which is two lines and used to be one");
+		messageTests();
+		System.out.println();
+		System.out.println("8. the two lines between the button and the saved accounts");
+		bandTests();
 
 		System.out.println();
 		if (fails == 0) {
@@ -149,6 +155,55 @@ public class TitleScreenTest {
 			"the left of a card is not its x");
 		check(TitleScreen.forgetAt(rowStart(count) + TitleScreen.PROFILE_W - 8, CARD_BOTTOM_Y, count) == -1,
 			"nor the bottom of it, where the timestamp is");
+	}
+
+	static void messageTests() {
+		// The screen was handed only the second of the login server's two lines, so six
+		// messages reached players as the instruction with the reason missing - among them
+		// "Please check your message-centre for details." with nothing to say the account had
+		// been disabled. Both lines now, and these are the rules that decide where they go.
+		int[] both = TitleScreen.messageRows(true, true);
+		int[] one = TitleScreen.messageRows(false, true);
+		int[] none = TitleScreen.messageRows(false, false);
+
+		check(both.length == 2, "a reason and an instruction take two lines");
+		check(one.length == 1, "one of them alone takes one");
+		check(TitleScreen.messageRows(true, false).length == 1, "whichever one it is");
+		check(none.length == 0, "and nothing is drawn for nothing");
+
+		// A single line stays where a single line has always been. Sliding it up to make room
+		// for a line that is not there would move every message that has only ever had one.
+		check(one[0] == TitleScreen.MESSAGE_Y, "one line does not move from where it was");
+		check(both[1] > both[0], "and the instruction goes below the reason");
+
+		// THE PART A PICTURE CANNOT CHECK. Both lines live in the gap between the rule and
+		// the username field, and the way to prove it is to ask the hit tests that ship with
+		// the screen: a message sitting on the username field is a message over a field the
+		// player is about to type in.
+		for (int i = 0; i < both.length; i++) {
+			check(both[i] > TitleScreen.RULE_Y, "line " + i + " is below the rule");
+			check(TitleScreen.fieldAt(CX, both[i]) == -1, "line " + i + " is clear of both fields");
+			check(!TitleScreen.inEnter(CX, both[i]), "line " + i + " is clear of the button");
+		}
+		check(TitleScreen.fieldAt(CX, one[0]) == -1, "and so is a single line");
+
+		// The descenders of the lower line, not just its baseline: a 12-pixel font drops a
+		// few pixels under it, and the field rule is immediately below.
+		check(TitleScreen.fieldAt(CX, both[1] + 4) == -1, "with room under the lower line");
+	}
+
+	static void bandTests() {
+		// The link and the empty-row hint were drawn at 393 and 394 - one pixel apart, both
+		// sentences in the same place - and only ever for a player with no saved account.
+		// A picture could not catch it (no font draws nothing) and neither could the preview,
+		// which has three accounts in it and so never draws the hint at all.
+		check(TitleScreen.HINT_Y - TitleScreen.LINK_Y >= TitleScreen.MESSAGE_LINE,
+			"the link and the empty-row hint are a line apart");
+
+		// And the band they share: under the button, above the cards.
+		check(!TitleScreen.inEnter(CX, TitleScreen.LINK_Y - 9), "the link clears the ENTER button");
+		check(TitleScreen.HINT_Y + 3 < TitleScreen.PROFILE_Y, "and the hint clears the cards below it");
+		check(TitleScreen.profileAt(CX, TitleScreen.HINT_Y, 3) == -1, "which no card answers to");
 	}
 
 	static void footerTests() {

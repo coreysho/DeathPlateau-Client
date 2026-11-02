@@ -63,8 +63,20 @@ public final class TitleScreen {
 
 	private static final int SIGIL_SIZE = 468;
 	private static final int WORDMARK_Y = 24;
-	private static final int RULE_Y = 118;
+	static final int RULE_Y = 118;
 	private static final int RULE_W = 112;
+
+	// THE LOGIN SERVER'S REPLY, in the gap between the rule and the first field.
+	//
+	// TWO LINES, because that is how every one of these messages is written: the login server
+	// sends a reason and an instruction (Client.loginMessage0 and loginMessage1), and this
+	// screen used to be handed only the second. Six of them lost the half that explained
+	// them - "Please check your message-centre for details." with nothing above it to say the
+	// account had been disabled, "Try again in 60 secs..." with no mention of being logged in
+	// already. A message with one line still sits at MESSAGE_Y, where it always has.
+	static final int MESSAGE_Y = 162;
+	static final int MESSAGE_TOP = 148;
+	static final int MESSAGE_LINE = 15;
 
 	private static final int FIELD_H = 42;
 	private static final int USER_Y = 178;
@@ -73,7 +85,13 @@ public final class TitleScreen {
 	private static final int REMEMBER_BOX = 16;
 	private static final int BUTTON_Y = 325;
 	private static final int BUTTON_H = 44;
-	private static final int LINK_Y = 380;
+	// TWO LINES SHARE THE BAND between the button and the saved accounts: this one, and the
+	// hint at HINT_Y that only appears with nothing saved. They were drawn one pixel apart -
+	// baselines 393 and 394 - so a player with no saved account, which is every new player,
+	// read both sentences printed over each other. Nothing caught it: the hint is drawn only
+	// when the row is empty, the preview has always had three accounts in it, and with no
+	// font neither line draws at all. Keep MESSAGE_LINE between them; the test says so.
+	static final int LINK_Y = 381;
 
 	private static final int BAR_Y = BUTTON_Y;
 	private static final int BAR_H = 22;
@@ -84,6 +102,7 @@ public final class TitleScreen {
 	// having to. The row is bounded above by the links at LINK_Y and below by FOOTER_Y, and the
 	// card is as tall as that gap allows.
 	static final int PROFILE_Y = 404;
+	static final int HINT_Y = PROFILE_Y - 8;
 	static final int PROFILE_H = 62;
 	static final int PROFILE_W = 152;
 	static final int PROFILE_GAP = 10;
@@ -241,11 +260,11 @@ public final class TitleScreen {
 	 * The whole frame, every time. The caller decides which pieces of it actually reach the
 	 * screen; see Client.drawTitle.
 	 *
-	 * `message` is the login server's reply, or "" when there is nothing to say. `hover` is the
-	 * account the pointer is over, or -1.
+	 * `reason` and `advice` are the login server's reply - either may be "" - and `hover` is
+	 * the account the pointer is over, or -1.
 	 */
 	public static void paint(Pix32 canvas, PixFont bold, PixFont plain, String username,
-		String password, int field, boolean remember, String message,
+		String password, int field, boolean remember, String reason, String advice,
 		List<LoginProfiles.Profile> profiles, int hover, int online, int loopCycle) {
 
 		int[] ground = base(canvas);
@@ -261,15 +280,13 @@ public final class TitleScreen {
 		}
 		rule();
 
-		if (message != null && message.length() > 0) {
-			centre(bold, message, CRIMSON_TEXT, 162);
-		}
+		message(bold, plain, reason, advice);
 
 		field(plain, username, USER_Y, field == 0, false, loopCycle);
 		field(plain, password, PASS_Y, field == 1, true, loopCycle);
 		rememberRow(plain, remember);
 		enterButton(bold);
-		centre(plain, "Forgot your password?", CRIMSON_TEXT, LINK_Y + 13);
+		centre(plain, "Forgot your password?", CRIMSON_TEXT, LINK_Y);
 
 		profileRow(plain, profiles, hover);
 		centre(plain, footerText(online), STONE_FAINT, FOOTER_Y + 10);
@@ -389,7 +406,7 @@ public final class TitleScreen {
 		// line above three cards that plainly work is clutter telling you what you already did.
 		if (count == 0 && font != null) {
 			String hint = "Tick \"Remember me\" when you sign in to keep an account here";
-			text(font, hint, STONE_FAINT, CX - font.stringWid(hint) / 2, PROFILE_Y - 10);
+			text(font, hint, STONE_FAINT, CX - font.stringWid(hint) / 2, HINT_Y);
 		}
 	}
 
@@ -562,6 +579,48 @@ public final class TitleScreen {
 	 */
 	static String footerText(int online) {
 		return online < 0 ? null : online + " PLAYERS ONLINE";
+	}
+
+	/**
+	 * The reply, one line or two. Either half may be empty, and one line alone goes where a
+	 * single line has always gone rather than sliding up to make room for a line that is not
+	 * there.
+	 *
+	 * The reason is bold and the advice is not, so the sentence that says what happened reads
+	 * first. Both in the same red: this is the only part of the screen that reports a failure
+	 * and it should not look like two unrelated remarks.
+	 */
+	static void message(PixFont bold, PixFont plain, String reason, String advice) {
+		boolean hasReason = said(reason);
+		int[] rows = messageRows(hasReason, said(advice));
+		if (rows.length == 2) {
+			centre(bold, reason, CRIMSON_TEXT, rows[0]);
+			centre(plain, advice, CRIMSON_TEXT, rows[1]);
+		} else if (rows.length == 1) {
+			centre(bold, hasReason ? reason : advice, CRIMSON_TEXT, rows[0]);
+		}
+	}
+
+	static boolean said(String s) {
+		return s != null && s.length() > 0;
+	}
+
+	/**
+	 * The baselines the reply is drawn on: two, one, or none at all.
+	 *
+	 * A METHOD RATHER THAN AN `if` AROUND THE DRAW, for the reason footerText gives: no test in
+	 * this repo has a font, so every one of those branches draws nothing and a picture cannot
+	 * tell them apart. As a function the rule is checked against the hit tests that ship with
+	 * the screen - a message is in the wrong place if a field answers to where it sits.
+	 */
+	static int[] messageRows(boolean hasReason, boolean hasAdvice) {
+		if (hasReason && hasAdvice) {
+			return new int[] { MESSAGE_TOP, MESSAGE_TOP + MESSAGE_LINE };
+		}
+		if (hasReason || hasAdvice) {
+			return new int[] { MESSAGE_Y };
+		}
+		return new int[0];
 	}
 
 	private static void centre(PixFont font, String text, int colour, int y) {

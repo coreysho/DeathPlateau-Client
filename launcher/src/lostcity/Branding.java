@@ -51,6 +51,19 @@ public final class Branding {
 	public static final String SLOGAN = "The true golden era.";
 	public static final int SLOGAN_COLOUR = 0xE8C35A;
 
+	/**
+	 * The website, without a scheme, because it is read out by a player rather than clicked.
+	 *
+	 * THE LOGIN SCREEN CANNOT OPEN A LINK. An applet could ask the page to; a jar launched from
+	 * the launcher has no page, and the title screen has no hit test for its text anyway. So
+	 * this is shown to be typed, and that is why it carries no https:// - a player typing it
+	 * into a browser does not need one, and the line is short enough to fit as it is.
+	 *
+	 * Here beside the name for the reason the class says: the launcher cannot see jagex2, and
+	 * its footer has a slot for this (LauncherWindow.footer, which says so).
+	 */
+	public static final String WEBSITE = "deathplateau.com";
+
 	private static final int[] SIZES = { 16, 24, 32, 48, 64, 128 };
 
 	/** Loaded once - these go to the window manager at startup and never change. */

@@ -4414,8 +4414,15 @@ public class Client extends GameShell implements PixMap.Target {
 				oplogic10 = 0;
 				this.prepareGame();
 			} else if (var8 == 3) {
-				this.loginMessage0 = "";
-				this.loginMessage1 = "Invalid username or password.";
+				// BOTH CAUSES, because the login server cannot tell them apart and nor can this.
+				// An unknown name and a wrong password are one reply once accounts are made on
+				// the website instead of by logging in, which is how this world runs:
+				// LoginServer.ts answers 1 for both and World.ts turns that into the 3 above.
+				// So "Invalid username or password." was the whole of what a new player was
+				// ever told, and nothing anywhere on this screen said that an account has to
+				// be made first.
+				this.loginMessage0 = "No account with that name and password.";
+				this.loginMessage1 = "New here? Make one at " + lostcity.Branding.WEBSITE;
 				// A SAVED LOGIN THE SERVER WOULD NOT TAKE is expired, cancelled, or for an account
 				// that no longer exists - and the player never typed it, so "invalid password" is
 				// not something they can act on. Drop it and ask for the password instead, which is
@@ -7951,7 +7958,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.titleCanvas = new Pix32(TitleScreen.W, TitleScreen.H);
 		}
 		TitleScreen.paint(this.titleCanvas, this.fontBold12, this.fontPlain12, this.username,
-			this.password, this.titleLoginField, this.rememberLogin, this.loginMessage1,
+			this.password, this.titleLoginField, this.rememberLogin, this.loginMessage0, this.loginMessage1,
 			LoginProfiles.all(), this.titleHover, -1, loopCycle);
 
 		// The middle piece every frame, because the cursor blinks there and nowhere else. The
