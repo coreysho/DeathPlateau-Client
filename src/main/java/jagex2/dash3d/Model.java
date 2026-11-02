@@ -1141,6 +1141,18 @@ public class Model extends ModelSource {
 
 	@ObfuscatedName("LZYQDKJV.a(III[I)V")
 	public void method368(int arg0, int arg2, int[] arg3) {
+		this.method368(arg0, arg2, arg3, 0);
+	}
+
+	/**
+	 * Walk-merge, with the caller saying which animation to keep if the two cannot be merged at all.
+	 *
+	 * arg4 is the primary sequence's crossskeleton flag (seq config opcode 13): 0 keeps the movement
+	 * frame, 1 keeps the primary. It only matters down the !sameSkeleton path below - two frames on
+	 * the same skeleton merge properly and neither is discarded. NPCs use the three-argument form and
+	 * so always take 0; nothing an NPC plays comes off a foreign skeleton in this build.
+	 */
+	public void method368(int arg0, int arg2, int[] arg3, int arg4) {
 		if (arg2 == -1) {
 			return;
 		}
@@ -1162,18 +1174,25 @@ public class Model extends ModelSource {
 		// line up with the 377 one - merging across them twists the model or throws
 		// ArrayIndexOutOfBounds.
 		//
-		// WHICH ONE TO FALL BACK TO. This used to play the primary animation alone (arg2), and that
-		// is what "eating while walking scoots" was: the merge is only ever attempted while the
-		// player is MOVING, so dropping the movement frame left them gliding across the ground with
-		// their legs still and a spoon at their mouth. The movement frame (arg0) is the one to keep:
-		// a player who walks normally and simply does not visibly raise the food is far less wrong
-		// than one who slides. Anything that plays while standing still is unaffected - ClientPlayer
-		// only passes a base frame here when the base animation differs from the ready animation.
+		// WHICH ONE TO FALL BACK TO IS THE SEQUENCE'S OWN BUSINESS, which is what arg4 carries. This
+		// branch first played the primary animation alone (arg2), and that is what "eating while
+		// walking scoots" was: the merge is only ever attempted while the player is MOVING, so
+		// dropping the movement frame left them gliding across the ground with their legs still and
+		// a spoon at their mouth. Keeping the movement frame instead fixed the slide, but it fixed it
+		// for everything - including the dragon warhammer and granite hammer specials, which then
+		// stopped being drawn at all if the player was walking when they went off.
 		//
-		// The real fix is an OSRS-skeleton counterpart for the 377 gesture animations (human_eat and
-		// the rest), at which point this branch stops being reached for them at all.
+		// NEITHER DEFAULT IS RIGHT FOR BOTH, because the two kinds of animation fail in opposite
+		// directions. A gesture is long and the legs are the readable part: three ticks of sliding is
+		// worse than three ticks of not visibly raising the food, so a gesture takes 0. A special
+		// attack is one tick and the swing IS the readable part - it is what the player paid the
+		// energy for and what tells them the hit landed - so it takes 1 and the legs hold still for
+		// that tick. Hence crossskeleton on the seq rather than a rule here.
+		//
+		// The real fix is still an OSRS-skeleton counterpart for the 377 animations these sit next
+		// to, at which point this branch stops being reached and the flag stops mattering.
 		if (!sameSkeleton(var5.base, var6.base)) {
-			this.applyTransform(arg0);
+			this.applyTransform(arg4 == 1 ? arg2 : arg0);
 			return;
 		}
 		AnimBase var7 = var5.base;

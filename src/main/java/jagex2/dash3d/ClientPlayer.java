@@ -256,7 +256,11 @@ public class ClientPlayer extends ClientEntity {
 		Model var22 = Model.field1190;
 		var22.method361(AnimFrame.isNull(var6) & AnimFrame.isNull(var7), var11);
 		if (var6 != -1 && var7 != -1) {
-			var22.method368(var7, var6, SeqType.field775[super.field1171].field781);
+			// The primary sequence decides what happens if its frame and the movement frame turn out
+			// to be on different skeletons - see Model.method368 and crossskeleton. field1171 is
+			// necessarily >= 0 here: var7 is only ever set in that branch above.
+			SeqType var23 = SeqType.field775[super.field1171];
+			var22.method368(var7, var6, var23.field781, var23.crossskeleton);
 		} else if (var6 != -1) {
 			var22.applyTransform(var6);
 		}
