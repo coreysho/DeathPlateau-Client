@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A saved login, end to end: the real client against a real engine, three times over.
+"""A saved login, end to end: the real client against a real engine, on both account authorities.
 
 WHY A WHOLE ENGINE FOR THIS. The client keeps a server-issued token where it used to keep the
 player's password, and that is two new fields inside the RSA login block plus one new packet coming
@@ -7,18 +7,27 @@ back. LoginProfilesTest proves what the client writes to disk; the engine's own 
 does with a token; neither can prove the two read the same envelope, and a disagreement there is
 not a subtle bug - it is nobody being able to log in.
 
-Three phases, each a fresh JVM sharing one scratch user.home, because "it still works after you
-close the client" is the whole feature:
+Five phases, each a fresh JVM, the first four sharing one scratch user.home because "it still works
+after you close the client" is the whole feature:
 
-    password   type a password with Remember me ticked, and be handed a token
-    token      click the saved card, type nothing, and get in on the token alone
-    stale      hold a token the server never issued, and be refused in words a player can act on
-    legacy     send the login block of a client from before saved logins, and still be let in
+    password     type a password with Remember me ticked, and be handed a token
+    token        click the saved card, type nothing, and get in on the token alone
+    stale        hold a token the server never issued, and be refused in words a player can act on
+    legacy       send the login block of a client from before saved logins, and still be let in
+    noremember   log in with Remember me OFF, in a home of its own, and be given nothing to keep
+
+AND ALL FIVE TWICE, against the two kinds of world there are. A world either checks passwords
+itself or delegates to a login server (LOGIN_SERVER), and the default is false - so every run of
+this suite before today tested the first kind, while the live world runs the second. The feature
+did nothing there and said nothing about it, behind five green phases, for days. The client cannot
+tell the two apart and should not have to, which is exactly why the suite has to.
 
 Starts an engine on its own ports unless --port names one already running, and tells the client the
-engine's own login key, which is per-machine and never committed.
+engine's own login key, which is per-machine and never committed. With --port there is one engine,
+somebody else's, so only one pass runs and the heading does not guess which kind it is.
 
     python3 tools/clienttests/run_logintokentest.py
+    python3 tools/clienttests/run_logintokentest.py --authority server   # the live shape only
     python3 tools/clienttests/run_logintokentest.py --port 43694 --webport 8694   # one already up
 
 Needs a display: the client opens its real window and is driven through its real input handling.
@@ -49,13 +58,35 @@ ENGINE = os.path.join(os.path.dirname(ROOT), 'Engine-TS')
 # the previous run's management port. With a leftover engine still holding it, the new engine could
 # not bind, died after saying it was ready, and the client fetched its cache from the old one:
 # four runs reporting a client that never reached its title screen, for a reason that was never in
-# the client. Three in a row can only collide with a run that moved by less than three.
+# the client. Six in a row can only collide with a run that moved by less than six.
 PORT = 43994
 
 
 def ports(node):
-    """The three the engine needs: the game port, the web server, the management server."""
+    """The three the engine needs: the game port, the web server, the management server.
+
+    The second pass takes three more above them - node + 3, + 4, + 5 - for the login, friend and
+    logger servers EASY_STARTUP brings up in the same process. It runs after the first engine has
+    stopped, so it reuses these three.
+    """
     return node, node + 1, node + 2
+
+
+# THE LIVE WORLD'S SHAPE. LOGIN_SERVER means the world does not check passwords itself: it asks a
+# login server, which owns the accounts. EASY_STARTUP starts that server (and the friend and logger
+# servers) as workers in the same process, which is exactly how the deployed world runs.
+#
+# Their ports are moved off the 43500 / 45099 / 43501 defaults for the same reason the three above
+# are: a developer's own engine, or one left over from another run, is already on them, and a
+# worker that cannot bind takes the process down after it has said it was ready.
+def server_env(node):
+    return {
+        'LOGIN_SERVER': 'true',
+        'EASY_STARTUP': 'true',
+        'LOGIN_PORT': str(node + 3),
+        'FRIEND_PORT': str(node + 4),
+        'LOGGER_PORT': str(node + 5)
+    }
 
 USER = 'tokentest'
 PASSWORD = 'tok12345'
@@ -97,15 +128,22 @@ def serving(webport):
         return False
 
 
-def start_engine(engine, log, port, webport, mgmtport):
-    """An engine on the test ports, left running until the phases are done."""
+def start_engine(engine, log, port, webport, mgmtport, extra_env=None):
+    """An engine on the test ports, left running until the phases are done.
+
+    extra_env is merged over the environment it starts with, and any _PORT in it is guarded below
+    with the other three - a login server that cannot bind is as fatal as a world that cannot.
+    """
     # BEFORE ANYTHING IS STARTED. An engine that cannot bind one of these dies AFTER printing
     # "World ready" - the game socket is the last thing it listens on - so starting it regardless
     # means handing the client a port that belongs to whatever got there first. That is not a
     # hypothetical: four runs in a row fetched their cache from a leftover engine whose pack files
     # had been replaced underneath it, and every one of them reported a client that never reached
     # its title screen.
-    for name, p in (('game', port), ('web', webport), ('management', mgmtport)):
+    guarded = [('game', port), ('web', webport), ('management', mgmtport)]
+    guarded += [(key[:-5].lower() + ' server', int(value))
+                for key, value in sorted((extra_env or {}).items()) if key.endswith('_PORT')]
+    for name, p in guarded:
         if in_use(p):
             raise SystemExit('run_logintokentest: something is already serving on the %s port %d. '
                              'An engine left over from an earlier run will do this - stop it, or '
@@ -113,6 +151,7 @@ def start_engine(engine, log, port, webport, mgmtport):
 
     env = dict(os.environ)
     env.update({'NODE_PORT': str(port), 'WEB_PORT': str(webport), 'WEB_MANAGEMENT_PORT': str(mgmtport)})
+    env.update(extra_env or {})
     out = open(log, 'w', encoding='utf-8')
     proc = subprocess.Popen(['npx', 'tsx', 'src/app.ts'], cwd=engine, env=env,
                             stdout=out, stderr=subprocess.STDOUT, shell=(os.name == 'nt'))
@@ -179,7 +218,11 @@ def main():
     ap.add_argument('--webport', type=int)
     ap.add_argument('--keep', action='store_true', help='leave the scratch home behind to look at')
     ap.add_argument('--node-port', type=int, default=PORT,
-                    help='the started engine takes this port and the two above it')
+                    help='the started engine takes this port and the five above it')
+    ap.add_argument('--authority', choices=('local', 'server', 'both'), default='both',
+                    help='which account authority to run against: the world itself, a login '
+                         'server, or both (the default). Ignored with --port, where the engine '
+                         'is already running and already configured.')
     args = ap.parse_args()
 
     why = cannot_run(args.engine)
@@ -217,28 +260,72 @@ def main():
         port = args.port or args.node_port
         _node, derived_web, mgmtport = ports(port)
         webport = args.webport or derived_web
+        first = None if args.authority == 'server' else {}
         if not args.port:
             log = os.path.join(work, 'engine.log')
+            if first is None:
+                first = server_env(port)
+                log = os.path.join(work, 'engine-loginserver.log')
             print('starting an engine on %d (log: %s)' % (port, log))
-            engine = start_engine(args.engine, log, port, webport, mgmtport)
+            engine = start_engine(args.engine, log, port, webport, mgmtport, first)
             print('engine ready')
         else:
             print('using the engine already on %d' % port)
 
-        # ONE HOME ACROSS THE FIRST FOUR PHASES. That is what makes the second phase mean
-        # anything: the token it signs in with is the one the first phase was given and wrote to
-        # disk.
-        home = os.path.join(work, 'home')
-        os.makedirs(home)
-        # AND ONE OF ITS OWN for the last. noremember asserts that nothing was saved, and the four
-        # before it save on purpose - sharing a home would have it assert the opposite of what
-        # they arranged.
-        alone = os.path.join(work, 'home-noremember')
-        os.makedirs(alone)
+        # The heading says what this pass is running against, and with --port it says only
+        # that: the engine is somebody else's and its authority is not ours to claim.
+        first_label = ('the engine already on %d' % port) if args.port else (
+            'a login server' if args.authority == 'server' else 'local accounts')
+        failed = run_phases(java, classes, rsan, work, port, webport, first_label)
 
-        failed = 0
-        phases = (('password', home), ('token', home), ('stale', home), ('legacy', home), ('noremember', alone))
-        for i, (phase, where) in enumerate(phases):
+        # AND AGAIN, AGAINST A LOGIN SERVER. Only when this run started the engine: with --port
+        # there is one engine, somebody else's, and its authority is whatever they configured.
+        if not args.port and args.authority == 'both':
+            stop_engine(engine)
+            engine = None
+            log = os.path.join(work, 'engine-loginserver.log')
+            print()
+            print('starting a second engine, this one delegating to a login server (log: %s)' % log)
+            engine = start_engine(args.engine, log, port, webport, mgmtport, server_env(port))
+            print('engine ready')
+            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server')
+
+        print()
+        if failed == 0:
+            print('saved logins work end to end: every phase passed, on both authorities'
+                  if not args.port and args.authority == 'both' else
+                  'saved logins work end to end: every phase passed')
+        else:
+            print('%d PHASE(S) FAILED' % failed)
+        return 0 if failed == 0 else 1
+    finally:
+        stop_engine(engine)
+        if args.keep:
+            print('scratch home left at ' + work)
+        else:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def run_phases(java, classes, rsan, work, port, webport, label):
+    """The five phases against whatever engine is on these ports. Returns how many failed."""
+    print()
+    print('==== %s ====' % label)
+    # Homes of this pass's own, so the second pass starts where the first did: with a machine that
+    # has never saved a login. They are named for the pass because --keep is for looking at them.
+    tag = label.replace(' ', '-')
+    # ONE HOME ACROSS THE FIRST FOUR PHASES. That is what makes the second phase mean anything:
+    # the token it signs in with is the one the first phase was given and wrote to disk.
+    home = os.path.join(work, 'home-' + tag)
+    os.makedirs(home)
+    # AND ONE OF ITS OWN for the last. noremember asserts that nothing was saved, and the four
+    # before it save on purpose - sharing a home would have it assert the opposite of what they
+    # arranged.
+    alone = os.path.join(work, 'home-' + tag + '-noremember')
+    os.makedirs(alone)
+
+    failed = 0
+    phases = (('password', home), ('token', home), ('stale', home), ('legacy', home), ('noremember', alone))
+    for i, (phase, where) in enumerate(phases):
             if i:
                 # THE WORLD IS STILL LOGGING THE LAST PHASE OUT. Its socket went when that JVM
                 # exited, and until the world has saved and removed the player the next login is
@@ -268,31 +355,25 @@ def main():
                     # NON-ZERO WITH NOTHING NAMED means the client died on the way in, and the
                     # reason is on stderr - usually the cache, the key or the port.
                     print(r.stderr[-3000:])
-        print()
-        if failed == 0:
-            print('saved logins work end to end: all %d phases passed' % len(phases))
-        else:
-            print('%d PHASE(S) FAILED' % failed)
-        return 0 if failed == 0 else 1
-    finally:
-        if engine is not None:
-            # THE WHOLE TREE. npx runs the engine as a grandchild through cmd.exe, and terminating
-            # what Popen holds kills the wrapper and leaves node sitting on the port - so the next
-            # run dies with EADDRINUSE and the orphan has to be hunted down by hand. taskkill /T
-            # takes the children with it.
-            if os.name == 'nt':
-                subprocess.run(['taskkill', '/T', '/F', '/PID', str(engine.pid)],
-                               capture_output=True, text=True)
-            else:
-                engine.terminate()
-            try:
-                engine.wait(timeout=30)
-            except Exception:
-                engine.kill()
-        if args.keep:
-            print('scratch home left at ' + work)
-        else:
-            shutil.rmtree(work, ignore_errors=True)
+    return failed
+
+
+def stop_engine(proc):
+    """THE WHOLE TREE. npx runs the engine as a grandchild through cmd.exe, and terminating what
+    Popen holds kills the wrapper and leaves node sitting on the port - so the next run dies with
+    EADDRINUSE and the orphan has to be hunted down by hand. taskkill /T takes the children with
+    it. Called between the two passes as well as at the end, because the second engine takes the
+    first one's ports."""
+    if proc is None:
+        return
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True, text=True)
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except Exception:
+        proc.kill()
 
 
 if __name__ == '__main__':
