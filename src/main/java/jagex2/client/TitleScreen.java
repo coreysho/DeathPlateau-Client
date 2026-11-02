@@ -424,7 +424,8 @@ public final class TitleScreen {
 		Pix3D.centerX = x + FACE / 2;
 		Pix3D.centerY = y + FACE / 2;
 		try {
-			int zoom = FACE_SCALE * Math.max(1, head.field1221);
+			int extent = Math.max(head.field1218, head.field1709 / 2);
+			int zoom = FACE_SCALE * Math.max(1, extent);
 			int sin = Pix3D.sinTable[FACE_TILT] * zoom >> 16;
 			int cos = Pix3D.cosTable[FACE_TILT] * zoom >> 16;
 			// The interface renderer's own vertical centring: a model hangs above its origin, so

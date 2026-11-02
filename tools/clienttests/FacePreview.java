@@ -44,7 +44,7 @@ public class FacePreview {
 	private static final int[] ZOOMS = { 700, 850, 1000, 1150, 1300 };
 
 	/** Eye distance as a multiple of the model radius, which is what ships. */
-	private static final int[] SCALES = { 10, 14, 18, 22, 26 };
+	private static final int[] SCALES = { 18, 22, 26, 30, 34 };
 
 	/** And how far to lift the camera, since a head hangs above its own origin. */
 	private static final int[] LIFTS = { -8, -4, 0, 4, 8 };
@@ -115,12 +115,18 @@ public class FacePreview {
 
 			Pix3D.centerX = x + BOX / 2;
 			Pix3D.centerY = y + BOX / 2;
-			int zoom = SCALES[row] * head.field1221;
+			// WHAT HAS TO FIT A SQUARE BOX is the bigger of the two half-extents, not the
+			// diagonal. field1221 is the diagonal, and a tall helmet or a long beard inflates it
+			// and shrinks the face for no reason; field1218 alone ignores height and lets a
+			// spike out of the top. With the field1709/2 centring below the model spans about
+			// plus or minus half its height, so these are the two half-extents.
+			int extent = Math.max(head.field1218, head.field1709 / 2);
+			int zoom = SCALES[row] * extent;
 			int sin = Pix3D.sinTable[0] * zoom >> 16;
 			int cos = Pix3D.cosTable[0] * zoom >> 16;
 			int before = painted(raster);
 			head.method380(0, 0, 0, 0, 0, head.field1709 / 2 + sin, cos);
-			System.out.println("  x" + SCALES[row] + " radius -> zoom " + zoom + "  pixels: " + (painted(raster) - before));
+			System.out.println("  x" + SCALES[row] + " extent " + extent + " -> zoom " + zoom + "  pixels: " + (painted(raster) - before));
 		}
 
 		BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
