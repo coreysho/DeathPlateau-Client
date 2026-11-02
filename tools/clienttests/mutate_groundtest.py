@@ -17,7 +17,7 @@ import sys
 # mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
 # standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import read_source, workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -681,8 +681,7 @@ def main():
     # mutation, it is a KeyError that kills the run partway through - which is how the first
     # eighteen mutations added here never ran at all.
     for path in (PLUGIN, ITEM, PALETTE, ARRIVALS, OVERLAY, PREFS, CONTEXT, HOTKEY):
-        with open(path, encoding='utf-8', newline='') as f:
-            orig[path] = f.read()
+        orig[path] = read_source(path)
     # Written into a copy, never into the working tree - see mutate_guard.workspace.
     _work, inside = workspace('groundtest')
     muts = [m for m in MUTS if not only or only in m[1]]

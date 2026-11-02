@@ -17,7 +17,7 @@ import sys
 # mid-run cannot reach the run. mutate_guard.workspace has the reasoning, and its check() is the
 # standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import read_source, workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -207,8 +207,7 @@ MUTS = [
 
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
-    with open(CLIENT, encoding='utf-8', newline='') as f:
-        orig = f.read()
+    orig = read_source(CLIENT)
     # Written into a copy, never into the working tree - see mutate_guard.workspace.
     _work, inside = workspace('jaggrabtest')
     muts = [m for m in MUTS if not only or only in m[1]]

@@ -29,6 +29,12 @@ catches a leftover mutation AND a pattern gone stale against moved source. A sta
 worth catching on its own: the runners report a non-matching pattern as SKIP and count it as a
 survivor, so a renamed variable can quietly stop a mutation from testing anything at all.
 
+read_source() is why those patterns match at all. Every suite reads the file it is about to
+patch through it, because a pattern is written with LF and a Windows working tree holds CRLF.
+Reading the bytes as they sat cost 346 of 974 mutations - a third of the coverage, spread over
+all 24 suites - and reported each one in the words for a stale pattern, which is what kept it
+hidden: the runs were red for a reason that looked like someone else's to fix.
+
     python3 tools/clienttests/mutate_guard.py          # check every mutate_*.py
     python3 tools/clienttests/mutate_guard.py jaggrab  # just the ones whose name matches
 
@@ -117,6 +123,28 @@ def workspace(prefix):
     return root, inside
 
 
+def read_source(path):
+    r"""A source file in the form the mutation patterns are written in, which is LF.
+
+    WHY THIS IS NOT open().read(). A pattern in a MUTS table is written in Python with "\n"
+    between its lines. A Windows checkout of this repo holds "\r\n": .gitattributes normalises to
+    LF in the repository, not in the working tree, so `git ls-files --eol` reads i/lf w/crlf. Read
+    the bytes as they sit and every pattern spanning more than one line matches nothing - and a
+    0-match pattern is reported as SKIP and counted a survivor, so it tests nothing.
+
+    That was not a corner case. It was 346 of 974 mutations across all 24 suites, a third of the
+    client's mutation coverage, and every run said so in words that read like stale patterns
+    ("0 matches (stale, or source mutated)") when not one pattern was stale. The suites were
+    written on a tree that happened to be LF and have been degrading on this one ever since.
+
+    Normalising here means a suite patches the canonical form on every platform. The mutant is
+    written back with newline='' in that same form, so the copy a runner compiles is consistent
+    LF; only the mutation itself differs from the original.
+    """
+    with open(path, encoding='utf-8', newline='') as f:
+        return f.read().replace('\r\n', '\n')
+
+
 def load(script):
     """A mutate_*.py as a module, without running its main()."""
     spec = importlib.util.spec_from_file_location(os.path.basename(script)[:-3], script)
@@ -169,8 +197,7 @@ def check(only=None):
                 continue
             if path not in source:
                 try:
-                    with open(path, encoding='utf-8', newline='') as f:
-                        source[path] = f.read()
+                    source[path] = read_source(path)
                 except OSError as missing:
                     source[path] = None
                     print('%-28s cannot read %s (%s)' % (name, path, missing))

@@ -23,7 +23,7 @@ import sys
 # mutate_guard.workspace - and its check() is the standalone pass that every pattern below still
 # matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mutate_guard import workspace  # noqa: E402  (after the sys.path line, necessarily)
+from mutate_guard import read_source, workspace  # noqa: E402  (after the sys.path line, necessarily)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -236,8 +236,7 @@ def main():
     only = sys.argv[1] if len(sys.argv) > 1 else None
     orig = {}
     for path in (RENDER, SQUARE):
-        with open(path, encoding='utf-8', newline='') as f:
-            orig[path] = f.read()
+        orig[path] = read_source(path)
     _work, inside = workspace('worldmap')
     # THE CACHE IS NOT IN THE REPOSITORY, so it is not in the copy either. The suite found it
     # once, here, and hands the same path to every run: a run that cannot find it refuses
