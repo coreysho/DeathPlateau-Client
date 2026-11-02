@@ -1,18 +1,25 @@
 on:
   push:
 
+# THE RUNNER IS NAMED, NOT 'latest'. ubuntu-latest is rolling from 24.04 to 26.04 between 19
+# October and 19 November 2026, so a job can pass in the morning and fail in the afternoon on an
+# image nobody chose - and that failure reads as a code failure. 26.04 was chosen deliberately and
+# watched going in; ubuntu-24.04 is the fallback if something in the image turns out to matter.
+#
+# The action versions are each one's latest release, read from the API: a v4 that GitHub is already
+# force-running on Node 24 is a version that will stop working, not one that is merely old.
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: 8
 
-    - uses: gradle/actions/setup-gradle@v4
+    - uses: gradle/actions/setup-gradle@v6
       with:
         gradle-version: '8.14'
 
@@ -23,7 +30,7 @@ jobs:
       run: gradle proguard
 
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: client
         path: |
@@ -50,13 +57,13 @@ jobs:
   tests:
     name: The client's own test suites
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         path: DeathPlateau-Client
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         repository: coreysho/DeathPlateau-Content
         ref: 377-wip
@@ -69,7 +76,7 @@ jobs:
     #
     # Engine-TS is the name the suites look for beside the client checkout. Measured on a cold
     # clone: npm ci, npm run rsa and npm run build come to about a minute and forty seconds.
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         repository: coreysho/DeathPlateau-Engine
         ref: 377-wip
@@ -80,16 +87,16 @@ jobs:
     - name: Content beside the engine
       run: ln -s DeathPlateau-Content content
 
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: 21
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version: 24
         cache: npm
@@ -111,7 +118,7 @@ jobs:
     - name: Install xvfb
       run: sudo apt-get update && sudo apt-get install -y xvfb
 
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v8
       with:
         name: client
         path: DeathPlateau-Client/build/libs
@@ -194,11 +201,11 @@ jobs:
   # still pointed at real code can, on every push.
   mutations:
     name: Every mutation pattern still matches its source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
@@ -206,11 +213,11 @@ jobs:
       run: python3 tools/clienttests/mutate_guard.py
 
   deob-map:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: 21
@@ -222,7 +229,7 @@ jobs:
         java -jar Deobfuscator.jar
 
     - name: Upload mapping
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: deob-map
         path: |
