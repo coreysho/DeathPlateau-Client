@@ -94,14 +94,14 @@ public final class TitleScreen {
 	private static final int FACE = 48;
 	private static final int FACE_INSET = 7;
 
-	// HOW A HEAD SITS IN ITS BOX. A head model is built with its origin at the neck and y running
-	// negative upwards, so drawing it on the box's centre hangs it above the middle - the same
-	// correction the interface renderer makes for obj icons. These three are the only numbers in
-	// here that were not measured against something, because a face cannot be rendered without a
-	// cache and the login preview has none: tune them against a real client, not a drawing.
-	private static final int FACE_ZOOM = 260;
+	// HOW A HEAD SITS IN ITS BOX, chosen by rendering it. FacePreview draws this same model
+	// through this same call against a real packed cache, as a grid of eye distances against
+	// vertical lifts; these are the cell that fits. Below about 1000 the head is larger than the
+	// frame, and a model ignores the 2D clip - so it would spill across the card and the screen
+	// rather than being cut off at the edge of its box.
+	private static final int FACE_ZOOM = 1150;
 	private static final int FACE_TILT = 0;
-	private static final int FACE_LIFT = 14;
+	private static final int FACE_LIFT = 0;
 	private static final int FOOTER_Y = 479;
 
 	private static final int SIGIL_ALPHA = 92;          // 36% of 256, the mockup's opacity
@@ -485,6 +485,15 @@ public final class TitleScreen {
 			built = who == null ? null : who.getHeadModel();
 		} catch (Throwable ignored) {
 			built = null;
+		}
+		if (built != null) {
+			// THE STEP getHeadModel DOES NOT DO, and the reason the portraits were blank. It
+			// merges the parts and recolours them and stops: the face arrays stay null, and a
+			// model with no face arrays rasterises nothing at all, at any size or position. Every
+			// other caller lights the model it gets - the interface renderer does it in
+			// Component - and this one did not. The numbers are the ones the player's own body is
+			// lit with in ClientPlayer.getBodyModel.
+			built.calculateNormals(64, 850, -30, -50, -30, true);
 		}
 		if (built == null) {
 			// Said once per account, to client.log. Without it a portrait that does not appear
