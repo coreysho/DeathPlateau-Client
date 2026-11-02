@@ -43,6 +43,9 @@ public class FacePreview {
 	/** The eye distances to try. FACE_ZOOM shipped at 260 and showed nothing. */
 	private static final int[] ZOOMS = { 700, 850, 1000, 1150, 1300 };
 
+	/** Eye distance as a multiple of the model radius, which is what ships. */
+	private static final int[] SCALES = { 10, 14, 18, 22, 26 };
+
 	/** And how far to lift the camera, since a head hangs above its own origin. */
 	private static final int[] LIFTS = { -8, -4, 0, 4, 8 };
 
@@ -77,7 +80,9 @@ public class FacePreview {
 			// no face arrays rasterises nothing at all. The same numbers the player's own body is
 			// lit with in ClientPlayer.getBodyModel.
 			head.calculateNormals(64, 850, -30, -50, -30, true);
-			System.out.println("  lit");
+			head.method364();
+			System.out.println("  lit; height above origin=" + head.field1709
+				+ "  radius=" + head.field1221 + "  wide=" + head.field1218);
 			System.out.println("  vertices=" + head.field1195 + "  faces=" + (head.field1205 == null ? -1 : head.field1205.length));
 		}
 		if (head == null) {
@@ -88,7 +93,7 @@ public class FacePreview {
 		}
 
 		int width = PAD + ZOOMS.length * (BOX + PAD);
-		int height = PAD + LIFTS.length * (BOX + PAD);
+		int height = PAD + SCALES.length * (BOX + PAD);
 		int[] raster = new int[width * height];
 		Pix2D.bind(width, height, raster);
 		Pix2D.setClipping(0, 0, height, width);
@@ -100,7 +105,7 @@ public class FacePreview {
 		}
 		Pix3D.lineOffset = offsets;
 
-		for (int cell = 0; cell < ZOOMS.length * LIFTS.length; cell++) {
+		for (int cell = 0; cell < ZOOMS.length * SCALES.length; cell++) {
 			int i = cell % ZOOMS.length;
 			int row = cell / ZOOMS.length;
 			int x = PAD + i * (BOX + PAD);
@@ -109,13 +114,13 @@ public class FacePreview {
 			Pix2D.drawRect(y, BOX, 0x2A1A1B, x, BOX);
 
 			Pix3D.centerX = x + BOX / 2;
-			Pix3D.centerY = y + BOX / 2 + LIFTS[row];
-			int zoom = ZOOMS[i];
+			Pix3D.centerY = y + BOX / 2;
+			int zoom = SCALES[row] * head.field1221;
 			int sin = Pix3D.sinTable[0] * zoom >> 16;
 			int cos = Pix3D.cosTable[0] * zoom >> 16;
 			int before = painted(raster);
-			head.method380(0, 0, 0, 0, 0, sin, cos);
-			System.out.println("  zoom " + zoom + " lift " + LIFTS[row] + "  pixels: " + (painted(raster) - before));
+			head.method380(0, 0, 0, 0, 0, head.field1709 / 2 + sin, cos);
+			System.out.println("  x" + SCALES[row] + " radius -> zoom " + zoom + "  pixels: " + (painted(raster) - before));
 		}
 
 		BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);

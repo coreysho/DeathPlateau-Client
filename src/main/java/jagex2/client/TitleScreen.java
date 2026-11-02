@@ -94,14 +94,16 @@ public final class TitleScreen {
 	private static final int FACE = 48;
 	private static final int FACE_INSET = 7;
 
-	// HOW A HEAD SITS IN ITS BOX, chosen by rendering it. FacePreview draws this same model
-	// through this same call against a real packed cache, as a grid of eye distances against
-	// vertical lifts; these are the cell that fits. Below about 1000 the head is larger than the
-	// frame, and a model ignores the 2D clip - so it would spill across the card and the screen
-	// rather than being cut off at the edge of its box.
-	private static final int FACE_ZOOM = 1150;
+	// HOW A HEAD SITS IN ITS BOX, as a multiple of the model's own radius rather than a fixed
+	// distance. A fixed one was measured against a bare identikit face and then met a character
+	// in a helmet, whose model is half as big again: it filled the card and hung off the bottom
+	// of it, because a model ignores the 2D clip and is not cut off at the edge of its frame.
+	// Scaling the eye distance with the radius makes a helmeted head and a bald one the same
+	// size on screen, which is the only version of this that survives the next hat.
+	// Chosen by rendering: FacePreview draws a grid of multiples, and 18 is the one with a
+	// margin round it.
+	private static final int FACE_SCALE = 18;
 	private static final int FACE_TILT = 0;
-	private static final int FACE_LIFT = 0;
 	private static final int FOOTER_Y = 479;
 
 	private static final int SIGIL_ALPHA = 92;          // 36% of 256, the mockup's opacity
@@ -420,11 +422,14 @@ public final class TitleScreen {
 		int keepY = Pix3D.centerY;
 		Pix3D.lineOffset = offsetsFor(Pix2D.width2d, Pix2D.height2d);
 		Pix3D.centerX = x + FACE / 2;
-		Pix3D.centerY = y + FACE / 2 + FACE_LIFT;
+		Pix3D.centerY = y + FACE / 2;
 		try {
-			int sin = Pix3D.sinTable[FACE_TILT] * FACE_ZOOM >> 16;
-			int cos = Pix3D.cosTable[FACE_TILT] * FACE_ZOOM >> 16;
-			head.method380(0, 0, 0, FACE_TILT, 0, sin, cos);
+			int zoom = FACE_SCALE * Math.max(1, head.field1221);
+			int sin = Pix3D.sinTable[FACE_TILT] * zoom >> 16;
+			int cos = Pix3D.cosTable[FACE_TILT] * zoom >> 16;
+			// The interface renderer's own vertical centring: a model hangs above its origin, so
+			// half of that height puts its middle on the middle of the frame.
+			head.method380(0, 0, 0, FACE_TILT, 0, head.field1709 / 2 + sin, cos);
 		} catch (Throwable ignored) {
 			// A head that will not draw is a blank frame, not a login screen that will not come up.
 		} finally {
@@ -501,6 +506,9 @@ public final class TitleScreen {
 			// Component - and this one did not. The numbers are the ones the player's own body is
 			// lit with in ClientPlayer.getBodyModel.
 			built.calculateNormals(64, 850, -30, -50, -30, true);
+			// Fills in field1221 and field1709, the radius and the height above the origin, which
+			// are what the frame is fitted to.
+			built.method364();
 		}
 		if (built == null) {
 			// Said once per account, to client.log. Without it a portrait that does not appear
