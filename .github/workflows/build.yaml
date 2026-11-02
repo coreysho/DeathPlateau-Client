@@ -19,15 +19,18 @@ jobs:
         distribution: 'temurin'
         java-version: 8
 
+    # NO gradle-version. The wrapper in the repository is the one source of truth for which
+    # Gradle builds this client; a pin here is a second one, and the two had already drifted -
+    # the wrapper said 8.11.1 while this said 8.14, so a local build and a CI build were
+    # different tools and nothing recorded which made a release. setup-gradle still does the
+    # caching; ./gradlew decides the version.
     - uses: gradle/actions/setup-gradle@v6
-      with:
-        gradle-version: '8.14'
 
     - name: Build
-      run: gradle build
+      run: ./gradlew build
 
     - name: Obfuscate
-      run: gradle proguard
+      run: ./gradlew proguard
 
     - name: Upload
       uses: actions/upload-artifact@v7

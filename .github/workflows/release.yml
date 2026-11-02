@@ -29,14 +29,15 @@ jobs:
         distribution: 'temurin'
         java-version: 8
 
+    # NO gradle-version: the wrapper in the repository decides, and it is the only thing that
+    # does. See the comment in build.yaml - these two had drifted apart from it already.
     - uses: gradle/actions/setup-gradle@v6
-      with:
-        gradle-version: '8.14'
 
-    # The same jar gradlew.bat build makes locally - not the proguard one.
+    # The same jar gradlew.bat build makes locally - not the proguard one. And now literally the
+    # same: the same wrapper, so the same Gradle, rather than two pins that happened to agree.
     - name: Build client
       run: |
-        gradle build
+        ./gradlew build
         cp build/libs/rs2client-dev.jar client.jar
 
     - name: Build launcher
