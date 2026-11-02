@@ -15,6 +15,43 @@ import sign.signlink;
 
 public class OnDemand extends OnDemandProvider implements Runnable {
 
+	// HOW FAST THIS FETCHES, which used to be 2004's answer and is now this server's (2026-11-02).
+	//
+	// WHAT THE LOOP ACTUALLY DOES. run() sleeps, then spins an inner loop while anything happened.
+	// read() is non-blocking - it asks in.available() and returns - so the moment the socket is
+	// empty the inner loop goes quiet and the thread sleeps again. That makes this ONE WAVE OF
+	// REQUESTS PER SLEEP: issue up to N files, wait out the round trip in a sleep, collect them,
+	// issue the next N. Throughput is therefore (files per wave) x (waves per second), and both
+	// numbers were set for a dial-up client talking to Jagex over the internet.
+	//
+	// It showed up as four separate complaints that are all the same thing: items taking seconds to
+	// appear when equipped, a fast switch landing in batches rather than at once, an inventory slot
+	// drawn blank until its model turns up, and an empty equipment tab on login. None of those is a
+	// server bug - the item is in the inventory the whole time - it is the model not being here yet.
+	//
+	// IN FLIGHT: 10 -> 48. 48 is the worst single screen: a bank or shop can show around forty
+	// distinct items at once, a dressed player is twelve worn slots plus seven body parts, and one
+	// wave should be able to cover the lot rather than three quarters of it. The ceiling that
+	// matters is the server's, and it is MAX_PENDING_PER_CLIENT = 2048 in engine
+	// src/engine/OnDemandThread.ts, so 48 is not close to anything.
+	//
+	// Safe because every request assembles into its OWN buffer - read() allocates current.data on
+	// part 0 and writes each chunk at its own offset - so files arriving interleaved cannot tread
+	// on each other however many are in the air. That was worth checking before touching this.
+	//
+	// THE SLEEP: 20ms -> 10ms, and 50ms -> 20ms on the prefetch path. Halved rather than removed,
+	// because the sleep is also what stops this thread spinning, and it is emulated under CheerpJ
+	// where threads are not free. The prefetch path is the "Loading extra files - N%" screen: ten
+	// files every fifty milliseconds is five hundred files in two and a half seconds of pure
+	// waiting, before a single byte of transfer.
+	//
+	// The prefetch window moves with the urgent one, and costs gameplay nothing: handleExtras only
+	// runs while urgentCount is 0, so a background fill never competes with something the game is
+	// waiting for.
+	private static final int MAX_IN_FLIGHT = 48;
+	private static final int CYCLE_MS = 10;
+	private static final int IDLE_CYCLE_MS = 20;
+
 	@ObfuscatedName("ZPGPWCCV.e")
 	public byte[][] priorities = new byte[4][];
 
@@ -406,9 +443,9 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 			while (this.running) {
 				this.cycle++;
 
-				byte del = 20;
+				int del = CYCLE_MS;
 				if (this.topPriority == 0 && this.app.fileStreams[0] != null) {
-					del = 50;
+					del = IDLE_CYCLE_MS;
 				}
 
 				try {
@@ -550,7 +587,7 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 			}
 		}
 
-		while (this.urgentCount < 10) {
+		while (this.urgentCount < MAX_IN_FLIGHT) {
 			OnDemandRequest req = (OnDemandRequest) this.missing.pop();
 			if (req == null) {
 				break;
@@ -572,7 +609,7 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 	@ObfuscatedName("ZPGPWCCV.b(I)V")
 	public void handleExtras() {
 		while (this.urgentCount == 0) {
-			if (this.requestCount >= 10 || this.topPriority == 0) {
+			if (this.requestCount >= MAX_IN_FLIGHT || this.topPriority == 0) {
 				return;
 			}
 
@@ -596,7 +633,7 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 					this.message = "Loading extra files - " + this.loadedPrefetchFiles * 100 / this.totalPrefetchFiles + "%";
 					this.requestCount++;
 
-					if (this.requestCount == 10) {
+					if (this.requestCount >= MAX_IN_FLIGHT) {
 						return;
 					}
 				}
@@ -630,7 +667,7 @@ public class OnDemand extends OnDemandProvider implements Runnable {
 						this.message = "Loading extra files - " + this.loadedPrefetchFiles * 100 / this.totalPrefetchFiles + "%";
 
 						this.requestCount++;
-						if (this.requestCount == 10) {
+						if (this.requestCount >= MAX_IN_FLIGHT) {
 							return;
 						}
 					}
