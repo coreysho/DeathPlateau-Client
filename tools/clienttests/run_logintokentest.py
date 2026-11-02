@@ -128,6 +128,18 @@ def serving(webport):
         return False
 
 
+def display():
+    """What to put in front of java so it has something to draw into.
+
+    The same idiom as the rest of this directory: nothing when there is a display, xvfb-run when
+    there is not. The engine needs none of this - it draws nothing.
+    """
+    if os.name == 'nt' or os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+        return []
+    xvfb = shutil.which('xvfb-run')
+    return [xvfb, '-a'] if xvfb else []
+
+
 def start_engine(engine, log, port, webport, mgmtport, extra_env=None):
     """An engine on the test ports, left running until the phases are done.
 
@@ -197,9 +209,12 @@ def cannot_run(engine):
     if not shutil.which('javac') or not shutil.which('java'):
         return 'no javac and java on PATH'
     # The client opens its real window and is driven through its real input handling. There is no
-    # headless mode to fall back on - without a display GameShell has no Graphics to draw into.
-    if os.name != 'nt' and not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
-        return 'no display (this drives the client\'s real window)'
+    # headless mode to fall back on - without a display GameShell has no Graphics to draw into - but
+    # xvfb-run makes one, which is how the other eighteen suites here run on a machine with no
+    # screen. Only the absence of both is a reason not to run.
+    if os.name != 'nt' and not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY') \
+            and not shutil.which('xvfb-run'):
+        return 'no display and no xvfb-run (this drives the client\'s real window)'
     if not os.path.isdir(engine):
         return 'no engine checkout at %s' % engine
     if not os.path.exists(os.path.join(engine, 'data/config/login-rsa.pem')):
@@ -334,7 +349,7 @@ def run_phases(java, classes, rsan, work, port, webport, label):
                 # this is just not spending that minute on something a pause settles.
                 time.sleep(8)
             print()
-            cmd = [java, '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1',
+            cmd = display() + [java, '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1',
                    '-Dlostcity.port=%d' % port, '-Dlostcity.webport=%d' % webport,
                    # JAGGRAB off. The client assumes 43595 whenever it is talking to a host
                    # directly - the engine's own port at home, and nothing at all here - so every

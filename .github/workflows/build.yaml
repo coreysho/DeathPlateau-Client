@@ -62,6 +62,24 @@ jobs:
         ref: 377-wip
         path: DeathPlateau-Content
 
+    # THE ENGINE, AND A CACHE PACKED OUT OF IT. Three suites read real squares, real map icons
+    # and a real login out of data/pack, and with no engine here all three printed SKIP on every
+    # push - counted, but never run anywhere else either, which is how run_mapicontest came to
+    # have a bug that disabled it everywhere and went weeks without being noticed.
+    #
+    # Engine-TS is the name the suites look for beside the client checkout. Measured on a cold
+    # clone: npm ci, npm run rsa and npm run build come to about a minute and forty seconds.
+    - uses: actions/checkout@v4
+      with:
+        repository: coreysho/DeathPlateau-Engine
+        ref: 377-wip
+        path: Engine-TS
+
+    # The engine compiles content from ../content whatever BUILD_SRC_DIR says, so it has to be
+    # there under that name. A link rather than a second checkout: the content clone is 350MB.
+    - name: Content beside the engine
+      run: ln -s DeathPlateau-Content content
+
     - uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
@@ -70,6 +88,21 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: Engine-TS/package-lock.json
+
+    # The key is per-machine and never committed, so this one is made here and thrown away with
+    # the runner; the suite reads the modulus out of it and tells the client.
+    - name: Pack the client cache
+      working-directory: Engine-TS
+      run: |
+        npm ci
+        npm run rsa
+        npm run build
 
     # Eleven of the thirty construct a Swing window or an Applet, which needs a display.
     - name: Install xvfb
