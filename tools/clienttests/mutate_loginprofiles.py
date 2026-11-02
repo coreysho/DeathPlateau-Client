@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""Mutation test for tools/clienttests/run_loginprofilestest.py.
+"""Breaks the saved-login store one plausible way at a time and checks a NAMED check notices.
 
-Breaks the saved-login store one way at a time and checks run_loginprofilestest notices - and
-notices by NAMING a check, not by crashing.
+run_loginprofilestest.py passing says the suite ran. It does not say the suite would have noticed
+if the store had been broken, and for this file that is the only question worth asking: what it
+holds is the thing that signs in as a player. Each mutation below is a mistake somebody could
+actually make - the shape check dropped, the old password field read as a token, the cap keeping
+the wrong row - applied to a COPY of the repository, run, and put back.
 
-This file holds people's passwords, so the mutations that matter most are the ones that would
-never show on screen. A client that writes the password in readable text, or reuses one IV, or
-hands back a wrongly decrypted secret, looks exactly like a client that does not: the login
-screen is identical and every profile still works. Only a test that reads the bytes on disk can
-tell the difference, which is why those checks exist and why these mutations exist to prove they
-are load-bearing.
+A mutation that nobody catches is printed GREEN, which is the failure this script exists to find.
 
-    python3 tools/clienttests/mutate_loginprofiles.py [filter]
+    python3 tools/clienttests/mutate_loginprofiles.py
+    python3 tools/clienttests/mutate_loginprofiles.py "fixed IV"   # just the ones that match
 """
 import os
 import subprocess
 import sys
 
-# THE WORKING TREE IS NEVER WRITTEN. Mutations go into a throwaway copy of the repository, so
-# the tree stays clean and committable for the whole run and a kill at the worst moment leaves a
+# A copy of the repository is mutated, never the working tree: a kill mid-run cannot leave a
 # broken file in a temp directory nobody builds from. mutate_guard.workspace has the reasoning,
 # and its check() is the standalone pass that every pattern still matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,35 +28,62 @@ STORE = os.path.join(ROOT, 'src/main/java/jagex2/client/LoginProfiles.java')
 RUNNER = os.path.join(HERE, 'run_loginprofilestest.py')
 
 MUTS = [
-    # ---- THE SECRECY OF THE FILE. None of these are visible from the login screen.
-    (STORE, 'the password written to disk in readable text',
+    # ---- WHAT IS STORED. None of these are visible from the login screen.
+    (STORE, 'the token written to disk in readable text',
      '\t\t\treturn Base64.getEncoder().encodeToString(all);',
      '\t\t\treturn plain;'),
-    (STORE, 'the keep-password choice ignored, so declining still stores it',
-     '\t\tString secret = keepPassword && password != null && password.length() <= MAX_SECRET ? password : "";',
-     '\t\tString secret = password != null && password.length() <= MAX_SECRET ? password : "";'),
-    (STORE, 'a fixed IV, so two accounts sharing a password encrypt identically',
+    (STORE, 'a fixed IV, so two cards written on one machine encrypt identically',
      '\t\t\tbyte[] iv = new byte[16];\n\t\t\tnew Random().nextBytes(iv);\n',
      '\t\t\tbyte[] iv = new byte[16];\n'),
     (STORE, 'the key no longer tied to the machine, so a copied file still decrypts',
      '\t\tmd.update(String.valueOf(System.getProperty("user.name", "")).getBytes("UTF-8"));\n',
      ''),
-    (STORE, 'a failed decrypt handing back something that is not the password',
-     '\t\t} catch (Exception ignored) {\n\t\t\treturn "";\n\t\t}\n\t}\n\n\t/**\n\t * Derived from this machine\'s account',
-     '\t\t} catch (Exception ignored) {\n\t\t\treturn "junk";\n\t\t}\n\t}\n\n\t/**\n\t * Derived from this machine\'s account'),
+    (STORE, 'a failed decrypt handing back something that is not the token',
+     '\t\t\treturn new String(c.doFinal(all, 16, all.length - 16), "UTF-8");\n\t\t} catch (Exception ignored) {\n\t\t\treturn "";',
+     '\t\t\treturn new String(c.doFinal(all, 16, all.length - 16), "UTF-8");\n\t\t} catch (Exception ignored) {\n\t\t\treturn "junkjunkjunkjunkjunk";'),
 
-    # ---- A BROKEN FILE MUST COST THE PASSWORD, NEVER THE ACCOUNT.
-    (STORE, 'an undecryptable entry dropped entirely, so the account vanishes from the row',
-     '\t\t\t\tif (secret.length() > MAX_SECRET) {\n\t\t\t\t\tsecret = "";\n\t\t\t\t}\n',
-     '\t\t\t\tif (secret.length() == 0) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}\n'),
+    # ---- THE UPGRADE. Every player who had saved logins before this has a file with their
+    # password in it, and these are the two ways to get that wrong.
+    (STORE, "the old client's stored PASSWORD read as if it were a token",
+     '\t\t\t\tString token = decrypt(p.getProperty("profile." + i + ".token", ""));',
+     '\t\t\t\tString token = decrypt(p.getProperty("profile." + i + ".token",\n\t\t\t\t\tp.getProperty("profile." + i + ".secret", "")));'),
+    (STORE, 'an old file read but never rewritten, so the password stays on the disk for ever',
+     '\t\t\t\tif (p.getProperty("profile." + i + ".secret") != null) {\n\t\t\t\t\tlegacy = true;\n\t\t\t\t}\n',
+     ''),
+
+    # ---- THE SHAPE CHECK, which is what keeps a mangled file from putting a login on the wire
+    # that the server can only refuse.
+    (STORE, 'a stored value of any shape at all treated as a token',
+     '\t\t\t\tif (!looksLikeToken(token)) {\n\t\t\t\t\ttoken = "";\n\t\t\t\t}',
+     '\t\t\t\tif (token.length() > 4096) {\n\t\t\t\t\ttoken = "";\n\t\t\t\t}'),
+    (STORE, 'a token of the wrong length accepted from the server',
+     '\t\tif (username == null || !looksLikeToken(token)) {\n\t\t\treturn;\n\t\t}',
+     '\t\tif (username == null || token == null) {\n\t\t\treturn;\n\t\t}'),
+    (STORE, 'the alphabet not checked, so a token with impossible characters is kept',
+     '\t\t\tif (TOKEN_CHARS.indexOf(value.charAt(i)) < 0) {\n\t\t\t\treturn false;\n\t\t\t}',
+     '\t\t\tif (false) {\n\t\t\t\treturn false;\n\t\t\t}'),
+
+    # ---- THE CARD'S OWN STATE.
+    (STORE, 'a profile with no saved login claiming it can sign in',
+     '\t\t\treturn this.token.length() > 0;',
+     '\t\t\treturn true;'),
+    (STORE, 'signing in clearing the saved login the account already had',
+     '\t\tString token = tokenOf(name);',
+     '\t\tString token = "";'),
+    (STORE, 'a refused saved login taking the whole account with it',
+     '\t\t\tprofiles.set(i, new Profile(p.username, "", p.lastUsed, p.look));',
+     '\t\t\tprofiles.remove(i);'),
+    (STORE, 'a refused saved login dropped in memory but left in the file',
+     '\t\t\tprofiles.set(i, new Profile(p.username, "", p.lastUsed, p.look));\n\t\t\tsave();',
+     '\t\t\tprofiles.set(i, new Profile(p.username, "", p.lastUsed, p.look));'),
 
     # ---- THE LIST RULES. These do show on screen, as a row that is wrong.
     (STORE, 'a name matched with case, so Corey and corey become two rows',
      '\t\t\tif (profiles.get(i).username.equalsIgnoreCase(name)) {\n\t\t\t\tprofiles.remove(i);',
      '\t\t\tif (profiles.get(i).username.equals(name)) {\n\t\t\t\tprofiles.remove(i);'),
     (STORE, 'the newest login appended rather than put first',
-     '\t\tprofiles.add(0, new Profile(name, secret, System.currentTimeMillis(), look));',
-     '\t\tprofiles.add(new Profile(name, secret, System.currentTimeMillis(), look));'),
+     '\t\tprofiles.add(0, new Profile(name, token, System.currentTimeMillis(), look));',
+     '\t\tprofiles.add(new Profile(name, token, System.currentTimeMillis(), look));'),
     (STORE, 'the cap removed, so the row overflows the title area',
      '\t\twhile (profiles.size() > MAX) {\n\t\t\tprofiles.remove(profiles.size() - 1);\n\t\t}\n',
      ''),
@@ -66,8 +91,8 @@ MUTS = [
      '\t\t\tprofiles.remove(profiles.size() - 1);',
      '\t\t\tprofiles.remove(0);'),
     (STORE, 'the login stamp never set, so the order cannot be trusted',
-     'new Profile(name, secret, System.currentTimeMillis(), look)',
-     'new Profile(name, secret, 0L, look)'),
+     'new Profile(name, token, System.currentTimeMillis(), look)',
+     'new Profile(name, token, 0L, look)'),
 
     # ---- THE REST OF THE CONTRACT.
     (STORE, 'a name longer than the login field accepts saved anyway',
@@ -76,9 +101,6 @@ MUTS = [
     (STORE, 'forget leaving the account in the file it removed from the list',
      '\t\tif (username == null || !removeByName(username.trim())) {\n\t\t\treturn;\n\t\t}\n\t\tsave();',
      '\t\tif (username == null || !removeByName(username.trim())) {\n\t\t\treturn;\n\t\t}'),
-    (STORE, 'a profile with no password claiming it can sign in',
-     '\t\t\treturn this.secret.length() > 0;',
-     '\t\t\treturn true;'),
 ]
 
 
@@ -105,7 +127,7 @@ def main():
             r = subprocess.run([sys.executable, inside(RUNNER)], capture_output=True, text=True,
                                timeout=600)
         except subprocess.TimeoutExpired:
-            print('  %-5s %-76s %s' % ('HUNG', why, 'the suite never finished - not a catch'))
+            print('  %-5s %-76s %s' % ('red', why, 'caught, but by a timeout - not a named check'))
             loose += 1
             continue
         finally:

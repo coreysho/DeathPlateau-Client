@@ -4102,7 +4102,11 @@ public class Client extends GameShell implements PixMap.Target {
 				this.username = profile.username;
 				this.redrawFrame = true;
 				if (profile.canSignIn()) {
-					this.password = profile.secret;
+					// The card's saved login, which is a token and not a password. The password
+					// field stays empty - there is nothing in it to send, and nothing on this
+					// computer that could fill it in.
+					this.loginToken = profile.token;
+					this.password = "";
 					this.loginRetryCount = 0;
 					this.login(this.username, this.password, false);
 					if (this.ingame) {
@@ -4123,6 +4127,9 @@ public class Client extends GameShell implements PixMap.Target {
 				this.rememberLogin = !this.rememberLogin;
 				this.redrawFrame = true;
 			} else if (TitleScreen.inEnter(x, y)) {
+				// Typed, so no token: a player who clicked a card and then typed a password anyway
+				// means the password, and the stale token would sign them into the card instead.
+				this.loginToken = "";
 				this.loginRetryCount = 0;
 				this.login(this.username, this.password, false);
 				if (this.ingame) {
@@ -4178,6 +4185,20 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 	}
 
+	/**
+	 * THE SAVED LOGIN THIS SESSION IS USING, or "" for a login being typed.
+	 *
+	 * A token is worth one account on one computer until the server cancels it, and it is what the
+	 * login screen's saved accounts hold instead of the player's password. It is a field rather
+	 * than an argument to login() because login() is also how the client reconnects after losing
+	 * its socket mid-game, and by then there is nothing to pass: a player who signed in from a card
+	 * never typed a password for this client to keep.
+	 *
+	 * Set at every call site, never left to carry over: a card login sets the card's token, and a
+	 * typed login clears it.
+	 */
+	public String loginToken = "";
+
 	@ObfuscatedName("client.a(Ljava/lang/String;Ljava/lang/String;Z)V")
 	public void login(String arg0, String arg1, boolean arg2) {
 		signlink.errorname = arg0;
@@ -4213,6 +4234,19 @@ public class Client extends GameShell implements PixMap.Target {
 				this.out.p4(signlink.uid);
 				this.out.pjstr(arg0);
 				this.out.pjstr(arg1);
+				// SAVED LOGINS, inside the same RSA envelope as the password - a token is worth the
+				// account until it is cancelled, so it travels exactly as a password does and never
+				// in the clear. Two fields and not a second meaning for the password field, so the
+				// server is never left guessing which of the two it was sent.
+				//
+				// The flag asks for a token to keep; the string is one being used. Both go on every
+				// login, empty when there is nothing to say, and the 382 revision below is what
+				// stops a server that cannot read them from being sent them.
+				// Only a typed password can ask for one: a token login already has a token, and
+				// the server pushes its month out from today every time one is used.
+				boolean wantsToken = this.rememberLogin && this.loginToken.length() == 0;
+				this.out.p1(wantsToken ? 1 : 0);
+				this.out.pjstr(this.loginToken);
 				this.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);
 				this.login.pos = 0;
 				if (arg2) {
@@ -4227,7 +4261,8 @@ public class Client extends GameShell implements PixMap.Target {
 				// "your client is out of date". 378 = the walk-merge skeleton guard. 379 = P_DIALOGPROMPT,
 				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
 				// 381 = chat as typed (ChatText): public, private and clan lines are their characters, not WordPack.
-				this.login.p2(381);
+				// 382 = saved logins: two more fields in the login block, and server prot 14 to hand one back.
+				this.login.p2(382);
 				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
 				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
 				// instead, so a jar from before them keeps working rather than being turned away.
@@ -4262,7 +4297,12 @@ public class Client extends GameShell implements PixMap.Target {
 				DevLog.log("SESSION", "logged in as \"" + arg0 + "\"");
 				// Only now, with the server's yes in hand: saving on the attempt would fill the
 				// row with accounts whose password was wrong.
-				LoginProfiles.remember(arg0, arg1, this.rememberLogin);
+				//
+				// THE NAME ONLY. What makes a card able to sign in is a token, and the token does
+				// not exist yet: the server mints it after this and sends it as server prot 14,
+				// which lands in rememberToken below. A login that asked for no token saves the
+				// name just the same, so the card is still there to click.
+				LoginProfiles.remember(arg0);
 				this.out.pos = 0;
 				this.in.pos = 0;
 				this.ptype = -1;
@@ -4371,6 +4411,18 @@ public class Client extends GameShell implements PixMap.Target {
 			} else if (var8 == 3) {
 				this.loginMessage0 = "";
 				this.loginMessage1 = "Invalid username or password.";
+				// A SAVED LOGIN THE SERVER WOULD NOT TAKE is expired, cancelled, or for an account
+				// that no longer exists - and the player never typed it, so "invalid password" is
+				// not something they can act on. Drop it and ask for the password instead, which is
+				// the one thing that can get them back in.
+				if (this.loginToken.length() > 0) {
+					LoginProfiles.forgetToken(arg0);
+					this.loginToken = "";
+					this.password = "";
+					this.titleLoginField = 1;
+					this.loginMessage0 = "Your saved login has expired.";
+					this.loginMessage1 = "Please enter your password.";
+				}
 			} else if (var8 == 4) {
 				this.loginMessage0 = "Your account has been disabled.";
 				this.loginMessage1 = "Please check your message-centre for details.";
@@ -4414,7 +4466,12 @@ public class Client extends GameShell implements PixMap.Target {
 				DevLog.log("SESSION", "logged in as \"" + arg0 + "\"");
 				// Only now, with the server's yes in hand: saving on the attempt would fill the
 				// row with accounts whose password was wrong.
-				LoginProfiles.remember(arg0, arg1, this.rememberLogin);
+				//
+				// THE NAME ONLY. What makes a card able to sign in is a token, and the token does
+				// not exist yet: the server mints it after this and sends it as server prot 14,
+				// which lands in rememberToken below. A login that asked for no token saves the
+				// name just the same, so the card is still there to click.
+				LoginProfiles.remember(arg0);
 				this.out.pos = 0;
 				this.in.pos = 0;
 				this.ptype = -1;
@@ -9896,6 +9953,23 @@ public class Client extends GameShell implements PixMap.Target {
 					if (this.stickyChatInterfaceId != -1) {
 						this.redrawChatback = true;
 					}
+				}
+				this.ptype = -1;
+				return true;
+			}
+
+			if (this.ptype == 14) {
+				// SET_LOGIN_TOKEN, custom (2026-11-02) - the saved login this session asked for.
+				// Sent once, in the opening packets, and only to a client that ticked Remember me
+				// and then proved it knew the password.
+				//
+				// It is kept in two places on purpose: on disk, so the card can sign in next time,
+				// and in the field this session reconnects with, so a dropped socket does not need
+				// a password nobody can supply any more.
+				String token = this.in.gjstr();
+				if (token.length() > 0) {
+					this.loginToken = token;
+					LoginProfiles.rememberToken(this.username, token);
 				}
 				this.ptype = -1;
 				return true;
