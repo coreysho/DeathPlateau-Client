@@ -116,6 +116,8 @@ public class LoginTokenTest extends Client {
 			stalePhase(user);
 		} else if (phase.equals("legacy")) {
 			legacyPhase(user, password);
+		} else if (phase.equals("noremember")) {
+			noRememberPhase(user, password);
 		} else {
 			check(false, "unknown phase " + phase);
 		}
@@ -236,6 +238,33 @@ public class LoginTokenTest extends Client {
 		// And the number below the supported pair still is. Nothing should accept 380.
 		int old = oldStyleLogin(user, password, 380);
 		check(old == 6, "a revision older than those two is still refused: reply " + old);
+	}
+
+	// ---------------------------------------------------------------- 5. Remember me, off
+	// THE OPPOSITE CLAIM, and the one nobody was making. The four phases above all tick Remember
+	// me, so a client that ignored the flag - asking for a token on every login - would have
+	// passed every one of them while storing a saved login for a player who never asked for one,
+	// on a machine that may not be theirs. The name is still remembered, as it always was before
+	// any of this: that is the card, and it is not a saved login.
+	static void noRememberPhase(String user, String password) throws Exception {
+		check(LoginProfiles.all().isEmpty(), "a home of its own, with nothing saved in it");
+
+		set("username", user);
+		set("password", password);
+		set("rememberLogin", Boolean.FALSE);
+		boolean in = signIn(true);
+		check(in, "a login that did not ask to be remembered still gets in" + why());
+		if (!in) {
+			return;
+		}
+
+		check(((String) get("loginToken")).length() == 0, "and is handed no saved login");
+
+		List<LoginProfiles.Profile> saved = LoginProfiles.all();
+		check(saved.size() == 1 && saved.get(0).username.equalsIgnoreCase(user), "the name is remembered, as it always was");
+		check(saved.size() == 1 && saved.get(0).token.length() == 0, "with nothing to sign in with");
+		check(!saved.isEmpty() && !saved.get(0).canSignIn(), "so the card asks for the password instead of signing in");
+		check(!fileText().contains(password), "and the password is not on the disk either");
 	}
 
 	/** The pre-382 login block, start to finish, and whatever byte the engine answers with. */

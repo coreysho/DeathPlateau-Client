@@ -225,13 +225,20 @@ def main():
         else:
             print('using the engine already on %d' % port)
 
-        # ONE HOME ACROSS ALL THREE PHASES. That is what makes the second phase mean anything: the
-        # token it signs in with is the one the first phase was given and wrote to disk.
+        # ONE HOME ACROSS THE FIRST FOUR PHASES. That is what makes the second phase mean
+        # anything: the token it signs in with is the one the first phase was given and wrote to
+        # disk.
         home = os.path.join(work, 'home')
         os.makedirs(home)
+        # AND ONE OF ITS OWN for the last. noremember asserts that nothing was saved, and the four
+        # before it save on purpose - sharing a home would have it assert the opposite of what
+        # they arranged.
+        alone = os.path.join(work, 'home-noremember')
+        os.makedirs(alone)
 
         failed = 0
-        for i, phase in enumerate(('password', 'token', 'stale', 'legacy')):
+        phases = (('password', home), ('token', home), ('stale', home), ('legacy', home), ('noremember', alone))
+        for i, (phase, where) in enumerate(phases):
             if i:
                 # THE WORLD IS STILL LOGGING THE LAST PHASE OUT. Its socket went when that JVM
                 # exited, and until the world has saved and removed the player the next login is
@@ -247,7 +254,7 @@ def main():
                    # other retry goes to a closed port and makes the real failure harder to read.
                    # HTTP on the web port is what this harness wants.
                    '-Dlostcity.jaggrabport=0',
-                   '-Duser.home=' + home, '-cp', classes,
+                   '-Duser.home=' + where, '-cp', classes,
                    'jagex2.client.LoginTokenTest', phase, USER, PASSWORD]
             r = subprocess.run(cmd, capture_output=True, text=True, cwd=work)
             printed = False
@@ -263,7 +270,7 @@ def main():
                     print(r.stderr[-3000:])
         print()
         if failed == 0:
-            print('saved logins work end to end: all four phases passed')
+            print('saved logins work end to end: all %d phases passed' % len(phases))
         else:
             print('%d PHASE(S) FAILED' % failed)
         return 0 if failed == 0 else 1
