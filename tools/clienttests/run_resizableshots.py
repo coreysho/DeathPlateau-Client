@@ -35,6 +35,9 @@ import argparse
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import enginecheck  # noqa: E402  (after the sys.path line, necessarily)
 import time
 
 # A spot with a long open view, so a bigger draw distance has something to show.
@@ -105,6 +108,12 @@ def main():
     ap.add_argument('--port', type=int, default=43694)
     ap.add_argument('--webport', type=int, default=8694)
     a = ap.parse_args()
+    # THE ENGINE THIS IS ABOUT TO RENDER AGAINST, before a window is opened or a frame is drawn.
+    # An engine that is not there fails loudly enough, but one whose pack is broken sends the
+    # client to 404 and 30%, and one whose pack is merely STALE does not fail at all - it serves
+    # the previous build, and the shots come out looking right. See enginecheck.
+    enginecheck.require(a.port, a.webport)
+
     global JAR
     if a.jar:
         JAR = os.path.abspath(a.jar)

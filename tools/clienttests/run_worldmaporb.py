@@ -25,6 +25,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import enginecheck  # noqa: E402  (after the sys.path line, necessarily)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SHOTS = os.path.join(HERE, 'ResizableShots.java')
@@ -40,6 +43,12 @@ def main():
     ap.add_argument('--port', default='43694')
     ap.add_argument('--webport', default='8694')
     args = ap.parse_args()
+    # THE ENGINE THIS IS ABOUT TO RENDER AGAINST, before a window is opened or a frame is drawn.
+    # An engine that is not there fails loudly enough, but one whose pack is broken sends the
+    # client to 404 and 30%, and one whose pack is merely STALE does not fail at all - it serves
+    # the previous build, and the shots come out looking right. See enginecheck.
+    enginecheck.require(int(args.port), int(args.webport))
+
 
     java = shutil.which('java')
     javac = shutil.which('javac')

@@ -25,6 +25,9 @@ import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import enginecheck  # noqa: E402  (after the sys.path line, necessarily)
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -228,6 +231,12 @@ def main():
     ap.add_argument('--sheet', action='store_true', help='rebuild the contact sheets from shots already taken')
     ap.add_argument('--home', help="the client's cache folder (default: coursecam_home beside --out)")
     a = ap.parse_args()
+    # THE ENGINE THIS IS ABOUT TO RENDER AGAINST, before a window is opened or a frame is drawn.
+    # An engine that is not there fails loudly enough, but one whose pack is broken sends the
+    # client to 404 and 30%, and one whose pack is merely STALE does not fail at all - it serves
+    # the previous build, and the shots come out looking right. See enginecheck.
+    enginecheck.require(a.port, a.webport)
+
     global JAR
     if a.jar:
         JAR = os.path.abspath(a.jar)

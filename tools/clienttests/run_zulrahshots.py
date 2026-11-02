@@ -30,6 +30,9 @@ import random
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import enginecheck  # noqa: E402  (after the sys.path line, necessarily)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 JAR = os.path.join(ROOT, 'build/libs/rs2client-dev.jar')
@@ -70,6 +73,12 @@ def main():
     ap.add_argument('--width', type=int, default=1280)
     ap.add_argument('--height', type=int, default=800)
     a = ap.parse_args()
+    # THE ENGINE THIS IS ABOUT TO RENDER AGAINST, before a window is opened or a frame is drawn.
+    # An engine that is not there fails loudly enough, but one whose pack is broken sends the
+    # client to 404 and 30%, and one whose pack is merely STALE does not fail at all - it serves
+    # the previous build, and the shots come out looking right. See enginecheck.
+    enginecheck.require(a.port, a.webport)
+
 
     jar = os.path.abspath(a.jar) if a.jar else JAR
     out = os.path.abspath(a.out)
