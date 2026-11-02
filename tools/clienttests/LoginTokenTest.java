@@ -486,7 +486,17 @@ public class LoginTokenTest extends Client {
 		long giveUp = System.currentTimeMillis() + ms;
 		while (!until.done()) {
 			if (System.currentTimeMillis() > giveUp) {
-				check(false, "timed out waiting for " + what + why());
+				// WHAT IT WAS WAITING ON, not just that it waited. "timed out waiting for the title
+				// screen" sent me looking at the engine, the ports and my own last commit in turn,
+				// and every one of those was fine: the client had simply not been given a cache to
+				// draw one from. Each of these is one field, and between them they say which link
+				// is missing - the file store, the download, or the draw.
+				check(false, "timed out waiting for " + what + why()
+					+ " [state=" + geti("titleScreenState") + " frames=" + frames
+					+ " title=" + (get("imageTitle4") != null)
+					+ " cache=" + (sign.signlink.cache_dat != null)
+					+ " loading=" + get("lastProgressPercent") + "% " + get("lastProgressMessage")
+					+ " lastFetch=" + get("lastFetchFrom") + "]");
 				System.out.println();
 				System.out.println("1 CHECK(S) FAILED");
 				System.exit(1);

@@ -26,10 +26,13 @@ Needs a display: the client opens its real window and is driven through its real
 import argparse
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -40,9 +43,19 @@ ENGINE = os.path.join(os.path.dirname(ROOT), 'Engine-TS')
 
 # Ports of its own, so a run cannot reach a world somebody is playing on and cannot collide with
 # the engine a developer has up on the default 43594.
+#
+# CONTIGUOUS, AND THAT IS NOT COSMETIC. They used to be 43994 / 8994 / 9094 - the web and
+# management ports a hundred apart - while --node-port moved in hundreds, so one run's web port was
+# the previous run's management port. With a leftover engine still holding it, the new engine could
+# not bind, died after saying it was ready, and the client fetched its cache from the old one:
+# four runs reporting a client that never reached its title screen, for a reason that was never in
+# the client. Three in a row can only collide with a run that moved by less than three.
 PORT = 43994
-WEBPORT = 8994
-MGMTPORT = 9094
+
+
+def ports(node):
+    """The three the engine needs: the game port, the web server, the management server."""
+    return node, node + 1, node + 2
 
 USER = 'tokentest'
 PASSWORD = 'tok12345'
@@ -63,8 +76,41 @@ def modulus(engine):
     return r.stdout.strip()
 
 
+def in_use(port):
+    """Whether something already answers on this port.
+
+    A connect, not a listener table: netstat and Get-NetTCPConnection both came back empty on this
+    machine while two engines were plainly serving, and a harness that trusts them goes on to start
+    an engine that dies on bind.
+    """
+    with socket.socket() as s:
+        s.settimeout(1.5)
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def serving(webport):
+    """Whether the engine's web server answers for the cache the client is about to want."""
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:%d/crc0' % webport, timeout=5) as r:
+            return r.status == 200 and len(r.read()) > 8
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def start_engine(engine, log, port, webport, mgmtport):
     """An engine on the test ports, left running until the phases are done."""
+    # BEFORE ANYTHING IS STARTED. An engine that cannot bind one of these dies AFTER printing
+    # "World ready" - the game socket is the last thing it listens on - so starting it regardless
+    # means handing the client a port that belongs to whatever got there first. That is not a
+    # hypothetical: four runs in a row fetched their cache from a leftover engine whose pack files
+    # had been replaced underneath it, and every one of them reported a client that never reached
+    # its title screen.
+    for name, p in (('game', port), ('web', webport), ('management', mgmtport)):
+        if in_use(p):
+            raise SystemExit('run_logintokentest: something is already serving on the %s port %d. '
+                             'An engine left over from an earlier run will do this - stop it, or '
+                             'pass --node-port to move out of its way.' % (name, p))
+
     env = dict(os.environ)
     env.update({'NODE_PORT': str(port), 'WEB_PORT': str(webport), 'WEB_MANAGEMENT_PORT': str(mgmtport)})
     out = open(log, 'w', encoding='utf-8')
@@ -80,7 +126,20 @@ def start_engine(engine, log, port, webport, mgmtport):
             raise SystemExit('run_logintokentest: the engine stopped while starting')
         try:
             if 'World ready' in open(log, encoding='utf-8', errors='replace').read():
-                return proc
+                # AND STILL ALIVE, AND ACTUALLY SERVING. "World ready" is printed before the game
+                # socket is bound, so it is not the same thing as a working engine - and the cache
+                # the client is about to ask for comes off the web server, not out of that line.
+                for _ in range(30):
+                    if proc.poll() is not None:
+                        print(open(log, encoding='utf-8').read()[-2000:])
+                        raise SystemExit('run_logintokentest: the engine stopped just after saying '
+                                         'it was ready - usually a port it could not bind')
+                    if serving(webport):
+                        return proc
+                    time.sleep(1)
+                proc.terminate()
+                raise SystemExit('run_logintokentest: the engine says it is ready but its web '
+                                 'server is not answering on %d' % webport)
         except OSError:
             pass
         time.sleep(1)
@@ -119,7 +178,8 @@ def main():
     ap.add_argument('--port', type=int, help='an engine already running on this port')
     ap.add_argument('--webport', type=int)
     ap.add_argument('--keep', action='store_true', help='leave the scratch home behind to look at')
-    ap.add_argument('--node-port', type=int, default=PORT, help='move the started engine off a stuck port')
+    ap.add_argument('--node-port', type=int, default=PORT,
+                    help='the started engine takes this port and the two above it')
     args = ap.parse_args()
 
     why = cannot_run(args.engine)
@@ -155,11 +215,8 @@ def main():
 
         rsan = modulus(args.engine)
         port = args.port or args.node_port
-        # Kept a fixed distance apart, so moving one moves all three and they cannot land on each
-        # other: the first attempt at this had the web port of one run equal to the management port
-        # of the next, and the collision read as "the engine stopped while starting".
-        webport = args.webport or (WEBPORT + (port - PORT))
-        mgmtport = MGMTPORT + (port - PORT)
+        _node, derived_web, mgmtport = ports(port)
+        webport = args.webport or derived_web
         if not args.port:
             log = os.path.join(work, 'engine.log')
             print('starting an engine on %d (log: %s)' % (port, log))
@@ -185,6 +242,11 @@ def main():
             print()
             cmd = [java, '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1',
                    '-Dlostcity.port=%d' % port, '-Dlostcity.webport=%d' % webport,
+                   # JAGGRAB off. The client assumes 43595 whenever it is talking to a host
+                   # directly - the engine's own port at home, and nothing at all here - so every
+                   # other retry goes to a closed port and makes the real failure harder to read.
+                   # HTTP on the web port is what this harness wants.
+                   '-Dlostcity.jaggrabport=0',
                    '-Duser.home=' + home, '-cp', classes,
                    'jagex2.client.LoginTokenTest', phase, USER, PASSWORD]
             r = subprocess.run(cmd, capture_output=True, text=True, cwd=work)

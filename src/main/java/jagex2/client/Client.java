@@ -4245,6 +4245,11 @@ public class Client extends GameShell implements PixMap.Target {
 				// Only a typed password can ask for one: a token login already has a token, and
 				// the server pushes its month out from today every time one is used.
 				boolean wantsToken = this.rememberLogin && this.loginToken.length() == 0;
+				// To client.log, because when a saved login does not save, the first question is
+				// whether this client ever asked - and the answer was not written down anywhere.
+				DevLog.log("SESSION", this.loginToken.length() > 0 ? "signing in with a saved login"
+					: wantsToken ? "asking for a saved login to keep"
+					: "not asking for a saved login (Remember me is off)");
 				this.out.p1(wantsToken ? 1 : 0);
 				this.out.pjstr(this.loginToken);
 				this.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);
