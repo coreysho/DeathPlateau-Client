@@ -29,6 +29,78 @@ jobs:
         path: |
           build/libs/*
 
+  # THE SUITES THEMSELVES, which until now ran nowhere but on somebody's machine before a
+  # merge. That is how run_handovertest sat broken for days: 0dedbb8 gave handOver a boolean
+  # and its own test went on reflecting the no-argument method, so it died before reaching a
+  # single check, and nothing said so until somebody thought to run it.
+  #
+  # They were left out on the belief that they were too slow for CI. Measured: 223 seconds for
+  # all thirty, and only four of them take longer than six. (The MUTATION suites really are
+  # hours - one of them is 83 mutations times a full test run - and still belong nowhere near
+  # a push. mutate_guard above is the part of that which is cheap.)
+  #
+  # IT BUILDS NOTHING. Two suites read build/libs/rs2client-dev.jar, so this takes the jar the
+  # build job already made rather than compiling the client a second time with a second JDK -
+  # the suites compile the sources they need themselves, with javac.
+  #
+  # CONTENT IS CHECKED OUT BESIDE IT, at the name the tools look for: ClueSteps, MapLabels and
+  # MapIconNames are generated from the content, and their --check runs are the only thing that
+  # catches a place or a clue added there and not regenerated here. Without the checkout those
+  # three checks skip, and a skip is worth nothing.
+  tests:
+    name: The client's own test suites
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: DeathPlateau-Client
+
+    - uses: actions/checkout@v4
+      with:
+        repository: coreysho/DeathPlateau-Content
+        ref: 377-wip
+        path: DeathPlateau-Content
+
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: 21
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    # Eleven of the thirty construct a Swing window or an Applet, which needs a display.
+    - name: Install xvfb
+      run: sudo apt-get update && sudo apt-get install -y xvfb
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: client
+        path: DeathPlateau-Client/build/libs
+
+    - name: Every suite
+      working-directory: DeathPlateau-Client
+      run: |
+        failed=""
+        for f in tools/clienttests/run_*test*.py; do
+          name=$(basename "$f" .py)
+          echo "::group::$name"
+          if timeout 900 python3 "$f"; then
+            echo "::endgroup::"
+          else
+            echo "::endgroup::"
+            echo "::error title=$name::$name failed"
+            failed="$failed $name"
+          fi
+        done
+        if [ -n "$failed" ]; then
+          echo "FAILED:$failed"
+          exit 1
+        fi
+        echo "every suite passed"
+
   # A MUTATION THAT TESTS NOTHING LOOKS EXACTLY LIKE ONE THAT PASSES. Every mutate_*.py breaks
   # the client one plausible way at a time and checks a named check notices; a pattern whose
   # source has since been renamed or moved matches nothing, and the runners report that as SKIP
