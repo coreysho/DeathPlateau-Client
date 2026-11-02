@@ -84,12 +84,21 @@ def server_env(node):
     return {
         'LOGIN_SERVER': 'true',
         'EASY_STARTUP': 'true',
+        # AND IT HAS TO BE ALLOWED TO MAKE THE ACCOUNT. The two paths differ here and the
+        # difference is not small: LoginThread's local branch registers an unknown name whatever
+        # WEBSITE_REGISTRATION says, while the login server registers one only when that is false
+        # - which it is not by default. So this pass, with an account of its own, was told "No
+        # account with that name and password" five times in a row.
+        'WEBSITE_REGISTRATION': 'false',
         'LOGIN_PORT': str(node + 3),
         'FRIEND_PORT': str(node + 4),
         'LOGGER_PORT': str(node + 5)
     }
 
 USER = 'tokentest'
+# The second pass's own account. See run_phases: the first pass leaves its account logged in,
+# because the engine holding it is killed, and the login server is the half that refuses that.
+SERVER_USER = 'tokentest_ls'
 PASSWORD = 'tok12345'
 
 # Read out of the engine's own key file. The modulus is what the client encrypts the login block
@@ -296,7 +305,7 @@ def main():
         # that: the engine is somebody else's and its authority is not ours to claim.
         first_label = ('the engine already on %d' % port) if args.port else (
             'a login server' if args.authority == 'server' else 'local accounts')
-        failed = run_phases(java, classes, rsan, work, port, webport, first_label)
+        failed = run_phases(java, classes, rsan, work, port, webport, first_label, USER)
 
         # AND AGAIN, AGAINST A LOGIN SERVER. Only when this run started the engine: with --port
         # there is one engine, somebody else's, and its authority is whatever they configured.
@@ -309,7 +318,7 @@ def main():
             print('starting a second engine, this one delegating to a login server (log: %s)' % log)
             engine = start_engine(args.engine, log, port, webport, mgmtport, server_env(port))
             print('engine ready')
-            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server')
+            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server', SERVER_USER)
 
         print()
         if failed == 0:
@@ -327,8 +336,14 @@ def main():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def run_phases(java, classes, rsan, work, port, webport, label):
-    """The five phases against whatever engine is on these ports. Returns how many failed."""
+def run_phases(java, classes, rsan, work, port, webport, label, user):
+    """The five phases against whatever engine is on these ports. Returns how many failed.
+
+    `user` is this pass's own account. The two passes share a data directory, and the first
+    engine is killed rather than shut down - so it writes no logout and leaves its account marked
+    logged in. The local path ignores that; the login server refuses it, and adds a hop timer. One
+    account each and neither pass can see the other's leftovers.
+    """
     print()
     print('==== %s ====' % label)
     # Homes of this pass's own, so the second pass starts where the first did: with a machine that
@@ -363,7 +378,7 @@ def run_phases(java, classes, rsan, work, port, webport, label):
                    # HTTP on the web port is what this harness wants.
                    '-Dlostcity.jaggrabport=0',
                    '-Duser.home=' + where, '-cp', classes,
-                   'jagex2.client.LoginTokenTest', phase, USER, PASSWORD]
+                   'jagex2.client.LoginTokenTest', phase, user, PASSWORD]
             r = subprocess.run(cmd, capture_output=True, text=True, cwd=work)
             printed = False
             for line in r.stdout.split('\n'):

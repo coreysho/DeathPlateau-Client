@@ -230,6 +230,16 @@ public class LoginTokenTest extends Client {
 	 */
 	static void legacyPhase(String user, String password) throws Exception {
 		int reply = oldStyleLogin(user, password, 381);
+		// 5 IS NOT AN ANSWER TO THE QUESTION. It means "already logged in": the phase before this
+		// one was in the game a few seconds ago, its JVM is gone, and the world has not finished
+		// saving and removing the player yet. Every other phase here retries for a minute through
+		// signIn for exactly this reason; this one read its socket once and believed it, so on a
+		// slower machine - a CI runner - it reported a pre-382 block being REFUSED when nothing of
+		// the kind had happened. Wait it out, as the others do.
+		for (int i = 0; i < RETRIES && reply == 5; i++) {
+			Thread.sleep(RETRY_WAIT);
+			reply = oldStyleLogin(user, password, 381);
+		}
 		// 2 is "you are in" and 0 is "you are in, as a new character". 6 is out of date, which is
 		// the failure this phase exists to catch.
 		check(reply == 2 || reply == 0, "a login block with no saved-login fields is accepted: reply " + reply);
