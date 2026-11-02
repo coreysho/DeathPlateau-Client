@@ -174,10 +174,11 @@ def main():
                       'caught, but by a non-zero exit with no check named - a crash is not a catch'))
                 loose += 1
     finally:
-        # The whole tree, for the reason written in the runner's own finally: npx leaves node on
-        # the port otherwise, and the next run dies on bind.
-        subprocess.run(['taskkill', '/PID', str(engine.pid), '/T', '/F'],
-                       capture_output=True, text=True)
+        # The runner's own, which knows both platforms: taskkill /T on Windows, the process group
+        # everywhere else. This used to call taskkill directly, which exists on one of the two -
+        # on a Linux runner it would have thrown after every mutation had already been reported,
+        # so the output would have read as a clean run under a red job.
+        harness.stop_engine(engine, (port, webport, mgmtport))
 
     print()
     if bad:

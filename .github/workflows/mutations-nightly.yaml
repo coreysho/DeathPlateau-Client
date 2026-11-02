@@ -1,0 +1,163 @@
+# THE MUTATION SUITES, WHICH UNTIL NOW RAN NOWHERE.
+#
+# mutate_guard runs on every push, but all it proves is that each pattern still MATCHES the source
+# it points at. It cannot tell you a check stopped CATCHING - that takes breaking the code one
+# plausible way at a time and watching a named check go red, which is what these 25 suites do and
+# why they take hours. So they were left to be run by hand, and a suite that nobody runs is a suite
+# that nobody notices going quiet: the whole of 2 November came out of exactly that.
+#
+# ONE JOB PER SUITE. Three reasons, in order of how much they matter:
+#   * a failure names itself in the run list, instead of being one line inside a six-hour log
+#   * no single job can run out of GitHub's six-hour ceiling
+#   * one suite dying does not take the other 24 with it (fail-fast: false)
+#
+# Each job pays its own two and a half minutes of engine setup, which is wasteful on paper and the
+# right trade here: it keeps the file simple, it needs no artifact of the pack, and this repository
+# is public, so the minutes are free. max-parallel keeps it from taking every runner the account
+# has if anybody is pushing at the same time.
+#
+# NIGHTLY, not per-push. An hours-long suite on a push would make every push unmergeable until it
+# finished; the point of these is to catch rot, and rot is a thing you find in the morning.
+name: mutations nightly
+
+on:
+  schedule:
+    # 07:00 UTC, which is the small hours in Corey's timezone. Scheduled runs take the workflow
+    # from the default branch, which is dev-logging.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: mutations-nightly
+  cancel-in-progress: false
+
+jobs:
+  # The jar two of the driven runners read. Built once rather than in all 25 jobs.
+  jar:
+    runs-on: ubuntu-26.04
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-java@v6
+      with:
+        distribution: 'temurin'
+        java-version: 8
+
+    - uses: gradle/actions/setup-gradle@v6
+
+    - name: Build
+      run: ./gradlew build
+
+    - name: Upload
+      uses: actions/upload-artifact@v7
+      with:
+        name: client
+        path: build/libs/*.jar
+        retention-days: 2
+
+  suites:
+    name: ${{ matrix.suite }}
+    needs: jar
+    runs-on: ubuntu-26.04
+    # Under GitHub's six-hour ceiling, with room for the worst of them: one is 83 mutations and
+    # each mutation is a whole test run.
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        suite:
+          - actortest
+          - agilitytest
+          - apilevel
+          - clue
+          - configtest
+          - dragtest
+          - farm
+          - gamestate
+          - groundtest
+          - icons
+          - jaggrabtest
+          - loginprofiles
+          - logintoken
+          - loot
+          - mapwindow
+          - menutest
+          - mousetest
+          - notifytest
+          - npctest
+          - rooftest
+          - skilltest
+          - slayer
+          - titlescreen
+          - worldmap
+          - xptest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        path: DeathPlateau-Client
+
+    - uses: actions/checkout@v7
+      with:
+        repository: coreysho/DeathPlateau-Content
+        ref: 377-wip
+        path: DeathPlateau-Content
+
+    - uses: actions/checkout@v7
+      with:
+        repository: coreysho/DeathPlateau-Engine
+        ref: 377-wip
+        path: Engine-TS
+
+    # The engine compiles content from ../content whatever BUILD_SRC_DIR says.
+    - name: Content beside the engine
+      run: ln -s DeathPlateau-Content content
+
+    - uses: actions/setup-java@v6
+      with:
+        distribution: 'temurin'
+        java-version: 21
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: Engine-TS/package-lock.json
+
+    # Same as the per-push job: a key and a migrated database as well as the pack, because a clone
+    # has neither and a world with no account table refuses every login.
+    - name: Pack the client cache
+      working-directory: Engine-TS
+      run: |
+        npm ci
+        npm run rsa
+        npm run sqlite:migrate
+        npm run build
+
+    - name: Install xvfb
+      run: sudo apt-get update && sudo apt-get install -y xvfb
+
+    - uses: actions/download-artifact@v8
+      with:
+        name: client
+        path: DeathPlateau-Client/build/libs
+
+    - name: mutate_${{ matrix.suite }}
+      working-directory: DeathPlateau-Client
+      run: |
+        rc=0
+        python3 "tools/clienttests/mutate_${{ matrix.suite }}.py" >"/tmp/out" 2>&1 || rc=$?
+        cat /tmp/out
+        # A SURVIVOR IS THE FINDING, and it is the last thing printed - so the annotation carries
+        # the GREEN lines, which are the mutations nothing caught, rather than the tail of a run
+        # that may well end on something that passed.
+        if [ "$rc" != "0" ]; then
+          why=$( { grep -E 'GREEN|SKIP|SURVIVED|only by a crash' /tmp/out || tail -n 14 /tmp/out; } \
+                 | tail -n 24 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=mutate_${{ matrix.suite }}::mutate_${{ matrix.suite }} has survivors%0A$why"
+          exit 1
+        fi

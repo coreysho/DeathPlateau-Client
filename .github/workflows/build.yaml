@@ -212,6 +212,22 @@ jobs:
       with:
         python-version: '3.12'
 
+    # AND THAT THE NIGHTLY STILL RUNS ALL OF THEM. The matrix in mutations-nightly.yaml is a
+    # list somebody has to remember to add to, and a suite that is not in it runs nowhere - the
+    # exact state that workflow exists to end. Compared here, on every push, so the gap fails on
+    # the commit that opens it.
+    - name: Every suite is in the nightly matrix
+      run: |
+        listed=$(sed -n '/^          - /p' .github/workflows/mutations-nightly.yaml | sed 's/^          - //' | sort)
+        on_disk=$(ls tools/clienttests/mutate_*.py | sed 's#.*/mutate_##; s#\.py$##' | grep -v '^guard$' | sort)
+        if [ "$listed" != "$on_disk" ]; then
+          echo "the nightly matrix and the suites on disk have drifted:"
+          diff <(echo "$listed") <(echo "$on_disk") || true
+          echo "::error title=mutations nightly::a mutation suite is missing from the nightly matrix, so it runs nowhere"
+          exit 1
+        fi
+        echo "all $(echo "$on_disk" | wc -l) suites are in the nightly matrix"
+
     - name: mutate_guard
       run: python3 tools/clienttests/mutate_guard.py
 
