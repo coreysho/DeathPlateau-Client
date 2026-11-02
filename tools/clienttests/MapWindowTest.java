@@ -551,12 +551,28 @@ public class MapWindowTest {
 		Pretend wide = new Pretend();
 		wide.has(1, 1);
 		WorldMap world = over(wide);
-		yes("nothing is marked until somebody opens the map", !wide.prefetched);
+		yes("nothing is marked until somebody asks for it", !wide.prefetched);
 		world.opened();
 		yes("opening it marks the world", wide.prefetched);
 		wide.prefetched = false;
 		world.opened();
 		yes("and marks it once, not on every open", !wide.prefetched);
+
+		// AND ENTERING THE WORLD IS ENOUGH, without the map ever being opened. This is what
+		// stops a player watching seven hundred squares arrive the first time they press the
+		// button: the client warms the map as soon as it is in the game, the files come down
+		// at on-demand priority 2 behind everything the game itself wants, and the map opens
+		// onto a world that is already here.
+		Pretend early = new Pretend();
+		WorldMap warm = over(early);
+		yes("a map nobody has touched has marked nothing", !early.prefetched);
+		warm.warm();
+		yes("being in the world marks it, with no window anywhere", early.prefetched);
+		early.prefetched = false;
+		warm.warm();
+		yes("...once, however many frames go by", !early.prefetched);
+		warm.opened();
+		yes("...and opening it afterwards does not mark it all over again", !early.prefetched);
 
 		// A CLOSED MAP COSTS THE GAME NOTHING. What it asked for has to STOP being wanted:
 		// every arrival afterwards wakes the whole waiting list up again, and the client is
@@ -597,6 +613,46 @@ public class MapWindowTest {
 			MapSquare.SIDE * MapSquare.SIDE, pixels.length);
 		yes("asking again hands back the same one, not another draw",
 			pixels == map.square(50, 50, 0));
+
+		// A SQUARE THAT WOULD NOT DRAW IS TRIED AGAIN ON THE NEXT OPEN, and not before.
+		//
+		// WHY IT MUST BE TRIED AGAIN AT ALL. Drawing runs through statics the live game shares
+		// - MapSquare.draw saves and restores World.lowMem and the two light levels - so
+		// whether a square draws can turn on what the game was doing at that moment. The
+		// underground squares 36,148 and 50,148 came out black in two runs out of three and
+		// drew perfectly in the third, from the same nine files with no byte different. A
+		// blank remembered for the whole session turns a moment's bad luck into a hole in the
+		// map that nothing can heal.
+		//
+		// WHY NOT BEFORE. One a frame is a draw storm on ground that will never come good.
+		// This is the gap between the two, and the Pretend cache is the right place to check
+		// it: its squares are a single byte, which is not a map, so every one of them goes
+		// down the failure path.
+		int[] junk = map.square(50, 50, 0);
+		int lit = 0;
+		for (int i = 0; i < junk.length; i++) {
+			if (junk[i] != 0) {
+				lit++;
+			}
+		}
+		eq("a square the renderer could not draw is kept blank", 0, lit);
+		map.tick();
+		map.tick();
+		yes("...and is NOT drawn again on the frames after, which would be a draw a frame",
+			junk == map.square(50, 50, 0));
+		map.opened();
+		map.tick();
+		// THE BLANK IS GONE, so the next ask reads as "not drawn" and queues it - which is
+		// exactly what a square nobody has drawn yet reads as, and is how it gets another go.
+		yes("...but opening the map forgets the blank", map.square(50, 50, 0) == null);
+		map.tick();
+		int[] second = map.square(50, 50, 0);
+		yes("...and the frame after, it has been drawn afresh",
+			second != null && second != junk);
+		map.tick();
+		map.tick();
+		yes("...one more go, not one a frame from then on",
+			second == map.square(50, 50, 0));
 
 		// A SQUARE WHOSE GROUND IS NOT COMING MUST NOT BE ASKED FOR AGAIN EVERY FRAME. It is
 		// set aside until something arrives that might have been what it was waiting for; a

@@ -1432,6 +1432,86 @@ public class ResizableShots extends Client {
 			+ blank + " the world HAS and the map drew as nothing");
 		if (blank > 0) {
 			say("  drew as nothing: " + blanks.toString().trim());
+			for (int i = 0; i < suspect.size(); i++) {
+				blame(map, suspect.get(i)[0], suspect.get(i)[1]);
+			}
+		}
+	}
+
+	/**
+	 * The nine files a black square was drawn from, and how many bytes each of them had.
+	 *
+	 * A SQUARE IS DRAWN FROM ITS NEIGHBOURS TOO, for the light along its edges, and WorldMap
+	 * only waits on a neighbour whose bytes are NULL. A file the server answered "I have not
+	 * got that" for is remembered as a zero-length array so nothing waits on it for ever -
+	 * which also makes it look, to the gather, exactly like a file that arrived. So a square
+	 * can be drawn from an empty neighbour, and if that throws in all five margins the square
+	 * is remembered blank and never retried. This prints the lengths so the difference between
+	 * "all nine arrived" and "one of them is zero bytes" is on the page.
+	 */
+	static void blame(Object map, int x, int z) throws Exception {
+		java.lang.reflect.Method fileOf =
+			map.getClass().getDeclaredMethod("fileOf", int.class, int.class, int.class);
+		fileOf.setAccessible(true);
+		java.lang.reflect.Field ff = map.getClass().getDeclaredField("files");
+		ff.setAccessible(true);
+		java.util.Map<?, ?> files = (java.util.Map<?, ?>) ff.get(map);
+		for (int type = 0; type < 2; type++) {
+			StringBuilder row = new StringBuilder();
+			int empty = 0;
+			int absent = 0;
+			for (int dz = 1; dz >= -1; dz--) {
+				for (int dx = -1; dx <= 1; dx++) {
+					int file = ((Integer) fileOf.invoke(map, x + dx, z + dz, type)).intValue();
+					if (file < 0) {
+						row.append("  .  ");
+						continue;
+					}
+					byte[] data = (byte[]) files.get(Integer.valueOf(file));
+					if (data == null) {
+						absent++;
+						row.append(" none");
+					} else if (data.length == 0) {
+						empty++;
+						row.append(" ZERO");
+					} else {
+						row.append(' ').append(data.length);
+					}
+				}
+				row.append("  |");
+			}
+			say("    " + x + "," + z + (type == 0 ? " land" : " locs") + ": " + row
+				+ "   (" + empty + " came back empty, " + absent + " never arrived)");
+		}
+		// AND WHAT DRAWING IT ACTUALLY THROWS. WorldMap.tick catches this and keeps a blank in
+		// its place, on purpose - one square must not take the frame down - but that means the
+		// reason never reaches anybody. Called here with the same nine the map gathered.
+		java.lang.reflect.Method gather =
+			map.getClass().getDeclaredMethod("gather", int.class, int.class, int.class);
+		gather.setAccessible(true);
+		Object land = gather.invoke(map, x, z, 0);
+		Object locs = gather.invoke(map, x, z, 1);
+		if (land == null || locs == null) {
+			say("      (the map has not got all nine yet, so this is not the fault)");
+			return;
+		}
+		for (int i = 0; i < 5; i++) {
+			int margin = jagex2.client.worldmap.MapSquare.MARGINS[i];
+			try {
+				int[] px = jagex2.client.worldmap.MapSquare.draw((byte[][][]) land,
+					(byte[][][]) locs, x, z, 0, margin);
+				int lit = 0;
+				for (int q = 0; px != null && q < px.length; q++) {
+					if (px[q] != 0) {
+						lit++;
+					}
+				}
+				say("      margin " + margin + ": drew " + (px == null ? "null" : lit + " lit pixels"));
+			} catch (Throwable broken) {
+				String at = broken.getStackTrace().length > 0
+					? broken.getStackTrace()[0].toString() : "?";
+				say("      margin " + margin + ": " + broken + "  at " + at);
+			}
 		}
 	}
 
@@ -1557,9 +1637,13 @@ public class ResizableShots extends Client {
 
 	/** What the map is holding, and what the on-demand thread still has to do. */
 	static String mapState(Object map, Object od) throws Exception {
-		return String.format("icons %4d  drawn %3d  files %4d  prefetch left %4d  in flight %2d",
+		// PREFETCHED, NOT JUST "LEFT". total - loaded is 0 both when the prefetch has finished
+		// and when it was never started, and those are the two states this is here to tell
+		// apart: the whole point of warming the map on entering the world is that the first
+		// number is large before anybody opens anything.
+		return String.format("icons %4d  drawn %3d  files %4d  prefetched %4d/%4d  in flight %2d",
 			iconCount(map), mapSize(map, "drawn"), mapSize(map, "files"),
-			odInt(od, "totalPrefetchFiles") - odInt(od, "loadedPrefetchFiles"),
+			odInt(od, "loadedPrefetchFiles"), odInt(od, "totalPrefetchFiles"),
 			odInt(od, "requestCount"));
 	}
 

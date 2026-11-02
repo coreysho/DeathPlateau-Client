@@ -81,6 +81,26 @@ public final class WorldMap {
 	/** Files asked for and not yet seen, so the same one is not asked for twice. */
 	private final Set asked = new HashSet();
 
+	/**
+	 * Squares whose draw came back with no picture, kept so they can be tried again.
+	 *
+	 * A DRAW THAT FAILS IS REMEMBERED BLANK so that one bad square cannot take the frame down
+	 * and cannot be retried every frame afterwards. But remembering it for the whole session
+	 * was too long: drawing runs through statics the live game shares (MapSquare.draw saves
+	 * and restores World.lowMem and the two light levels), so whether a square draws can
+	 * depend on what the game was doing at that moment - which is why underground squares
+	 * 36,148 and 50,148 came out black in two runs out of three and drew perfectly in the
+	 * third, from the same nine files with no byte different.
+	 *
+	 * So a failure now lasts until the map is next opened. That is bounded - one more attempt
+	 * per failed square per open, not one a frame - and a square that is genuinely undrawable
+	 * costs one draw each time the player opens the map and goes back to being blank.
+	 */
+	private final Set failed = ConcurrentHashMap.newKeySet();
+
+	/** Set when the map is opened, acted on by the next tick - the thread that owns `age`. */
+	private volatile boolean retry;
+
 	/** Drawn squares by key. Written on the game thread, read by the window's thread. */
 	private final Map drawn = new ConcurrentHashMap();
 
@@ -240,6 +260,10 @@ public final class WorldMap {
 	 */
 	public void tick() {
 		this.refeedIcons();
+		if (this.retry) {
+			this.retry = false;
+			this.forgetFailed();
+		}
 		for (int looked = 0; looked < LOOK_AT; looked++) {
 			Integer at = (Integer) this.wanted.poll();
 			if (at == null) {
@@ -269,10 +293,15 @@ public final class WorldMap {
 			} catch (Throwable broken) {
 				// A square that will not draw must not take the frame down with it, and must
 				// not be asked for again every frame after that either: an empty one is
-				// remembered in its place.
+				// remembered in its place - until the next open, see `failed`.
 				pixels = new int[MapSquare.SIDE * MapSquare.SIDE];
+				this.failed.add(at);
 			}
 			if (pixels == null) {
+				// NOT a failure, and deliberately not retried: draw hands back null only when
+				// the centre square has no land at all, which is the world ending rather than
+				// something going wrong. Retrying those would be four hundred redraws every
+				// time the map opens over the edge of the map.
 				pixels = new int[MapSquare.SIDE * MapSquare.SIDE];
 			}
 			this.keep(at, pixels);
@@ -346,6 +375,23 @@ public final class WorldMap {
 		if (this.asked.add(file)) {
 			this.supply.request(file.intValue());
 		}
+	}
+
+	/**
+	 * Drop the squares that failed to draw, so the next look at them is a fresh attempt.
+	 *
+	 * Game thread only: `age` is a plain deque and `keep` is the other thing that touches it.
+	 * Not {@link #forget}, which throws away every square drawn and is for when their look
+	 * changes under us; this one touches only the ones that came back with no picture.
+	 */
+	private void forgetFailed() {
+		java.util.Iterator it = this.failed.iterator();
+		while (it.hasNext()) {
+			Object at = it.next();
+			this.drawn.remove(at);
+			this.age.remove(at);
+		}
+		this.failed.clear();
 	}
 
 	private void keep(Integer at, int[] pixels) {
@@ -467,8 +513,26 @@ public final class WorldMap {
 		this.waiting.clear();
 	}
 
-	/** Opening the map: mark the rest of the world as worth fetching in the background. */
-	public void opened() {
+	/**
+	 * Start fetching the world in the background, once.
+	 *
+	 * CALLED ON ENTERING THE WORLD AND NOT ON OPENING THE MAP, which is where it used to
+	 * happen and is why the map had to fill in while the player watched. The files come down
+	 * at on-demand priority 2, behind everything the game itself wants, so a player who never
+	 * opens the map pays for it only in idle bandwidth - and one who does opens it onto a
+	 * world that is already here.
+	 */
+	public void warm() {
+		// NO GUARD OF ITS OWN: prefetchAll already marks the world once and returns after
+		// that, and a second flag here only hid the first - with one, the mutation that
+		// takes prefetchAll's guard out was caught by nothing, because the second open
+		// never reached prefetchAll to find it missing.
 		this.prefetchAll();
+	}
+
+	/** Opening the map: start the fetch if nothing has yet, and retry whatever would not draw. */
+	public void opened() {
+		this.warm();
+		this.retry = true;
 	}
 }

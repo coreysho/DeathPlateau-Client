@@ -243,6 +243,29 @@ MUTS = [
      '\t\tint before = this.builtFor;\n\t\tthis.functions();\n\t\treturn this.builtFor != before;',
      '\t\tthis.functions();\n\t\treturn true;'),
 
+    (SUPPLY, 'being in the world fetching nothing, so the map still fills in only once opened',
+     '\t\tthis.prefetchAll();\n\t}\n\n\t/** Opening the map:',
+     '\t}\n\n\t/** Opening the map:'),
+
+    # ---- THE WORLD ARRIVING BEFORE IT IS ASKED FOR, and failed squares getting another go.
+    # Every one of these is a map that still opens and still draws; what changes is how long
+    # the player waits for it, or whether a hole in it ever heals.
+    (SUPPLY, 'a failed square remembered blank for the whole session, which is the hole in the '
+             'map that nothing heals',
+     '\t\t\tthis.retry = false;\n\t\t\tthis.forgetFailed();',
+     '\t\t\tthis.retry = false;'),
+    (SUPPLY, 'opening the map not asking for the failed squares back',
+     '\t\tthis.warm();\n\t\tthis.retry = true;',
+     '\t\tthis.warm();'),
+    (SUPPLY, 'a draw that THREW not remembered as having failed, so it is never retried',
+     "\t\t\t\t// remembered in its place - until the next open, see `failed`.\n"
+     '\t\t\t\tpixels = new int[MapSquare.SIDE * MapSquare.SIDE];\n\t\t\t\tthis.failed.add(at);',
+     "\t\t\t\t// remembered in its place - until the next open, see `failed`.\n"
+     '\t\t\t\tpixels = new int[MapSquare.SIDE * MapSquare.SIDE];'),
+    (SUPPLY, 'every square retried on every frame, which is a draw a frame over dead ground',
+     '\t\tif (this.retry) {',
+     '\t\tif (true) {'),
+
     # ---- THE NAMES OF PLACES. A label is the one thing on this map with no picture behind it,
     # so every one of these shows a map that still looks like a map.
     (LABELS, 'the wrong break character, so "Kingdom Of/Misthalin" stays one long line',

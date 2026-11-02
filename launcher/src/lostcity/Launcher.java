@@ -467,6 +467,46 @@ public final class Launcher {
      * no starting it - and this one simply carries on, because a launcher that cannot start the game is
      * the one failure a player cannot fix for themselves.
      */
+    /**
+     * The command line that starts the launcher we are handing to.
+     *
+     * ITS OWN METHOD SO THE TWO FLAGS CAN BE READ WITHOUT STARTING ANYTHING. HANDOFF goes on every
+     * hand-over and CHECKED only on the one that follows an update check, and the whole of the
+     * "launcher doesn't search for an update before trying to play, and then tells you there's an
+     * update" bug was those two being one flag. Built inline, nothing could see which flags a
+     * hand-over would carry short of spawning a process and reading its arguments back, so the
+     * fix shipped untested.
+     */
+    private List<String> handOverCommand(File copy, boolean checked) {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(javaBinary());
+        for (String key : System.getProperties().stringPropertyNames()) {
+            // The world is added once, below. Skipped here because launch() now passes it to
+            // every client, so a launcher that was itself started by a client restart has it
+            // set - and without this it went on the command line twice.
+            if (key.startsWith("lostcity.") && !key.equals("lostcity.world")) {
+                cmd.add("-D" + key + "=" + System.getProperty(key));
+            }
+        }
+        String world;
+        synchronized (choiceLock) {
+            world = choice;
+        }
+        if (world != null) {
+            cmd.add("-Dlostcity.world=" + world); // --dev / --world=, as a property it reads back
+        }
+        cmd.add("-D" + HANDOFF + "=1");
+        if (checked) {
+            // Only the hand-over that happens after the update check may tell the next
+            // launcher not to bother. The early one has checked nothing.
+            cmd.add("-D" + CHECKED + "=1");
+        }
+        cmd.add("-cp");
+        cmd.add(copy.getAbsolutePath());
+        cmd.add("lostcity.Launcher");
+        return cmd;
+    }
+
     private boolean handOver(boolean checked) {
         if (System.getProperty(HANDOFF) != null) {
             return false; // already the newest: it was handed to us
@@ -486,32 +526,7 @@ public final class Launcher {
             // from a COPY: on Windows a running jar is locked, and client.jar has to stay replaceable
             File copy = new File(dir, "launcher-run.jar");
             Files.copy(jar.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            List<String> cmd = new ArrayList<>();
-            cmd.add(javaBinary());
-            for (String key : System.getProperties().stringPropertyNames()) {
-                // The world is added once, below. Skipped here because launch() now passes it to
-                // every client, so a launcher that was itself started by a client restart has it
-                // set - and without this it went on the command line twice.
-                if (key.startsWith("lostcity.") && !key.equals("lostcity.world")) {
-                    cmd.add("-D" + key + "=" + System.getProperty(key));
-                }
-            }
-            String world;
-            synchronized (choiceLock) {
-                world = choice;
-            }
-            if (world != null) {
-                cmd.add("-Dlostcity.world=" + world); // --dev / --world=, as a property it reads back
-            }
-            cmd.add("-D" + HANDOFF + "=1");
-            if (checked) {
-                // Only the hand-over that happens after the update check may tell the next
-                // launcher not to bother. The early one has checked nothing.
-                cmd.add("-D" + CHECKED + "=1");
-            }
-            cmd.add("-cp");
-            cmd.add(copy.getAbsolutePath());
-            cmd.add("lostcity.Launcher");
+            List<String> cmd = handOverCommand(copy, checked);
             log("handing over to the launcher in " + jar.getName() + ": " + cmd);
             new ProcessBuilder(cmd).directory(dir).start();
             hide(); // its window opens in a moment; two would look like two launchers
