@@ -1173,8 +1173,14 @@ public class ResizableShots extends Client {
 		int atX = Integer.parseInt(at[0].trim());
 		int atZ = Integer.parseInt(at[1].trim());
 		windowClass.getMethod("centreOn", int.class, int.class).invoke(window, atX, atZ);
-		setPrivate(window, "zoom", Integer.valueOf(1));
-		say("centred on " + atX + "," + atZ + " (square " + (atX / 64) + "," + (atZ / 64) + ")");
+		// THE ZOOM MATTERS MORE THAN THE WINDOW SIZE for how much there is to draw: a square
+		// is 64 pixels at zoom 1 and 256 at zoom 4, so the widest zoom on a big window wants
+		// four hundred squares and the default view wants twenty. Both are worth measuring
+		// and only one of them is what a player opens.
+		int atZoom = Integer.parseInt(System.getProperty("shots.mapzoom", "1"));
+		setPrivate(window, "zoom", Integer.valueOf(atZoom));
+		say("centred on " + atX + "," + atZ + " (square " + (atX / 64) + "," + (atZ / 64)
+			+ ") at zoom " + atZoom);
 		map.getClass().getMethod("opened").invoke(map);
 		javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
 
@@ -1183,9 +1189,14 @@ public class ResizableShots extends Client {
 			}
 		});
 
+		// HOW OFTEN TO LOOK. Five seconds apart is right for the question "does it keep
+		// growing", and useless for "how long until it is finished" - the default view is
+		// fifteen squares and is done before the first sample.
+		int every = Integer.parseInt(System.getProperty("shots.mapsample", "250"));
 		for (int round = 0; round < 5; round++) {
-			waitFrames(250);
-			say(String.format("open +%2ds  %s  %s   %s", (round + 1) * 5, frameCost(100),
+			waitFrames(every);
+			say(String.format("open +%4.1fs  %s  %s   %s", (round + 1) * every / 50.0,
+				frameCost(Math.min(100, every)),
 				mapState(map, clientField("onDemand")), filled(window)));
 		}
 		say("the map is marked at: " + geti("mapMarkX") + ", " + geti("mapMarkZ")
