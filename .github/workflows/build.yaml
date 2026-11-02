@@ -29,6 +29,34 @@ jobs:
         path: |
           build/libs/*
 
+  # A MUTATION THAT TESTS NOTHING LOOKS EXACTLY LIKE ONE THAT PASSES. Every mutate_*.py breaks
+  # the client one plausible way at a time and checks a named check notices; a pattern whose
+  # source has since been renamed or moved matches nothing, and the runners report that as SKIP
+  # and count it a survivor. So the suite goes on saying "every mutation was caught" while
+  # quietly testing fewer things than it lists.
+  #
+  # It has happened twice in two days, both times behind somebody else's refactor: the launcher
+  # icon check went on grepping the file its call had left, and two login patterns stopped
+  # matching when Profile gained a face. Neither showed up in any test run - run_launchertest
+  # failed for its own reason, run_loginprofilestest passed throughout.
+  #
+  # mutate_guard is the backstop and it needs nothing: no build, no cache, no sibling repo, and
+  # 974 patterns across 24 files in under a tenth of a second. The full suites still cannot run
+  # here - a single one is minutes and the whole set is hours - but the check that they are
+  # still pointed at real code can, on every push.
+  mutations:
+    name: Every mutation pattern still matches its source
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: mutate_guard
+      run: python3 tools/clienttests/mutate_guard.py
+
   deob-map:
     runs-on: ubuntu-latest
     steps:
