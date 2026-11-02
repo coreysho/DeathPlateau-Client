@@ -1968,13 +1968,35 @@ public class CourseCam extends Client {
 		// fine. The glide starts afterwards, and Player.exactMove gives it away: it teleports the
 		// player to the end before setting the mask, so the path contains one jump of several tiles
 		// and then the drawn slide back from the start. Everything before that jump is walking.
+		// THE TELEPORT IS THE ONE THAT ARRIVES AT THE LANDING, not simply the first gap in the
+		// path. Taking the first gap assumes the walk to the obstacle was sampled every tile, and
+		// it is not: Al Kharid's zip line is nineteen tiles from the cable's landing, the sample
+		// dropped 3285..3287, and the 3284 -> 3288 hole read as the glide. Straightness was then
+		// measured from 3284,3166 across the rest of the walk - which turns a corner at 3299 to
+		// line up with the zip line, exactly as walking should - and the course failed with "it
+		// slid across the roofs", over a zip line that runs dead straight along z=3163.
+		//
+		// exactMove teleports to the destination before setting the mask, so the arrival at the
+		// landing IS the teleport, wherever sampling put the other gaps. The first gap rule is
+		// kept only for the case where the landing never appears in the path at all, which means
+		// the observation ran out before they got there and the straightness check is skipped
+		// below anyway.
 		int jump = -1;
 		for (int i = 1; i < path.size(); i++) {
-			int[] a = tileOf(path.get(i - 1));
-			int[] b = tileOf(path.get(i));
-			if (Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) > 1) {
+			int[] t = tileOf(path.get(i));
+			if (t[0] == end[0] && t[1] == end[1]) {
 				jump = i;
 				break;
+			}
+		}
+		if (jump < 0) {
+			for (int i = 1; i < path.size(); i++) {
+				int[] a = tileOf(path.get(i - 1));
+				int[] b = tileOf(path.get(i));
+				if (Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) > 1) {
+					jump = i;
+					break;
+				}
 			}
 		}
 		// AND ONLY FOR A GLIDE THAT GOES SOMEWHERE. A one-by-two hop onto a market stall or a
@@ -1987,6 +2009,27 @@ public class CourseCam extends Client {
 			int[] b = tileOf(path.get(jump));
 			glideX = Math.abs(b[0] - a[0]);
 			glideZ = Math.abs(b[1] - a[1]);
+		}
+		// THE DRAWN SLIDE IS REQUIRED, AND SAYING SO IS THE POINT.
+		//
+		// I took this requirement out, reasoning that the fault is a landing out of line with the
+		// glide start and that those two tiles say so on their own. Twelve obstacles failed
+		// immediately - Pollnivneach's basket, Seers' wall and its three gaps, four more first
+		// obstacles - and they are nearly all the ground-to-roof climb that opens a course, which
+		// the note above already says to leave alone. That is the third rule built on the glide's
+		// shape to be thrown out by the same kind of evidence, after the two recorded above.
+		//
+		// Start-to-landing is not enough. What separates a vault from a slide is what the player
+		// is drawn OVER, and without the recorded slide tiles there is nothing to look at.
+		//
+		// But it must not go quiet about it. Finding the teleport by the landing rather than by
+		// the first gap moves it to the end of the path whenever the slide was sampled thinly, so
+		// this now suppresses crossings it never used to - Falador's tightrope 2 and gap 3 and
+		// Ardougne's plank went from passing to untested without a word. An untested crossing is
+		// reported as untested.
+		if (jump > 0 && Math.max(glideX, glideZ) >= 3 && path.size() - jump < 3) {
+			say("      (the drawn slide was sampled " + (path.size() - jump) + " tile(s) deep, too"
+				+ " thin to tell a vault from a slide - straightness NOT judged here)");
 		}
 		if (jump > 0 && path.size() - jump >= 3 && Math.max(glideX, glideZ) >= 3) {
 			int[] start = tileOf(path.get(jump - 1));
