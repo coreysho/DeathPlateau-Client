@@ -4274,7 +4274,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
 				// 381 = chat as typed (ChatText): public, private and clan lines are their characters, not WordPack.
 				// 382 = saved logins: two more fields in the login block, and server prot 14 to hand one back.
-				this.login.p2(383);
+				this.login.p2(384);
 				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
 				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
 				// instead, so a jar from before them keeps working rather than being turned away.
@@ -9853,6 +9853,28 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	@ObfuscatedName("client.h(I)Z")
+	/**
+	 * Take one varp the server has sent: cache it, and if it changed, redraw what shows it.
+	 *
+	 * The body is VARP_SMALL's, lifted so VARP_BATCH cannot drift from it. Out of range is dropped
+	 * rather than fatal: a varp past the end of the array would throw inside the packet loop, and
+	 * that is a disconnect on every login for as long as the server keeps sending it.
+	 */
+	private void applyVarp(int varp, int value) {
+		if (varp < 0 || varp >= VARP_COUNT) {
+			return;
+		}
+		this.varCache[varp] = value;
+		if (this.varps[varp] != value) {
+			this.varps[varp] = value;
+			this.updateVarp(varp);
+			this.redrawSidebar = true;
+			if (this.stickyChatInterfaceId != -1) {
+				this.redrawChatback = true;
+			}
+		}
+	}
+
 	public boolean readPacket() {
 		if (this.stream == null) {
 			return false;
@@ -11313,6 +11335,37 @@ public class Client extends GameShell implements PixMap.Target {
 					this.plugins.onGameTick();
 				}
 				this.awaitingSync = false;
+				this.ptype = -1;
+				return true;
+			}
+
+			if (this.ptype == 114) {
+				// VARP_BATCH - every varp in one packet instead of one packet each.
+				//
+				// A login sent 371 varp packets of the 536 it sent in total, and this loop reads
+				// at most five packets a pass, so that was about 2.2 seconds of this client
+				// catching up before it was level with the world. One packet, same work.
+				//
+				// Written and read the plain way: VARP_SMALL and VARP_LARGE below use Jagex's
+				// shuffled byte orders because the server has to match a client it did not write,
+				// and this packet is ours at both ends. See VarpBatchEncoder.
+				//
+				// The per-varp body is the same three lines as VARP_SMALL, out-of-range guard
+				// included - a varp past the end of the array would otherwise throw inside the
+				// packet loop, which is a disconnect on every login for as long as the server
+				// keeps sending it.
+				int smallCount = this.in.g2();
+				for (int i = 0; i < smallCount; i++) {
+					int varp = this.in.g2();
+					int value = this.in.g1b();
+					this.applyVarp(varp, value);
+				}
+				int largeCount = this.in.g2();
+				for (int i = 0; i < largeCount; i++) {
+					int varp = this.in.g2();
+					int value = this.in.g4();
+					this.applyVarp(varp, value);
+				}
 				this.ptype = -1;
 				return true;
 			}
