@@ -2575,6 +2575,11 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.pb")
 	public static boolean displayFps;
 
+	// The round trip to the server in milliseconds, as the SERVER measured it (opcode 1, PING), or
+	// -1 before the first one comes back. Drawn beside Fps when ::fpson is on. The server does the
+	// timing because only it knows when the probe left; the client just answers and is told.
+	public int serverPing = -1;
+
 	@ObfuscatedName("client.vc")
 	public static boolean lowMem;
 
@@ -4267,7 +4272,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// server prot 9, which an older client has no length for. 380 = the login RSA key rotation.
 				// 381 = chat as typed (ChatText): public, private and clan lines are their characters, not WordPack.
 				// 382 = saved logins: two more fields in the login block, and server prot 14 to hand one back.
-				this.login.p2(382);
+				this.login.p2(383);
 				// 0x1 low memory. 0x2 = this client draws Old School's hitsplats (venom, heal, max hit -
 				// hitmarks 5-7); the server sends a client without the bit plain poison and damage splats
 				// instead, so a jar from before them keeps working rather than being turned away.
@@ -9193,6 +9198,17 @@ public class Client extends GameShell implements PixMap.Target {
 			}
 			this.fontPlain12.method243("Fps:" + super.fps, var4, var2, var3);
 			int var13 = var3 + 15;
+			// Ping, as the server measured it. Yellow to 150ms, orange past that, red past 300ms -
+			// the tick is 600ms, so a round trip over about half of one lands actions a tick late.
+			String pingText = this.serverPing < 0 ? "Ping:--" : "Ping:" + this.serverPing + "ms";
+			int pingColour = 16776960;
+			if (this.serverPing > 300) {
+				pingColour = 16711680;
+			} else if (this.serverPing > 150) {
+				pingColour = 16755200;
+			}
+			this.fontPlain12.method243(pingText, pingColour, var2, var13);
+			var13 += 15;
 			Runtime var5 = Runtime.getRuntime();
 			int var6 = (int) ((var5.totalMemory() - var5.freeMemory()) / 1024L);
 			int var7 = 16776960;
@@ -9886,6 +9902,18 @@ public class Client extends GameShell implements PixMap.Target {
 			this.ptype2 = this.ptype1;
 			this.ptype1 = this.ptype0;
 			this.ptype0 = this.ptype;
+
+			if (this.ptype == 1) {
+				// PING - answered straight away, because every millisecond spent here is counted by
+				// the server as the connection's.
+				int pingSeq = this.in.g1();
+				int measured = this.in.g2();
+				this.serverPing = measured == 65535 ? -1 : measured;
+				this.out.p1isaac(2); // PONG
+				this.out.p1(pingSeq);
+				this.ptype = -1;
+				return true;
+			}
 
 			if (this.ptype == 166) {
 				// IF_SETPOSITION
