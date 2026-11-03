@@ -78,10 +78,10 @@ MUTS = [
     # client that sends them under an older number has them read as something else entirely.
     # THIS PATTERN TRACKS THE CLIENT'S CURRENT NUMBER and must be bumped with it: a stale literal
     # matches nothing, and mutate_guard counts a 0-match pattern as a survivor that tests nothing.
-    # It went stale once already, at 382 -> 383 (PING/PONG).
+    # It went stale once already, at 382 -> 383 (PING/PONG), and moved again at 383 -> 384 (VARP_BATCH).
     (CLIENT, 'the revision left a build behind, with the two new fields still sent',
-     '\t\t\t\tthis.login.p2(383);',
-     '\t\t\t\tthis.login.p2(382);'),
+     '\t\t\t\tthis.login.p2(384);',
+     '\t\t\t\tthis.login.p2(383);'),
     (CLIENT, 'the block length not counting the fields that were added to it',
      '\t\t\t\tthis.login.p1(this.out.pos + 36 + 1 + 1 + 2);',
      '\t\t\t\tthis.login.p1(this.out.pos + 36 + 1 + 1 + 1);'),
