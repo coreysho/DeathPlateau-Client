@@ -1666,24 +1666,27 @@ public class Client extends GameShell implements PixMap.Target {
 	// the page it is served from is the only thing that knows which. Engine-TS's rs2.cgi passes
 	// it. A desktop launch can set -Dlostcity.weburl=https://... for the same reason.
 	//
-	// THE TWO CLIENTS WANT DIFFERENT ADDRESSES, which is why this is not one default:
+	// NO DEFAULT, EITHER WAY (2026-11-03). This used to fall back to "http://death-plateau.playit.plus"
+	// for a browser launch, and that default was kept untouched for months on the grounds that the
+	// page serving the client was read off disk (public/rs2.cgi), uncommitted, so this source could
+	// not see whether the page passed weburl or leaned on the fallback.
 	//
-	//   - the browser keeps the HTTP edge it is served from. WS_URL is set only by that page, so
-	//     it is what tells the two apart, and the browser's default here is deliberately left
-	//     exactly as it was: an unverified change to it breaks the webclient for everyone, and
-	//     public/rs2.cgi is read off disk at runtime rather than committed, so this source cannot
-	//     see whether the page passes weburl or leans on this.
-	//   - the desktop takes no default at all, so WEB_HOST and WEB_PORT above decide - one place
-	//     for the tunnel, no second copy of the host to drift out of step with it.
+	// IT PASSES IT. The page is not that file at all: Engine-TS generates it (src/web.ts, CHEERPJ_PAGE,
+	// which is the branch that runs whenever client.jar and the CheerpJ bundle are both present - the
+	// server logs "serving public/client.jar through CheerpJ" on every boot). It builds every one of
+	// these from location: lostcity.host, webhost, webport, weburl and ws. So the fallback never fired,
+	// and the one thing it could still do was name a host that is being switched off.
 	//
-	// A dev-world launch passes lostcity.webhost/webport (the launcher does, for its own tunnel)
-	// and a LAN launch passes lostcity.host; either has to win, because a dev client fetching
-	// World 1's cache is the stale-config trap signlink's storeid comment describes.
-	private static final boolean WEBHOST_GIVEN = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null
-		|| setting("lostcity.webport", "LOSTCITY_WEBPORT") != null || HOST_GIVEN;
-	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL") != null
-		? setting("lostcity.weburl", "LOSTCITY_WEBURL")
-		: (WS_URL != null && !WEBHOST_GIVEN ? "http://death-plateau.playit.plus" : null);
+	// The browser client is now served from play.deathplateau.com over a Cloudflare tunnel, which is
+	// exactly why nothing here needed changing for that move: the page tells the client where it is.
+	// A desktop launch can still pass -Dlostcity.weburl=https://... for a cache behind a TLS
+	// terminator of its own, which is the case a host and a port cannot express.
+	//
+	// WEBHOST_GIVEN went with it. It existed only to decide whether the browser got that default, and
+	// what it guarded - a dev-world or LAN launch having to win over World 1's cache, because a dev
+	// client fetching World 1's is the stale-config trap signlink's storeid comment describes - is
+	// settled by WEB_HOST and WEB_PORT above, which read lostcity.webhost and .webport themselves.
+	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL");
 
 	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
 	// A diagnostic that names a different host than the one the client actually dials is worse

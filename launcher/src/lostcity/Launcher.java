@@ -52,20 +52,25 @@ import javax.swing.SwingUtilities;
 // dev world (World 2, node 11) is a second server in the same container, for staff only - the server
 // turns everybody else away with "This world is full". It has its own game and web ports, found by
 // devEndpoint(): the server's own ports plus one when lostcity.host points straight at it (the LAN, or
-// Tailscale), else the dev world's own playit.gg tunnels below; lostcity.dev.host / .port / .webhost /
+// Tailscale), else the relay on those same ports; lostcity.dev.host / .port / .webhost /
 // .webport override any of it. --dev, --world=1, or -Dlostcity.world=dev|1 choose without the buttons.
 public final class Launcher {
     private static final String REPO = "coreysho/DeathPlateau-Client";
     private static final String ASSET = "client.jar";
     private static final String API = "https://api.github.com/repos/" + REPO + "/releases/latest";
 
-    // The dev world's playit.gg tunnels - one to the dev game port (43595 on the server) and one to its
-    // web port (8889), made like World 1's (Client.SERVER_HOST / WEB_HOST). With lostcity.host given (the
-    // LAN or Tailscale) the server's own ports are used instead, and lostcity.dev.* overrides either.
-    private static final String DEV_TUNNEL_HOST = "carolyn-sternness.tun.ply.gg";
-    private static final int DEV_TUNNEL_PORT = 55662;
-    private static final String DEV_TUNNEL_WEBHOST = "carolyn-adapt.tun.ply.gg";
-    private static final int DEV_TUNNEL_WEBPORT = 55673;
+    // The dev world through the relay (2026-11-03). It used to be two playit.gg tunnels with ports of
+    // their own - 55662 and 55673 - which had to be kept in step with the server by hand and were the
+    // last thing on the subscription after World 1 moved. The VPS forwards the dev world's OWN ports,
+    // 43595 and 8889, so there is one host and the real numbers, as there now is for World 1.
+    //
+    // This duplicates Client.RELAY_HOST rather than reading it, because it has to: the release
+    // workflow compiles the launcher from launcher/src alone, so none of the client's classes are on
+    // its classpath. The playit hosts above were duplicated the same way for the same reason. If the
+    // relay ever moves, both files change.
+    private static final String DEV_RELAY_HOST = "216.128.157.152";
+    private static final int DEV_RELAY_PORT = 43595;
+    private static final int DEV_RELAY_WEBPORT = 8889;
 
     // the 377 client's own node ids: World 1 is 10, the dev world 11 ("World 2" in the friends list)
     private static final int DEV_NODE_ID = 11;
@@ -363,10 +368,12 @@ public final class Launcher {
             gamePort = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : "43594") + 1;
             webPort = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : "8888") + 1;
         } else {
-            gameHost = DEV_TUNNEL_HOST;
-            gamePort = DEV_TUNNEL_PORT;
-            webHost = DEV_TUNNEL_WEBHOST;
-            webPort = DEV_TUNNEL_WEBPORT;
+            // the relay, on the dev world's own ports - the same "plus one" the branch above works
+            // out from the server's, because the relay forwards them unchanged
+            gameHost = DEV_RELAY_HOST;
+            gamePort = DEV_RELAY_PORT;
+            webHost = DEV_RELAY_HOST;
+            webPort = DEV_RELAY_WEBPORT;
         }
         gameHost = System.getProperty("lostcity.dev.host", gameHost);
         gamePort = Integer.parseInt(System.getProperty("lostcity.dev.port", String.valueOf(gamePort)));
