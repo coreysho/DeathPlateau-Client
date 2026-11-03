@@ -221,12 +221,21 @@ public class JaggrabTest {
 		check(!Client.jaggrabUsable(Client.JAGGRAB_PORT, Client.WS_URL),
 			"...so every cache retry is HTTP, the one transport a tunnel carries");
 
-		// The cache comes from the WEB host, and the game from the game host. They are different
-		// hosts, which is the other half of what was wrong: JAGGRAB was being sent to the game
-		// one.
-		check(!Client.WEB_HOST.equals(Client.SERVER_HOST),
-			"the web host and the game host are different machines here (" + Client.WEB_HOST
-				+ " vs " + Client.SERVER_HOST + ")");
+		// ONE RELAY, TWO PORTS (2026-11-03). Under playit these were two unrelated tunnel
+		// hostnames, and the cache coming off the web one was the other half of what was wrong:
+		// JAGGRAB was being sent to the game host. The VPS relay carries both streams on one
+		// address, so the two hosts now agree by construction - which makes the source checks
+		// below matter MORE, not less: with a single host, aiming a cache fetch at the game host
+		// is no longer visibly wrong in a plain launch, only its port is.
+		check(Client.WEB_HOST.equals(Client.SERVER_HOST),
+			"the cache host follows the game host, so one -Dlostcity.host moves both ("
+				+ Client.WEB_HOST + " / " + Client.SERVER_HOST + ")");
+		check(Client.WEB_PORT != Client.GAME_PORT,
+			"...and the two are told apart by port (game " + Client.GAME_PORT + ", cache "
+				+ Client.WEB_PORT + ")");
+		check(!Client.webAddress().equals(Client.gameAddress()),
+			"...so they are still two different endpoints (" + Client.webAddress() + " vs "
+				+ Client.gameAddress() + ")");
 
 		// And the source no longer asks the game host for cache files.
 		String source = read("src/main/java/jagex2/client/Client.java");
@@ -355,8 +364,8 @@ public class JaggrabTest {
 		check(Client.webAddress().indexOf(".playit.plus") < 0,
 			"a plain launch does not fetch the cache through playit's HTTP edge ("
 				+ Client.webAddress() + ")");
-		check(Client.WEB_HOST.endsWith(".tun.ply.gg") || Client.WEB_HOST.indexOf('.') < 0,
-			"...it uses a TCP tunnel, or something that is not a playit name at all ("
+		check(Client.WEB_HOST.indexOf("playit") < 0 && Client.WEB_HOST.indexOf("ply.gg") < 0,
+			"...it is served off an address of our own, not any playit name ("
 				+ Client.WEB_HOST + ")");
 		check(Client.WEB_PORT != 80 && Client.WEB_PORT != 443,
 			"...on a port of its own rather than a shared web port (" + Client.WEB_PORT + ")");

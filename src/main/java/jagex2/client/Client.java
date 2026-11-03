@@ -1480,28 +1480,30 @@ public class Client extends GameShell implements PixMap.Target {
 	// Server address the standalone client connects to. Override at launch with -Dlostcity.host /
 	// lostcity.port / lostcity.webhost / lostcity.webport (or the LOSTCITY_HOST, LOSTCITY_PORT,
 	// LOSTCITY_WEBHOST, LOSTCITY_WEBPORT env vars), without touching source.
-	// (2026-09-27) The public way in is a playit.gg tunnel in front of the home server, so the home IP is
-	// never handed out: one tunnel for the game (TCP 43594 on the server) and one for the web/cache
-	// server (TCP 8888), each with its own host and port. Point lostcity.host at the server directly
-	// (e.g. -Dlostcity.host=192.168.4.97 on the LAN) and both ports fall back to the server's own
-	// 43594 and 8888, and the web host follows the game host, unless they are given too.
+	// (2026-11-03) The public way in is a relay on a VPS in Chicago, so the home IP is never handed
+	// out: WireGuard from the server to the VPS, HAProxy there forwarding 43594 and 8888 back down it
+	// with PROXY protocol v2, so the engine still sees each player's real address.
+	//
+	// WHY NOT playit.gg, WHICH THIS REPLACED. The tunnel was costing every player 60-135ms and far
+	// more the further away they were: the server's own leg to playit measured 54ms where the VPS
+	// measures 13.7ms, and a traceroute put the difference in one hop inside Hurricane Electric,
+	// which hauled the traffic across the country before it reached a playit edge sitting in Chicago.
+	// London went 380ms -> ~110ms, Sydney 870ms -> ~210ms.
+	//
+	// ONE HOST, THE REAL PORTS. The relay listens on the server's own 43594 and 8888, so there is no
+	// second pair of tunnel ports to keep in step - lostcity.host alone moves both (e.g.
+	// -Dlostcity.host=192.168.4.97 on the LAN), and the cache follows the game host unless told
+	// otherwise. THE BROWSER CLIENT IS NOT THIS: it keeps its own playit HTTP edge, see WEB_URL.
 	private static String setting(String property, String env) {
 		String value = System.getProperty(property);
 		return value != null ? value : System.getenv(env);
 	}
+	private static final String RELAY_HOST = "216.128.157.152";
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
-	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : "carolyn-scientist.tun.ply.gg";
-	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : (HOST_GIVEN ? "43594" : "53562"));
-	// A RAW TCP TUNNEL, NOT THE SHARED HTTP EDGE. death-plateau.playit.plus is a playit HTTP(S)
-	// tunnel: its edge terminates and inspects HTTP, and it answered this client's own cache fetch
-	// with 403 while serving browsers the same bytes - a player sat on "connection problem" for a
-	// day over it, and the owner never saw it because a LAN launch passes lostcity.host and never
-	// goes near playit. A .tun.ply.gg tunnel forwards bytes and has no opinion about them, which
-	// is what a 377 client needs: getJagCrc does a fixed 40-byte readFully and cannot report an
-	// interstitial, a redirect or a refusal as anything but four fixed words. The webclient keeps
-	// the HTTP edge - see WEB_URL - so BOTH tunnels have to be up.
-	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : (HOST_GIVEN ? SERVER_HOST : "carolyn-fever.tun.ply.gg");
-	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : (HOST_GIVEN ? "8888" : "53628"));
+	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : RELAY_HOST;
+	public static int GAME_PORT = Integer.parseInt(setting("lostcity.port", "LOSTCITY_PORT") != null ? setting("lostcity.port", "LOSTCITY_PORT") : "43594");
+	public static String WEB_HOST = setting("lostcity.webhost", "LOSTCITY_WEBHOST") != null ? setting("lostcity.webhost", "LOSTCITY_WEBHOST") : SERVER_HOST;
+	public static int WEB_PORT = Integer.parseInt(setting("lostcity.webport", "LOSTCITY_WEBPORT") != null ? setting("lostcity.webport", "LOSTCITY_WEBPORT") : "8888");
 	/**
 	 * The port JAGGRAB is served on, or 0 for "this client cannot use JAGGRAB".
 	 *
