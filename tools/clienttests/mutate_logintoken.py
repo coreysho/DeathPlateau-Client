@@ -74,11 +74,14 @@ MUTS = [
      '\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);\n\t\t\t\tthis.out.pjstr(this.loginToken);\n\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);',
      '\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);\n\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);\n\t\t\t\tthis.out.pjstr(this.loginToken);'),
 
-    # THE GATE. 382 is what tells the server the two fields are there to read. A client that sends
-    # them under an older number has them read as something else entirely.
-    (CLIENT, 'the revision left at 381, with the two new fields still sent',
-     '\t\t\t\tthis.login.p2(382);',
-     '\t\t\t\tthis.login.p2(381);'),
+    # THE GATE. The build number is what tells the server the two fields are there to read. A
+    # client that sends them under an older number has them read as something else entirely.
+    # THIS PATTERN TRACKS THE CLIENT'S CURRENT NUMBER and must be bumped with it: a stale literal
+    # matches nothing, and mutate_guard counts a 0-match pattern as a survivor that tests nothing.
+    # It went stale once already, at 382 -> 383 (PING/PONG).
+    (CLIENT, 'the revision left a build behind, with the two new fields still sent',
+     '\t\t\t\tthis.login.p2(383);',
+     '\t\t\t\tthis.login.p2(382);'),
     (CLIENT, 'the block length not counting the fields that were added to it',
      '\t\t\t\tthis.login.p1(this.out.pos + 36 + 1 + 1 + 2);',
      '\t\t\t\tthis.login.p1(this.out.pos + 36 + 1 + 1 + 1);'),
