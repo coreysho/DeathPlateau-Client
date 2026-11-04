@@ -7249,8 +7249,26 @@ public class Client extends GameShell implements PixMap.Target {
 							// chatTyped apart - the history should hold what was actually typed, so recalling
 							// "red:hello" or a "::command" gives it back whole.
 							this.pushChatHistory(this.chatTyped);
+							// A PLAYER'S OWN FRAME RATE AND ROUND TRIP ARE NOT PRIVILEGED (2026-11-04).
+							// ::fpson lived in the staff block below, so for everybody who was not staff it
+							// did nothing at all and said nothing either - the command is swallowed, no
+							// error. That came up the first time a player was asked for a ping reading and
+							// answered "it isn't showing me anything", which left the only way to get a
+							// number out of a player being to ssh in and sample the histogram while they
+							// happened to be online.
+							//
+							// It still goes to the server as a CLIENT_CHEAT below, as every :: line does.
+							// The server has no such command and ignores it without logging, so there is
+							// nothing to suppress.
+							if (this.chatTyped.equals("::fpson")) {
+								displayFps = true;
+							} else if (this.chatTyped.equals("::fpsoff")) {
+								displayFps = false;
+							}
+
 							// >= 2, not == 2: the login rank is 4 for a developer since the purple crown, and
-							// these are the commands developers are the ones to use.
+							// these are the commands developers are the ones to use. What is in here CHANGES
+							// THE WORLD or the client's connection to it; the readout above only looks.
 							if (this.staffmodlevel >= 2) {
 								if (this.chatTyped.equals("::clientdrop")) {
 									this.tryReconnect();
@@ -7260,10 +7278,6 @@ public class Client extends GameShell implements PixMap.Target {
 									for (int i = 0; i < this.onDemand.getFileCount(2); i++) {
 										this.onDemand.prefetchPriority(2, (byte) 1, i);
 									}
-								} else if (this.chatTyped.equals("::fpson")) {
-									displayFps = true;
-								} else if (this.chatTyped.equals("::fpsoff")) {
-									displayFps = false;
 								} else if (this.chatTyped.equals("::noclip")) {
 									for (int level = 0; level < 4; level++) {
 										for (int x = 1; x < 103; x++) {
