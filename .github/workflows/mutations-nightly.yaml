@@ -22,9 +22,15 @@ name: mutations nightly
 
 on:
   schedule:
-    # 07:00 UTC, which is the small hours in Corey's timezone. Scheduled runs take the workflow
-    # from the default branch, which is dev-logging.
-    - cron: '0 7 * * *'
+    # The small hours in Corey's timezone. Scheduled runs take the workflow from the default
+    # branch, which is dev-logging.
+    #
+    # :37 AND NOT :00. The first two scheduled runs were asked for at 07:00 and started at 14:44
+    # and 14:56 - near eight hours late, both times. GitHub queues scheduled runs behind everyone
+    # else's, and the top of the hour is where everyone else's are; a minute nobody picks by hand
+    # is the one piece of this that is actually under our control. A run that lands late is still
+    # a run, so this is about the result being there in the morning, not about correctness.
+    - cron: '37 7 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -152,6 +158,16 @@ jobs:
         rc=0
         python3 "tools/clienttests/mutate_${{ matrix.suite }}.py" >"/tmp/out" 2>&1 || rc=$?
         cat /tmp/out
+        # 2 IS A SUITE THAT COULD NOT RUN - no cache, no java, no engine - and it is still red,
+        # because the nightly provides all three and a suite that skips here is a suite testing
+        # nothing. But it gets its own title: "has survivors" sent me hunting for a mutation on
+        # 4 November when mutate_worldmap had not run one.
+        if [ "$rc" = "2" ]; then
+          why=$( { grep -E 'SKIP|cannot|could not|no cache|not found' /tmp/out || tail -n 14 /tmp/out; } \
+                 | tail -n 24 | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=mutate_${{ matrix.suite }}::mutate_${{ matrix.suite }} could not run%0A$why"
+          exit 1
+        fi
         # A SURVIVOR IS THE FINDING, and it is the last thing printed - so the annotation carries
         # the GREEN lines, which are the mutations nothing caught, rather than the tail of a run
         # that may well end on something that passed.

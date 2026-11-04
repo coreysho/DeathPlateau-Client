@@ -37,6 +37,8 @@ PREVIEW = os.path.join(HERE, 'MapWindowPreview.java')
 GUESSES = [
     os.environ.get('DP_PACK'),
     os.path.join(os.path.dirname(ROOT), 'DeathPlateau-Engine/data/pack'),
+    # And under the name the engine used to have, which is still what a CI checkout calls it.
+    os.path.join(os.path.dirname(ROOT), 'Engine-TS/data/pack'),
 ]
 
 # How many colours each ought to have at the least. AN UPPER FLOOR IS MOSTLY BLACK and that is

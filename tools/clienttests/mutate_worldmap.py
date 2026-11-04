@@ -24,6 +24,11 @@ import sys
 # matches its source exactly once.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mutate_guard import read_source, workspace  # noqa: E402  (after the sys.path line, necessarily)
+# ONE LIST OF PLACES THE CACHE MIGHT BE, and it belongs to the runner. This file used to keep its
+# own copy, which knew the engine as DeathPlateau-Engine and not as Engine-TS - so on a checkout
+# shaped the way CI's is, the suite could not find a pack sitting right beside it, ran nothing, and
+# was reported as a suite full of survivors.
+from run_worldmaptest import find_pack  # noqa: E402  (same reason)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -32,13 +37,6 @@ RENDER = os.path.join(HERE, 'WorldMapRender.java')
 # mutations that break drawing break a file that ships.
 SQUARE = os.path.join(ROOT, 'src/main/java/jagex2/client/worldmap/MapSquare.java')
 RUNNER = os.path.join(HERE, 'run_worldmaptest.py')
-
-def find_pack():
-    for where in (os.environ.get('DP_PACK'),
-                  os.path.join(os.path.dirname(ROOT), 'DeathPlateau-Engine/data/pack')):
-        if where and os.path.exists(os.path.join(where, 'main_file_cache.idx4')):
-            return os.path.abspath(where)
-    return None
 
 
 MUTS = [
@@ -241,11 +239,13 @@ def main():
     # THE CACHE IS NOT IN THE REPOSITORY, so it is not in the copy either. The suite found it
     # once, here, and hands the same path to every run: a run that cannot find it refuses
     # outright, which would read as a mutation caught by a crash.
-    pack = find_pack()
+    pack = find_pack([])
     if not pack:
-        print('mutate_worldmap: no cache found. Pack the engine (npm run build in '
-              'DeathPlateau-Engine) or set DP_PACK.')
-        return 1
+        # 2, as the runners use it: "could not run" is not a finding either way, and the nightly
+        # titles it as such rather than blaming mutations it never attempted.
+        print('mutate_worldmap: SKIP - no cache found. Pack the engine (npm run build in the '
+              'engine checkout) or set DP_PACK.')
+        return 2
     env = dict(os.environ, DP_PACK=pack)
     print('cache: ' + pack)
     muts = [m for m in MUTS if not only or only in m[1]]

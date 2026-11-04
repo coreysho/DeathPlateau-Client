@@ -46,6 +46,15 @@ GUESSES = [
 ]
 
 
+def crash_line(stderr):
+    """The first line of the stack trace that says what went wrong, for the FAIL line above."""
+    for l in stderr.split('\n'):
+        l = l.strip()
+        if ('Exception' in l or 'Error' in l) and not l.startswith('at '):
+            return l[:120]
+    return 'no exception on stderr'
+
+
 def find_pack(argv):
     for where in list(argv) + GUESSES:
         if where and os.path.exists(os.path.join(where, 'main_file_cache.idx4')):
@@ -106,14 +115,25 @@ def main():
             lines = [l for l in r.stdout.split('\n') if l.strip()]
             for l in lines:
                 print(l)
-            if not lines:
-                print(r.stderr[-4000:])
-                return 1
             if r.returncode != 0 and not any(l.startswith('FAIL') for l in lines):
                 # NON-ZERO WITH NO FAILURE NAMED means the suite died part way through, and the
                 # reason is on stderr. Printing stdout alone here showed a run that simply
                 # stopped mid-section with nothing to say why, which cost an afternoon once.
                 print(r.stderr[-4000:])
+                # AND THEN NAME IT. A map that throws instead of drawing is a defect like any
+                # other, and a bare non-zero exit is not something a reader can act on - so the
+                # pass, the exception and the section it died in go out as a FAIL line. Without
+                # this, mutate_worldmap reports the whole class as "caught, but only by a crash",
+                # which is the one outcome these suites refuse to count.
+                print('FAIL %s: the map renderer threw instead of drawing - %s (last section: %s)'
+                      % ('cold start' if cold else 'warm start',
+                         crash_line(r.stderr), (lines[-1][:60] if lines else 'none reached')))
+            if not lines:
+                # Only when the branch above has not already printed it: a JVM that drew nothing
+                # and still claims success has its reason on stderr like any other.
+                if r.returncode == 0:
+                    print(r.stderr[-4000:])
+                return 1
             if r.returncode != 0:
                 bad = 1
         return bad
