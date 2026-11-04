@@ -21,16 +21,21 @@
 name: mutations nightly
 
 on:
-  schedule:
-    # The small hours in Corey's timezone. Scheduled runs take the workflow from the default
-    # branch, which is dev-logging.
-    #
-    # :37 AND NOT :00. The first two scheduled runs were asked for at 07:00 and started at 14:44
-    # and 14:56 - near eight hours late, both times. GitHub queues scheduled runs behind everyone
-    # else's, and the top of the hour is where everyone else's are; a minute nobody picks by hand
-    # is the one piece of this that is actually under our control. A run that lands late is still
-    # a run, so this is about the result being there in the morning, not about correctness.
-    - cron: '37 7 * * *'
+  # NO SCHEDULE HERE, AND NOT BY OVERSIGHT. Asked for at 07:00 UTC, GitHub started the first two
+  # nights at 14:44 and 14:56 - near eight hours late, both times, and within twelve minutes of
+  # each other, which is a saturated queue and not bad luck. Scheduled workflows wait platform-wide
+  # and behind paid work, and every cron written by hand sits on the hour. A run that lands
+  # mid-afternoon is still a run, but it is not a nightly: the point was an answer in the morning.
+  #
+  # A DISPATCH IS SERVED AT ONCE, because it is a request and not a cron. So the clock lives on the
+  # game server now, which is always on because it is the game:
+  #
+  #   content/tools/ci-nightly.sh   in the content repository, run by deathplateau-ci-nightly.timer
+  #                                 at 07:37 UTC, and `--check` says what the last run did
+  #
+  # Leaving a cron here as well would mean two 40-minute runs a day and a question about which one
+  # was real, so there is exactly one scheduler and it is not this file. If the box is down at
+  # 07:37 there is no nightly; the timer is Persistent, so a reboot runs the one it missed.
   workflow_dispatch:
 
 concurrency:
