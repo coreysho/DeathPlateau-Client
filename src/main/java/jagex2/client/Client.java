@@ -5528,15 +5528,20 @@ public class Client extends GameShell implements PixMap.Target {
 				try {
 					if (this.waveIds[var2] != this.lastWaveId || this.waveLoops[var2] != this.lastWaveLoops) {
 						Packet var4 = Wave.method479(this.waveLoops[var2], (byte) 6, this.waveIds[var2]);
-						if (System.currentTimeMillis() + (long) (var4.pos / 22) > (long) (this.lastWaveLength / 22) + this.lastWaveStartTime) {
-							this.lastWaveLength = var4.pos;
-							this.lastWaveStartTime = System.currentTimeMillis();
-							if (this.saveWave(var4.pos, var4.data)) {
-								this.lastWaveId = this.waveIds[var2];
-								this.lastWaveLoops = this.waveLoops[var2];
-							} else {
-								var3 = true;
-							}
+						// A SOUND IS NO LONGER DROPPED FOR BEING SHORTER THAN THE ONE ALREADY GOING.
+						// This used to play a new sound only if it would finish LATER than the
+						// current one - "now + its length > when the current one ends" - which made
+						// sense when signlink had a single line and played one wave at a time on
+						// its own thread: the alternative was cutting the long sound off. It has
+						// four voices now and they mix, so the rule only loses sounds. It is half
+						// of why a monster's defend sound went missing under a faster weapon.
+						this.lastWaveLength = var4.pos;
+						this.lastWaveStartTime = System.currentTimeMillis();
+						if (this.saveWave(var4.pos, var4.data)) {
+							this.lastWaveId = this.waveIds[var2];
+							this.lastWaveLoops = this.waveLoops[var2];
+						} else {
+							var3 = true;
 						}
 					} else if (!this.replayWave()) {
 						var3 = true;
