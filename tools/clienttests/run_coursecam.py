@@ -202,7 +202,9 @@ def java(out, classes, rsan, port, webport, user, table, props=(), home=None):
     # terrain to pick. So the home lives beside the output rather than inside it.
     home = home or os.path.join(os.path.dirname(os.path.abspath(out)), 'coursecam_home')
     os.makedirs(home, exist_ok=True)
-    cmd = ['java', '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1', '-Dlostcity.port=%d' % port,
+    # CourseCam seeds java.lang.Math's own Random through reflection, which a JDK of 9 or later
+    # refuses from an unnamed module unless java.lang is opened to it.
+    cmd = ['java', '--add-opens', 'java.base/java.lang=ALL-UNNAMED', '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1', '-Dlostcity.port=%d' % port,
            '-Dlostcity.webport=%d' % webport, '-Duser.home=' + home] + ['-D' + p for p in props]
     cmd += ['-cp', JAR + os.pathsep + classes, 'CourseCam', out, user, table]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=out)
