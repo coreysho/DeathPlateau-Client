@@ -572,8 +572,8 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.Eg")
 	// 0-1 the moderator and administrator crowns; 2-4 the Realism, 5x and 10x badges; 5 the developer
-	// crown; 6 the owner's; 7 the second owner's. See ChatIcons.
-	public Pix8[] imageModIcons = new Pix8[8];
+	// crown; 6 the owner's; 7 the second owner's; 8 the veteran's bronze emblem. See ChatIcons.
+	public Pix8[] imageModIcons = new Pix8[9];
 
 	// the clan list's rank icons: friend, Recruit .. General, owner, staff (content sprites/clanrank)
 	public Pix32[] imageClanRanks = new Pix32[9];
