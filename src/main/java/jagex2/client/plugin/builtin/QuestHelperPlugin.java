@@ -888,8 +888,12 @@ public final class QuestHelperPlugin extends Plugin {
 			if (lead != null && lead.why != null && !lead.why.isEmpty()) {
 				lines.add("@gra@" + wrapped(lead.why));
 			}
-			if (lead != null && lead.shown() != null) {
-				lines.add("@gre@" + lead.shown());
+			// THE NAME ONLY IF THE INSTRUCTION HAS NOT ALREADY SAID IT. "Pickpocket Villager."
+			// with "Villager" under it is the same word twice, and the line is there for the
+			// steps whose wording does not name what they are pointing at.
+			String named = lead == null ? null : lead.shown();
+			if (named != null && !named.isEmpty() && lead.text.indexOf(named) < 0) {
+				lines.add("@gre@" + named);
 			}
 			if (showItems) {
 				for (Need n : missing(st)) {
@@ -1119,7 +1123,12 @@ public final class QuestHelperPlugin extends Plugin {
 						// The explanation under the instruction when there is one - "Open it; the only
 						// way into the house" under "Open Door." - and the thing's name otherwise.
 						Step step = st.steps.get(i);
-						return step.why != null && !step.why.isEmpty() ? step.why : step.shown();
+						if (step.why != null && !step.why.isEmpty()) {
+							return step.why;
+						}
+						// And nothing at all rather than the name the row above has just said.
+						String name = step.shown();
+						return name == null || step.text.indexOf(name) >= 0 ? null : name;
 					}
 					List<Need> items = bringing(st);
 					int at = i - st.steps.size();
