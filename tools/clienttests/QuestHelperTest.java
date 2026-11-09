@@ -112,6 +112,16 @@ public class QuestHelperTest {
 	static final int KNIFE = 946;
 	static final int DRAMEN_BRANCH = 771;
 
+	/**
+	 * Shilo Village's first leg ends on "Use Wampum belt on Trufitus": an npc step with an item.
+	 *
+	 * Standing in front of Trufitus without the belt is the case that separates "mark what the
+	 * step wants" from "mark what the step wants AND you are holding" - the npc is matched by id
+	 * whether or not the bag has anything in it.
+	 */
+	static final int TRUFITUS = 740;
+	static final int WAMPUM_BELT = 625;
+
 	/** Elemental Workshop I, in the order a player meets it: bookcase, book, key. */
 	static final int BATTERED_BOOK = 2886;
 	static final int BATTERED_KEY = 2887;
@@ -619,6 +629,36 @@ public class QuestHelperTest {
 
 		emptyBag();
 		client.varps[LOST_CITY_VARP] = 0;
+		change();
+		track(ELEMENTAL);
+		settle();
+
+		// AN ITEM THE STEP WANTS AND YOU HAVE NOT GOT. The npc is in front of you, so the step is
+		// the one to show - but there is no slot to mark, and nothing to repaint the panel for.
+		emptyBag();
+		clearNpcs();
+		change();
+		track(SHILO);
+		client.varps[SHILO_VARP] = 0;
+		spawn("Trufitus", TRUFITUS, MID_X, MID_Z);
+		settle();
+		check(said(screen(), "Use Wampum belt on Trufitus"),
+			"a step whose npc is in front of you is the step, belt or no belt");
+		sidebar();
+		check(paintedIn(0, 0, W, H) == 0, "...and with no belt in the bag, no slot is marked");
+		client.redrawSidebar = false;
+		manager.onGameTick();
+		check(!client.redrawSidebar,
+			"...nor is the panel repainted for a mark that is not there");
+
+		carry(WAMPUM_BELT, 1);
+		settle();
+		sidebar();
+		int[] belt = context().getSidebarInvCellBounds(0);
+		check(belt != null && paintedIn(belt[0], belt[1], belt[2], belt[3]) > 0,
+			"and once the belt is in the bag, its slot is marked");
+		emptyBag();
+		clearNpcs();
 		change();
 		track(ELEMENTAL);
 		settle();
