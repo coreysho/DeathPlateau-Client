@@ -112,6 +112,35 @@ public class QuestHelperTest {
 	static final int UNDEAD_BRANCH = 10303;
 
 	/**
+	 * Animal Magnetism's second leg: eleven walks and talks under ONE progress value.
+	 *
+	 * The quest counts them in a flag of its own (varp 1701), which is the only thing that moves
+	 * while you walk between Alice and her husband - and exactly the shape of the report this
+	 * was written for: a leg the quest's own varp cannot see inside.
+	 */
+	static final int ANIMAL_COUNT = 1701;
+
+	/**
+	 * Horror from the Deep's second leg, whose last flag means the leg is over.
+	 *
+	 * The quest writes its progress varp at the end of a conversation the leg's last step
+	 * starts, so between the two the leg is finished and the varp does not know it.
+	 */
+	static final String HORROR = "HORROR FROM THE DEEP";
+	static final int HORROR_VARP = 740;
+	static final int HORROR_DONE = 743;
+
+	/**
+	 * Lunar Diplomacy's eleventh leg, with four more legs behind it.
+	 *
+	 * Horror from the Deep has one leg after its finished one, so "the next leg" and "the last
+	 * leg" are the same answer there; this one can tell them apart.
+	 */
+	static final String LUNAR = "LUNAR DIPLOMACY";
+	static final int LUNAR_VARP = 1740;
+	static final int LUNAR_DONE = 1742;
+
+	/**
 	 * Lost City's fifth leg: one step, and it names two items.
 	 *
 	 * "Use Knife on Dramen branch" is one instruction a player cannot follow holding half of it,
@@ -209,6 +238,8 @@ public class QuestHelperTest {
 		workshopTests();
 		System.out.println("9b. what a step handed over is the record that it happened");
 		receiptTests();
+		System.out.println("9bb. the quest's own flags, which move inside a leg");
+		flagTests();
 		System.out.println("9c. what the player is wearing");
 		wornTests();
 		System.out.println("10. the item in the bag, marked on the sidebar");
@@ -624,6 +655,70 @@ public class QuestHelperTest {
 
 		emptyBag();
 		client.varps[ANIMAL_VARP] = 0;
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	// ---------------------------------------------------------------- 9bb
+
+	/**
+	 * The quest's own working flags, which move inside a leg.
+	 *
+	 * THE SECOND HAND ON THE CLOCK. A progress varp ticks once a leg; a flag ticks with each
+	 * step, and the sims have been asserting them all along. Animal Magnetism walks between two
+	 * farmers eleven times at one progress value and counts the trips in a varp of its own.
+	 */
+	static void flagTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(ANIMAL);
+		client.varps[ANIMAL_VARP] = 1;
+		client.varps[ANIMAL_COUNT] = 0;
+		settle();
+		check(said(screen(), "Go to the farm") || said(screen(), "Talk to Alice"),
+			"a leg opens at its first step while the quest's flag is at nothing");
+
+		client.varps[ANIMAL_COUNT] = 5;
+		settle();
+		check(!said(screen(), "Go to the farm"),
+			"...and the flag moving carries the leg with it, with no progress varp in sight");
+		check(said(screen(), "Go back to Malcolm") || said(screen(), "Talk to Alice's husband"),
+			"...to the step that flag is true from");
+
+		// A FLAG AT THE END OF THE LIST SAYS THE LEG IS OVER. The quest writes its progress varp
+		// at the end of a conversation the last step starts - the gap between the two is where a
+		// player drinks three beers and is still told to buy the first.
+		change();
+		track(HORROR);
+		client.varps[HORROR_VARP] = 1;
+		client.varps[HORROR_DONE] = 0;
+		settle();
+		check(said(screen(), "Go to the Barbarian Outpost") || said(screen(), "Talk to Gunnjorn"),
+			"a leg with an end-of-leg flag opens normally while that flag is unset");
+
+		client.varps[HORROR_DONE] = 63;
+		settle();
+		check(said(screen(), "Go north through the opened panel"),
+			"...and once it is set, the NEXT leg is what to do, varp or no varp");
+
+		// AND THE NEXT LEG, NOT THE LAST. Lunar Diplomacy has four legs behind the one its flag
+		// finishes, so a walk forward that went to the end of the quest would show the wrong one.
+		change();
+		track(LUNAR);
+		client.varps[LUNAR_VARP] = 110;
+		client.varps[LUNAR_DONE] = 255;
+		settle();
+		check(said(screen(), "Use Waking sleep vial on Kindling"),
+			"a finished leg hands over to the one after it, not to the end of the quest");
+		client.varps[LUNAR_VARP] = 0;
+		client.varps[LUNAR_DONE] = 0;
+
+		client.varps[HORROR_VARP] = 0;
+		client.varps[HORROR_DONE] = 0;
+		client.varps[ANIMAL_VARP] = 0;
+		client.varps[ANIMAL_COUNT] = 0;
 		change();
 		track(FEUD);
 		settle();

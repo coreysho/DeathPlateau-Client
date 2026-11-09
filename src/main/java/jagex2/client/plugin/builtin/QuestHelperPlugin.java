@@ -167,8 +167,25 @@ public final class QuestHelperPlugin extends Plugin {
 		String text = "";
 	}
 
+	/**
+	 * One of the quest's own working flags, and the step it is true from.
+	 *
+	 * THE SECOND HAND ON THE CLOCK. The progress varp moves once a leg; the flags move inside
+	 * one - how many beers Drunken Ali has had, which gangs have been asked - and a step whose
+	 * only trace is a flag can be seen no other way. A mark at the end of a leg's list says the
+	 * leg is finished whatever its varp still reads, which is how a player who drank three beers
+	 * stops being told to buy the first one.
+	 */
+	private static final class Mark {
+		int at;
+		int var = -1;
+		boolean varbit;
+		int is;
+	}
+
 	private static final class Stage {
 		int from;
+		final List<Mark> marks = new ArrayList<>();
 		final List<Head> headings = new ArrayList<>();
 		final List<Step> steps = new ArrayList<>();
 		final List<Need> items = new ArrayList<>();
@@ -314,6 +331,20 @@ public final class QuestHelperPlugin extends Plugin {
 				st.headings.add(head);
 			}
 		}
+		List<?> marks = Json.array(o, "marks");
+		if (marks != null) {
+			for (Object m : marks) {
+				if (!(m instanceof Map)) {
+					continue;
+				}
+				Mark mark = new Mark();
+				mark.at = Json.integer((Map<?, ?>) m, "at", 0);
+				mark.var = Json.integer((Map<?, ?>) m, "var", -1);
+				mark.varbit = "true".equals(String.valueOf(((Map<?, ?>) m).get("varbit")));
+				mark.is = Json.integer((Map<?, ?>) m, "is", 0);
+				st.marks.add(mark);
+			}
+		}
 		List<?> steps = Json.array(o, "steps");
 		if (steps != null) {
 			for (Object s : steps) {
@@ -455,6 +486,37 @@ public final class QuestHelperPlugin extends Plugin {
 		return best;
 	}
 
+	/**
+	 * The leg to show: the one the varp names, unless the quest's own flags say it is finished.
+	 *
+	 * A LEG CAN BE OVER BEFORE THE VARP SAYS SO. The Feud writes its progress at the end of a
+	 * conversation that three beers start, so a player who has drunk all three - and whose
+	 * beer-counting flag says exactly that - can still be sitting on the value the leg began at.
+	 * Rather than show them the first beer again, the flags are taken at their word and the next
+	 * leg is shown: it is where the game will put them the moment it catches up.
+	 *
+	 * Bounded, because a table whose legs all read finished would otherwise walk off the end.
+	 */
+	private Stage legNow(Quest q) {
+		Stage st = this.stageNow(q);
+		for (int guard = 0; st != null && guard < 8; guard++) {
+			if (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {
+				return st;
+			}
+			Stage next = null;
+			for (Stage other : q.stages) {
+				if (other.from > st.from && (next == null || other.from < next.from)) {
+					next = other;
+				}
+			}
+			if (next == null) {
+				return st;
+			}
+			st = next;
+		}
+		return st;
+	}
+
 	/** The first step of the current leg that names something to go and do. */
 	private Step leadStep(Stage st) {
 		if (st == null) {
@@ -547,6 +609,20 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 			if (done && i + 1 > start) {
 				start = i + 1;
+			}
+		}
+
+		// AND THE QUEST'S OWN FLAGS. A step whose only trace is a flag - three beers drunk, two
+		// gangs asked - can be seen no other way, and the flag is already in the client because
+		// the quest keeps it. `at` is the step it is true from, so everything above it is done.
+		for (int i = 0; i < st.marks.size(); i++) {
+			Mark mark = st.marks.get(i);
+			if (mark.var < 0 || mark.is <= 0 || mark.at <= start) {
+				continue;
+			}
+			int now = mark.varbit ? ctx.getVarbit(mark.var) : ctx.getVarp(mark.var);
+			if (now >= mark.is) {
+				start = mark.at;
 			}
 		}
 
@@ -798,7 +874,7 @@ public final class QuestHelperPlugin extends Plugin {
 			if (q == null) {
 				return;
 			}
-			Stage st = stageNow(q);
+			Stage st = legNow(q);
 			Spot sp = spot(st);
 			// The step the marker is boxing, so the words and the box agree. With nothing of the
 			// leg in the scene there is no box, and the leg's own first instruction is the answer.
@@ -850,7 +926,7 @@ public final class QuestHelperPlugin extends Plugin {
 			if (q == null) {
 				return;
 			}
-			Spot sp = spot(stageNow(q));
+			Spot sp = spot(legNow(q));
 			if (sp == null || sp.sceneTileX < 0) {
 				return;
 			}
@@ -895,7 +971,7 @@ public final class QuestHelperPlugin extends Plugin {
 		if (q == null) {
 			return NONE;
 		}
-		Spot sp = this.spot(this.stageNow(q));
+		Spot sp = this.spot(this.legNow(q));
 		if (sp == null || sp.step == null) {
 			return NONE;
 		}
@@ -995,7 +1071,7 @@ public final class QuestHelperPlugin extends Plugin {
 						return listed().size();
 					}
 					Quest q = tracked();
-					Stage st = stageNow(q);
+					Stage st = legNow(q);
 					return 1 + (st == null ? 0 : st.steps.size() + bringing(st).size());
 				}
 
@@ -1008,7 +1084,7 @@ public final class QuestHelperPlugin extends Plugin {
 					if (index == 0) {
 						return q.name;
 					}
-					Stage st = stageNow(q);
+					Stage st = legNow(q);
 					if (st == null) {
 						return "";
 					}
@@ -1029,7 +1105,7 @@ public final class QuestHelperPlugin extends Plugin {
 						return index >= 0 && index < all.size() ? statusOf(all.get(index)) : null;
 					}
 					Quest q = tracked();
-					Stage st = stageNow(q);
+					Stage st = legNow(q);
 					if (index == 0) {
 						Spot sp = spot(st);
 						String head = headingFor(st, sp == null ? 0 : indexOf(st, sp.step));
@@ -1055,7 +1131,7 @@ public final class QuestHelperPlugin extends Plugin {
 						return null;
 					}
 					Quest q = tracked();
-					Stage st = stageNow(q);
+					Stage st = legNow(q);
 					if (index == 0 || st == null) {
 						return null;
 					}

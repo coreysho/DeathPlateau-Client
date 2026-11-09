@@ -141,6 +141,23 @@ MUTS = [
      '\tprivate static final int WORN_COM = 1688;',
      '\tprivate static final int WORN_COM = 3214;'),
 
+    # ---- THE QUEST'S OWN FLAGS, which are the only clock that ticks inside a leg.
+    (PLUGIN, 'the quest\'s flags ignored, so a leg the varp cannot see inside never moves',
+     '\t\t\tint now = mark.varbit ? ctx.getVarbit(mark.var) : ctx.getVarp(mark.var);',
+     '\t\t\tint now = 0;'),
+    (PLUGIN, 'a flag read as a varbit or a varp the wrong way round',
+     '\t\t\tint now = mark.varbit ? ctx.getVarbit(mark.var) : ctx.getVarp(mark.var);',
+     '\t\t\tint now = mark.varbit ? ctx.getVarp(mark.var) : ctx.getVarbit(mark.var);'),
+    (PLUGIN, 'a flag taken as true before it is set, so every leg jumps to its end',
+     '\t\t\tif (now >= mark.is) {\n\t\t\t\tstart = mark.at;\n\t\t\t}',
+     '\t\t\tif (true) {\n\t\t\t\tstart = mark.at;\n\t\t\t}'),
+    (PLUGIN, 'a leg the flags say is finished shown anyway, which is the beers all over again',
+     '\t\t\tif (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {\n\t\t\t\treturn st;\n\t\t\t}',
+     '\t\t\tif (true) {\n\t\t\t\treturn st;\n\t\t\t}'),
+    (PLUGIN, 'the walk forward taking any later leg rather than the next one',
+     '\t\t\t\tif (other.from > st.from && (next == null || other.from < next.from)) {',
+     '\t\t\t\tif (other.from > st.from && (next == null || other.from > next.from)) {'),
+
     # ---- HOW FAR INTO A LEG. The bag is the only record inside one.
     (PLUGIN, 'the leg always started from its first step, which is how it stuck on the bookcase',
      '\t\tint start = this.reached(this.tracked(), st);',
