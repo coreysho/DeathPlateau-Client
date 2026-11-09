@@ -238,6 +238,33 @@ public class SidebarPreview {
 				Thread.sleep(250);
 			}
 		}
+		// The Quest helper page: a plugin whose whole content comes from a data file in its own
+		// jar, and whose rows depend on a VARP rather than on a skill or an inventory. So the
+		// preview has to put the player part-way through a quest or the page correctly says
+		// "no quest in progress" and the render proves nothing.
+		//
+		// varp 107 is prieststart, The Restless Ghost's own progress varp, and 2 is the leg after
+		// Father Urhney hands the amulet over: six steps, and one item the player is NOT carrying,
+		// which is what makes the need column worth looking at.
+		if (args.length > 1 && args[1].equals("questhelper")) {
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("questhelper")) {
+					continue;
+				}
+				if (client.varps != null && client.varps.length > 107) {
+					client.varps[107] = 2;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException(
+						"no rail tab for " + entry.key + ": the quest helper's panel did not reach the rail");
+				}
+				manager.onClientTick(0);
+				Thread.sleep(250);
+			}
+		}
 		// The Anti-drag page: one @ConfigItem int and nothing else, which is the third shape a
 		// config page comes in - a number the player types rather than a switch or a list.
 		if (args.length > 1 && args[1].equals("antidrag")) {
