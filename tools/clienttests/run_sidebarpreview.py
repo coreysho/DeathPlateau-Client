@@ -29,13 +29,14 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src/main/java')
 LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
+PLUGIN_RES = os.path.join(ROOT, 'plugins/resources')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']),
          ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('loot', ['loot']),
-         ('clue', ['clue']),
+         ('clue', ['clue']), ('questhelper', ['questhelper']),
          ('hub', ['hub']), ('empty', [])]
 
 
@@ -124,11 +125,20 @@ def main():
             z.writestr('META-INF/MANIFEST.MF',
                        'Manifest-Version: 1.0\n'
                        'Plugin-Class: deathplateau.plugins.CoordinatesPlugin,'
-                       'deathplateau.plugins.XpTrackerPlugin\n\n')
+                       'deathplateau.plugins.XpTrackerPlugin,'
+                       'deathplateau.plugins.QuestHelperPlugin\n\n')
             for base, _, files in os.walk(plugin_classes):
                 for name in files:
                     full = os.path.join(base, name)
                     z.write(full, os.path.relpath(full, plugin_classes).replace(os.sep, '/'))
+            # AND THE RESOURCES, or a plugin that reads one loads with nothing in it. The quest
+            # helper's whole page is its step table, so without quests.json the preview would show
+            # an empty list and look like a layout bug rather than a missing file.
+            if os.path.isdir(PLUGIN_RES):
+                for base, _, files in os.walk(PLUGIN_RES):
+                    for name in files:
+                        full = os.path.join(base, name)
+                        z.write(full, os.path.relpath(full, PLUGIN_RES).replace(os.sep, '/'))
 
         r = run(javac, '-nowarn', '-cp', classes, '-d', work, PREVIEW, PAINT_TEST, RAIL_TEST)
         if r.returncode != 0:
