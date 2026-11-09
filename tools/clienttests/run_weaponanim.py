@@ -131,7 +131,11 @@ def main():
     print('account: ' + user)
 
     def run_once():
-        cmd = ['java', '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1',
+        # --add-opens as run_coursecam.py and run_worldmaporb.py pass it: ResizableShots seeds
+        # Math's own Random by reflection, which a JDK past 16 refuses without it, and the run
+        # died on that before taking a single picture.
+        cmd = ['java', '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+               '-Dshots.rsan=' + rsan, '-Dlostcity.host=127.0.0.1',
                '-Dlostcity.port=%d' % a.port, '-Dlostcity.webport=%d' % a.webport,
                '-Duser.home=' + home, '-Dshots.zulseqs=' + labels,
                '-Dshots.anims=' + ';'.join(rows), '-Dshots.yaw=%d' % a.yaw,
