@@ -114,6 +114,19 @@ package jagex2.client.plugin;
  *     VALUES, NOT A HANDLE, as everywhere else here - LocType.get hands out references into a
  *     20-entry round-robin cache - and a read, as everywhere else: nothing added here changes a
  *     loc, places one, or clicks one.</dd>
+ * <dt>12</dt><dd>The dialogue on screen: {@code ctx.getDialogueOptions} gives the lines of a
+ *     "Select an Option" box in the order they are drawn, {@code ctx.getDialogueOptionBounds}
+ *     says where one of them sits, and {@link Overlay#LAYER_CHAT} is a fourth place to draw -
+ *     the chatbox, over whatever interface is open there. {@code ctx.requestChatRedraw} is its
+ *     {@code requestSidebarRedraw}: that raster is kept between frames too.
+ *     <p>
+ *     The option ids are not guessed. The client already finds a line for its own number-key
+ *     hotkey - the open interface's id plus one plus the line's place - and this asks the same
+ *     method, so a plugin marking an option and the hotkey pressing one cannot disagree about
+ *     which line is which.
+ *     <p>
+ *     READS AND A RECTANGLE. Nothing here clicks an option or answers a conversation; what a
+ *     plugin can do with it is draw.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -122,7 +135,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 11;
+	public static final int LEVEL = 12;
 
 	private PluginApi() {
 	}

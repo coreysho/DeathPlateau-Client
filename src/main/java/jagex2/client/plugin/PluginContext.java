@@ -611,6 +611,70 @@ public final class PluginContext {
 		this.client.redrawSidebar = true;
 	}
 
+	// ------------------------------------------------------------------ the dialogue on screen
+
+	/**
+	 * The lines of the "Select an Option" box, in the order they are drawn, or empty.
+	 *
+	 * The client already knows this shape and uses it for the number-key hotkey: multi2 to multi5
+	 * are the four option interfaces, and an option's component is the open interface's id plus
+	 * one plus its place. Asked the same way here, through the client's own
+	 * dialogueOptionCount, so a plugin marking a line and the hotkey pressing one can never
+	 * disagree about which line is which.
+	 *
+	 * Empty whenever there is no option box: an ordinary conversation, a level-up, nothing open.
+	 */
+	public List<String> getDialogueOptions() {
+		List<String> out = new ArrayList<String>();
+		int open = this.client.chatInterfaceId;
+		int n = this.client.dialogueOptionCount(open);
+		if (n <= 0) {
+			return out;
+		}
+		for (int i = 1; i <= n; i++) {
+			Component com = component(open + 1 + i);
+			out.add(com == null || com.text == null ? "" : com.text);
+		}
+		return out;
+	}
+
+	/**
+	 * Where one of those lines sits, in the CHAT AREA's coordinates, for an
+	 * {@link Overlay#LAYER_CHAT} overlay. Null for an index that is not on screen.
+	 *
+	 * Taken from the option component's own geometry rather than by measuring its text: the
+	 * interface says how wide a line's box is, and a mark drawn around the letters would be a
+	 * different shape on every option.
+	 */
+	public int[] getDialogueOptionBounds(int index) {
+		int open = this.client.chatInterfaceId;
+		int n = this.client.dialogueOptionCount(open);
+		if (index < 0 || index >= n) {
+			return null;
+		}
+		Component layer = component(open);
+		int comId = open + 1 + (index + 1);
+		Component com = component(comId);
+		if (layer == null || com == null) {
+			return null;
+		}
+		int[] at = new int[2];
+		if (!locate(Client.CHAT_IF_Y, Client.CHAT_IF_X, layer, 0, comId, at)) {
+			return null;
+		}
+		return new int[] { at[0], at[1], com.width, com.height };
+	}
+
+	/**
+	 * Asks the client to repaint the chatbox this frame, as
+	 * {@link #requestSidebarRedraw()} does for the sidebar and for the same reason: the chat
+	 * raster is kept between frames, so a mark on an option that nothing else is disturbing
+	 * would flicker with the mouse.
+	 */
+	public void requestChatRedraw() {
+		this.client.redrawChatback = true;
+	}
+
 	/**
 	 * Walk the open window for a component, accumulating where it lands.
 	 *

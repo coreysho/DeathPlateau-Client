@@ -95,6 +95,16 @@ public final class QuestHelperPlugin extends Plugin {
 		 */
 		int[] also = NONE;
 
+		/**
+		 * The dialogue options this step picks, in the order it picks them, or empty.
+		 *
+		 * The sims have always recorded these - it is how a run gets through a conversation - and
+		 * 522 steps across 102 quests carry at least one. A pick is either the option's words or
+		 * its place in the list as a number, and the words may offer several alternatives
+		 * separated by "||" for a question that is asked at random.
+		 */
+		String[] picks = NO_PICKS;
+
 		/** Whether an npc in the scene is the one this step is about, or one just as good. */
 		boolean takes(int npcId) {
 			if (npcId == this.id) {
@@ -160,6 +170,20 @@ public final class QuestHelperPlugin extends Plugin {
 
 	/** No items at all: a walk, a note, a talk. Shared so a frame does not allocate for each. */
 	private static final int[] NONE = new int[0];
+	private static final String[] NO_PICKS = new String[0];
+
+	/** A step's dialogue picks, as written. */
+	private static String[] picks(List<?> raw) {
+		if (raw == null || raw.isEmpty()) {
+			return NO_PICKS;
+		}
+		String[] out = new String[raw.size()];
+		for (int i = 0; i < out.length; i++) {
+			Object o = raw.get(i);
+			out[i] = o == null ? "" : String.valueOf(o);
+		}
+		return out;
+	}
 
 	private static final class Need {
 		String name = "";
@@ -385,6 +409,7 @@ public final class QuestHelperPlugin extends Plugin {
 				step.label = m.containsKey("label") ? Json.string(m, "label", null) : null;
 				step.item = Json.integer(m, "item", -1);
 				step.also = ids(Json.array(m, "also"));
+				step.picks = picks(Json.array(m, "picks"));
 				step.gives = ids(Json.array(m, "gives"));
 				step.wears = ids(Json.array(m, "wears"));
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
@@ -1065,7 +1090,20 @@ public final class QuestHelperPlugin extends Plugin {
 			ctx.requestSidebarRedraw();
 		}
 		this.marked = want;
+
+		// THE CHATBOX IS CACHED TOO, and for the same reason: an option box that nothing is
+		// disturbing is painted once and kept, so the mark on a line would come and go with the
+		// mouse. The tick after the box closes is what rubs it out, which is why `marking` is
+		// remembered exactly as `marked` is above.
+		boolean option = this.optionNow() >= 0;
+		if (option || this.marking) {
+			ctx.requestChatRedraw();
+		}
+		this.marking = option;
 	}
+
+	/** Whether an option was marked last tick, so the tick it stops is the one that rubs it out. */
+	private boolean marking = false;
 
 	/**
 	 * The box round the slot the step's item is in.
@@ -1107,6 +1145,103 @@ public final class QuestHelperPlugin extends Plugin {
 					break;
 				}
 			}
+		}
+	};
+
+	/**
+	 * Which option on screen the step would pick, or -1.
+	 *
+	 * THE SIM'S OWN RULE, because the sim is what wrote these picks and a second rule would
+	 * disagree with it somewhere: a numeric pick is the option's place in the list, counting from
+	 * one; a worded pick is matched by case-insensitive SUBSTRING, and may offer several
+	 * alternatives separated by "||" for a question asked at random - whichever of them is on the
+	 * menu is the answer. See drive() in the engine's tools/sim/a1lib.ts.
+	 *
+	 * ONLY THE FIRST PICK OF A STEP. A step that picks twice does so in two different boxes, one
+	 * after the other, and the second has not been asked yet.
+	 */
+	private int optionFor(Step step, List<String> options) {
+		if (step == null || step.picks.length == 0 || options.isEmpty()) {
+			return -1;
+		}
+		String pick = step.picks[0].trim();
+		if (pick.isEmpty()) {
+			return -1;
+		}
+		boolean numeric = true;
+		for (int i = 0; i < pick.length(); i++) {
+			if (pick.charAt(i) < '0' || pick.charAt(i) > '9') {
+				numeric = false;
+				break;
+			}
+		}
+		if (numeric) {
+			int at = Integer.parseInt(pick) - 1;
+			return at >= 0 && at < options.size() ? at : -1;
+		}
+		String[] wants = pick.split("\\|\\|");
+		for (int i = 0; i < options.size(); i++) {
+			String option = options.get(i).toLowerCase();
+			for (int w = 0; w < wants.length; w++) {
+				String want = wants[w].trim().toLowerCase();
+				if (!want.isEmpty() && option.indexOf(want) >= 0) {
+					return i;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/** The option the tracked quest's live step would pick, or -1 - the whole of what chat draws. */
+	private int optionNow() {
+		if (!this.highlight) {
+			return -1;
+		}
+		List<String> options = ctx.getDialogueOptions();
+		if (options.isEmpty()) {
+			return -1;
+		}
+		Quest q = this.tracked();
+		if (q == null) {
+			return -1;
+		}
+		Spot spot = this.spot(this.legNow(q));
+		return spot == null ? -1 : this.optionFor(spot.step, options);
+	}
+
+	/**
+	 * The box round the dialogue option the step would pick.
+	 *
+	 * IN THE CHATBOX, a third raster again - see Overlay.LAYER_CHAT. Nothing is drawn unless the
+	 * quest being tracked has a step with a pick AND that pick is one of the options actually on
+	 * screen, so an unrelated conversation is left alone.
+	 */
+	private final Overlay chat = new Overlay() {
+
+		public int layer() {
+			return Overlay.LAYER_CHAT;
+		}
+
+		/** Not draggable: it marks a line the client owns, so it has nowhere else to be. */
+		public boolean movable() {
+			return false;
+		}
+
+		public void render(OverlayGraphics g) {
+			if (!ctx.isLoggedIn()) {
+				return;
+			}
+			int at = optionNow();
+			if (at < 0) {
+				return;
+			}
+			int[] box = ctx.getDialogueOptionBounds(at);
+			if (box == null) {
+				return;
+			}
+			int c = colour();
+			g.fillAlpha(box[0], box[1], box[2], box[3], c, 48);
+			g.box(box[0], box[1], box[2], box[3], c);
 		}
 	};
 
@@ -1265,6 +1400,7 @@ public final class QuestHelperPlugin extends Plugin {
 		this.addOverlay(this.panel);
 		this.addOverlay(this.marker);
 		this.addOverlay(this.bag);
+		this.addOverlay(this.chat);
 		this.addRailPage();
 	}
 

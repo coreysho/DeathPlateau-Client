@@ -277,6 +277,9 @@ public class MyToolPlugin extends Plugin {
 | 7 | `ctx.isMenuOpen`, for an overlay near the cursor that should stand aside while a menu is open; `OverlayGraphics.fontFor` with `FONT_CHOICES`. |
 | 8 | `ctx.getTrueTileX` / `getTrueTileZ`: the tile the server has the player on, which during a walk is ahead of the one they appear to stand on. |
 | 9 | Where the scenery is: `ctx.findLocs`, and the `SceneLoc` it hands back. |
+| 10 | What the server told the client: `ctx.getVarp`, `ctx.getVarbit` (with the count and `hasVarbit`), and the inventory - `ctx.getInventorySize`, `getInventoryObjId`, `getInventoryObjCount`, `countObj`, `hasObj`, `ctx.getObjName`. |
+| 11 | What a loc looks like right now: `ctx.resolveLoc`, `ctx.getLocName`, `getLocDesc`, `getLocOp`, `getLocVarbit`, `getLocVarp`, `getLocCount`. |
+| 12 | The dialogue on screen: `ctx.getDialogueOptions`, `ctx.getDialogueOptionBounds`, `ctx.requestChatRedraw`, and `Overlay.LAYER_CHAT`. |
 
 Note what did **not** move the level: Alt-drag arrived between 1 and 2 and a plugin calls nothing
 for it - overlays became movable underneath them. A level only goes up when there is something new

@@ -488,8 +488,10 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int CHAT_W = 505;
 	private static final int CHAT_H = 129;
 	private static final int CHAT_LOG_H = CHAT_H - 19;
-	private static final int CHAT_IF_X = (CHAT_W - 479) / 2;
-	private static final int CHAT_IF_Y = (CHAT_H - 96) / 2;
+	// Public for PluginContext: a LAYER_CHAT overlay works in the chat area's coordinates, and
+	// where the open interface starts inside it is this offset and not zero.
+	public static final int CHAT_IF_X = (CHAT_W - 479) / 2;
+	public static final int CHAT_IF_Y = (CHAT_H - 96) / 2;
 	private static final int SIDE_X = 547;
 	private static final int MAP_X = 545;
 	// The button row. Six filter/mode buttons on a 66px pitch, then Report filling the rest.
@@ -6527,14 +6529,19 @@ public class Client extends GameShell implements PixMap.Target {
 	// 2026-09-02: first pass wrongly assumed com_0's id was the root id (off by one for all four).
 	// If interface.pack is ever repacked such that these ids shift, these four constants need
 	// updating to match.
-	private static final int MULTI2_INTERFACE_ID = 2459;
-	private static final int MULTI3_INTERFACE_ID = 2469;
-	private static final int MULTI4_INTERFACE_ID = 2480;
-	private static final int MULTI5_INTERFACE_ID = 2492;
+	// Public so a test can build one of these boxes without copying the ids: a copy would go on
+	// passing on the day interface.pack moves them, which is the one day it must not.
+	public static final int MULTI2_INTERFACE_ID = 2459;
+	public static final int MULTI3_INTERFACE_ID = 2469;
+	public static final int MULTI4_INTERFACE_ID = 2480;
+	public static final int MULTI5_INTERFACE_ID = 2492;
 
 	// Returns how many selectable options the currently-open chat interface has (2-5), or -1 if
 	// it isn't one of the four "Select an Option" dialogue interfaces above.
-	private int dialogueOptionCount(int interfaceId) {
+	// Public for PluginContext.getDialogueOptions: a plugin that marks an option has to agree
+	// with the number-key hotkey about which line is which, and the only way to guarantee that is
+	// to ask the same method.
+	public int dialogueOptionCount(int interfaceId) {
 		if (interfaceId == MULTI2_INTERFACE_ID) {
 			return 2;
 		} else if (interfaceId == MULTI3_INTERFACE_ID) {
@@ -15697,6 +15704,12 @@ public class Client extends GameShell implements PixMap.Target {
 			this.fontBold12.centreString(CHAT_W / 2, CHAT_IF_Y + 60, 128, "Click to continue");
 		} else if (this.chatInterfaceId != -1) {
 			this.drawInterface(CHAT_IF_Y, CHAT_IF_X, Component.get(this.chatInterfaceId), 0);
+			// AFTER THE INTERFACE, so a mark on an option sits over the option rather than under
+			// it, and in the chat area's own coordinates - the same arrangement as the sidebar
+			// pass in drawSidebar.
+			if (this.plugins != null) {
+				this.plugins.renderOverlays(CHAT_W, CHAT_H, jagex2.client.plugin.Overlay.LAYER_CHAT);
+			}
 		} else if (this.stickyChatInterfaceId == -1) {
 			PixFont var5 = this.fontPlain12;
 			int var6 = 0;

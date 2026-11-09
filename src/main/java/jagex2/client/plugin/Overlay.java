@@ -88,9 +88,25 @@ public abstract class Overlay {
 	public static final int LAYER_SIDEBAR = 2;
 
 	/**
-	 * Which of the three the client draws this overlay at. There are three because the client has
-	 * three points in its frame where an overlay can go, and the difference is visible: one is
-	 * under the names and hitsplats, one over them, and one is on the sidebar.
+	 * On the CHATBOX, over whatever interface is open there - a conversation, a "Select an
+	 * Option" box, a level-up.
+	 *
+	 * Its coordinates are the chat area's own, as the sidebar's are the sidebar's, so (0, 0) is
+	 * the top left of the box and not of the screen. Use {@link
+	 * jagex2.client.plugin.PluginContext#getDialogueOptionBounds(int)} to find a line in them
+	 * rather than measuring text, because the option components carry their own geometry.
+	 *
+	 * THE CHATBOX IS CACHED like the sidebar, and this pass runs in the frames the client
+	 * repaints it. A conversation repaints on its own whenever anything in it moves, so a mark on
+	 * an option that is sitting still needs {@link
+	 * jagex2.client.plugin.PluginContext#requestChatRedraw()}.
+	 */
+	public static final int LAYER_CHAT = 3;
+
+	/**
+	 * Which of the four the client draws this overlay at. There are four because the client has
+	 * four points in its frame where an overlay can go, and the difference is visible: one is
+	 * under the names and hitsplats, one over them, one is on the sidebar and one in the chatbox.
 	 */
 	public int layer() {
 		return LAYER_SCREEN;

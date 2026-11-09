@@ -275,6 +275,8 @@ public class QuestHelperTest {
 		locTests();
 		System.out.println("13. one of a crowd the step would take just as well");
 		familyTests();
+		System.out.println("14. the dialogue option the step would pick");
+		dialogueTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -1053,6 +1055,162 @@ public class QuestHelperTest {
 	}
 
 	// ---------------------------------------------------------------- 11
+
+	// ---------------------------------------------------------------- 14
+
+	/**
+	 * THE OPTION TO CLICK, marked in the chatbox.
+	 *
+	 * The sims have always recorded which option they pick - it is how a run gets through a
+	 * conversation - and the exporter ships them, so 522 steps across 102 quests already say what
+	 * to click. What was missing was the client end.
+	 *
+	 * The matching rule is the SIM's, because the sim wrote these picks: a number is the option's
+	 * place in the list, words are matched by case-insensitive substring, and "||" separates
+	 * alternatives for a question asked at random.
+	 *
+	 * The Restless Ghost opens on "Talk to Father Aereck" picking "looking for a quest", and
+	 * Cook's Assistant opens on "Talk to Cook" picking "1" - a worded pick and a numeric one,
+	 * both already fixtures here.
+	 */
+	static void dialogueTests() throws Exception {
+		clearNpcs();
+		change();
+		track(GHOST);
+		client.varps[GHOST_VARP] = 0;
+		settle();
+
+		check(chat().isEmpty() && chatPainted() == 0,
+			"with no option box open, nothing is marked in the chatbox");
+
+		// THE WORDED PICK. The option carrying the step's words is marked and the others are not,
+		// and the words are only PART of the line, which is what makes it a substring match.
+		openDialogue(new String[] {
+			"Can you tell me about this church?",
+			"I'm looking for a quest, actually.",
+			"Nothing, sorry."
+		});
+		settle();
+		int[] want = context().getDialogueOptionBounds(1);
+		check(want != null, "the option box gives the second line its own bounds");
+		check(onlyInside(want), "the step's own option is the one marked, and nothing else is");
+
+		// NONE OF THESE IS THE ANSWER, so the box is left alone rather than guessed at.
+		openDialogue(new String[] { "Nice weather.", "Goodbye.", "Who are you?" });
+		settle();
+		check(chatPainted() == 0, "an option box with no answer of the step's in it is not marked");
+
+		// THE NUMERIC PICK is a place in the list, not words: Cook's Assistant picks "1", and the
+		// first line is marked whatever it happens to say.
+		change();
+		track(COOK);
+		client.varps[COOK_VARP] = 0;
+		openDialogue(new String[] { "What's wrong?", "I'm looking for a quest, actually.", "Bye." });
+		settle();
+		int[] first = context().getDialogueOptionBounds(0);
+		check(first != null && onlyInside(first),
+			"a numeric pick marks the line in that place, not the one whose words match");
+
+		// AND THE TICK ASKS FOR THE REPAINT, because the chatbox raster is kept between frames.
+		int before = client.redrawChatback ? 1 : 0;
+		client.redrawChatback = false;
+		manager.onGameTick();
+		check(client.redrawChatback, "with an option to mark, the plugin asks for the chatbox repaint (" + before + ")");
+		closeDialogue();
+		settle();
+		client.redrawChatback = false;
+		manager.onGameTick();
+		check(client.redrawChatback, "...and once more when the box closes, so the mark is rubbed out");
+		client.redrawChatback = false;
+		manager.onGameTick();
+		check(!client.redrawChatback, "...and not every tick after that");
+
+		closeDialogue();
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	/**
+	 * A "Select an Option" box with these lines, built the way the client's own interfaces are.
+	 *
+	 * The ids are the CLIENT's - an option's component is the open interface's id plus one plus
+	 * its place, which is how its number-key hotkey finds one - so this cannot drift from the
+	 * thing it is standing in for.
+	 */
+	static void openDialogue(String[] lines) {
+		int root = lines.length == 2 ? Client.MULTI2_INTERFACE_ID
+			: lines.length == 3 ? Client.MULTI3_INTERFACE_ID
+			: lines.length == 4 ? Client.MULTI4_INTERFACE_ID : Client.MULTI5_INTERFACE_ID;
+		jagex2.config.Component box = new jagex2.config.Component();
+		box.id = root;
+		box.type = 0;
+		box.width = 479;
+		box.height = 96;
+		box.children = new int[lines.length];
+		box.childX = new int[lines.length];
+		box.childY = new int[lines.length];
+		for (int i = 0; i < lines.length; i++) {
+			jagex2.config.Component line = new jagex2.config.Component();
+			line.id = root + 1 + (i + 1);
+			line.type = 4;
+			line.text = lines[i];
+			line.width = 300;
+			line.height = 14;
+			jagex2.config.Component.types[line.id] = line;
+			box.children[i] = line.id;
+			box.childX[i] = 20;
+			box.childY[i] = 20 + i * 16;
+		}
+		jagex2.config.Component.types[root] = box;
+		client.chatInterfaceId = root;
+	}
+
+	static void closeDialogue() {
+		client.chatInterfaceId = -1;
+	}
+
+	/** One chatbox-layer frame: what the option mark drew. */
+	static List<Drawn> chat() {
+		return frame(Overlay.LAYER_CHAT);
+	}
+
+	/** The pixels the chatbox pass left behind. */
+	static int chatPainted() {
+		chat();
+		int n = 0;
+		for (int i = 0; i < pixels.length; i++) {
+			if (pixels[i] != 0) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/**
+	 * Whether the chatbox pass painted inside this box and nowhere outside it.
+	 *
+	 * The box's own coordinates decide, so this says "that line and no other" without reading
+	 * back the number the mark was drawn at.
+	 */
+	static boolean onlyInside(int[] box) {
+		chat();
+		int in = 0, out = 0;
+		for (int y = 0; y < H; y++) {
+			for (int x = 0; x < W; x++) {
+				if (pixels[y * W + x] == 0) {
+					continue;
+				}
+				boolean inside = x >= box[0] && x < box[0] + box[2] && y >= box[1] && y < box[1] + box[3];
+				if (inside) {
+					in++;
+				} else {
+					out++;
+				}
+			}
+		}
+		return in > 0 && out == 0;
+	}
 
 	// ---------------------------------------------------------------- 13
 
