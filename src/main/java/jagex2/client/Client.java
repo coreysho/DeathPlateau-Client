@@ -15628,6 +15628,14 @@ public class Client extends GameShell implements PixMap.Target {
 		} else if (this.tabInterfaceId[this.selectedTab] != -1) {
 			this.drawInterface(0, 0, Component.get(this.tabInterfaceId[this.selectedTab]), 0);
 		}
+		// Plugin overlays on the sidebar, over the open tab and under the right-click menu. The
+		// third of the three passes in a frame, and the only one that can reach the inventory:
+		// the other two draw into the viewport raster, which in fixed mode does not include this
+		// panel at all. In sidebar coordinates, so (0, 0) is this raster's corner.
+		if (this.plugins != null) {
+			this.plugins.renderOverlays(this.areaSidebar.width, this.areaSidebar.height,
+				jagex2.client.plugin.Overlay.LAYER_SIDEBAR);
+		}
 		if (this.menuVisible && this.menuArea == 1) {
 			this.drawMenu();
 		}

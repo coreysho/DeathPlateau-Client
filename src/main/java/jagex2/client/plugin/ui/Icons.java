@@ -319,7 +319,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "pin", "list" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -372,6 +372,9 @@ public final class Icons {
 		}
 		if ("refresh".equals(name)) {
 			return refresh(size, colour);
+		}
+		if ("pin".equals(name)) {
+			return pin(size, colour);
 		}
 		return list(size, colour);
 	}
@@ -435,6 +438,35 @@ public final class Icons {
 				path.lineTo(x + dx * wing * 1.4, y + dy * wing * 1.4);
 				path.closePath();
 				return path;
+			}
+		};
+	}
+
+	/**
+	 * A map pin, for a page that is about somewhere to go.
+	 *
+	 * A RING, A TRIANGLE AND A DOT rather than one teardrop outline: at fourteen pixels a drawn
+	 * teardrop's shoulders close up into a blob, and the dot is what stops the whole thing
+	 * reading as a balloon.
+	 */
+	public static Icon pin(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				g.setStroke(new BasicStroke(Math.max(1.2f, s * 0.10f), BasicStroke.CAP_ROUND,
+					BasicStroke.JOIN_ROUND));
+				double r = s * 0.26;
+				double cx = s / 2.0;
+				double cy = s * 0.34;
+				g.draw(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
+				Path2D tip = new Path2D.Double();
+				tip.moveTo(cx - r * 0.62, cy + r * 0.78);
+				tip.lineTo(cx + r * 0.62, cy + r * 0.78);
+				tip.lineTo(cx, s - s * 0.08);
+				tip.closePath();
+				g.fill(tip);
+				double dot = s * 0.09;
+				g.fill(new Ellipse2D.Double(cx - dot, cy - dot, dot * 2, dot * 2));
 			}
 		};
 	}

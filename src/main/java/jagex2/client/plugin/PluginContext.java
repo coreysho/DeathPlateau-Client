@@ -514,17 +514,35 @@ public final class PluginContext {
 	 * a grid. A plugin calls this per frame and must cope with the window closing under it.
 	 */
 	public int[] getInvCellBounds(int comId, int cell) {
+		int[] origin = this.client.mainInterfaceOrigin();
+		Component open = origin == null ? null : component(this.client.viewportInterfaceId);
+		return open == null ? null : this.cellBounds(open, origin[1], origin[0], comId, cell);
+	}
+
+	/**
+	 * Where one cell of the inventory is on the SIDEBAR, as {x, y, width, height}, or null when
+	 * the inventory tab is not the one showing.
+	 *
+	 * In the sidebar's own coordinates, which is what an {@link Overlay#LAYER_SIDEBAR} overlay
+	 * draws in. Null is the ordinary answer and not an error: the player has the skills tab open,
+	 * or a shop has taken the panel over, and there is nothing to mark.
+	 */
+	public int[] getSidebarInvCellBounds(int cell) {
+		int root = this.client.sidebarInterfaceId != -1 ? this.client.sidebarInterfaceId
+			: this.client.selectedTab >= 0 && this.client.selectedTab < this.client.tabInterfaceId.length
+				? this.client.tabInterfaceId[this.client.selectedTab] : -1;
+		Component open = root == -1 ? null : component(root);
+		return open == null ? null : this.cellBounds(open, 0, 0, INVENTORY_COM, cell);
+	}
+
+	/** The shared half of the two above: walk the open tree for the grid, then index into it. */
+	private int[] cellBounds(Component open, int originY, int originX, int comId, int cell) {
 		Component com = component(comId);
 		if (!Component.holdsInv(com) || com.width <= 0 || cell < 0 || cell >= com.width * com.height) {
 			return null;
 		}
-		int[] origin = this.client.mainInterfaceOrigin();
-		Component open = origin == null ? null : component(this.client.viewportInterfaceId);
-		if (open == null) {
-			return null;
-		}
 		int[] at = new int[2];
-		if (!locate(origin[1], origin[0], open, 0, comId, at)) {
+		if (!locate(originY, originX, open, 0, comId, at)) {
 			return null;
 		}
 		int x = at[0] + (com.marginX + CELL) * (cell % com.width);
@@ -541,6 +559,20 @@ public final class PluginContext {
 
 	/** An item slot is 32 by 32, which is what the interface geometry is laid out in. */
 	private static final int CELL = 32;
+
+	/**
+	 * Asks the client to repaint the sidebar this frame.
+	 *
+	 * THE SIDEBAR IS CACHED. The client redraws it when something it owns changes - an item
+	 * moves, a tab is clicked, the mouse is over it - and otherwise leaves the raster alone, so
+	 * an {@link Overlay#LAYER_SIDEBAR} overlay draws only in those frames and a mark would come
+	 * and go with the mouse. A plugin that wants its mark to stay calls this on a tick while it
+	 * has something to draw, which costs a 190x261 repaint in those frames and nothing in any
+	 * other.
+	 */
+	public void requestSidebarRedraw() {
+		this.client.redrawSidebar = true;
+	}
 
 	/**
 	 * Walk the open window for a component, accumulating where it lands.

@@ -7,6 +7,8 @@ import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
 import jagex2.client.plugin.PluginDescriptor;
+import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.SceneLoc;
 import jagex2.client.plugin.hub.Json;
 
@@ -32,9 +34,16 @@ import java.util.Map;
  * WHAT IT CANNOT DO, said plainly because the gap is visible in use. Progress is known to STAGE
  * granularity, not step granularity - the quest varp says "you have talked to Father Urhney", not
  * "you have taken three of the five steps since". So the sidebar lists the whole of the leg you
- * are on rather than striking steps out one at a time, and which of those steps the panel and the
- * marker name is decided by the SCENE instead of by the varp: see {@link #spot}. Finer tracking
+ * are on rather than striking steps out one at a time, and which of those steps leads is worked
+ * out from the world rather than read off the varp: what is standing in front of you ({@link
+ * #spot}) and what the quest has put in your bag ({@link #reached}). Both are inferences. A step
+ * that leaves no trace - reading a book you keep, pulling a lever - cannot be seen to have
+ * happened, so the panel can sit on one until the next thing it CAN see arrives. Finer tracking
  * would need the content to record sub-steps, which no part of the game does today.
+ *
+ * AND THE ITEM LIST IS TWO LISTS. What a leg says you must hold is partly a bank trip and partly
+ * what the quest hands you while you are in it; only the first is something to go and fetch, and
+ * the table marks which is which. See {@link Need#bring}.
  */
 @PluginDescriptor(
 	name = "Quest helper",
@@ -75,7 +84,38 @@ public final class QuestHelperPlugin extends Plugin {
 		String label = null;
 		int id = -1;
 		int[] at = null;
+
+		/**
+		 * The obj this step is HOLDING, for a step that uses one thing on another, else -1.
+		 *
+		 * "Use Battered key on Odd looking wall" is a step about the wall with the key in your
+		 * hand. Which item that is matters twice: it is the one to light up in the bag, and
+		 * holding it is how the plugin can tell you are past the steps that handed it over.
+		 */
+		int item = -1;
+
+		/**
+		 * The objs this step is about: what is in your hand, what it is used on, or both.
+		 *
+		 * "Use Knife on Battered book" is two items and one instruction, and a player holding
+		 * one of them is not holding the step - so both are marked in the bag, and either of
+		 * them arriving says the step before this one is done.
+		 */
+		int[] objs() {
+			int held = this.item;
+			int self = "obj".equals(this.kind) ? this.id : -1;
+			if (held >= 0 && self >= 0 && held != self) {
+				return new int[] { held, self };
+			}
+			if (held >= 0) {
+				return new int[] { held };
+			}
+			return self >= 0 ? new int[] { self } : NONE;
+		}
 	}
+
+	/** No items at all: a walk, a note, a talk. Shared so a frame does not allocate for each. */
+	private static final int[] NONE = new int[0];
 
 	private static final class Need {
 		String name = "";
@@ -83,6 +123,16 @@ public final class QuestHelperPlugin extends Plugin {
 		int n = 1;
 		/** Worn, not merely carried - a different instruction, and the reason these two merge. */
 		boolean wear;
+
+		/**
+		 * Something to BRING, rather than something the quest hands over on the way.
+		 *
+		 * The table knows the difference because the sim does: a sim hands itself what a player
+		 * would fetch from the bank and merely asserts what the quest gives it. 819 of the 1371
+		 * item rows are the second kind, and listing those in red told a player to go and get a
+		 * key that is sewn into a book they have not found yet.
+		 */
+		boolean bring;
 	}
 
 	/**
@@ -106,6 +156,15 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	private static final class Quest {
+		/**
+		 * Every obj this quest expects the player to BRING, over all its legs.
+		 *
+		 * Quest-wide and not per leg, because a knife handed over at the start is still a knife
+		 * from the bank three legs later - and because holding one of these says nothing about
+		 * how far anybody has got, which is what {@link #reached} needs it for.
+		 */
+		final List<Integer> brought = new ArrayList<>();
+
 		String id = "";
 		String name = "";
 		int stageVarId = -1;
@@ -211,6 +270,13 @@ public final class QuestHelperPlugin extends Plugin {
 				}
 			}
 		}
+		for (Stage st : q.stages) {
+			for (Need need : st.items) {
+				if (need.bring && need.id >= 0 && !q.brought.contains(Integer.valueOf(need.id))) {
+					q.brought.add(Integer.valueOf(need.id));
+				}
+			}
+		}
 		return q;
 	}
 
@@ -242,6 +308,7 @@ public final class QuestHelperPlugin extends Plugin {
 				step.target = m.containsKey("target") ? Json.string(m, "target", null) : null;
 				step.id = Json.integer(m, "id", -1);
 				step.label = m.containsKey("label") ? Json.string(m, "label", null) : null;
+				step.item = Json.integer(m, "item", -1);
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
 				List<?> at = Json.array(m, "at");
 				if (at != null && at.size() >= 2) {
@@ -276,6 +343,9 @@ public final class QuestHelperPlugin extends Plugin {
 				}
 				if (seen != null) {
 					seen.wear = seen.wear || wearing;
+					// Brought in either list means brought: the carry row and the wear row are the
+					// same item, and the one that knows where it came from decides.
+					seen.bring = seen.bring || "true".equals(String.valueOf(m.get("bring")));
 					continue;
 				}
 				Need need = new Need();
@@ -283,6 +353,7 @@ public final class QuestHelperPlugin extends Plugin {
 				need.id = id;
 				need.n = Json.integer(m, "n", 1);
 				need.wear = wearing;
+				need.bring = "true".equals(String.valueOf(m.get("bring")));
 				st.items.add(need);
 			}
 		}
@@ -411,15 +482,57 @@ public final class QuestHelperPlugin extends Plugin {
 		return this.held;
 	}
 
+	/**
+	 * How far into this leg the quest's own items say the player has already got.
+	 *
+	 * THE BAG IS THE ONLY RECORD INSIDE A LEG. The varp moves between legs and says nothing
+	 * about the dozen steps within one, so a leg whose first step is still in the scene stayed
+	 * the answer for the whole leg: Elemental Workshop I puts the bookcase, the book, the key,
+	 * the wall and the furnace in ONE leg, and the panel said "Search Bookcase" at the furnace.
+	 *
+	 * An item the quest hands over is a receipt for the steps that handed it over. Holding the
+	 * battered book means the bookcase has been searched; holding the key means the book has been
+	 * cut open. So the last step in the leg whose item is in the bag is where the leg is now, and
+	 * everything before it is done. Items the player BROUGHT prove nothing and are skipped - a
+	 * knife is in the bag from the first step to the last.
+	 */
+	private int reached(Quest q, Stage st) {
+		int start = 0;
+		// THE FIRST STEP THAT WANTS IT, not the last. Holding a thing says the steps that handed
+		// it over are done, and the step that hands it over is the one before the first step that
+		// uses it - so the book puts the leg at "Read Battered book", which is where a player who
+		// has just searched the bookcase actually is, rather than at the cut two steps later.
+		List<Integer> seen = new ArrayList<>();
+		for (int i = 0; i < st.steps.size(); i++) {
+			int[] objs = st.steps.get(i).objs();
+			for (int j = 0; j < objs.length; j++) {
+				Integer obj = Integer.valueOf(objs[j]);
+				if (seen.contains(obj)) {
+					continue;
+				}
+				seen.add(obj);
+				if (q != null && q.brought.contains(obj)) {
+					continue;
+				}
+				if (ctx.countObj(obj.intValue()) > 0 && i > start) {
+					start = i;
+				}
+			}
+		}
+		return start;
+	}
+
 	private Spot look(Stage st) {
 		if (st == null) {
 			return null;
 		}
+		int start = this.reached(this.tracked(), st);
+
 		// EVERY LOC OF THE LEG IN ONE SWEEP. findLocs costs a full scene walk per call, so asking
 		// it once per loc step would multiply that by the length of the leg, every frame.
 		int wanted = 0;
-		for (Step s : st.steps) {
-			if (s.id >= 0 && "loc".equals(s.kind)) {
+		for (int i = start; i < st.steps.size(); i++) {
+			if (st.steps.get(i).id >= 0 && "loc".equals(st.steps.get(i).kind)) {
 				wanted++;
 			}
 		}
@@ -427,16 +540,17 @@ public final class QuestHelperPlugin extends Plugin {
 		if (wanted > 0) {
 			int[] ids = new int[wanted];
 			int n = 0;
-			for (Step s : st.steps) {
-				if (s.id >= 0 && "loc".equals(s.kind)) {
-					ids[n++] = s.id;
+			for (int i = start; i < st.steps.size(); i++) {
+				if (st.steps.get(i).id >= 0 && "loc".equals(st.steps.get(i).kind)) {
+					ids[n++] = st.steps.get(i).id;
 				}
 			}
 			locs = ctx.findLocs(ids);
 		}
 		List<Actor> npcs = ctx.getNpcs();
 
-		for (Step s : st.steps) {
+		for (int i = start; i < st.steps.size(); i++) {
+			Step s = st.steps.get(i);
 			if (s.id < 0) {
 				continue;
 			}
@@ -466,8 +580,9 @@ public final class QuestHelperPlugin extends Plugin {
 		// AFTER the scene, not before, although it comes first in the leg. An item you keep
 		// carrying - a tome to read, a key to hold - is a step nothing can tell you have done, so
 		// a step you can see in front of you has to beat it or the panel would stick on it.
-		for (Step s : st.steps) {
-			if ("obj".equals(s.kind) && s.id >= 0 && ctx.countObj(s.id) > 0) {
+		for (int i = start; i < st.steps.size(); i++) {
+			Step s = st.steps.get(i);
+			if ("obj".equals(s.kind) && this.carrying(s)) {
 				Spot spot = new Spot();
 				spot.step = s;
 				return spot;
@@ -478,7 +593,8 @@ public final class QuestHelperPlugin extends Plugin {
 		// scene has loaded: the way out of the room rather than no marker at all. Off the edge of
 		// the scene there is nothing to project onto, and a box pinned to the screen edge would be
 		// a guess at a direction.
-		for (Step s : st.steps) {
+		for (int i = start; i < st.steps.size(); i++) {
+			Step s = st.steps.get(i);
 			if (s.at == null || s.at[2] != ctx.getPlane()) {
 				continue;
 			}
@@ -489,6 +605,20 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 		}
 		return null;
+	}
+
+	/** Whether every item a step names is in the bag: half of "use the knife on it" is no step. */
+	private boolean carrying(Step step) {
+		int[] objs = step.objs();
+		if (objs.length == 0) {
+			return false;
+		}
+		for (int i = 0; i < objs.length; i++) {
+			if (ctx.countObj(objs[i]) <= 0) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static Spot at(Step step, int sceneTileX, int sceneTileZ, String label) {
@@ -534,13 +664,22 @@ public final class QuestHelperPlugin extends Plugin {
 		return -1;
 	}
 
+	/**
+	 * What this leg wants that you have not got - and only what you were meant to BRING.
+	 *
+	 * A leg's item list is everything you must be holding by the end of it, which includes what
+	 * the quest hands over while you are in it: the battered key is sewn into a book you have not
+	 * found, so "need Battered key" was an instruction nobody could follow. Those rows are still
+	 * in the table and still on the page, where they read as what is coming; they are just not
+	 * counted as missing.
+	 */
 	private List<Need> missing(Stage st) {
 		List<Need> out = new ArrayList<>();
 		if (st == null) {
 			return out;
 		}
 		for (Need n : st.items) {
-			if (n.id >= 0 && ctx.countObj(n.id) < n.n) {
+			if (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {
 				out.add(n);
 			}
 		}
@@ -654,6 +793,113 @@ public final class QuestHelperPlugin extends Plugin {
 		}
 	}
 
+	// ------------------------------------------------------------------ the item in your bag
+
+	/**
+	 * The obj the step in front of you wants in your hand, or -1.
+	 *
+	 * Only one you are actually holding: a step that wants something you have not got is a step
+	 * you cannot take, and a box drawn round an empty slot would be pointing at nothing. It is
+	 * the step's own item for "Read Battered book", and the held half for "Use Battered key on
+	 * Odd looking wall" - the wall is in the world, the key is in the bag, and both get marked.
+	 */
+	private int[] wantedItems() {
+		Quest q = this.tracked();
+		if (q == null) {
+			return NONE;
+		}
+		Spot sp = this.spot(this.stageNow(q));
+		if (sp == null || sp.step == null) {
+			return NONE;
+		}
+		int[] objs = sp.step.objs();
+		int held = 0;
+		for (int i = 0; i < objs.length; i++) {
+			if (ctx.countObj(objs[i]) > 0) {
+				held++;
+			}
+		}
+		if (held == objs.length) {
+			return objs;
+		}
+		int[] out = new int[held];
+		int n = 0;
+		for (int i = 0; i < objs.length; i++) {
+			if (ctx.countObj(objs[i]) > 0) {
+				out[n++] = objs[i];
+			}
+		}
+		return out;
+	}
+
+	/** How many slots the sidebar was last asked to mark, so their going is repainted too. */
+	private int marked;
+
+	/**
+	 * Keeps the sidebar repainting while there is something in it to mark.
+	 *
+	 * ON THE GAME TICK AND NOT EVERY FRAME. The client caches the sidebar raster and repaints it
+	 * when something it owns changes, so an overlay there draws in those frames only. A tick is
+	 * 600ms, which is as often as the answer can change anyway - an item arrives in the bag on a
+	 * tick - and it costs one 190x261 repaint rather than fifty a second. The frames between keep
+	 * the mark because the raster keeps it; the tick after it stops being wanted is what rubs it
+	 * out, which is why `marked` is remembered.
+	 */
+	@Subscribe
+	public void onGameTick(GameTick tick) {
+		if (!this.highlight || !ctx.isLoggedIn()) {
+			return;
+		}
+		int want = this.wantedItems().length;
+		if (want > 0 || this.marked > 0) {
+			ctx.requestSidebarRedraw();
+		}
+		this.marked = want;
+	}
+
+	/**
+	 * The box round the slot the step's item is in.
+	 *
+	 * ON THE SIDEBAR, which is a different raster from the one the other two overlays draw into
+	 * - see Overlay.LAYER_SIDEBAR. Null bounds are the ordinary answer rather than an error: the
+	 * player has another tab open, or a shop has taken the panel, and there is nothing to mark.
+	 */
+	private final Overlay bag = new Overlay() {
+
+		public int layer() {
+			return Overlay.LAYER_SIDEBAR;
+		}
+
+		/** Not draggable: it marks a slot the client owns, so it has nowhere else to be. */
+		public boolean movable() {
+			return false;
+		}
+
+		public void render(OverlayGraphics g) {
+			if (!highlight || !ctx.isLoggedIn()) {
+				return;
+			}
+			int[] want = wantedItems();
+			int c = colour();
+			for (int i = 0; i < want.length; i++) {
+				for (int slot = 0; slot < ctx.getInventorySize(); slot++) {
+					if (ctx.getInventoryObjId(slot) != want[i]) {
+						continue;
+					}
+					int[] box = ctx.getSidebarInvCellBounds(slot);
+					if (box == null) {
+						return;
+					}
+					g.fillAlpha(box[0], box[1], box[2], box[3], c, 48);
+					g.box(box[0], box[1], box[2], box[3], c);
+					// ONE SLOT PER ITEM. Four buckets in the bag is one instruction, and four
+					// boxes would read as four things to do.
+					break;
+				}
+			}
+		}
+	};
+
 	// ------------------------------------------------------------------ the sidebar page
 
 	/**
@@ -664,7 +910,7 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private void addRailPage() {
 		try {
-			this.addPanel("Quest helper", "list", new ConfigList() {
+			this.addPanel("Quest helper", "pin", new ConfigList() {
 
 				/** Browsing shows every quest; otherwise the tracked quest's leg, under a header. */
 				private boolean picking() {
@@ -724,7 +970,12 @@ public final class QuestHelperPlugin extends Plugin {
 						Step step = st.steps.get(i);
 						return step.why != null && !step.why.isEmpty() ? step.why : step.shown();
 					}
-					return st.items.get(i - st.steps.size()).wear ? "to wear" : "to carry";
+					// WHERE IT COMES FROM FIRST, because that is what decides whether the row is
+					// a thing to go and fetch or a thing to expect: "found in the quest" under
+					// Battered key, "to carry" under Hammer.
+					Need need = st.items.get(i - st.steps.size());
+					return need.bring ? (need.wear ? "to wear" : "to carry")
+						: (need.wear ? "from the quest, to wear" : "from the quest");
 				}
 
 				public String value(int index) {
@@ -794,6 +1045,7 @@ public final class QuestHelperPlugin extends Plugin {
 		this.load();
 		this.addOverlay(this.panel);
 		this.addOverlay(this.marker);
+		this.addOverlay(this.bag);
 		this.addRailPage();
 	}
 
@@ -801,5 +1053,11 @@ public final class QuestHelperPlugin extends Plugin {
 		this.quests.clear();
 		this.pinned = null;
 		this.browsing = false;
+		// One more repaint, so the box goes with the plugin rather than sitting on the cached
+		// sidebar until something else happens to repaint it.
+		if (this.marked > 0) {
+			ctx.requestSidebarRedraw();
+			this.marked = 0;
+		}
 	}
 }

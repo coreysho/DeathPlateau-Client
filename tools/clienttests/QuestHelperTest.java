@@ -83,6 +83,40 @@ public class QuestHelperTest {
 	static final String ELEMENTAL = "ELEMENTAL WORKSHOP I";
 	static final int EARTH_ELEMENTAL = 1023;
 	static final int GHOSTSPEAK = 552;
+	/** A bucket: one of the three things The Feud's first leg says to bring. */
+	static final int BUCKET = 1925;
+
+	/**
+	 * Cook's Assistant's second leg: sixteen steps, and three of its items say different things.
+	 *
+	 * The bucket and the pot are a bank trip - the sim hands itself both before it starts - and
+	 * the grain is picked in the wheat field halfway through. So holding a bucket says nothing
+	 * about how far anybody has got and holding grain says a great deal, which is the whole of
+	 * the rule in one leg.
+	 */
+	static final String COOK = "COOK'S ASSISTANT";
+	static final int COOK_VARP = 29;
+	static final int GRAIN = 1947;
+	static final int POT = 1931;
+	static final int COOK_X = 3172;
+	static final int COOK_Z = 3307;
+
+	/**
+	 * Lost City's fifth leg: one step, and it names two items.
+	 *
+	 * "Use Knife on Dramen branch" is one instruction a player cannot follow holding half of it,
+	 * and both halves are in the bag - which is the case a single highlighted slot cannot show.
+	 */
+	static final String LOST_CITY = "LOST CITY";
+	static final int LOST_CITY_VARP = 147;
+	static final int KNIFE = 946;
+	static final int DRAMEN_BRANCH = 771;
+
+	/** Elemental Workshop I, in the order a player meets it: bookcase, book, key. */
+	static final int BATTERED_BOOK = 2886;
+	static final int BATTERED_KEY = 2887;
+	static final int WORKSHOP_X = 2713;
+	static final int WORKSHOP_Z = 3487;
 
 	/** Long enough for the plugin's fifth-of-a-second cache to expire between two scenes. */
 	static final long SETTLE = 250L;
@@ -94,6 +128,11 @@ public class QuestHelperTest {
 	 * build its inventory at whatever the code said and could never disagree with it.
 	 */
 	static final int INVENTORY_COM = 3214;
+
+	/** The tab layer the grid hangs off, and where it hangs: this suite's own fixture. */
+	static final int INVENTORY_TAB = 3213;
+	static final int GRID_X = 20;
+	static final int GRID_Y = 30;
 
 	static int fails;
 	static int passes;
@@ -132,10 +171,18 @@ public class QuestHelperTest {
 		rangeTests();
 		System.out.println("5. the leg follows the varp");
 		progressTests();
+		System.out.println("5b. what you have to bring, and what the quest hands over");
+		bringTests();
 		System.out.println("6. which of the leg's people is the one to talk to");
 		orderTests();
 		System.out.println("7. the guide's wording follows the step, inside one leg");
 		headingTests();
+		System.out.println("8. the bag says how far into a leg the player has got");
+		bagTests();
+		System.out.println("9. Elemental Workshop I, in the order a player meets it");
+		workshopTests();
+		System.out.println("10. the item in the bag, marked on the sidebar");
+		slotTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -279,11 +326,12 @@ public class QuestHelperTest {
 
 		client.varps[GHOST_VARP] = 2;
 		settle();
-		check(said(screen(), "need Ghostspeak amulet"),
-			"writing the quest's varp moves the panel to the leg that varp names, and that leg "
-				+ "wants an amulet this player has not got");
 		check(said(screen(), "Go back north out of the swamp"),
-			"...so the walk leads, because wearing an amulet you do not have is not a step");
+			"writing the quest's varp moves the panel to the leg that varp names");
+		// THE AMULET IS NOT A SHOPPING ITEM. Father Urhney hands it over in the leg before, so
+		// telling a player to go and get one is telling them to do the quest they are doing.
+		check(!said(screen(), "need Ghostspeak amulet"),
+			"...and does not ask for the amulet, which is something this quest hands over");
 
 		// THE SAME LEG WITH THE AMULET IN THE BAG. Wearing it is then something that can be done
 		// standing still, and it is what the leg opens with.
@@ -317,6 +365,30 @@ public class QuestHelperTest {
 		check(rows.size() > 0 && "complete".equals(rows.get(0).detail.split(" - ")[0]),
 			"a quest whose varp has reached its end reads as complete");
 		client.varps[GHOST_VARP] = 0;
+		settle();
+	}
+
+	/**
+	 * The other half of the item rule: what you were meant to BRING is still asked for.
+	 *
+	 * The Feud's first leg wants 2000 coins, leather gloves and a bucket, and the sim hands
+	 * itself all three before it starts - which is what marks them as a bank trip rather than
+	 * as something the quest gives you.
+	 */
+	static void bringTests() throws Exception {
+		clearNpcs();
+		change();
+		track(FEUD);
+		settle();
+		check(said(screen(), "need Coins"), "a leg still asks for what the player has to bring");
+		check(said(screen(), "need Bucket") && said(screen(), "need Leather gloves"),
+			"...all of it, not just the first row");
+
+		carry(BUCKET, 1);
+		settle();
+		check(!said(screen(), "need Bucket"), "...and stops asking once it is in the bag");
+		check(said(screen(), "need Leather gloves"), "...while the rest of the list stands");
+		carry(BUCKET, 0);
 		settle();
 	}
 
@@ -377,6 +449,224 @@ public class QuestHelperTest {
 		settle();
 	}
 
+	// ---------------------------------------------------------------- 8
+
+	static void bagTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(COOK);
+		client.varps[COOK_VARP] = 1;
+		int wasX = client.sceneBaseTileX;
+		int wasZ = client.sceneBaseTileZ;
+		client.sceneBaseTileX = COOK_X - MID_X;
+		client.sceneBaseTileZ = COOK_Z - MID_Z;
+		settle();
+
+		// THE VARP CANNOT SEE INSIDE A LEG. This one is sixteen steps long and the varp moves
+		// once, at the end of it, so without the bag the first step is the answer throughout.
+		check(said(screen(), "Go to the cow pasture") || said(screen(), "Pick up Egg")
+				|| said(screen(), "Lumbridge road"),
+			"a leg opens on its own first steps");
+
+		carry(BUCKET, 1);
+		settle();
+		check(!said(screen(), "Use Grain on Hopper"),
+			"a bucket in the bag moves nothing: it came from the bank, not from the quest");
+
+		carry(GRAIN, 1);
+		settle();
+		check(said(screen(), "Use Grain on Hopper"),
+			"grain in the bag does move it: the quest is what hands that over");
+
+		carry(POT, 1);
+		settle();
+		check(said(screen(), "Use Grain on Hopper"),
+			"...and a pot does not move it further, though a step further down uses one");
+
+		emptyBag();
+		client.sceneBaseTileX = wasX;
+		client.sceneBaseTileZ = wasZ;
+		client.varps[COOK_VARP] = 0;
+		settle();
+	}
+
+	// ---------------------------------------------------------------- 9
+
+	/**
+	 * Elemental Workshop I in the order a player meets it, which is what was asked for: the
+	 * bookcase, then the book it holds, then the key sewn into the book.
+	 *
+	 * All in ONE leg, with no varp moving between any of them.
+	 */
+	static void workshopTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(ELEMENTAL);
+		int wasX = client.sceneBaseTileX;
+		int wasZ = client.sceneBaseTileZ;
+		client.sceneBaseTileX = WORKSHOP_X - MID_X;
+		client.sceneBaseTileZ = WORKSHOP_Z - MID_Z;
+		settle();
+		check(said(screen(), "house door"), "the quest starts at the house with the bookcase in it");
+
+		carry(BATTERED_BOOK, 1);
+		settle();
+		check(said(screen(), "Read Battered book"),
+			"with the book in the bag the bookcase is behind you, and the book is the step");
+
+		carry(BATTERED_KEY, 1);
+		settle();
+		check(said(screen(), "Use Battered key on Odd looking wall"),
+			"and with the key cut out of it, the wall it opens is the step");
+		check(!said(screen(), "Read Battered book"), "...not the book, which is read");
+
+		emptyBag();
+		client.sceneBaseTileX = wasX;
+		client.sceneBaseTileZ = wasZ;
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	// ---------------------------------------------------------------- 10
+
+	/**
+	 * The other half of "highlight what you need": the item in the bag.
+	 *
+	 * A box round the slot, drawn on the SIDEBAR - a different raster from the one the marker and
+	 * the panel use, which is why the client needed a third overlay pass to draw it at all.
+	 */
+	static void slotTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(ELEMENTAL);
+		int wasX = client.sceneBaseTileX;
+		int wasZ = client.sceneBaseTileZ;
+		client.sceneBaseTileX = WORKSHOP_X - MID_X;
+		client.sceneBaseTileZ = WORKSHOP_Z - MID_Z;
+		settle();
+		sidebar();
+		check(paintedIn(0, 0, W, H) == 0, "with no item step in front of you, no slot is marked");
+
+		carry(BATTERED_BOOK, 1);
+		settle();
+		sidebar();
+		int[] slot = context().getSidebarInvCellBounds(0);
+		check(slot != null && slot[0] == GRID_X && slot[1] == GRID_Y,
+			"the first slot is where the grid says it is, walked out of the open tab");
+		check(slot != null && paintedIn(slot[0], slot[1], slot[2], slot[3]) > 0,
+			"the book's own slot is marked once the step is to read it");
+		check(paintedIn(0, 0, W, H) == paintedIn(slot[0], slot[1], slot[2], slot[3]),
+			"...and nothing is painted outside it");
+
+		// ONE BOX PER ITEM, however many of it you are carrying. Two battered books is one
+		// instruction, and two boxes would read as two things to do.
+		carrySlot(1, BATTERED_BOOK, 1);
+		settle();
+		sidebar();
+		int[] spare = context().getSidebarInvCellBounds(1);
+		check(spare != null && paintedIn(spare[0], spare[1], spare[2], spare[3]) == 0,
+			"a second copy of the item is not marked as a second thing to do");
+		carrySlot(1, 0, 0);
+
+		// The same box follows the item, rather than the slot it was first seen in.
+		emptyBag();
+		carry(POT, 1);
+		carry(BATTERED_BOOK, 1);
+		settle();
+		sidebar();
+		int[] second = context().getSidebarInvCellBounds(1);
+		check(second != null && paintedIn(second[0], second[1], second[2], second[3]) > 0,
+			"with something else in the first slot, the mark moves to where the book is");
+
+		// Another tab open is not an error and not a mark.
+		int tab = client.selectedTab;
+		client.selectedTab = tab == 0 ? 1 : 0;
+		sidebar();
+		check(paintedIn(0, 0, W, H) == 0, "with another tab open there is nothing to mark");
+		client.selectedTab = tab;
+
+		// TWO ITEMS, TWO SLOTS. "Use Knife on Dramen branch" is one step holding two things, and
+		// a player who can only see one of them marked is being shown half an instruction.
+		emptyBag();
+		change();
+		track(LOST_CITY);
+		client.varps[LOST_CITY_VARP] = 4;
+		settle();
+		sidebar();
+		// The panel still names the step - it is the only one in this leg, and saying nothing
+		// would be less use - but there is nothing in the bag to point at.
+		check(paintedIn(0, 0, W, H) == 0, "with neither item in the bag, no slot is marked");
+
+		carry(KNIFE, 1);
+		settle();
+		sidebar();
+		check(paintedIn(0, 0, W, H) == 0, "with only the knife, still nothing: the branch is the other half");
+
+		carry(DRAMEN_BRANCH, 1);
+		settle();
+		check(said(screen(), "Use Knife on Dramen branch"), "with both, the step is what to do");
+		sidebar();
+		int[] knifeSlot = context().getSidebarInvCellBounds(0);
+		int[] branchSlot = context().getSidebarInvCellBounds(1);
+		check(knifeSlot != null && paintedIn(knifeSlot[0], knifeSlot[1], knifeSlot[2], knifeSlot[3]) > 0
+				&& branchSlot != null
+				&& paintedIn(branchSlot[0], branchSlot[1], branchSlot[2], branchSlot[3]) > 0,
+			"...and both slots are marked, not just one");
+
+		emptyBag();
+		client.varps[LOST_CITY_VARP] = 0;
+		change();
+		track(ELEMENTAL);
+		settle();
+
+		// THE SIDEBAR IS CACHED, so a mark that is only drawn when the client happens to repaint
+		// the panel would come and go with the mouse. The plugin asks for the repaint on a tick
+		// while it has something to mark, and once more when it stops.
+		carry(BATTERED_BOOK, 1);
+		settle();
+		client.redrawSidebar = false;
+		manager.onGameTick();
+		check(client.redrawSidebar, "with a slot to mark, the plugin asks for the sidebar to be repainted");
+		emptyBag();
+		settle();
+		client.redrawSidebar = false;
+		manager.onGameTick();
+		check(client.redrawSidebar, "...and once more when the mark goes, so it is rubbed out");
+		client.redrawSidebar = false;
+		manager.onGameTick();
+		check(!client.redrawSidebar, "...and not every tick after that, for a panel with nothing on it");
+
+		// AND THE CLIENT MAKES THE PASS AT ALL. Everything above runs renderOverlays by hand; the
+		// line that does it in the game is in drawSidebar, where nothing a test can call reaches,
+		// and without it this whole section would pass against a plugin that draws nowhere.
+		String source = read("src/main/java/jagex2/client/Client.java");
+		int draws = source.indexOf("public void drawSidebar()");
+		int pass = source.indexOf("Overlay.LAYER_SIDEBAR", draws);
+		int menu = source.indexOf("this.drawMenu();", draws);
+		check(draws >= 0 && pass > draws && pass < menu,
+			"drawSidebar runs the sidebar overlay pass, after the tab and before the menu");
+
+		client.sceneBaseTileX = wasX;
+		client.sceneBaseTileZ = wasZ;
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	static String read(String path) {
+		try {
+			return new String(java.nio.file.Files.readAllBytes(
+				new java.io.File(System.getProperty("dp.root", "."), path).toPath()), "UTF-8");
+		} catch (Throwable missing) {
+			check(false, "cannot read " + path + " (" + missing + ")");
+			return "";
+		}
+	}
+
 	// ---------------------------------------------------------------- the client under it
 
 	static void setUp() {
@@ -409,6 +699,24 @@ public class QuestHelperTest {
 		inv.invSlotObjId = new int[28];
 		inv.invSlotObjCount = new int[28];
 		jagex2.config.Component.types[INVENTORY_COM] = inv;
+		inv.id = INVENTORY_COM;
+		inv.marginX = 10;
+		inv.marginY = 1;
+
+		// THE TAB THE GRID SITS IN. The client finds the inventory by walking the open sidebar
+		// tab's tree, so the test builds the smallest tree with that shape: one layer holding the
+		// grid at an offset, which is also what makes "the box is on the slot" an assertion about
+		// the real walk rather than about a number this file chose.
+		jagex2.config.Component tab = new jagex2.config.Component();
+		tab.id = INVENTORY_TAB;
+		tab.type = 0;
+		tab.width = 190;
+		tab.height = 261;
+		tab.children = new int[] { INVENTORY_COM };
+		tab.childX = new int[] { GRID_X };
+		tab.childY = new int[] { GRID_Y };
+		jagex2.config.Component.types[INVENTORY_TAB] = tab;
+		client.tabInterfaceId[client.selectedTab] = INVENTORY_TAB;
 
 		Pix3D.zoom = 512;
 		Pix3D.centerX = W / 2;
@@ -488,8 +796,35 @@ public class QuestHelperTest {
 	 */
 	static void carry(int objId, int count) {
 		jagex2.config.Component inv = jagex2.config.Component.types[INVENTORY_COM];
-		inv.invSlotObjId[0] = count > 0 ? objId + 1 : 0;
-		inv.invSlotObjCount[0] = count;
+		int slot = -1;
+		for (int i = 0; i < inv.invSlotObjId.length; i++) {
+			if (inv.invSlotObjId[i] == objId + 1) {
+				slot = i;
+				break;
+			}
+			if (inv.invSlotObjId[i] == 0 && slot < 0) {
+				slot = i;
+			}
+		}
+		if (slot < 0) {
+			throw new IllegalStateException("no room for " + objId);
+		}
+		inv.invSlotObjId[slot] = count > 0 ? objId + 1 : 0;
+		inv.invSlotObjCount[slot] = count;
+	}
+
+	/** An item in a named slot, for the cases where which slot it is in is the question. */
+	static void carrySlot(int slot, int objId, int count) {
+		jagex2.config.Component inv = jagex2.config.Component.types[INVENTORY_COM];
+		inv.invSlotObjId[slot] = count > 0 ? objId + 1 : 0;
+		inv.invSlotObjCount[slot] = count;
+	}
+
+	/** An empty bag, so one section's items cannot decide another's answer. */
+	static void emptyBag() {
+		jagex2.config.Component inv = jagex2.config.Component.types[INVENTORY_COM];
+		java.util.Arrays.fill(inv.invSlotObjId, 0);
+		java.util.Arrays.fill(inv.invSlotObjCount, 0);
 	}
 
 	/** An npc in the scene, the way the client's entity handler puts one there. */
@@ -530,6 +865,24 @@ public class QuestHelperTest {
 	}
 
 	static int ticks = 1;
+
+	/** One sidebar frame: what the bag overlay drew, in the sidebar's own coordinates. */
+	static List<Drawn> sidebar() {
+		return frame(Overlay.LAYER_SIDEBAR);
+	}
+
+	/** Pixels of a colour inside a rectangle, which is how a box on a slot is measured. */
+	static int paintedIn(int x, int y, int w, int h) {
+		int n = 0;
+		for (int row = Math.max(0, y); row < Math.min(H, y + h); row++) {
+			for (int col = Math.max(0, x); col < Math.min(W, x + w); col++) {
+				if (pixels[row * W + col] != 0) {
+					n++;
+				}
+			}
+		}
+		return n;
+	}
 
 	/** One scene-layer frame: what the marker drew. */
 	static List<Drawn> scene() {

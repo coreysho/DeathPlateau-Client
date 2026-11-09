@@ -73,9 +73,24 @@ public abstract class Overlay {
 	public static final int LAYER_SCREEN = 1;
 
 	/**
-	 * Which of the two the client draws this overlay at. There are two because the client has two
-	 * points in its frame where an overlay can go, and the difference is visible: one is under
-	 * the names and hitsplats, the other over them.
+	 * Drawn on the SIDEBAR, over the open tab, in the sidebar's own coordinates: (0, 0) is the
+	 * top-left of the panel under the tab row, not of the screen.
+	 *
+	 * For marking something the player has to click in the inventory - the item a quest step
+	 * wants - which neither of the other two can reach: both of those draw into the viewport
+	 * raster, and in fixed mode the sidebar is a different raster entirely, drawn beside it.
+	 *
+	 * THE SIDEBAR IS CACHED, so an overlay here only appears in the frames the client repaints
+	 * it. A plugin that wants a mark to stay put calls {@link
+	 * jagex2.client.plugin.PluginContext#requestSidebarRedraw()} on a tick while it has
+	 * something to draw, and nothing is repainted for a plugin that wants nothing.
+	 */
+	public static final int LAYER_SIDEBAR = 2;
+
+	/**
+	 * Which of the three the client draws this overlay at. There are three because the client has
+	 * three points in its frame where an overlay can go, and the difference is visible: one is
+	 * under the names and hitsplats, one over them, and one is on the sidebar.
 	 */
 	public int layer() {
 		return LAYER_SCREEN;

@@ -118,7 +118,8 @@ holding the event thread with a blank rectangle to do as it likes with. The cost
 the list above has no word for what you want to show, you cannot show it. Ask for a new kind of
 row rather than working around it.
 
-**The icon is named, not supplied**: `"chart"`, `"list"`, `"wrench"`, `"download"`, `"refresh"`.
+**The icon is named, not supplied**: `"chart"`, `"list"`, `"wrench"`, `"download"`, `"refresh"`,
+`"pin"`.
 An unknown name gets the plain one. Plugins do not ship artwork into the client's own furniture,
 and the rail stays one set of icons rather than a row of everybody's.
 

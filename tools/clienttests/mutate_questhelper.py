@@ -41,9 +41,8 @@ MUTS = [
      '\t\tList<Actor> npcs = ctx.getNpcs();',
      '\t\tList<Actor> npcs = new ArrayList<>();'),
     (PLUGIN, 'the steps walked backwards, so the last thing in the leg leads',
-     '\t\tfor (Step s : st.steps) {\n\t\t\tif (s.id < 0) {\n\t\t\t\tcontinue;\n\t\t\t}',
-     '\t\tfor (int back = st.steps.size() - 1; back >= 0; back--) {\n\t\t\tStep s = st.steps.get(back);\n'
-     '\t\t\tif (s.id < 0) {\n\t\t\t\tcontinue;\n\t\t\t}'),
+     '\t\tfor (int i = start; i < st.steps.size(); i++) {\n\t\t\tStep s = st.steps.get(i);\n\t\t\tif (s.id < 0) {',
+     '\t\tfor (int i = st.steps.size() - 1; i >= start; i--) {\n\t\t\tStep s = st.steps.get(i);\n\t\t\tif (s.id < 0) {'),
     (PLUGIN, 'an npc matched by nothing, so the first npc in the scene is marked whoever it is',
      '\t\t\t\t\tif (a != null && a.npcId == s.id) {',
      '\t\t\t\t\tif (a != null) {'),
@@ -81,10 +80,10 @@ MUTS = [
 
     # ---- THE INVENTORY. "Wear the amulet" is a step only while the amulet is in the bag.
     (PLUGIN, 'an item step offered whether or not the item is carried, so the panel sticks on it',
-     '\t\t\tif ("obj".equals(s.kind) && s.id >= 0 && ctx.countObj(s.id) > 0) {',
-     '\t\t\tif ("obj".equals(s.kind) && s.id >= 0) {'),
+     '\t\t\tif ("obj".equals(s.kind) && this.carrying(s)) {',
+     '\t\t\tif ("obj".equals(s.kind)) {'),
     (PLUGIN, 'the item step dropped entirely, which is what skipped "wear it" before',
-     '\t\t\tif ("obj".equals(s.kind) && s.id >= 0 && ctx.countObj(s.id) > 0) {',
+     '\t\t\tif ("obj".equals(s.kind) && this.carrying(s)) {',
      '\t\t\tif (false) {'),
     # NOT MUTATED: the -1 that means "an inventory step has nowhere to stand". Leaving the fields
     # at 0 is an EQUIVALENT mutant, deleted rather than chased - Client.projectFromGround refuses
@@ -102,10 +101,63 @@ MUTS = [
      '\t\t\tString heading = headingFor(st, lead == null ? 0 : indexOf(st, lead));',
      '\t\t\tString heading = headingFor(st, 0);'),
 
-    # ---- THE TABLE AND THE PANEL.
-    (PLUGIN, 'the missing-item list silently emptied, so a leg asks for nothing',
-     '\t\t\tif (n.id >= 0 && ctx.countObj(n.id) < n.n) {',
+    # ---- WHAT TO BRING, AND WHAT THE QUEST HANDS OVER. 819 of the 1371 item rows are the
+    # ---- second kind, and listing those as missing told a player to fetch a key out of a book
+    # ---- they have not found.
+    (PLUGIN, 'every item asked for again, the quest\'s own included',
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {',
+     '\t\t\tif (n.id >= 0 && ctx.countObj(n.id) < n.n) {'),
+    (PLUGIN, 'nothing asked for at all, so a leg never names what to bring',
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {',
      '\t\t\tif (false) {'),
+    (PLUGIN, 'the bring flag never read off the table, so everything reads as quest-given',
+     '\t\t\t\tneed.bring = "true".equals(String.valueOf(m.get("bring")));',
+     '\t\t\t\tneed.bring = false;'),
+
+    # ---- HOW FAR INTO A LEG. The bag is the only record inside one.
+    (PLUGIN, 'the leg always started from its first step, which is how it stuck on the bookcase',
+     '\t\tint start = this.reached(this.tracked(), st);',
+     '\t\tint start = 0;'),
+    (PLUGIN, 'the LAST step that wants a held item taken rather than the first',
+     '\t\t\t\tif (seen.contains(obj)) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}\n\t\t\t\tseen.add(obj);',
+     '\t\t\t\tif (false) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}\n\t\t\t\tseen.add(obj);'),
+    (PLUGIN, 'an item counted whether or not it is in the bag, so the leg jumps to its end',
+     '\t\t\t\tif (ctx.countObj(obj.intValue()) > 0 && i > start) {',
+     '\t\t\t\tif (i > start) {'),
+    (PLUGIN, 'a brought item counted as progress, so a bucket skips half a leg',
+     '\t\t\t\tif (q != null && q.brought.contains(obj)) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}',
+     '\t\t\t\tif (false) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}'),
+    (PLUGIN, 'the shopping list never collected, which is the same thing one layer down',
+     '\t\t\t\tif (need.bring && need.id >= 0 && !q.brought.contains(Integer.valueOf(need.id))) {',
+     '\t\t\t\tif (false) {'),
+    (PLUGIN, 'a step\'s held item ignored, so "Use the key on the wall" is about no key',
+     '\t\t\tint held = this.item;',
+     '\t\t\tint held = -1;'),
+    (PLUGIN, 'half an item step offered, so "use the knife on it" needs no knife',
+     '\t\t\tif (ctx.countObj(objs[i]) <= 0) {\n\t\t\t\treturn false;\n\t\t\t}',
+     '\t\t\tif (false) {\n\t\t\t\treturn false;\n\t\t\t}'),
+
+    # ---- THE SLOT IN THE BAG.
+    (PLUGIN, 'the repaint asked for an item the player has not got',
+     '\t\tint[] objs = sp.step.objs();\n\t\tint held = 0;',
+     '\t\tif (true) {\n\t\t\treturn sp.step.objs();\n\t\t}\n\t\tint[] objs = sp.step.objs();\n\t\tint held = 0;'),
+    (PLUGIN, 'every slot holding the item boxed rather than the first',
+     '\t\t\t\t\t// ONE SLOT PER ITEM.',
+     '\t\t\t\t\tcontinue;\n\t\t\t\t\t// ONE SLOT PER ITEM.'),
+    (PLUGIN, 'only the first of a step\'s two items marked',
+     '\t\t\tfor (int i = 0; i < want.length; i++) {',
+     '\t\t\tfor (int i = 0; i < want.length && i < 1; i++) {'),
+    (PLUGIN, 'the sidebar never asked to repaint, so the mark comes and goes with the mouse',
+     '\t\tif (want > 0 || this.marked > 0) {\n\t\t\tctx.requestSidebarRedraw();\n\t\t}',
+     '\t\tif (false) {\n\t\t\tctx.requestSidebarRedraw();\n\t\t}'),
+    (PLUGIN, 'the repaint asked for every tick, panel or no panel',
+     '\t\tif (want > 0 || this.marked > 0) {',
+     '\t\tif (true) {'),
+    (CONTEXT, 'the slot found in the window\'s coordinates rather than the sidebar\'s',
+     '\t\treturn open == null ? null : this.cellBounds(open, 0, 0, INVENTORY_COM, cell);',
+     '\t\treturn open == null ? null : this.cellBounds(open, 8, 8, INVENTORY_COM, cell);'),
+
+    # ---- THE TABLE AND THE PANEL.
     (PLUGIN, 'the quest table never read, so the page is empty and says nothing is loaded',
      '\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));',
      '\t\t\t\t\tif (this.quests.size() < 0) {\n\t\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));\n\t\t\t\t\t}'),
