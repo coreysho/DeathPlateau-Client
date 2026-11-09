@@ -95,6 +95,25 @@ public final class QuestHelperPlugin extends Plugin {
 		int item = -1;
 
 		/**
+		 * What this step handed over, as obj ids, or empty.
+		 *
+		 * THE ONLY RECORD THAT A TALK HAPPENED. The quest's varp moves once a leg and says
+		 * nothing about the steps inside it, but the sim asserts what the player is holding
+		 * right after each click that hands something over - so carrying what a step gave you
+		 * is how the plugin can tell that step is behind you. Ali Morrisane's two sales and the
+		 * disguise they make are three of these in a row.
+		 */
+		int[] gives = NONE;
+
+		/**
+		 * What this step put ON, as obj ids: a receipt that only counts while it is worn.
+		 *
+		 * The same amulet in the bag is "Wear Ghostspeak amulet" still waiting to be done, so
+		 * these are kept apart from {@link #gives} rather than both being "do you have it".
+		 */
+		int[] wears = NONE;
+
+		/**
 		 * The objs this step is about: what is in your hand, what it is used on, or both.
 		 *
 		 * "Use Knife on Battered book" is two items and one instruction, and a player holding
@@ -309,6 +328,8 @@ public final class QuestHelperPlugin extends Plugin {
 				step.id = Json.integer(m, "id", -1);
 				step.label = m.containsKey("label") ? Json.string(m, "label", null) : null;
 				step.item = Json.integer(m, "item", -1);
+				step.gives = ids(Json.array(m, "gives"));
+				step.wears = ids(Json.array(m, "wears"));
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
 				List<?> at = Json.array(m, "at");
 				if (at != null && at.size() >= 2) {
@@ -358,6 +379,18 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 		}
 		return st;
+	}
+
+	/** A json array of obj ids as an int[], or NONE. */
+	private static int[] ids(List<?> list) {
+		if (list == null || list.isEmpty()) {
+			return NONE;
+		}
+		int[] out = new int[list.size()];
+		for (int i = 0; i < out.length; i++) {
+			out[i] = num(list.get(i));
+		}
+		return out;
 	}
 
 	private static int num(Object o) {
@@ -498,6 +531,25 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private int reached(Quest q, Stage st) {
 		int start = 0;
+		// A STEP'S RECEIPT PUTS IT BEHIND YOU. Ali Morrisane sells a headpiece, then a beard, and
+		// the two make a disguise: three steps in one leg, with the varp moving before the first
+		// of them. Carrying - or WEARING - what a step handed over is the only thing in the game
+		// that says it happened, so the leg starts after the last step whose receipt you have.
+		for (int i = 0; i < st.steps.size() - 1; i++) {
+			Step step = st.steps.get(i);
+			boolean done = false;
+			for (int j = 0; j < step.gives.length; j++) {
+				done = done || ctx.countObjCarriedOrWorn(step.gives[j]) > 0;
+			}
+			// A WEAR IS ONLY DONE WHILE IT IS WORN. The amulet in the bag is that step waiting.
+			for (int j = 0; j < step.wears.length; j++) {
+				done = done || ctx.countWornObj(step.wears[j]) > 0;
+			}
+			if (done && i + 1 > start) {
+				start = i + 1;
+			}
+		}
+
 		// THE FIRST STEP THAT WANTS IT, not the last. Holding a thing says the steps that handed
 		// it over are done, and the step that hands it over is the one before the first step that
 		// uses it - so the book puts the leg at "Read Battered book", which is where a player who
@@ -604,6 +656,18 @@ public final class QuestHelperPlugin extends Plugin {
 				return at(s, x, z, s.shown());
 			}
 		}
+
+		// NOTHING TO POINT AT, BUT STILL A STEP. The leg is somewhere the scene cannot show -
+		// the quest is three regions away - and the words are the whole of the help. Taken from
+		// `start` like everything else: falling back to the leg's first step would undo what the
+		// bag has already told us, and put "talk to the tree" back after the branch was in hand.
+		for (int i = start; i < st.steps.size(); i++) {
+			if (!"note".equals(st.steps.get(i).kind)) {
+				Spot spot = new Spot();
+				spot.step = st.steps.get(i);
+				return spot;
+			}
+		}
 		return null;
 	}
 
@@ -700,7 +764,9 @@ public final class QuestHelperPlugin extends Plugin {
 			return out;
 		}
 		for (Need n : st.items) {
-			if (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {
+			// ON THE BODY COUNTS. A player wearing the amulet they were told to bring has brought
+			// it, and the row said they had not.
+			if (n.bring && n.id >= 0 && ctx.countObjCarriedOrWorn(n.id) < n.n) {
 				out.add(n);
 			}
 		}
@@ -833,24 +899,10 @@ public final class QuestHelperPlugin extends Plugin {
 		if (sp == null || sp.step == null) {
 			return NONE;
 		}
-		int[] objs = sp.step.objs();
-		int held = 0;
-		for (int i = 0; i < objs.length; i++) {
-			if (ctx.countObj(objs[i]) > 0) {
-				held++;
-			}
-		}
-		if (held == objs.length) {
-			return objs;
-		}
-		int[] out = new int[held];
-		int n = 0;
-		for (int i = 0; i < objs.length; i++) {
-			if (ctx.countObj(objs[i]) > 0) {
-				out[n++] = objs[i];
-			}
-		}
-		return out;
+		// ALL OF THEM OR NONE. A box means "click this", and half of "use the knife on the
+		// branch" is not something anybody can click - marking the knife alone would be pointing
+		// at the one part of the step that is not the problem.
+		return this.carrying(sp.step) ? sp.step.objs() : NONE;
 	}
 
 	/** How many slots the sidebar was last asked to mark, so their going is repainted too. */

@@ -321,6 +321,16 @@ public final class PluginContext {
 	 */
 	private static final int INVENTORY_COM = 3214;
 
+	/**
+	 * The component the WORN equipment is transmitted to (`1688=wornitems:worn`), for the same
+	 * reason the one above is here.
+	 *
+	 * Worn is not carried, and a plugin that asks "has the player got this" usually means both:
+	 * an amulet round your neck is not in the bag, and a quest that handed you a disguise you
+	 * are now wearing has still handed it to you.
+	 */
+	private static final int WORN_COM = 1688;
+
 	/** How many slots the inventory has - 28 in game, 0 before there is a cache to ask. */
 	public int getInventorySize() {
 		int[] ids = inventoryObjIds();
@@ -370,6 +380,32 @@ public final class PluginContext {
 	/** Whether any slot holds the obj at all. */
 	public boolean hasObj(int objId) {
 		return this.countObj(objId) > 0;
+	}
+
+	/**
+	 * How many of an obj the player is WEARING, which the inventory count cannot see.
+	 *
+	 * The equipment is its own transmitted component, so a worn item is in neither the bag nor
+	 * {@link #countObj}. A plugin asking whether somebody has a thing nearly always means either
+	 * - see {@link #countObjCarriedOrWorn}.
+	 */
+	public int countWornObj(int objId) {
+		Component com = component(WORN_COM);
+		if (!Component.holdsInv(com) || objId < 0) {
+			return 0;
+		}
+		int total = 0;
+		for (int slot = 0; slot < com.invSlotObjId.length && slot < com.invSlotObjCount.length; slot++) {
+			if (decodeSlotObj(com.invSlotObjId[slot]) == objId) {
+				total += com.invSlotObjCount[slot];
+			}
+		}
+		return total;
+	}
+
+	/** In the bag or on the body: how many of an obj the player has about them. */
+	public int countObjCarriedOrWorn(int objId) {
+		return this.countObj(objId) + this.countWornObj(objId);
 	}
 
 	/**

@@ -105,10 +105,10 @@ MUTS = [
     # ---- second kind, and listing those as missing told a player to fetch a key out of a book
     # ---- they have not found.
     (PLUGIN, 'every item asked for again, the quest\'s own included',
-     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {',
-     '\t\t\tif (n.id >= 0 && ctx.countObj(n.id) < n.n) {'),
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObjCarriedOrWorn(n.id) < n.n) {',
+     '\t\t\tif (n.id >= 0 && ctx.countObjCarriedOrWorn(n.id) < n.n) {'),
     (PLUGIN, 'nothing asked for at all, so a leg never names what to bring',
-     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {',
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObjCarriedOrWorn(n.id) < n.n) {',
      '\t\t\tif (false) {'),
     (PLUGIN, 'the bring flag never read off the table, so everything reads as quest-given',
      '\t\t\t\tneed.bring = "true".equals(String.valueOf(m.get("bring")));',
@@ -120,6 +120,26 @@ MUTS = [
     (PLUGIN, 'the page listing no items at all, so a leg never names what to bring',
      '\t\t\tif (n.bring) {\n\t\t\t\tout.add(n);\n\t\t\t}',
      '\t\t\tif (false) {\n\t\t\t\tout.add(n);\n\t\t\t}'),
+
+    # ---- WHAT A STEP HANDED OVER, which is the only record that a talk happened.
+    (PLUGIN, 'a step\'s receipt ignored, so the leg sits on a talk already taken',
+     '\t\t\tfor (int j = 0; j < step.gives.length; j++) {\n\t\t\t\tdone = done || ctx.countObjCarriedOrWorn(step.gives[j]) > 0;\n\t\t\t}',
+     '\t\t\tfor (int j = 0; j < 0; j++) {\n\t\t\t\tdone = done || ctx.countObjCarriedOrWorn(step.gives[j]) > 0;\n\t\t\t}'),
+    (PLUGIN, 'the receipt put the leg ON the step it finished rather than after it',
+     '\t\t\tif (done && i + 1 > start) {\n\t\t\t\tstart = i + 1;\n\t\t\t}',
+     '\t\t\tif (done && i > start) {\n\t\t\t\tstart = i;\n\t\t\t}'),
+    (PLUGIN, 'a wear counted as done while the thing is still in the bag',
+     '\t\t\t\tdone = done || ctx.countWornObj(step.wears[j]) > 0;',
+     '\t\t\t\tdone = done || ctx.countObjCarriedOrWorn(step.wears[j]) > 0;'),
+    (PLUGIN, 'what the player is wearing not counted as had, so a worn amulet is asked for',
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObjCarriedOrWorn(n.id) < n.n) {',
+     '\t\t\tif (n.bring && n.id >= 0 && ctx.countObj(n.id) < n.n) {'),
+    (PLUGIN, 'the last-resort step taken from the top of the leg, undoing what the bag said',
+     '\t\tfor (int i = start; i < st.steps.size(); i++) {\n\t\t\tif (!"note".equals(st.steps.get(i).kind)) {',
+     '\t\tfor (int i = 0; i < st.steps.size(); i++) {\n\t\t\tif (!"note".equals(st.steps.get(i).kind)) {'),
+    (CONTEXT, 'the worn equipment read off the inventory\'s component',
+     '\tprivate static final int WORN_COM = 1688;',
+     '\tprivate static final int WORN_COM = 3214;'),
 
     # ---- HOW FAR INTO A LEG. The bag is the only record inside one.
     (PLUGIN, 'the leg always started from its first step, which is how it stuck on the bookcase',
@@ -145,9 +165,9 @@ MUTS = [
      '\t\t\tif (false) {\n\t\t\t\treturn false;\n\t\t\t}'),
 
     # ---- THE SLOT IN THE BAG.
-    (PLUGIN, 'the repaint asked for an item the player has not got',
-     '\t\tint[] objs = sp.step.objs();\n\t\tint held = 0;',
-     '\t\tif (true) {\n\t\t\treturn sp.step.objs();\n\t\t}\n\t\tint[] objs = sp.step.objs();\n\t\tint held = 0;'),
+    (PLUGIN, 'the slot marked for a step the player cannot take, half of it in the bank',
+     '\t\treturn this.carrying(sp.step) ? sp.step.objs() : NONE;',
+     '\t\treturn sp.step.objs();'),
     (PLUGIN, 'every slot holding the item boxed rather than the first',
      '\t\t\t\t\t// boxes would read as four things to do.\n\t\t\t\t\tbreak;',
      '\t\t\t\t\t// boxes would read as four things to do.\n\t\t\t\t\tcontinue;'),

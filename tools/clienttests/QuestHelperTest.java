@@ -102,6 +102,16 @@ public class QuestHelperTest {
 	static final int COOK_Z = 3307;
 
 	/**
+	 * Animal Magnetism's tenth leg: talk to the tree, which hands over a branch, then back to Ava.
+	 *
+	 * The receipt case. Nothing in the game says a talk happened - the quest's varp moves once
+	 * for the whole leg - except what the talk put in your bag.
+	 */
+	static final String ANIMAL = "ANIMAL MAGNETISM";
+	static final int ANIMAL_VARP = 1700;
+	static final int UNDEAD_BRANCH = 10303;
+
+	/**
 	 * Lost City's fifth leg: one step, and it names two items.
 	 *
 	 * "Use Knife on Dramen branch" is one instruction a player cannot follow holding half of it,
@@ -141,6 +151,12 @@ public class QuestHelperTest {
 
 	/** The tab layer the grid hangs off, and where it hangs: this suite's own fixture. */
 	static final int INVENTORY_TAB = 3213;
+
+	/**
+	 * The component the server transmits the WORN equipment to: `1688=wornitems:worn` in the
+	 * content's interface.pack, written down here for the reason the inventory's number is.
+	 */
+	static final int WORN_COM = 1688;
 	static final int GRID_X = 20;
 	static final int GRID_Y = 30;
 
@@ -191,6 +207,10 @@ public class QuestHelperTest {
 		bagTests();
 		System.out.println("9. Elemental Workshop I, in the order a player meets it");
 		workshopTests();
+		System.out.println("9b. what a step handed over is the record that it happened");
+		receiptTests();
+		System.out.println("9c. what the player is wearing");
+		wornTests();
 		System.out.println("10. the item in the bag, marked on the sidebar");
 		slotTests();
 
@@ -572,6 +592,87 @@ public class QuestHelperTest {
 		settle();
 	}
 
+	// ---------------------------------------------------------------- 9b
+
+	/**
+	 * What a step handed you is the only record that you took it.
+	 *
+	 * This is the shape a player reported: Ali Morrisane sells a headpiece, then a beard, and
+	 * the two make a disguise - three steps inside one leg, with the quest's own varbit moving
+	 * before the first of them, so the helper kept saying "talk to Ali" after both sales. The
+	 * Feud tracks a varbit, which this harness has no cache to decode, so the same shape is
+	 * checked on Animal Magnetism: a talk that hands over a branch, and a walk back to Ava.
+	 */
+	static void receiptTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(ANIMAL);
+		client.varps[ANIMAL_VARP] = 9;
+		settle();
+		// Nothing of this leg is in the scene, so the panel gives its walk - and the point is
+		// which END of the leg it is at, which is the half that is about the branch.
+		check(!said(screen(), "Go back to Ava") && !said(screen(), "Talk to Ava"),
+			"a leg opens at its own beginning, not at the step after the talk");
+
+		carry(UNDEAD_BRANCH, 1);
+		settle();
+		check(!said(screen(), "Talk to Undead tree"),
+			"...and once what that talk handed over is in the bag, the talk is behind you");
+		check(said(screen(), "Go back to Ava") || said(screen(), "Talk to Ava"),
+			"...with the rest of the leg in front of you instead");
+
+		emptyBag();
+		client.varps[ANIMAL_VARP] = 0;
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	// ---------------------------------------------------------------- 9c
+
+	/**
+	 * A thing you are WEARING is a thing you have - and a thing you are told to wear is not.
+	 *
+	 * The equipment is its own transmitted component, so neither of these could be seen before:
+	 * a player wearing the amulet they were told to bring was told to bring it again, and "Wear
+	 * Ghostspeak amulet" would have counted itself done the moment the amulet reached the bag.
+	 */
+	static void wornTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		change();
+		track(GHOST);
+		client.varps[GHOST_VARP] = 2;
+		settle();
+
+		carry(GHOSTSPEAK, 1);
+		settle();
+		check(said(screen(), "Wear Ghostspeak amulet"),
+			"the amulet in the bag is a step still waiting to be taken");
+
+		carry(GHOSTSPEAK, 0);
+		wear(GHOSTSPEAK, 1);
+		settle();
+		check(!said(screen(), "Wear Ghostspeak amulet"),
+			"...and on your neck it is done, which no varp in this quest ever says");
+		check(said(screen(), "Go back north out of the swamp"), "...so the leg moves on");
+
+		// And the other way round: a leg's shopping list counts what you are wearing.
+		change();
+		track(FEUD);
+		settle();
+		check(said(screen(), "need Bucket"), "a leg asks for a bucket it cannot see");
+		wear(BUCKET, 1);
+		settle();
+		check(!said(screen(), "need Bucket"), "...and stops once the player is wearing one");
+
+		wear(BUCKET, 0);
+		wear(GHOSTSPEAK, 0);
+		client.varps[GHOST_VARP] = 0;
+		settle();
+	}
+
 	// ---------------------------------------------------------------- 10
 
 	/**
@@ -788,6 +889,16 @@ public class QuestHelperTest {
 		tab.childX = new int[] { GRID_X };
 		tab.childY = new int[] { GRID_Y };
 		jagex2.config.Component.types[INVENTORY_TAB] = tab;
+
+		// The equipment, which is its own component and not part of the tab above.
+		jagex2.config.Component body = new jagex2.config.Component();
+		body.id = WORN_COM;
+		body.type = 2;
+		body.width = 1;
+		body.height = 14;
+		body.invSlotObjId = new int[14];
+		body.invSlotObjCount = new int[14];
+		jagex2.config.Component.types[WORN_COM] = body;
 		client.tabInterfaceId[client.selectedTab] = INVENTORY_TAB;
 
 		Pix3D.zoom = 512;
@@ -890,6 +1001,23 @@ public class QuestHelperTest {
 		jagex2.config.Component inv = jagex2.config.Component.types[INVENTORY_COM];
 		inv.invSlotObjId[slot] = count > 0 ? objId + 1 : 0;
 		inv.invSlotObjCount[slot] = count;
+	}
+
+	/** An item on the player's body, which is a different component from the bag. */
+	static void wear(int objId, int count) {
+		jagex2.config.Component worn = jagex2.config.Component.types[WORN_COM];
+		int slot = -1;
+		for (int i = 0; i < worn.invSlotObjId.length; i++) {
+			if (worn.invSlotObjId[i] == objId + 1) {
+				slot = i;
+				break;
+			}
+			if (worn.invSlotObjId[i] == 0 && slot < 0) {
+				slot = i;
+			}
+		}
+		worn.invSlotObjId[slot] = count > 0 ? objId + 1 : 0;
+		worn.invSlotObjCount[slot] = count;
 	}
 
 	/** An empty bag, so one section's items cannot decide another's answer. */
