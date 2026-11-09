@@ -40,12 +40,6 @@ sourceSets {
         java {
             srcDirs = ['plugins/src']
         }
-        // The quest helper ships its step table beside its class: plugins/resources/quests.json,
-        // generated from the server repository's quest sims by tools/quest/ExportHelper.ts. It is
-        // read once out of the jar at startUp, because a handler may not do IO.
-        resources {
-            srcDirs = ['plugins/resources']
-        }
         compileClasspath += sourceSets.main.output
     }
 }
@@ -58,15 +52,7 @@ sourceSets {
 // line rather than another twenty.
 def examplePluginJars = [
     coordinates: 'deathplateau.plugins.CoordinatesPlugin',
-    xptracker  : 'deathplateau.plugins.XpTrackerPlugin',
-    questhelper: 'deathplateau.plugins.QuestHelperPlugin'
-]
-
-// Which plugins carry a resource of their own, and which. The per-plugin jars below include only
-// the plugin's own classes on purpose, so a data file has to be named or it is left out and the
-// plugin loads with an empty table.
-def pluginResources = [
-    questhelper: 'quests.json'
+    xptracker  : 'deathplateau.plugins.XpTrackerPlugin'
 ]
 
 examplePluginJars.each { id, pluginClass ->
@@ -82,9 +68,6 @@ examplePluginJars.each { id, pluginClass ->
         // the other plugin's classes too would still work - the manifest decides what loads -
         // but it would be a jar that is half somebody else's code.
         include "${pluginClass.replace('.', '/')}*.class"
-        if (pluginResources[id]) {
-            include pluginResources[id]
-        }
 
         manifest {
             attributes('Plugin-Class': pluginClass)

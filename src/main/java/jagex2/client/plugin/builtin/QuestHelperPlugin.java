@@ -1,6 +1,7 @@
-package deathplateau.plugins;
+package jagex2.client.plugin.builtin;
 
 import jagex2.client.plugin.Actor;
+import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
@@ -111,7 +112,7 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private void load() {
 		this.quests.clear();
-		try (InputStream in = QuestHelperPlugin.class.getResourceAsStream("/quests.json")) {
+		try (InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json")) {
 			if (in == null) {
 				return;
 			}
@@ -455,7 +456,7 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private void addRailPage() {
 		try {
-			this.addPanel("Quest helper", "list", new jagex2.client.plugin.ConfigList() {
+			this.addPanel("Quest helper", "list", new ConfigList() {
 
 				public int size() {
 					Quest q = tracked();

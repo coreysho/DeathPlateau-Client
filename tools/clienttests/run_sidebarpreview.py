@@ -30,6 +30,7 @@ SRC = os.path.join(ROOT, 'src/main/java')
 LAUNCHER_SRC = os.path.join(ROOT, 'launcher/src')
 PLUGIN_SRC = os.path.join(ROOT, 'plugins/src')
 PLUGIN_RES = os.path.join(ROOT, 'plugins/resources')
+MAIN_RES = os.path.join(ROOT, 'src/main/resources')
 PREVIEW = os.path.join(HERE, 'SidebarPreview.java')
 PAINT_TEST = os.path.join(HERE, 'SidebarPaintTest.java')
 RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
@@ -102,6 +103,18 @@ def main():
         classes = os.path.join(work, 'classes')
         os.makedirs(classes)
         r = run(javac, '-nowarn', '-d', classes, *java_sources(SRC, LAUNCHER_SRC))
+        # AND THE CLIENT'S OWN RESOURCES ONTO THE CLASSPATH. javac compiles .java and copies
+        # nothing, so src/main/resources - which gradle does put in the jar - was simply absent
+        # here. A built-in that reads one then renders its "missing file" message, and the preview
+        # calls that a pass because the page is not blank. The quest helper found this: it drew
+        # "quests.json is missing" over a jar that has quests.json in it.
+        if os.path.isdir(MAIN_RES):
+            for base, _, files in os.walk(MAIN_RES):
+                for name in files:
+                    full = os.path.join(base, name)
+                    dest = os.path.join(classes, os.path.relpath(full, MAIN_RES))
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.copyfile(full, dest)
         if r.returncode != 0:
             print(r.stderr[-4000:])
             raise SystemExit('run_sidebarpreview: the client does not compile')
