@@ -103,6 +103,46 @@ public final class QuestHelperPlugin extends Plugin {
 	/** Null means "follow whichever quest is in progress"; set by the sidebar to pin one. */
 	private String pinned = null;
 
+	/**
+	 * True while the page is showing the quest list instead of the tracked quest's steps.
+	 *
+	 * The auto-pick is a DEFAULT, not a decision: it takes the first started-and-unfinished quest
+	 * in table order, which is alphabetical by id, so a player part-way through six quests was
+	 * shown Fight Arena because "arena" sorts early. That is fine as an opening guess and no good
+	 * as the only option, so the page browses.
+	 */
+	private boolean browsing = false;
+
+	/** The quest list as the picker shows it: in progress first, then unstarted, then done. */
+	private List<Quest> listed() {
+		List<Quest> running = new ArrayList<>();
+		List<Quest> fresh = new ArrayList<>();
+		List<Quest> over = new ArrayList<>();
+		for (Quest q : this.quests) {
+			if (this.finished(q)) {
+				over.add(q);
+			} else if (this.started(q)) {
+				running.add(q);
+			} else {
+				fresh.add(q);
+			}
+		}
+		List<Quest> all = new ArrayList<>(running);
+		all.addAll(fresh);
+		all.addAll(over);
+		return all;
+	}
+
+	private String statusOf(Quest q) {
+		if (this.finished(q)) {
+			return "complete";
+		}
+		if (!this.started(q)) {
+			return "not started";
+		}
+		return "stage " + this.questValue(q) + " of " + q.done;
+	}
+
 	// ------------------------------------------------------------------ loading
 
 	/**
@@ -458,20 +498,26 @@ public final class QuestHelperPlugin extends Plugin {
 		try {
 			this.addPanel("Quest helper", "list", new ConfigList() {
 
+				/** Browsing shows every quest; otherwise the tracked quest's leg, under a header. */
+				private boolean picking() {
+					return browsing || tracked() == null;
+				}
+
 				public int size() {
-					Quest q = tracked();
-					if (q == null) {
-						return 0;
+					if (picking()) {
+						return listed().size();
 					}
+					Quest q = tracked();
 					Stage st = stageNow(q);
 					return 1 + (st == null ? 0 : st.steps.size() + st.items.size());
 				}
 
 				public String label(int index) {
-					Quest q = tracked();
-					if (q == null) {
-						return "";
+					if (picking()) {
+						List<Quest> all = listed();
+						return index >= 0 && index < all.size() ? all.get(index).name : "";
 					}
+					Quest q = tracked();
 					if (index == 0) {
 						return q.name;
 					}
@@ -483,18 +529,18 @@ public final class QuestHelperPlugin extends Plugin {
 					if (i < st.steps.size()) {
 						return wrapped(st.steps.get(i).text);
 					}
-					Need n = st.items.get(i - st.steps.size());
-					return pretty(n.name);
+					return pretty(st.items.get(i - st.steps.size()).name);
 				}
 
 				public String detail(int index) {
-					Quest q = tracked();
-					if (q == null) {
-						return null;
+					if (picking()) {
+						List<Quest> all = listed();
+						return index >= 0 && index < all.size() ? statusOf(all.get(index)) : null;
 					}
+					Quest q = tracked();
 					Stage st = stageNow(q);
 					if (index == 0) {
-						return "stage " + questValue(q) + " of " + q.done + (st != null && !st.headings.isEmpty() ? " - " + st.headings.get(0) : "");
+						return statusOf(q) + (st != null && !st.headings.isEmpty() ? " - " + st.headings.get(0) : "");
 					}
 					if (st == null) {
 						return null;
@@ -507,10 +553,10 @@ public final class QuestHelperPlugin extends Plugin {
 				}
 
 				public String value(int index) {
-					Quest q = tracked();
-					if (q == null) {
+					if (picking()) {
 						return null;
 					}
+					Quest q = tracked();
 					Stage st = stageNow(q);
 					if (index == 0 || st == null) {
 						return null;
@@ -520,19 +566,45 @@ public final class QuestHelperPlugin extends Plugin {
 						return null;
 					}
 					Need n = st.items.get(i - st.steps.size());
-					int have = n.id < 0 ? 0 : ctx.countObj(n.id);
-					return have + "/" + n.n;
+					return (n.id < 0 ? 0 : ctx.countObj(n.id)) + "/" + n.n;
 				}
 
 				public int progress(int index) {
 					return -1;
 				}
 
+				/** The button on a row: pick a quest while browsing, change it while tracking. */
+				public String action(int index) {
+					if (picking()) {
+						List<Quest> all = listed();
+						if (index < 0 || index >= all.size()) {
+							return null;
+						}
+						Quest q = all.get(index);
+						return q.id.equals(pinned) ? "Tracking" : "Track";
+					}
+					return index == 0 ? "Change" : null;
+				}
+
+				public void onAction(int index) {
+					if (picking()) {
+						List<Quest> all = listed();
+						if (index >= 0 && index < all.size()) {
+							pinned = all.get(index).id;
+							browsing = false;
+						}
+						return;
+					}
+					if (index == 0) {
+						browsing = true;
+					}
+				}
+
 				public String emptyMessage() {
 					if (quests.isEmpty()) {
-						return "No step table loaded - quests.json is missing from the plugin jar.";
+						return "No step table loaded - quests.json is missing from the client.";
 					}
-					return "No quest in progress. Start one and its steps appear here.";
+					return "No quests in the table.";
 				}
 			});
 		} catch (Throwable ignored) {
@@ -550,5 +622,6 @@ public final class QuestHelperPlugin extends Plugin {
 	protected void shutDown() {
 		this.quests.clear();
 		this.pinned = null;
+		this.browsing = false;
 	}
 }

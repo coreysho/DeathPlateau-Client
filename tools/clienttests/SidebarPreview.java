@@ -238,6 +238,26 @@ public class SidebarPreview {
 				Thread.sleep(250);
 			}
 		}
+		// The quest PICKER, which is the same page with nothing in progress: tracked() answers
+		// null, so the list offers every quest with a Track button instead of one quest's steps.
+		// Rendered separately because the two states share no rows, and the picker is the half a
+		// player meets first.
+		if (args.length > 1 && args[1].equals("questlist")) {
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("questhelper")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException("no rail tab for " + entry.key);
+				}
+				manager.onClientTick(0);
+				Thread.sleep(250);
+			}
+		}
+
 		// The Quest helper page: a plugin whose whole content comes from a data file in its own
 		// jar, and whose rows depend on a VARP rather than on a skill or an inventory. So the
 		// preview has to put the player part-way through a quest or the page correctly says

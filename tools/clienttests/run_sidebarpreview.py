@@ -37,7 +37,7 @@ RAIL_TEST = os.path.join(HERE, 'SidebarRailTest.java')
 
 PAGES = [('list', []), ('config', ['config']), ('ground', ['ground']),
          ('antidrag', ['antidrag']), ('xppanel', ['xppanel']), ('loot', ['loot']),
-         ('clue', ['clue']), ('questhelper', ['questhelper']),
+         ('clue', ['clue']), ('questhelper', ['questhelper']), ('questlist', ['questlist']),
          ('hub', ['hub']), ('empty', [])]
 
 
