@@ -97,6 +97,7 @@ jobs:
           - mousetest
           - notifytest
           - npctest
+          - questhelper
           - rooftest
           - skilltest
           - slayer

@@ -24,16 +24,17 @@ import java.util.Map;
  * which plays that quest through on foot and is run every night by CI. Each one already records
  * the ordered steps, the npc or loc for each, where it stands, what you must be carrying, and the
  * value of the quest's own varp after each leg. tools/quest/ExportHelper.ts reads those and writes
- * quests.json: 83 quests, 678 stages, 4322 steps, every target resolved to a cache id.
+ * quests.json: 106 quests, 892 stages, 5322 steps, every target resolved to a cache id.
  *
  * So the step list here is not a second, hand-written account of the quests that will drift from
  * the game. It is generated from the one the nightly proves: move a door and a sim fails.
  *
  * WHAT IT CANNOT DO, said plainly because the gap is visible in use. Progress is known to STAGE
  * granularity, not step granularity - the quest varp says "you have talked to Father Urhney", not
- * "you have taken three of the five steps since". So the panel shows the whole of the leg you are
- * on with the first step highlighted, rather than striking through steps one at a time. Finer
- * tracking would need the content to record sub-steps, which no part of the game does today.
+ * "you have taken three of the five steps since". So the sidebar lists the whole of the leg you
+ * are on rather than striking steps out one at a time, and which of those steps the panel and the
+ * marker name is decided by the SCENE instead of by the varp: see {@link #spot}. Finer tracking
+ * would need the content to record sub-steps, which no part of the game does today.
  */
 @PluginDescriptor(
 	name = "Quest helper",
@@ -84,9 +85,22 @@ public final class QuestHelperPlugin extends Plugin {
 		boolean wear;
 	}
 
+	/**
+	 * A line of the quest guide, and the step of this leg it is written in front of.
+	 *
+	 * WITH THE STEP, because a leg often carries several and a panel that showed the first of
+	 * them was describing the wrong part of the quest. Elemental Workshop I is ONE leg with
+	 * eleven headings - its varp only moves when the quest ends - so the panel said "the bookcase
+	 * on the east wall" while the player stood at the furnace.
+	 */
+	private static final class Head {
+		int at;
+		String text = "";
+	}
+
 	private static final class Stage {
 		int from;
-		final List<String> headings = new ArrayList<>();
+		final List<Head> headings = new ArrayList<>();
 		final List<Step> steps = new ArrayList<>();
 		final List<Need> items = new ArrayList<>();
 	}
@@ -108,10 +122,10 @@ public final class QuestHelperPlugin extends Plugin {
 	/**
 	 * True while the page is showing the quest list instead of the tracked quest's steps.
 	 *
-	 * The auto-pick is a DEFAULT, not a decision: it takes the first started-and-unfinished quest
-	 * in table order, which is alphabetical by id, so a player part-way through six quests was
-	 * shown Fight Arena because "arena" sorts early. That is fine as an opening guess and no good
-	 * as the only option, so the page browses.
+	 * NOTHING IS TRACKED UNTIL THE PLAYER PICKS. Guessing took the first started-and-unfinished
+	 * quest in table order, which is alphabetical by id, so somebody part-way through six quests
+	 * was shown Fight Arena because "arena" sorts early. A guess that is wrong five times out of
+	 * six is worse than an empty page with a list on it, and the page opens on the list.
 	 */
 	private boolean browsing = false;
 
@@ -206,7 +220,13 @@ public final class QuestHelperPlugin extends Plugin {
 		List<?> heads = Json.array(o, "headings");
 		if (heads != null) {
 			for (Object h : heads) {
-				st.headings.add(String.valueOf(h));
+				if (!(h instanceof Map)) {
+					continue;
+				}
+				Head head = new Head();
+				head.at = Json.integer((Map<?, ?>) h, "at", 0);
+				head.text = Json.string((Map<?, ?>) h, "text", "");
+				st.headings.add(head);
 			}
 		}
 		List<?> steps = Json.array(o, "steps");
@@ -300,23 +320,19 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	/**
-	 * The quest being followed: the pinned one, else the first that is started and not finished.
+	 * The quest being followed, which is the one the player pressed Track on and nothing else.
 	 *
-	 * "First" is the table's order, which is alphabetical by id and so arbitrary. It is only a
-	 * default - the sidebar pins one - but a player part-way through four quests should not have
-	 * the panel flicker between them, so it has to be a stable choice rather than, say, the
-	 * nearest.
+	 * IT USED TO GUESS, taking the first started-and-unfinished quest in the table, whose order is
+	 * alphabetical by id and so arbitrary: somebody part-way through six quests was shown Fight
+	 * Arena because "arena" sorts early. A guess that is wrong five times in six is worse than an
+	 * empty page with a list on it, so the page opens on the list and the player picks.
 	 */
 	private Quest tracked() {
-		if (this.pinned != null) {
-			for (Quest q : this.quests) {
-				if (q.id.equals(this.pinned)) {
-					return q;
-				}
-			}
+		if (this.pinned == null) {
+			return null;
 		}
 		for (Quest q : this.quests) {
-			if (this.started(q) && !this.finished(q)) {
+			if (q.id.equals(this.pinned)) {
 				return q;
 			}
 		}
@@ -346,6 +362,176 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 		}
 		return st.steps.isEmpty() ? null : st.steps.get(0);
+	}
+
+	// ------------------------------------------------------------------ what to point at
+
+	/**
+	 * A step of the current leg, and the scene tile to point at it on.
+	 *
+	 * A tile of -1 is a step with nowhere to stand: an item you use from the inventory happens
+	 * wherever you are, so it has words but no box.
+	 */
+	private static final class Spot {
+		Step step;
+		int sceneTileX = -1;
+		int sceneTileZ = -1;
+		String label;
+	}
+
+	private Spot held;
+	private Stage heldFor;
+	private long heldAt;
+
+	/**
+	 * The step of this leg you can act on from where you are standing, and where it is.
+	 *
+	 * NOT THE FIRST STEP OF THE LEG, which is what this did and why it felt a step behind. The varp
+	 * says which leg you are on, not how far into it you are, and a leg almost always opens with a
+	 * walk - a step that names no npc and no loc. Pointing at that meant nothing was highlighted
+	 * until the walk was already behind you AND the varp had moved on: pick The Feud, whose first
+	 * leg is "go to the bazaar, talk to Ali Morrisane", and Ali lit up only after you had talked to
+	 * him. So the scene decides. The earliest step of the leg whose npc or object is actually in
+	 * front of you wins; if none is, the earliest tile the leg recorded that the scene has loaded.
+	 * Standing in the bazaar that is Ali himself; walking out of Lumbridge it is the road east.
+	 *
+	 * CACHED FOR A FIFTH OF A SECOND because findLocs sweeps the whole 104x104 scene through four
+	 * layers, and the answer does not change fifty times a second. Both overlays read the one
+	 * answer, which is also why the panel's instruction and the marker's box cannot name different
+	 * steps.
+	 */
+	private Spot spot(Stage st) {
+		long now = System.currentTimeMillis();
+		if (st == this.heldFor && now - this.heldAt < 200L) {
+			return this.held;
+		}
+		this.heldFor = st;
+		this.heldAt = now;
+		this.held = this.look(st);
+		return this.held;
+	}
+
+	private Spot look(Stage st) {
+		if (st == null) {
+			return null;
+		}
+		// EVERY LOC OF THE LEG IN ONE SWEEP. findLocs costs a full scene walk per call, so asking
+		// it once per loc step would multiply that by the length of the leg, every frame.
+		int wanted = 0;
+		for (Step s : st.steps) {
+			if (s.id >= 0 && "loc".equals(s.kind)) {
+				wanted++;
+			}
+		}
+		List<SceneLoc> locs = null;
+		if (wanted > 0) {
+			int[] ids = new int[wanted];
+			int n = 0;
+			for (Step s : st.steps) {
+				if (s.id >= 0 && "loc".equals(s.kind)) {
+					ids[n++] = s.id;
+				}
+			}
+			locs = ctx.findLocs(ids);
+		}
+		List<Actor> npcs = ctx.getNpcs();
+
+		for (Step s : st.steps) {
+			if (s.id < 0) {
+				continue;
+			}
+			// An npc walks, so it is found by id in the scene rather than at the tile the manifest
+			// recorded - that tile is where the sim met it, not where it is standing now.
+			if ("talk".equals(s.kind) && npcs != null) {
+				for (Actor a : npcs) {
+					if (a != null && a.npcId == s.id) {
+						return at(s, a.sceneTileX, a.sceneTileZ, a.name != null ? a.name : s.shown());
+					}
+				}
+			} else if ("loc".equals(s.kind) && locs != null) {
+				for (SceneLoc l : locs) {
+					if (l.id == s.id && l.level == ctx.getPlane()) {
+						return at(s, l.sceneTileX, l.sceneTileZ, ctx.getLocName(l.id));
+					}
+				}
+			}
+		}
+
+		// NOTHING OUT THERE, BUT SOMETHING IN YOUR BAG. An item step is done in the inventory, so
+		// it can be acted on from anywhere - "Wear Ghostspeak amulet" before walking back to the
+		// churchyard - and it is only worth saying while you are actually carrying the item. That
+		// is also what makes it unstick: the amulet leaves the inventory when you put it on, so
+		// the step stops winning and the leg moves on without the varp having to change.
+		//
+		// AFTER the scene, not before, although it comes first in the leg. An item you keep
+		// carrying - a tome to read, a key to hold - is a step nothing can tell you have done, so
+		// a step you can see in front of you has to beat it or the panel would stick on it.
+		for (Step s : st.steps) {
+			if ("obj".equals(s.kind) && s.id >= 0 && ctx.countObj(s.id) > 0) {
+				Spot spot = new Spot();
+				spot.step = s;
+				return spot;
+			}
+		}
+
+		// Nothing of the leg is in front of you, so point at the earliest tile it recorded that the
+		// scene has loaded: the way out of the room rather than no marker at all. Off the edge of
+		// the scene there is nothing to project onto, and a box pinned to the screen edge would be
+		// a guess at a direction.
+		for (Step s : st.steps) {
+			if (s.at == null || s.at[2] != ctx.getPlane()) {
+				continue;
+			}
+			int x = ctx.worldToSceneX(s.at[0]);
+			int z = ctx.worldToSceneZ(s.at[1]);
+			if (ctx.isInScene(x, z)) {
+				return at(s, x, z, s.shown());
+			}
+		}
+		return null;
+	}
+
+	private static Spot at(Step step, int sceneTileX, int sceneTileZ, String label) {
+		Spot spot = new Spot();
+		spot.step = step;
+		spot.sceneTileX = sceneTileX;
+		spot.sceneTileZ = sceneTileZ;
+		spot.label = label;
+		return spot;
+	}
+
+	/**
+	 * The guide line the step at this index sits under: the last one written before it.
+	 *
+	 * Before it and not nearest it, because a heading introduces what follows and says nothing
+	 * about what came above. A leg whose first heading is written after its first step - which
+	 * happens when a sim opens with a walk and the guide's wording starts at the talk - leaves
+	 * that step with no heading at all rather than borrowing the one below it.
+	 */
+	private String headingFor(Stage st, int index) {
+		if (st == null) {
+			return null;
+		}
+		String text = null;
+		for (Head head : st.headings) {
+			if (head.at <= index) {
+				text = head.text;
+			}
+		}
+		return text;
+	}
+
+	/** Where a step sits in its leg, which is what its heading is keyed on. */
+	private static int indexOf(Stage st, Step step) {
+		if (st == null || step == null) {
+			return -1;
+		}
+		for (int i = 0; i < st.steps.size(); i++) {
+			if (st.steps.get(i) == step) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	private List<Need> missing(Stage st) {
@@ -387,10 +573,14 @@ public final class QuestHelperPlugin extends Plugin {
 				return;
 			}
 			Stage st = stageNow(q);
-			Step lead = leadStep(st);
+			Spot sp = spot(st);
+			// The step the marker is boxing, so the words and the box agree. With nothing of the
+			// leg in the scene there is no box, and the leg's own first instruction is the answer.
+			Step lead = sp != null ? sp.step : leadStep(st);
 			List<String> lines = new ArrayList<>();
-			if (st != null && !st.headings.isEmpty()) {
-				lines.add("@whi@" + wrapped(st.headings.get(0)));
+			String heading = headingFor(st, lead == null ? 0 : indexOf(st, lead));
+			if (heading != null && !heading.isEmpty()) {
+				lines.add("@whi@" + wrapped(heading));
 			}
 			lines.add(lead == null ? "No step recorded for this stage." : wrapped(lead.text));
 			if (lead != null && lead.why != null && !lead.why.isEmpty()) {
@@ -434,39 +624,11 @@ public final class QuestHelperPlugin extends Plugin {
 			if (q == null) {
 				return;
 			}
-			Step lead = leadStep(stageNow(q));
-			if (lead == null || lead.id < 0) {
+			Spot sp = spot(stageNow(q));
+			if (sp == null || sp.sceneTileX < 0) {
 				return;
 			}
-			int c = colour();
-
-			// An npc walks, so it is found by id in the scene rather than by the tile the manifest
-			// recorded - that tile is where the sim met it, not where it is standing now.
-			if ("talk".equals(lead.kind)) {
-				for (Actor a : ctx.getNpcs()) {
-					if (a.npcId == lead.id) {
-						mark(g, a.sceneTileX, a.sceneTileZ, c, a.name);
-						return;
-					}
-				}
-			} else if ("loc".equals(lead.kind)) {
-				List<SceneLoc> found = ctx.findLocs(new int[] { lead.id });
-				if (found != null) {
-					for (SceneLoc l : found) {
-						if (l.level == ctx.getPlane()) {
-							mark(g, l.sceneTileX, l.sceneTileZ, c, ctx.getLocName(l.id));
-							return;
-						}
-					}
-				}
-			}
-
-			// Not in the scene: mark the recorded tile if it is loaded, so the arrow still points
-			// the right way as you walk in. Off the edge of the scene there is nothing to project
-			// onto, and a marker pinned to the screen edge would be a guess at a direction.
-			if (lead.at != null && ctx.isInScene(lead.at[0] - ctx.sceneToWorldX(0), lead.at[1] - ctx.sceneToWorldZ(0))) {
-				mark(g, lead.at[0] - ctx.sceneToWorldX(0), lead.at[1] - ctx.sceneToWorldZ(0), c, pretty(lead.target));
-			}
+			mark(g, sp.sceneTileX, sp.sceneTileZ, colour(), sp.label);
 		}
 	};
 
@@ -548,7 +710,9 @@ public final class QuestHelperPlugin extends Plugin {
 					Quest q = tracked();
 					Stage st = stageNow(q);
 					if (index == 0) {
-						return statusOf(q) + (st != null && !st.headings.isEmpty() ? " - " + st.headings.get(0) : "");
+						Spot sp = spot(st);
+						String head = headingFor(st, sp == null ? 0 : indexOf(st, sp.step));
+						return statusOf(q) + (head == null || head.isEmpty() ? "" : " - " + head);
 					}
 					if (st == null) {
 						return null;
@@ -574,7 +738,10 @@ public final class QuestHelperPlugin extends Plugin {
 					}
 					int i = index - 1;
 					if (i < st.steps.size()) {
-						return null;
+						// The one the marker is pointing at, so the list reads as a position in the
+						// leg and not just as its contents.
+						Spot sp = spot(st);
+						return sp != null && sp.step == st.steps.get(i) ? "now" : null;
 					}
 					Need n = st.items.get(i - st.steps.size());
 					return (n.id < 0 ? 0 : ctx.countObj(n.id)) + "/" + n.n;

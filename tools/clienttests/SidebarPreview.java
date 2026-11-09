@@ -11,6 +11,7 @@ import javax.swing.JFrame;
 
 import jagex2.client.Client;
 import jagex2.client.plugin.PluginManager;
+import jagex2.client.plugin.ConfigList;
 import lostcity.Theme;
 
 public class SidebarPreview {
@@ -132,6 +133,29 @@ public class SidebarPreview {
 		server.setExecutor(null);
 		server.start();
 		return "http://127.0.0.1:" + server.getAddress().getPort() + "/index.json";
+	}
+
+	/**
+	 * Presses the Track button on the quest helper's row for a named quest.
+	 *
+	 * Through the panel snapshot, which is the same path the sidebar's own button takes, so the
+	 * preview renders a state a player can actually reach rather than one a reflective poke made
+	 * up. A name that is not in the list is a thrown error and not a blank page, because a page
+	 * that quietly stayed on the picker would still render and still pass the colour check.
+	 */
+	private static void track(PluginManager manager, String questName) {
+		for (PluginManager.PanelSnapshot panel : manager.snapshotPanels()) {
+			if (!panel.entry.key.equals("questhelper")) {
+				continue;
+			}
+			for (ConfigList.Row row : panel.rows) {
+				if (questName.equals(row.label)) {
+					panel.act(row.index);
+					return;
+				}
+			}
+		}
+		throw new IllegalStateException("no row for " + questName + " on the quest helper's page");
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -266,6 +290,11 @@ public class SidebarPreview {
 		// varp 107 is prieststart, The Restless Ghost's own progress varp, and 2 is the leg after
 		// Father Urhney hands the amulet over: six steps, and one item the player is NOT carrying,
 		// which is what makes the need column worth looking at.
+		//
+		// AND THE QUEST IS PICKED, by pressing the row's own Track button through the panel
+		// snapshot, because nothing is tracked until a player picks. Setting the field from here
+		// would render a state the plugin cannot reach on its own; pressing the button is the
+		// path a player takes, so a picker that stopped working would show up as a blank page.
 		if (args.length > 1 && args[1].equals("questhelper")) {
 			for (PluginManager.Entry entry : manager.getPlugins()) {
 				if (!entry.key.equals("questhelper")) {
@@ -277,6 +306,7 @@ public class SidebarPreview {
 				manager.setEnabled(entry, true);
 				manager.onClientTick(0);
 				Thread.sleep(250);
+				track(manager, "THE RESTLESS GHOST");
 				if (!sidebar.openPanel(entry.key)) {
 					throw new IllegalStateException(
 						"no rail tab for " + entry.key + ": the quest helper's panel did not reach the rail");

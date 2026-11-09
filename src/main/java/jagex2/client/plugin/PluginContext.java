@@ -1399,13 +1399,20 @@ public final class PluginContext {
 	 * Scene coordinates are relative to whatever chunk of the map is loaded, so the same tile is
 	 * a different pair of numbers after walking far enough for the client to reload around you.
 	 * A marker saved in scene coordinates comes back pointing somewhere else entirely.
+	 *
+	 * FROM sceneBaseTileX, which is the world tile that scene tile 0 is, and is the exact inverse
+	 * of {@link #worldToSceneX(int)}. It read `client.baseX` before, which is a different number
+	 * with a similar name: the ZONE origin out of the last UPDATE_ZONE packet, scene-local and
+	 * between 0 and 104, rewritten several times a tick. The two plugins that key tracked ground
+	 * items and loot by "world" tile were keying them by a number that moved under them, and a
+	 * quest marker asked to stand on a tile out of the server's own map landed nowhere near it.
 	 */
 	public int sceneToWorldX(int sceneTileX) {
-		return sceneTileX + this.client.baseX;
+		return sceneTileX + this.client.sceneBaseTileX;
 	}
 
 	public int sceneToWorldZ(int sceneTileZ) {
-		return sceneTileZ + this.client.baseZ;
+		return sceneTileZ + this.client.sceneBaseTileZ;
 	}
 
 	/** Whether Shift is held down right now. */
