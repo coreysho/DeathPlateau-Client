@@ -58,6 +58,8 @@ public final class QuestHelperPlugin extends Plugin {
 
 	private static final class Step {
 		String text = "";
+		/** The sim's note about this step, shown under it. Null when the step is its own note. */
+		String why = null;
 		String kind = "note";
 
 		/** What a player calls it, falling back to the server's handle when the cache had no name. */
@@ -220,6 +222,7 @@ public final class QuestHelperPlugin extends Plugin {
 				step.target = m.containsKey("target") ? Json.string(m, "target", null) : null;
 				step.id = Json.integer(m, "id", -1);
 				step.label = m.containsKey("label") ? Json.string(m, "label", null) : null;
+				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
 				List<?> at = Json.array(m, "at");
 				if (at != null && at.size() >= 2) {
 					step.at = new int[] { num(at.get(0)), num(at.get(1)), at.size() > 2 ? num(at.get(2)) : 0 };
@@ -390,6 +393,9 @@ public final class QuestHelperPlugin extends Plugin {
 				lines.add("@whi@" + wrapped(st.headings.get(0)));
 			}
 			lines.add(lead == null ? "No step recorded for this stage." : wrapped(lead.text));
+			if (lead != null && lead.why != null && !lead.why.isEmpty()) {
+				lines.add("@gra@" + wrapped(lead.why));
+			}
 			if (lead != null && lead.shown() != null) {
 				lines.add("@gre@" + lead.shown());
 			}
@@ -527,7 +533,9 @@ public final class QuestHelperPlugin extends Plugin {
 					}
 					int i = index - 1;
 					if (i < st.steps.size()) {
-						return wrapped(st.steps.get(i).text);
+						// NOT TRUNCATED. The panel wraps a row itself, so cutting at 58 characters
+						// first only guaranteed the wrap landed on a "..".
+						return st.steps.get(i).text;
 					}
 					return pretty(st.items.get(i - st.steps.size()).name);
 				}
@@ -547,7 +555,10 @@ public final class QuestHelperPlugin extends Plugin {
 					}
 					int i = index - 1;
 					if (i < st.steps.size()) {
-						return st.steps.get(i).shown();
+						// The explanation under the instruction when there is one - "Open it; the only
+						// way into the house" under "Open Door." - and the thing's name otherwise.
+						Step step = st.steps.get(i);
+						return step.why != null && !step.why.isEmpty() ? step.why : step.shown();
 					}
 					return st.items.get(i - st.steps.size()).wear ? "to wear" : "to carry";
 				}
