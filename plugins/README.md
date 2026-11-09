@@ -903,6 +903,14 @@ for (Actor npc : ctx.getNpcs()) {
 }
 ```
 
+**The name is the one the player reads.** An npc can be a *multinpc*: one id whose name, combat
+level and right-click words live on a child type chosen by a varp, which is how a quest npc has
+something new to say as the quest moves. `getNpcs` resolves that child, exactly as the client does
+for its own right-click menu, so `npc.name` is what the menu says and not the shell's placeholder -
+the four letters `null`, which is a real string in the config rather than a missing value. An npc
+whose type has not arrived yet still reads `?`, and one that genuinely has no name still reads
+`null`, so check for both before you draw a name you did not choose.
+
 **Two positions, and the difference matters.** `sceneX`/`sceneZ` are fine coordinates, 128 to a
 tile, and are where the actor is *mid-step* - `ctx.project` takes these, and a name tag drawn from
 them follows a walking npc smoothly. `sceneTileX`/`sceneTileZ` are the tile it stands on, for

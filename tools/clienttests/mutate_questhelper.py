@@ -201,6 +201,32 @@ MUTS = [
      '\t\treturn open == null ? null : this.cellBounds(open, 0, 0, INVENTORY_COM, cell);',
      '\t\treturn open == null ? null : this.cellBounds(open, 8, 8, INVENTORY_COM, cell);'),
 
+    # ---- A MULTINPC: one id, several faces, and the shell has no name of its own.
+    (CONTEXT, 'the multinpc shell read rather than the child, so a villager is labelled "null"',
+     '\t\tif (type.field1425 == null) {\n\t\t\treturn type;\n\t\t}',
+     '\t\tif (true) {\n\t\t\treturn type;\n\t\t}'),
+    (CONTEXT, 'the child taken whatever the varp says, so a quest npc wears a later face',
+     '\t\tNpcType child = type.method476();\n\t\treturn child == null ? type : child;',
+     '\t\tNpcType child = NpcType.get(type.field1425[type.field1425.length - 1]);\n'
+     '\t\treturn child == null ? type : child;'),
+    (PLUGIN, 'the config\'s placeholder name written over an npc that has not got one',
+     '\t\tif (name == null || name.isEmpty() || "null".equals(name) || "?".equals(name)) {',
+     '\t\tif (name == null) {'),
+    (PLUGIN, 'the npc in front of you never named, so the step\'s word is all there ever is',
+     '\t\t\t\t\t\treturn at(s, a.sceneTileX, a.sceneTileZ, nameOf(a, s));',
+     '\t\t\t\t\t\treturn at(s, a.sceneTileX, a.sceneTileZ, s.shown());'),
+
+    # ---- THE LOCS OF A LEG, which is most of Elemental Workshop and all of its first one.
+    (PLUGIN, 'the locs of the leg never swept, so a bookcase in front of you is not the step',
+     '\t\t\tlocs = ctx.findLocs(ids);',
+     '\t\t\tlocs = new ArrayList<>();'),
+    (PLUGIN, 'a loc labelled from the table rather than from the cache in front of you',
+     '\t\tString name = ctx.getLocName(id);\n\t\treturn name == null || name.isEmpty() ? step.shown() : name;',
+     '\t\tctx.getLocName(id);\n\t\treturn step.shown();'),
+    (PLUGIN, 'the cache\'s empty answer written as the label, so a multiloc goes out unnamed',
+     '\t\tString name = ctx.getLocName(id);\n\t\treturn name == null || name.isEmpty() ? step.shown() : name;',
+     '\t\treturn ctx.getLocName(id);'),
+
     # ---- THE TABLE AND THE PANEL.
     (PLUGIN, 'the quest table never read, so the page is empty and says nothing is loaded',
      '\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));',

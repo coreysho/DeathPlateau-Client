@@ -31,6 +31,10 @@ public final class Actor {
 	 * missing value - and an npc whose type has not arrived yet reads "?". Neither is worth hiding
 	 * behind an empty string, because a plugin matching on names wants to see that it happened.
 	 *
+	 * A MULTINPC IS ALREADY RESOLVED. One id whose name lives on a child the varp picks - the
+	 * Feud's villagers, a quest npc with something new to say - reads as the child the player
+	 * sees, which is the name in its right-click menu, not the shell's placeholder.
+	 *
 	 * A player's name is the bare name: the @icon@ tags the client prefixes for a moderator crown
 	 * or an ironman badge are not part of it.
 	 */

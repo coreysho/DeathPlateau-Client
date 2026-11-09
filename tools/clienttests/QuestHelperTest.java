@@ -19,9 +19,13 @@ import jagex2.client.plugin.ConfigList;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.PluginContext;
 import jagex2.client.plugin.PluginManager;
+import jagex2.config.LocType;
 import jagex2.config.NpcType;
 import jagex2.dash3d.ClientNpc;
 import jagex2.dash3d.ClientPlayer;
+import jagex2.dash3d.Sprite;
+import jagex2.dash3d.Square;
+import jagex2.dash3d.World3D;
 import jagex2.graphics.Pix2D;
 import jagex2.graphics.Pix3D;
 import jagex2.graphics.PixFont;
@@ -55,6 +59,14 @@ public class QuestHelperTest {
 	 */
 	static final String MYREQUE = "IN SEARCH OF THE MYREQUE";
 	static final int MYREQUE_VARP = 387;
+	/** A varp no quest in the table reads, used only to choose a multinpc's child. */
+	static final int MULTI_SELECTOR = 1900;
+
+	/** Elemental Workshop I's bookcase, the quest's first thing to search, and its name there. */
+	static final int BOOKCASE = 3389;
+	static final String BOOKCASE_NAME = "Bookcase";
+	static final int BOOKCASE_X = 2716;
+	static final int BOOKCASE_Z = 3481;
 	static final int RADIGAD = 1572;
 	static final String RADIGAD_NAME = "Radigad Ponfit";
 	static final int IVAN = 1574;
@@ -244,6 +256,10 @@ public class QuestHelperTest {
 		wornTests();
 		System.out.println("10. the item in the bag, marked on the sidebar");
 		slotTests();
+		System.out.println("11. an npc that is one id with several faces");
+		multiTests();
+		System.out.println("12. a loc of the leg, standing in the scene");
+		locTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -1021,6 +1037,156 @@ public class QuestHelperTest {
 		manager.onClientTick(0);
 	}
 
+	// ---------------------------------------------------------------- 11
+
+	// ---------------------------------------------------------------- 12
+
+	/**
+	 * A LOC OF THE LEG, in the scene: the half of the marker the npc checks never reach.
+	 *
+	 * Elemental Workshop I is nearly all locs - a bookcase, a door, a lever, a furnace - and was
+	 * the quest the request came in about. The scene is built by hand here, as AgilityTest builds
+	 * one, because findLocs walks the squares themselves: the scene keeps no list of locs.
+	 *
+	 * The name the marker writes comes from the CACHE and not from the table, which is the point
+	 * of the second check: the live name primed here is not the word the table recorded, so only a
+	 * reader that asks the cache can write it. The third is the Feud's bug in its loc form - a
+	 * multiloc's shell carries the placeholder name, the cache hands back nothing for it, and what
+	 * the step calls the thing has to stand in or the marker goes out with no label at all.
+	 */
+	static void locTests() throws Exception {
+		clearNpcs();
+		change();
+		track(ELEMENTAL);
+
+		// Standing beside the bookcase, which is where the quest's second step happens.
+		client.sceneBaseTileX = BOOKCASE_X - MID_X;
+		client.sceneBaseTileZ = BOOKCASE_Z - MID_Z;
+		Client.localPlayer.field1157 = MID_X * 128;
+		Client.localPlayer.field1158 = MID_Z * 128;
+		primeLocs("Dusty bookcase");
+		client.scene = new World3D(client.levelHeightmap, 104, 4, 104);
+		putLoc(MID_X, MID_Z, BOOKCASE);
+		settle();
+
+		check(said(screen(), "Search " + BOOKCASE_NAME),
+			"a loc of the leg in the scene is the step the panel gives");
+		check(painted() > 0, "...with a box drawn on its tile");
+		check(said(scene(), "Dusty bookcase"),
+			"...and the marker labelled from the cache in front of you, not from the table");
+
+		// THE SAME SHAPE AS THE VILLAGER. A multiloc shell has no name of its own, so the cache
+		// answers with nothing and the step's own word is the only label there is.
+		primeLocs("null");
+		settle();
+		check(said(scene(), BOOKCASE_NAME),
+			"a loc the cache has no name for is labelled from the step instead");
+		check(!said(scene(), "null"), "...and never with the placeholder the cache carries");
+
+		client.scene = null;
+		client.sceneBaseTileX = 0;
+		client.sceneBaseTileZ = 0;
+		change();
+		track(FEUD);
+		settle();
+	}
+
+	/**
+	 * LocType's own twenty-slot cache, filled by hand so method561 answers without a cache file.
+	 *
+	 * field1612 is the offsets table, which is only read for its LENGTH here - PluginContext uses
+	 * it to tell a loc id the cache could define from one it could not - so an empty array of the
+	 * right size is the whole of what a lookup needs.
+	 */
+	static void primeLocs(String name) {
+		LocType.field1612 = new int[BOOKCASE + 1];
+		LocType.field1636 = new LocType[20];
+		for (int i = 0; i < LocType.field1636.length; i++) {
+			LocType.field1636[i] = new LocType();
+			LocType.field1636[i].field1627 = -1;
+			LocType.field1636[i].field1655 = 1;
+			LocType.field1636[i].field1629 = 1;
+		}
+		LocType.field1636[0].field1627 = BOOKCASE;
+		LocType.field1636[0].field1630 = name;
+	}
+
+	/**
+	 * One piece of scenery in the scene, the way the map decode leaves it.
+	 *
+	 * The id is the top of a bitfield and 2 << 29 is the layer; World3D reads these fields and
+	 * nothing else, so there is no model and nothing to load.
+	 */
+	static void putLoc(int tileX, int tileZ, int id) {
+		Square square = client.scene.field1018[0][tileX][tileZ];
+		if (square == null) {
+			square = new Square(0, tileX, tileZ);
+			client.scene.field1018[0][tileX][tileZ] = square;
+		}
+		Sprite sprite = new Sprite();
+		sprite.field88 = (id << 14) | 2 << 29;
+		sprite.field82 = tileX;
+		sprite.field84 = tileZ;
+		square.field1391[square.field1390] = sprite;
+		square.field1390++;
+	}
+
+	/**
+	 * A MULTINPC: one npc id whose name, level and right-click words live on a child type.
+	 *
+	 * The Feud's villagers are these, and so is every quest npc with something different to say
+	 * as the quest moves. The shell the server sends carries no name of its own - what it carries
+	 * is the config's placeholder, the four letters "null" - and the client picks the child with a
+	 * varp before it reads a name for its own right-click menu. A plugin that read the shell
+	 * instead wrote "null" over the villager's head, which is what a player reported.
+	 *
+	 * Radigad stands in for the villager because the harness can write his quest's progress: The
+	 * Feud's is a varbit, and there is no cache here to decode one. The shape is the villager's.
+	 */
+	static void multiTests() throws Exception {
+		clearNpcs();
+		change();
+		track(MYREQUE);
+		client.varps[MYREQUE_VARP] = 4;
+
+		// THE CHILD IS WHAT THE PLAYER SEES. The shell is nameless and its child carries a name
+		// that is NOT the one the table recorded, so only a reader that resolves the child can
+		// write it - the table's own label would read "Radigad Ponfit".
+		final String DISGUISED = "Dwarf in a hood";
+		clearNpcs();
+		spawnMulti(RADIGAD, MULTI_SELECTOR, 1, DISGUISED, MID_X, MID_Z);
+		settle();
+		check(said(scene(), DISGUISED),
+			"an npc whose name is on a multinpc child is labelled with the child's name");
+		check(!said(scene(), "null"), "...and not with the placeholder the shell carries");
+		check(said(screen(), "Talk to " + RADIGAD_NAME),
+			"...while the panel still gives the step's own words, which is what the guide says");
+
+		// THE VARP CHOOSES. Slot 0 of this shell holds no child, which is the state a quest npc is
+		// in before its quest starts, and there is nothing to resolve.
+		client.varps[MULTI_SELECTOR] = 0;
+		settle();
+		check(!said(scene(), DISGUISED), "moving the varp off that child stops it being the name");
+		check(said(scene(), RADIGAD_NAME),
+			"...and with no child to read, the step's own name is written instead");
+		check(!said(scene(), "null"), "...still never the placeholder");
+
+		// AN ORDINARY NAMELESS NPC, no children at all: the same placeholder, the same answer.
+		clearNpcs();
+		spawn("null", RADIGAD, MID_X, MID_Z);
+		settle();
+		check(said(scene(), RADIGAD_NAME),
+			"an npc with no name in its config is labelled from the step rather than \"null\"");
+		check(!said(scene(), "null"), "...which is the whole of what that word was doing on screen");
+
+		clearNpcs();
+		client.varps[MYREQUE_VARP] = 0;
+		client.varps[MULTI_SELECTOR] = 0;
+		change();
+		track(FEUD);
+		settle();
+	}
+
 	/** The plugin's sidebar page as the sidebar reads it. */
 	static List<ConfigList.Row> page() {
 		for (PluginManager.PanelSnapshot panel : manager.snapshotPanels()) {
@@ -1120,6 +1286,51 @@ public class QuestHelperTest {
 		jagex2.config.Component inv = jagex2.config.Component.types[INVENTORY_COM];
 		java.util.Arrays.fill(inv.invSlotObjId, 0);
 		java.util.Arrays.fill(inv.invSlotObjCount, 0);
+	}
+
+	/**
+	 * A MULTINPC in the scene: a nameless shell whose child the varp picks.
+	 *
+	 * The shell keeps NpcType's own default name, which is the placeholder the config carries,
+	 * because that is the thing being tested. field1425 is the child table and field1462 the varp
+	 * that indexes it; slot 0 is left empty on purpose, so writing 0 to the varp is a shell with
+	 * no child to resolve. The child is primed into NpcType's 20-entry round-robin cache, which is
+	 * where NpcType.get looks first - there is no cache file here for it to fall through to.
+	 */
+	static void spawnMulti(int id, int selector, int slot, String childName, int tileX, int tileZ) {
+		NpcType.varProvider = client;
+		if (NpcType.field1458 == null) {
+			NpcType.field1458 = new NpcType[20];
+			for (int i = 0; i < NpcType.field1458.length; i++) {
+				NpcType.field1458[i] = new NpcType();
+			}
+		}
+		int childId = id + 1000;
+		NpcType child = new NpcType();
+		child.field1455 = childName;
+		child.field1442 = 1;
+		child.field1431 = childId;
+		NpcType.field1458[0] = child;
+
+		NpcType shell = new NpcType();
+		shell.field1431 = id;
+		shell.field1462 = selector;
+		shell.field1425 = new int[slot + 1];
+		for (int i = 0; i < shell.field1425.length; i++) {
+			shell.field1425[i] = -1;
+		}
+		shell.field1425[slot] = childId;
+		client.varps[selector] = slot;
+
+		ClientNpc npc = new ClientNpc();
+		npc.field1370 = shell;
+		npc.field1148 = 1;
+		npc.field1157 = tileX * 128 + 64;
+		npc.field1158 = tileZ * 128 + 64;
+		int at = client.npcCount;
+		client.npcs[at] = npc;
+		client.npcIds[at] = at;
+		client.npcCount = at + 1;
 	}
 
 	/** An npc in the scene, the way the client's entity handler puts one there. */

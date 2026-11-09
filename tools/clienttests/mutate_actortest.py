@@ -152,18 +152,22 @@ MUTS = [
     (CONTEXT, 'a player given an npc id, so isNpc answers yes for a person',
      'return new Actor(p.name, p.field1675, -1, p.field1157, p.field1158, p.field1148, self);',
      'return new Actor(p.name, p.field1675, 0, p.field1157, p.field1158, p.field1148, self);'),
+    # Anchored on the npc list's own last lines rather than on what follows the method, so that
+    # adding a helper below getNpcs does not quietly turn this pattern into a no-op.
     (CONTEXT, 'the sort dropped, so nearest-first is not true and a cap keeps anything',
-     '''		sortByDistanceFromPlayer(actors);
+     '''		}
+		sortByDistanceFromPlayer(actors);
 		return actors;
 	}
 
 	/**
-	 * The players in the scene''',
-     '''		return actors;
+	 * The type a player actually sees''',
+     '''		}
+		return actors;
 	}
 
 	/**
-	 * The players in the scene'''),
+	 * The type a player actually sees'''),
 
     # ---- THE LEVEL ITSELF.
     # The current level, which moves with every addition - mutate_guard reports this pattern as

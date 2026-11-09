@@ -10,6 +10,7 @@ import jagex2.client.GameShell;
 import jagex2.client.Stats;
 import jagex2.config.Component;
 import jagex2.config.LocType;
+import jagex2.config.NpcType;
 import jagex2.config.ObjType;
 import jagex2.config.VarbitType;
 import jagex2.dash3d.ClientNpc;
@@ -1114,11 +1115,36 @@ public final class PluginContext {
 			// no less correct than the game - but it is why Actor holds values and not a handle.
 			// field1431 is the config id, a long only because NpcType.get compares it to a cache
 			// key; the ids themselves are small.
-			actors.add(new Actor(npc.field1370.field1455, npc.field1370.field1442,
+			// The ID STAYS THE SHELL'S, which is what the server sent and what a plugin matches
+			// on; only the words come from the child.
+			NpcType shown = shown(npc.field1370);
+			actors.add(new Actor(shown.field1455, shown.field1442,
 				(int) npc.field1370.field1431, npc.field1157, npc.field1158, npc.field1148, false));
 		}
 		sortByDistanceFromPlayer(actors);
 		return actors;
+	}
+
+	/**
+	 * The type a player actually sees for an npc, which for a multinpc is not the one it carries.
+	 *
+	 * A multinpc is ONE id whose name, combat level and right-click words live on a child chosen
+	 * by a varp or varbit: the Feud's villagers, a quest npc that changes as the quest moves, a
+	 * farmer with something different to say. The shell has none of that, and the name it carries
+	 * is the config's placeholder - the literal four letters "null" - so a plugin reading the
+	 * shell labelled the Feud's villager "null" over its head.
+	 *
+	 * The client resolves the child before it reads the name for its own right-click menu, so
+	 * this is the same answer the game gives, taken the same way. Where it differs: the menu drops
+	 * an npc whose varp selects no child at all, and here the shell is kept, because a marker with
+	 * the step's own word on it beats no marker.
+	 */
+	private static NpcType shown(NpcType type) {
+		if (type.field1425 == null) {
+			return type;
+		}
+		NpcType child = type.method476();
+		return child == null ? type : child;
 	}
 
 	/**

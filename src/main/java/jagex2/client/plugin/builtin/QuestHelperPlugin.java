@@ -687,13 +687,13 @@ public final class QuestHelperPlugin extends Plugin {
 			if ("talk".equals(s.kind) && npcs != null) {
 				for (Actor a : npcs) {
 					if (a != null && a.npcId == s.id) {
-						return at(s, a.sceneTileX, a.sceneTileZ, a.name != null ? a.name : s.shown());
+						return at(s, a.sceneTileX, a.sceneTileZ, nameOf(a, s));
 					}
 				}
 			} else if ("loc".equals(s.kind) && locs != null) {
 				for (SceneLoc l : locs) {
 					if (l.id == s.id && l.level == ctx.getPlane()) {
-						return at(s, l.sceneTileX, l.sceneTileZ, ctx.getLocName(l.id));
+						return at(s, l.sceneTileX, l.sceneTileZ, this.locName(s, l.id));
 					}
 				}
 			}
@@ -759,6 +759,37 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * What to write over a loc: the cache's name for it, or the step's own word when it has none.
+	 *
+	 * A MULTILOC is the same shape as the multinpc below - one id whose name lives on a child the
+	 * varbit picks - but it cannot be resolved in the same place. A loc's shell is exactly what a
+	 * plugin asks about when it wants that varbit, so PluginContext hands back the shell and
+	 * leaves resolving to the caller that wants it; the scene deals in shell ids, so a quest door
+	 * or a bookcase that changes with the quest has no name of its own to give. The step's word is
+	 * the better of the two in any case: it is what the guide calls the thing.
+	 */
+	private String locName(Step step, int id) {
+		String name = ctx.getLocName(id);
+		return name == null || name.isEmpty() ? step.shown() : name;
+	}
+
+	/**
+	 * What to write over an npc: its own name, unless the config has not got one.
+	 *
+	 * An npc with no name of its own reads "null" - the four letters 377 puts in the config, not a
+	 * missing value - and one whose type has not arrived yet reads "?". Neither is a label, so the
+	 * step's own word stands in. PluginContext already resolves a multinpc to the child the player
+	 * sees, so this is the npc that genuinely has no name rather than the Feud's villager.
+	 */
+	private static String nameOf(Actor npc, Step step) {
+		String name = npc.name;
+		if (name == null || name.isEmpty() || "null".equals(name) || "?".equals(name)) {
+			return step.shown();
+		}
+		return name;
 	}
 
 	private static Spot at(Step step, int sceneTileX, int sceneTileZ, String label) {
