@@ -44,7 +44,7 @@ MUTS = [
      '\t\tfor (int i = start; i < st.steps.size(); i++) {\n\t\t\tStep s = st.steps.get(i);\n\t\t\tif (s.id < 0) {',
      '\t\tfor (int i = st.steps.size() - 1; i >= start; i--) {\n\t\t\tStep s = st.steps.get(i);\n\t\t\tif (s.id < 0) {'),
     (PLUGIN, 'an npc matched by nothing, so the first npc in the scene is marked whoever it is',
-     '\t\t\t\t\tif (a != null && a.npcId == s.id) {',
+     '\t\t\t\t\tif (a != null && s.takes(a.npcId)) {',
      '\t\t\t\t\tif (a != null) {'),
 
     # ---- WHICH LEG. Stage granularity is all there is, so being off by one leg is the whole panel.
@@ -215,6 +215,18 @@ MUTS = [
     (PLUGIN, 'the npc in front of you never named, so the step\'s word is all there ever is',
      '\t\t\t\t\t\treturn at(s, a.sceneTileX, a.sceneTileZ, nameOf(a, s));',
      '\t\t\t\t\t\treturn at(s, a.sceneTileX, a.sceneTileZ, s.shown());'),
+
+    # ---- A STEP WHOSE TARGET COMES IN A CROWD: three villagers, three scorpions, two Edmonds.
+    (PLUGIN, 'the family ignored, so only the id the sim happened to meet is the step',
+     '\t\t\tif (npcId == this.id) {\n\t\t\t\treturn true;\n\t\t\t}',
+     '\t\t\tif (true) {\n\t\t\t\treturn npcId == this.id;\n\t\t\t}'),
+    # An "every npc is taken" mutation would go here, and is NOT here: the call-site mutation
+    # above ("matched by nothing") is the same break reached from one line higher up, and the
+    # suite cannot tell the two apart. One of them is the test; the second would only be a second
+    # forty seconds on every run.
+    (PLUGIN, 'the family never read off the table, so every step has one of itself',
+     '\t\t\t\tstep.also = ids(Json.array(m, "also"));',
+     '\t\t\t\tstep.also = NONE;'),
 
     # ---- THE LOCS OF A LEG, which is most of Elemental Workshop and all of its first one.
     (PLUGIN, 'the locs of the leg never swept, so a bookcase in front of you is not the step',

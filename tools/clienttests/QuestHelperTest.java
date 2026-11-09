@@ -62,6 +62,19 @@ public class QuestHelperTest {
 	/** A varp no quest in the table reads, used only to choose a multinpc's child. */
 	static final int MULTI_SELECTOR = 1900;
 
+	/**
+	 * Scorpion Catcher's three Kharid Scorpions, which the server runs one script on.
+	 *
+	 * Its first leg names 385 and its second 386, so the table's own rows are the proof that the
+	 * sim met a different one each time; a player standing in front of the third is standing in
+	 * front of the step.
+	 */
+	static final String SCORPION = "SCORPION CATCHER";
+	static final int SCORPION_VARP = 76;
+	static final int SCORPION_FIRST = 385;
+	static final int SCORPION_THIRD = 387;
+	static final String SCORPION_NAME = "Kharid Scorpion";
+
 	/** Elemental Workshop I's bookcase, the quest's first thing to search, and its name there. */
 	static final int BOOKCASE = 3389;
 	static final String BOOKCASE_NAME = "Bookcase";
@@ -260,6 +273,8 @@ public class QuestHelperTest {
 		multiTests();
 		System.out.println("12. a loc of the leg, standing in the scene");
 		locTests();
+		System.out.println("13. one of a crowd the step would take just as well");
+		familyTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -1038,6 +1053,58 @@ public class QuestHelperTest {
 	}
 
 	// ---------------------------------------------------------------- 11
+
+	// ---------------------------------------------------------------- 13
+
+	/**
+	 * A STEP WHOSE TARGET COMES IN A CROWD, which is what a player reported on The Feud.
+	 *
+	 * Pollnivneach has three villagers to pickpocket, Scorpion Catcher three scorpions, Plague
+	 * City two Edmonds. The sim met one of them and the table recorded that one, so the marker
+	 * pointed across town at the id it had while an identical one stood next to the player.
+	 *
+	 * The step now carries the ids the SERVER would run the same script on for its op, worked out
+	 * in the exporter where the scripts are loaded. Scorpion Catcher is the quest to check it on
+	 * because its own legs name different scorpions - 385 in the second leg, 386 in the third -
+	 * so the table itself says these are interchangeable, and because its progress is a plain
+	 * varp this harness can write.
+	 */
+	static void familyTests() throws Exception {
+		clearNpcs();
+		change();
+		track(SCORPION);
+		client.varps[SCORPION_VARP] = 2;
+
+		// THE THIRD SCORPION, where the leg names the first.
+		spawn(SCORPION_NAME, SCORPION_THIRD, MID_X, MID_Z);
+		settle();
+		check(said(screen(), "Use Scorpion cage on " + SCORPION_NAME),
+			"a step is the step with another of its family in front of you, not only its own id");
+		check(said(scene(), SCORPION_NAME), "...and that one is what the marker points at");
+		check(painted() > 0, "...with a box on its tile");
+
+		// AND NOT ANY NPC AT ALL, which is what a family that swallowed the whole cache would
+		// come to: a passer-by in no step of the leg, sharing no script with one.
+		clearNpcs();
+		spawn("Man", 1, MID_X, MID_Z);
+		settle();
+		check(!said(scene(), "Man"), "an npc of no family of the leg is not the step");
+		check(!said(screen(), "Use Scorpion cage on " + SCORPION_NAME),
+			"...and the panel falls back to the leg rather than claiming he is one");
+
+		// The id the leg names itself still works, which is the case that worked before.
+		clearNpcs();
+		spawn(SCORPION_NAME, SCORPION_FIRST, MID_X, MID_Z);
+		settle();
+		check(said(screen(), "Use Scorpion cage on " + SCORPION_NAME),
+			"the step's own id is still the step");
+
+		clearNpcs();
+		client.varps[SCORPION_VARP] = 0;
+		change();
+		track(FEUD);
+		settle();
+	}
 
 	// ---------------------------------------------------------------- 12
 

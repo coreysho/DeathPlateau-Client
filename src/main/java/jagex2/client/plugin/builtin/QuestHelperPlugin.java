@@ -83,6 +83,31 @@ public final class QuestHelperPlugin extends Plugin {
 		String target = null;
 		String label = null;
 		int id = -1;
+
+		/**
+		 * The OTHER npcs this step would take, or empty.
+		 *
+		 * Pollnivneach has three villagers to pickpocket and the sim used one of them, so the
+		 * marker pointed at that one across town while an identical villager stood next to the
+		 * player. These are the ids the SERVER runs the same script on for this step's op, worked
+		 * out where the scripts are loaded; it is per op and not per npc, so The Feud's Lure takes
+		 * two of its villagers and its Knock-Out only one.
+		 */
+		int[] also = NONE;
+
+		/** Whether an npc in the scene is the one this step is about, or one just as good. */
+		boolean takes(int npcId) {
+			if (npcId == this.id) {
+				return true;
+			}
+			for (int i = 0; i < this.also.length; i++) {
+				if (this.also[i] == npcId) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		int[] at = null;
 
 		/**
@@ -359,6 +384,7 @@ public final class QuestHelperPlugin extends Plugin {
 				step.id = Json.integer(m, "id", -1);
 				step.label = m.containsKey("label") ? Json.string(m, "label", null) : null;
 				step.item = Json.integer(m, "item", -1);
+				step.also = ids(Json.array(m, "also"));
 				step.gives = ids(Json.array(m, "gives"));
 				step.wears = ids(Json.array(m, "wears"));
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
@@ -686,7 +712,7 @@ public final class QuestHelperPlugin extends Plugin {
 			// recorded - that tile is where the sim met it, not where it is standing now.
 			if ("talk".equals(s.kind) && npcs != null) {
 				for (Actor a : npcs) {
-					if (a != null && a.npcId == s.id) {
+					if (a != null && s.takes(a.npcId)) {
 						return at(s, a.sceneTileX, a.sceneTileZ, nameOf(a, s));
 					}
 				}
