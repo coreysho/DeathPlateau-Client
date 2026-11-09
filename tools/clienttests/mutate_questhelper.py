@@ -114,6 +114,13 @@ MUTS = [
      '\t\t\t\tneed.bring = "true".equals(String.valueOf(m.get("bring")));',
      '\t\t\t\tneed.bring = false;'),
 
+    (PLUGIN, 'the page listing every item again, the quest\'s own included',
+     '\t\t\tif (n.bring) {\n\t\t\t\tout.add(n);\n\t\t\t}',
+     '\t\t\tif (true) {\n\t\t\t\tout.add(n);\n\t\t\t}'),
+    (PLUGIN, 'the page listing no items at all, so a leg never names what to bring',
+     '\t\t\tif (n.bring) {\n\t\t\t\tout.add(n);\n\t\t\t}',
+     '\t\t\tif (false) {\n\t\t\t\tout.add(n);\n\t\t\t}'),
+
     # ---- HOW FAR INTO A LEG. The bag is the only record inside one.
     (PLUGIN, 'the leg always started from its first step, which is how it stuck on the bookcase',
      '\t\tint start = this.reached(this.tracked(), st);',

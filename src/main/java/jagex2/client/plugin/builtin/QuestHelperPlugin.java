@@ -673,6 +673,27 @@ public final class QuestHelperPlugin extends Plugin {
 	 * in the table and still on the page, where they read as what is coming; they are just not
 	 * counted as missing.
 	 */
+	/**
+	 * The items of a leg worth showing anybody: the ones to BRING.
+	 *
+	 * The rest are what the quest hands over while you are in it, and a row for those is a row
+	 * about nothing you can act on - "Battered key 0/1" above the steps that go and find it. They
+	 * stay in the table, because that is where the sims put them and because {@link #reached}
+	 * reads the ids to tell how far into a leg you have got; they are simply not a list.
+	 */
+	private static List<Need> bringing(Stage st) {
+		List<Need> out = new ArrayList<>();
+		if (st == null) {
+			return out;
+		}
+		for (Need n : st.items) {
+			if (n.bring) {
+				out.add(n);
+			}
+		}
+		return out;
+	}
+
 	private List<Need> missing(Stage st) {
 		List<Need> out = new ArrayList<>();
 		if (st == null) {
@@ -923,7 +944,7 @@ public final class QuestHelperPlugin extends Plugin {
 					}
 					Quest q = tracked();
 					Stage st = stageNow(q);
-					return 1 + (st == null ? 0 : st.steps.size() + st.items.size());
+					return 1 + (st == null ? 0 : st.steps.size() + bringing(st).size());
 				}
 
 				public String label(int index) {
@@ -945,7 +966,9 @@ public final class QuestHelperPlugin extends Plugin {
 						// first only guaranteed the wrap landed on a "..".
 						return st.steps.get(i).text;
 					}
-					return pretty(st.items.get(i - st.steps.size()).name);
+					List<Need> items = bringing(st);
+					int at = i - st.steps.size();
+					return at < items.size() ? pretty(items.get(at).name) : "";
 				}
 
 				public String detail(int index) {
@@ -970,12 +993,9 @@ public final class QuestHelperPlugin extends Plugin {
 						Step step = st.steps.get(i);
 						return step.why != null && !step.why.isEmpty() ? step.why : step.shown();
 					}
-					// WHERE IT COMES FROM FIRST, because that is what decides whether the row is
-					// a thing to go and fetch or a thing to expect: "found in the quest" under
-					// Battered key, "to carry" under Hammer.
-					Need need = st.items.get(i - st.steps.size());
-					return need.bring ? (need.wear ? "to wear" : "to carry")
-						: (need.wear ? "from the quest, to wear" : "from the quest");
+					List<Need> items = bringing(st);
+					int at = i - st.steps.size();
+					return at >= items.size() ? null : items.get(at).wear ? "to wear" : "to carry";
 				}
 
 				public String value(int index) {
@@ -994,7 +1014,12 @@ public final class QuestHelperPlugin extends Plugin {
 						Spot sp = spot(st);
 						return sp != null && sp.step == st.steps.get(i) ? "now" : null;
 					}
-					Need n = st.items.get(i - st.steps.size());
+					List<Need> items = bringing(st);
+					int at = i - st.steps.size();
+					if (at >= items.size()) {
+						return null;
+					}
+					Need n = items.get(at);
 					return (n.id < 0 ? 0 : ctx.countObj(n.id)) + "/" + n.n;
 				}
 

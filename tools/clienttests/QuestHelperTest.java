@@ -400,6 +400,38 @@ public class QuestHelperTest {
 		check(said(screen(), "need Leather gloves"), "...while the rest of the list stands");
 		carry(BUCKET, 0);
 		settle();
+
+		// AND THE QUEST'S OWN ITEMS ARE NOT ON THE PAGE AT ALL. A row for something the quest
+		// hands over is a row about nothing anybody can act on; The Restless Ghost's amulet is
+		// one, and its leg has no other item.
+		change();
+		track(GHOST);
+		client.varps[GHOST_VARP] = 2;
+		settle();
+		List<ConfigList.Row> rows = page();
+		String amulet = null;
+		for (ConfigList.Row row : rows) {
+			if (row.label != null && row.label.indexOf("Ghostspeak amulet") >= 0
+				&& !row.label.startsWith("Wear ")) {
+				amulet = row.label + " / " + row.detail;
+			}
+		}
+		check(amulet == null, "the quest's own item is not a row on the page (" + amulet + ")");
+		check(rows.size() > 1, "...and the leg's steps are still listed (" + rows.size() + " rows)");
+		client.varps[GHOST_VARP] = 0;
+		change();
+		track(FEUD);
+		settle();
+
+		// The ones to bring ARE rows, with a count beside them.
+		List<ConfigList.Row> feud = page();
+		int counted = 0;
+		for (ConfigList.Row row : feud) {
+			if ("to carry".equals(row.detail) || "to wear".equals(row.detail)) {
+				counted++;
+			}
+		}
+		check(counted == 3, "a leg's three things to bring are three rows (" + counted + ")");
 	}
 
 	// ---------------------------------------------------------------- 6
