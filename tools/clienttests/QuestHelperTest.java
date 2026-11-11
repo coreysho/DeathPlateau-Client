@@ -20,6 +20,7 @@ import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.PluginContext;
 import jagex2.client.plugin.PluginManager;
 import jagex2.config.LocType;
+import jagex2.config.VarbitType;
 import jagex2.config.NpcType;
 import jagex2.dash3d.ClientNpc;
 import jagex2.dash3d.ClientPlayer;
@@ -305,10 +306,23 @@ public class QuestHelperTest {
 	 * nothing to catch out here; what it leaves behind is entry.renderErrors. The count is zeroed
 	 * and the plugin re-enabled before each leg, so one bad leg cannot hide the ones after it.
 	 *
-	 * WHAT IT CANNOT REACH: a quest whose progress is a varbit. A varbit is a range of bits inside
-	 * a parent varp described by the cache, and this harness has no cache, so writing one reads
-	 * back zero. Those quests are swept at their first leg only, and the count is printed rather
-	 * than hidden.
+	 * IT USED TO STOP AT THE VARBIT QUESTS. A varbit is a range of bits inside a parent varp
+	 * described by the cache, and this harness has no cache, so writing one read back zero: 28
+	 * quests were swept at their first leg only and 225 legs were drawn by nothing. The Feud was
+	 * the worst of them at 16 unreachable legs, and The Feud is the quest the reports keep coming
+	 * from, which is how "667 legs swept, no throw" and a player hitting one were both true.
+	 *
+	 * So the three numbers that make up a varbit now travel in the table - `stageBits`, emitted by
+	 * the engine's ExportHelper out of VarBitType - and this builds the entries getVarbit needs by
+	 * hand. VarbitType.field1760 is the table it reads; nothing but this harness ever assigns it,
+	 * because a real client unpacks it from the cache.
+	 *
+	 * AND EVERY LEG IS READ BACK THROUGH THE PLUGIN'S OWN questValue PATH before it counts. Bit
+	 * arithmetic written here could disagree with decodeVarbit, a bit range could be wrong, or a
+	 * leg value could be too wide for its field - and in all three cases the sweep would draw leg
+	 * 0 over and over while reporting a number it had not reached. A leg that does not read back
+	 * is counted as unreachable and named, which is the one thing worse than a small sweep: a big
+	 * one that is lying.
 	 */
 	static void sweepTests() throws Exception {
 		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
@@ -326,10 +340,39 @@ public class QuestHelperTest {
 		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
 		enabledField.setAccessible(true);
 
+		// THE VARBIT TABLE THE CACHE WOULD HAVE GIVEN US, built from what the quests declare. Sized
+		// to the highest id in use; every other slot stays null, which is exactly what a cache that
+		// does not define an id looks like to varbitType(), so no OTHER varbit starts answering.
+		int widest = -1;
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			if (quest.get("stageBits") != null) {
+				widest = Math.max(widest, jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1));
+			}
+		}
+		VarbitType[] table = new VarbitType[widest + 1];
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
+			int id = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			if (bits == null || id < 0 || id >= table.length) {
+				continue;
+			}
+			VarbitType type = new VarbitType();
+			type.field1762 = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
+			type.field1763 = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
+			type.field1764 = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
+			table[id] = type;
+		}
+		VarbitType[] wasTable = VarbitType.field1760;
+		VarbitType.field1760 = table;
+
+		PluginContext ctx = context();
 		int legs = 0;
 		int unreachable = 0;
 		List<String> threw = new ArrayList<String>();
 		List<String> untrackable = new ArrayList<String>();
+		List<String> notWritten = new ArrayList<String>();
 
 		for (Object element : all) {
 			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
@@ -343,14 +386,21 @@ public class QuestHelperTest {
 				untrackable.add(name);
 				continue;
 			}
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
 			for (Object stage : jagex2.client.plugin.hub.Json.array(quest, "stages")) {
 				int from = jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stage, "from", 0);
-				if (varbit && from != 0) {
-					unreachable++;
-					continue;
-				}
-				if (!varbit && varp >= 0 && varp < client.varps.length) {
+				if (varbit) {
+					writeBits(bits, from);
+				} else if (varp >= 0 && varp < client.varps.length) {
 					client.varps[varp] = from;
+				}
+				// READ BACK THE WAY THE PLUGIN READS IT. If this disagrees, the leg was never set
+				// and drawing it would be drawing some other leg under its name.
+				int saw = varp < 0 ? 0 : (varbit ? ctx.getVarbit(varp) : ctx.getVarp(varp));
+				if (saw != from) {
+					unreachable++;
+					notWritten.add(name + " leg " + from + " read back as " + saw);
+					continue;
 				}
 				manager.onClientTick(ticks++);
 				errorsField.setInt(entry, 0);
@@ -372,8 +422,33 @@ public class QuestHelperTest {
 		for (String bad : untrackable) {
 			System.out.println("       no row: " + bad);
 		}
-		check(threw.isEmpty(), "every quest at every reachable leg draws without throwing ("
-			+ legs + " legs drawn, " + unreachable + " varbit legs the harness cannot reach)");
+		for (String bad : notWritten) {
+			System.out.println("       could not set: " + bad);
+		}
+		check(threw.isEmpty(), "every quest at every leg draws without throwing (" + legs + " legs drawn)");
+		// THE SHORTFALL IS ITS OWN CHECK NOW, not a number in another check's name. While it was
+		// only ever printed, 225 legs went unswept for as long as nobody read the line.
+		check(unreachable == 0, "and every leg in the table could be set to begin with ("
+			+ unreachable + " unreachable)");
+		VarbitType.field1760 = wasTable;
+	}
+
+	/**
+	 * One varbit's value, written into the parent varp's bits. The inverse of
+	 * PluginContext.decodeVarbit, which is what reads it back two lines after every call to this.
+	 */
+	static void writeBits(java.util.Map<?, ?> bits, int value) {
+		if (bits == null) {
+			return;
+		}
+		int varp = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
+		int lsb = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
+		int msb = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
+		if (varp < 0 || varp >= client.varps.length || lsb < 0 || msb < lsb || msb > 31) {
+			return;
+		}
+		int mask = msb - lsb >= 31 ? -1 : (1 << (msb - lsb + 1)) - 1;
+		client.varps[varp] = client.varps[varp] & ~(mask << lsb) | (value & mask) << lsb;
 	}
 
 	// ---------------------------------------------------------------- 1
