@@ -104,6 +104,78 @@ jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+// ---- THE QUEST HELPER'S STEP TABLE, TAKEN FROM THE ENGINE AT BUILD TIME ----
+//
+// src/main/resources/deathplateau/quests.json is GENERATED, by the engine's
+// tools/quest/ExportHelper.ts out of the sim manifests. It used to get here by hand, and on
+// 10 November the engine's #36 and #37 fixed the exporter, regenerated the table there, went
+// green and merged - and this jar shipped a table eleven steps short for a day, The Feud among
+// them. A file that has to be copied by a person is a file that will not be.
+//
+// So when there is an engine beside this checkout, ITS table is what goes in the jar, and the
+// committed copy is not read at all. release.yml checks the engine out and points this at it, so
+// what players download is generated rather than remembered.
+//
+// THE COMMITTED COPY STAYS, and is not vestigial: it is what ships when there is no engine here,
+// which is every clone of this repository on its own. Eleven of the test suites construct a real
+// client and the plugin reads this table off its own classpath, so a build with nothing in it
+// would be a build whose quest helper has no quests. tools/clienttests/run_helpertabletest.py is
+// what keeps it from rotting - it fails when this file and the engine's disagree, and a skip from
+// it is a failure.
+//
+// WHY IT COPIES RATHER THAN RUNNING THE EXPORTER. The exporter resolves every target to a cache
+// id, so it imports NpcType, LocType and ScriptProvider and needs the engine's node_modules and a
+// packed cache - a 350MB content clone and about a hundred seconds - to produce bytes that are
+// already sitting in the engine's data/quests.json. And that file is not taken on trust: the same
+// run_helpertabletest.py checks it against a fresh export on every push, in the one job that has
+// a cache packed already. So this copies a value that is checked elsewhere rather than paying to
+// recompute it in every build.
+//
+// WHERE IT LOOKS, in order:
+//   -PquestTable=<path>     or the DP_QUEST_TABLE environment variable. What CI uses, because a
+//                           runner checks the engine out inside the workspace and not beside it.
+//   ../Engine-TS            the name the test suites look for, and the README's layout.
+//   ../DeathPlateau-Engine  the name a clone gets if you do not rename it.
+def questTable = {
+    def named = project.findProperty('questTable') ?: System.getenv('DP_QUEST_TABLE')
+    if (named) {
+        def f = file(named)
+        if (!f.isFile()) {
+            // NOT a warning. Somebody asked for a specific table by name and it is not there, so
+            // shipping the committed one instead would be answering a different question.
+            throw new GradleException("questTable=${named} is not a file")
+        }
+        return f
+    }
+    for (name in ['Engine-TS', 'DeathPlateau-Engine']) {
+        def f = new File(projectDir.parentFile, "${name}/data/quests.json")
+        if (f.isFile()) {
+            return f
+        }
+    }
+    return null
+}()
+
+processResources {
+    if (questTable != null) {
+        // EXCLUDE AND THEN ADD, rather than letting two sources race for the same path and
+        // trusting a duplicates strategy to pick the one I meant. One file reaches the jar and
+        // this says which.
+        exclude 'deathplateau/quests.json'
+        from(questTable) { into 'deathplateau' }
+        inputs.file(questTable)
+        doFirst {
+            def committed = file('src/main/resources/deathplateau/quests.json')
+            def same = committed.isFile() && committed.bytes == questTable.bytes
+            logger.lifecycle("quest table: ${questTable} (${same ? 'same as the committed copy' : 'DIFFERS from the committed copy - the engine\'s is shipping'})")
+        }
+    } else {
+        doFirst {
+            logger.lifecycle('quest table: no engine beside this checkout, so the committed src/main/resources copy ships')
+        }
+    }
+}
+
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
 }

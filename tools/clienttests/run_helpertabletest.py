@@ -2,25 +2,31 @@
 """The step table shipped in the jar is the one the engine's exporter writes.
 
 THE GAP THIS EXISTS FOR. data/quests.json is GENERATED, by Engine-TS/tools/quest/
-ExportHelper.ts out of the sim manifests. The table a player's helper actually reads is a
-RESOURCE in this repository - src/main/resources/deathplateau/quests.json, loaded off the
-plugin's own classpath - and nothing regenerates it at build time. It is a file copied across by
-hand.
+ExportHelper.ts out of the sim manifests. The table a player's helper reads is a RESOURCE -
+deathplateau/quests.json on the plugin's own classpath - and it used to get here by hand.
 
 So the engine's PRs #36 and #37 fixed the exporter, regenerated data/quests.json there, went
-green, and merged - and the table in this jar stayed eleven steps short for a day, across six
+green, and merged - and the table in the jar stayed eleven steps short for a day, across six
 quests, The Feud among them. No server deploy touches this file and no git pull on the box would
 have fixed it. Nothing anywhere compared the two copies, so nothing could say so.
+
+WHAT CHANGED SINCE, and what this still guards. build.gradle now takes the engine's table when
+there is an engine to take it from, and build.yaml and release.yml check one out - so the jar a
+player downloads is generated rather than remembered, and the committed copy is no longer what
+ships. It is the FALLBACK: what a lone clone of this repository builds with, which is every
+clone that has no engine beside it, and what a release ships if that checkout does not arrive.
+A fallback nobody compares is a fallback that rots, and eleven of the suites construct a real
+client that reads it. So this keeps it equal to the engine's.
 
 WHAT IT CHECKS, as two separate failures, because the fix is different for each:
 
     the engine's copy is current   data/quests.json there == a fresh ExportHelper run.
                                    Fails when somebody changes the exporter and does not
                                    regenerate. Fix: run the exporter, commit it there.
-    the jar ships that copy        this repository's resource == data/quests.json there.
+    the fallback is that copy      this repository's resource == data/quests.json there.
                                    Fails when the engine's table moves and nobody copies it
-                                   here. That is the one that happened. Fix: copy it across and
-                                   release, because every push to dev-logging is a release.
+                                   here. That is the one that happened, back when the fallback
+                                   was also what shipped. Fix: copy it across and push.
 
 IT NAMES THE QUESTS. "The files differ" sends you diffing an 800KB JSON; a step count per quest
 is what made this legible in the first place, so a mismatch prints the quests whose step counts
@@ -119,16 +125,15 @@ def main():
         print('the quest helper\'s step table, in all three places it exists')
         ok = report('the engine\'s data/quests.json is what the exporter writes now',
                     fresh, 'exported', engine_copy, 'committed')
-        ok &= report('and the table shipped in this jar is that same table',
-                     engine_copy, 'engine', shipped, 'jar')
+        ok &= report('and the committed fallback is that same table',
+                     engine_copy, 'engine', shipped, 'committed')
 
         if ok:
             print('\n2 checks, ALL PASS')
             return 0
-        print('\nThe helper is reading a table nobody generated. Regenerate it in the engine with '
-              '`npx tsx tools/quest/ExportHelper.ts`, copy data/quests.json to '
-              'src/main/resources/deathplateau/quests.json here, and push - every push to '
-              'dev-logging is a client release.')
+        print('\nRegenerate it in the engine with `npx tsx tools/quest/ExportHelper.ts`, copy '
+              'data/quests.json to src/main/resources/deathplateau/quests.json here, and push - '
+              'every push to dev-logging is a client release.')
         return 1
     finally:
         shutil.rmtree(work, ignore_errors=True)

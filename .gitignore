@@ -21,3 +21,7 @@ launcher/out/
 /client.jar
 /Death-Plateau-Launcher.jar
 __pycache__/
+
+# The engine, checked out beside this one by build.yaml and release.yml so build.gradle can take
+# the quest helper step table from it. A local checkout can live here too instead of ../Engine-TS.
+/engine/
