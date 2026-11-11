@@ -7,13 +7,17 @@ import jagex2.graphics.PixFont;
  * Icons and shadowed text inside a chatbox line: the rank crowns, and the XP-mode badges that the
  * rare-drop broadcasts and ::yell put beside a player's name.
  *
- * AN ICON IS A FIVE-CHARACTER MARKER in the text, "@cr1@" to "@cr9@", naming imageModIcons[0..8]:
+ * AN ICON IS A FIVE-CHARACTER MARKER in the text, "@cr1@" to "@cra@", naming imageModIcons[0..9]:
  *   @cr1@ silver crown (moderator)    @cr3@ Realism badge (1x)
  *   @cr2@ gold crown (administrator)  @cr4@ 5x badge
  *   @cr6@ purple crown (developer)    @cr5@ 10x badge
  *   @cr7@ red crown (owner)
  *   @cr8@ blue and gold crown (a second owner)
  *   @cr9@ bronze emblem (veteran - tested before launch; the only one that is not a crown)
+ *   @cra@ blue roundel (helper - a player who answers questions, and carries no powers at all)
+ * The tenth could not be "@cr10@": the marker is five characters BECAUSE that is the shape of a
+ * colour tag, which is the whole reason an older client skips one it does not know rather than
+ * printing it. So the numbering carries on into letters when it runs out of digits.
  * The first two were already the markers public and private chat put in front of a sender's name,
  * so the numbering carries on from them rather than starting a second scheme. Every marker is the
  * shape of a colour tag - "@" + three characters + "@" - which is what makes this degrade well: an
@@ -46,7 +50,10 @@ public final class ChatIcons {
 			return -1;
 		}
 		char n = text.charAt(i + 3);
-		return n >= '1' && n <= '9' ? n - '1' : -1;
+		if (n >= '1' && n <= '9') {
+			return n - '1';
+		}
+		return n == 'a' ? 9 : -1;
 	}
 
 	private static int shadowAt(String text, int i) {
@@ -72,7 +79,7 @@ public final class ChatIcons {
 	/**
 	 * The markers for the icons byte at the end of a player's appearance (engine Player.chatIcons):
 	 * the crown in the low nibble - 1 silver, 2 gold, 4 developer, 5 owner, 6 second owner,
-	 * 7 veteran - and the XP-mode badge in
+	 * 7 veteran, 8 helper - and the XP-mode badge in
 	 * the high one - 1 Realism, 2 5x, 3 10x. Crown first, the order ~broadcast_name uses.
 	 *
 	 * 7 IS TESTED BEFORE THE ">= 6", and the order is the only thing stopping a veteran from
@@ -83,7 +90,7 @@ public final class ChatIcons {
 	public static String forPlayer(int icons) {
 		int crown = icons & 0xF;
 		int badge = icons >> 4 & 0xF;
-		String s = crown == 7 ? "@cr9@" : crown >= 6 ? "@cr8@" : crown == 5 ? "@cr7@" : crown == 4 ? "@cr6@" : crown >= 2 ? "@cr2@" : crown == 1 ? "@cr1@" : "";
+		String s = crown == 8 ? "@cra@" : crown == 7 ? "@cr9@" : crown >= 6 ? "@cr8@" : crown == 5 ? "@cr7@" : crown == 4 ? "@cr6@" : crown >= 2 ? "@cr2@" : crown == 1 ? "@cr1@" : "";
 		if (badge >= 1 && badge <= 3) {
 			s += "@cr" + (badge + 2) + "@";
 		}
