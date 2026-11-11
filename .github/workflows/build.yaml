@@ -207,7 +207,11 @@ jobs:
         # run_helpertabletest is here for the same reason twice over: it is the one check that
         # compares the step table shipped in this jar against the one the engine's exporter writes,
         # and a quest helper reading a table nobody generated is precisely what a silent skip buys.
-        for want in run_worldmaptest run_mapicontest run_logintokentest run_helpertabletest; do
+        # run_chaticontest joins them for the same reason as run_helpertabletest: it is the only
+        # place where this client's idea of a chat icon and the engine's are both in the room, and
+        # a marker one side draws while the other measures it as nothing wraps chat at the wrong
+        # width. A silent skip there is a contract nobody is checking.
+        for want in run_worldmaptest run_mapicontest run_logintokentest run_helpertabletest run_chaticontest; do
           case " $skipped " in
             *" $want "*)
               echo "::error title=$want::$want skipped, and it cannot: this job checks out the engine and packs a cache, so the checkout, the pack, the login key or the migrations did not arrive"
