@@ -69,10 +69,19 @@ jobs:
       run: |
         mkdir -p launcher/out
         javac -source 8 -target 8 -encoding UTF-8 -d launcher/out $(find launcher/src -name '*.java')
-        # FROM THE PROCESSED RESOURCES, not from src: the step above may have taken the
-        # quest table from the engine, and this jar carries that directory too. Reading src
-        # here would put a different table in the launcher than in the client.
-        cp -r build/resources/main/deathplateau launcher/out/
+        cp -r src/main/resources/deathplateau launcher/out/
+        # THE SAME TABLE THE CLIENT JAR GOT. This jar carries that resource directory too, and
+        # the step above may have taken the quest table from the engine - so overlay it here as
+        # well, or the launcher would carry the committed one and the two jars would disagree.
+        #
+        # GUARDED, AND FROM THE ENGINE RATHER THAN FROM build/resources: this block is not only
+        # run here. tools/clienttests/run_launchertest.py reads it out of this file and runs it
+        # against a plain copy of the repository - no gradle, so no build/resources - which is
+        # the only way a test of a build step stays true to the step. Reaching into gradle's
+        # output coupled the launcher to a build that had not happened, and that suite said so.
+        if [ -f engine/data/quests.json ]; then
+          cp engine/data/quests.json launcher/out/deathplateau/quests.json
+        fi
         jar cfe Death-Plateau-Launcher.jar lostcity.Launcher -C launcher/out .
 
     # NO WINDOWS .EXE, DELIBERATELY. The icon on a .jar in Explorer is the file-type icon Windows
