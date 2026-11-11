@@ -277,10 +277,103 @@ public class QuestHelperTest {
 		familyTests();
 		System.out.println("14. the dialogue option the step would pick");
 		dialogueTests();
+		System.out.println("15. every quest, at every leg, drawn");
+		sweepTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
 		System.exit(fails == 0 ? 0 : 1);
+	}
+
+	// ---------------------------------------------------------------- 15
+
+	/**
+	 * EVERY QUEST AT EVERY LEG, DRAWN, AND NONE OF THEM THROWING.
+	 *
+	 * WHY THIS EXISTS. A player reported the helper turning itself off, quoting the client's own
+	 * words back: "it kept throwing while drawing". That message comes from PluginManager, which
+	 * catches a Throwable out of an overlay, counts it, and disables the plugin at the fifth one -
+	 * so the plugin fails SILENTLY until it vanishes, and the only record is a line in the dev log
+	 * on the player's own machine. Every test above picks a quest and a leg by hand, which is how
+	 * a throw in the 880 legs nobody picked stays invisible.
+	 *
+	 * So this walks the shipped table: track each quest, write each leg's `from` into its progress
+	 * varp, and draw all three layers. It asserts nothing about what is drawn - the sections above
+	 * do that - only that drawing it does not throw.
+	 *
+	 * THE COUNTER, NOT THE EXCEPTION. renderOverlays swallows the Throwable by design, so there is
+	 * nothing to catch out here; what it leaves behind is entry.renderErrors. The count is zeroed
+	 * and the plugin re-enabled before each leg, so one bad leg cannot hide the ones after it.
+	 *
+	 * WHAT IT CANNOT REACH: a quest whose progress is a varbit. A varbit is a range of bits inside
+	 * a parent varp described by the cache, and this harness has no cache, so writing one reads
+	 * back zero. Those quests are swept at their first leg only, and the count is printed rather
+	 * than hidden.
+	 */
+	static void sweepTests() throws Exception {
+		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
+		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+		byte[] chunk = new byte[8192];
+		for (int n = in.read(chunk); n > 0; n = in.read(chunk)) {
+			buf.write(chunk, 0, n);
+		}
+		in.close();
+		Object root = jagex2.client.plugin.hub.Json.parse(new String(buf.toByteArray(), "UTF-8"));
+		List<?> all = jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) root, "quests");
+
+		java.lang.reflect.Field errorsField = PluginManager.Entry.class.getDeclaredField("renderErrors");
+		errorsField.setAccessible(true);
+		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
+		enabledField.setAccessible(true);
+
+		int legs = 0;
+		int unreachable = 0;
+		List<String> threw = new ArrayList<String>();
+		List<String> untrackable = new ArrayList<String>();
+
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			String name = jagex2.client.plugin.hub.Json.string(quest, "name", "");
+			int varp = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			boolean varbit = Boolean.TRUE.equals(quest.get("stageIsVarbit"));
+			try {
+				change();
+				track(name);
+			} catch (RuntimeException notListed) {
+				untrackable.add(name);
+				continue;
+			}
+			for (Object stage : jagex2.client.plugin.hub.Json.array(quest, "stages")) {
+				int from = jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stage, "from", 0);
+				if (varbit && from != 0) {
+					unreachable++;
+					continue;
+				}
+				if (!varbit && varp >= 0 && varp < client.varps.length) {
+					client.varps[varp] = from;
+				}
+				manager.onClientTick(ticks++);
+				errorsField.setInt(entry, 0);
+				enabledField.setBoolean(entry, true);
+				screen();
+				scene();
+				sidebar();
+				legs++;
+				if (errorsField.getInt(entry) > 0) {
+					threw.add(name + " at leg " + from);
+				}
+			}
+		}
+
+		for (String bad : threw) {
+			System.out.println("       threw while drawing: " + bad);
+		}
+		check(untrackable.isEmpty(), "every quest in the table has a row to track (" + all.size() + " quests)");
+		for (String bad : untrackable) {
+			System.out.println("       no row: " + bad);
+		}
+		check(threw.isEmpty(), "every quest at every reachable leg draws without throwing ("
+			+ legs + " legs drawn, " + unreachable + " varbit legs the harness cannot reach)");
 	}
 
 	// ---------------------------------------------------------------- 1
