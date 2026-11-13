@@ -211,7 +211,16 @@ jobs:
         # place where this client's idea of a chat icon and the engine's are both in the room, and
         # a marker one side draws while the other measures it as nothing wraps chat at the wrong
         # width. A silent skip there is a contract nobody is checking.
-        for want in run_worldmaptest run_mapicontest run_logintokentest run_helpertabletest run_chaticontest; do
+        #
+        # run_pmcrowntest needs neither the engine nor a cache - only javac and java, which this
+        # job has by definition, since it builds the jar a few steps up. So it has nothing it can
+        # legitimately skip for, and what it guards is worth more than its cost: the private
+        # message icon ladder is the one place a rank icon is chosen OUTSIDE ChatIcons.forPlayer,
+        # and the order of its branches is all that keeps a Veteran's emblem from coming out as the
+        # second owner's crown. It also checks that neither ornament turns into a right - message
+        # type 7 is drawn whatever the recipient set their private chat to, and the ignore list is
+        # gated on the same byte.
+        for want in run_worldmaptest run_mapicontest run_logintokentest run_helpertabletest run_chaticontest run_pmcrowntest; do
           case " $skipped " in
             *" $want "*)
               echo "::error title=$want::$want skipped, and it cannot: this job checks out the engine and packs a cache, so the checkout, the pack, the login key or the migrations did not arrive"
