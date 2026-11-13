@@ -10730,7 +10730,13 @@ public class Client extends GameShell implements PixMap.Target {
 						break;
 					}
 				}
-				if (var94 <= 1) {
+				// THE IGNORE LIST IS BYPASSED BY STAFF, NOT BY AN ICON. This read "crown <= 1",
+				// which meant the same thing for as long as every crown above 1 was a staff rank.
+				// Crowns 7 and 8 are the Veteran and Helper emblems and carry no rights whatever,
+				// so they have to be listed here: without them, giving somebody an ornament would
+				// quietly let them past a block, and taking it away would be the only way to stop
+				// them. Added 2026-11-13 with the engine change that started sending 7 and 8 here.
+				if (var94 <= 1 || var94 == 7 || var94 == 8) {
 					for (int var97 = 0; var97 < this.ignoreCount; var97++) {
 						if (this.ignoreName37[var97] == var91) {
 							var95 = true;
@@ -10750,7 +10756,21 @@ public class Client extends GameShell implements PixMap.Target {
 						//if (var94 != 3) {
 						//	var98 = WordFilter.filter(var98);
 						//}
-						if (var94 >= 6) {
+						// 7 AND 8 ARE TESTED BEFORE THE ">= 6", and the order is the only thing
+						// stopping a veteran from wearing the second owner's crown - the same
+						// fencing, for the same reason, as ChatIcons.forPlayer. The low nibble is
+						// a set of icon ids rather than a ladder.
+						//
+						// AND THEY ARE MESSAGE TYPE 3, NOT 7. Type 7 is a staff line: it is drawn
+						// whatever the recipient has set their private chat to, which is right for
+						// a moderator and wrong for an ornament. Type 3 respects the setting, so a
+						// Veteran's message reaches exactly the people an ordinary player's would,
+						// with the emblem drawn on it.
+						if (var94 == 8) {
+							this.addMessage("@cra@" + JString.formatDisplayName(JString.fromBase37(var91)), var98, 3);
+						} else if (var94 == 7) {
+							this.addMessage("@cr9@" + JString.formatDisplayName(JString.fromBase37(var91)), var98, 3);
+						} else if (var94 >= 6) {
 							this.addMessage("@cr8@" + JString.formatDisplayName(JString.fromBase37(var91)), var98, 7);
 						} else if (var94 == 5) {
 							this.addMessage("@cr7@" + JString.formatDisplayName(JString.fromBase37(var91)), var98, 7);
