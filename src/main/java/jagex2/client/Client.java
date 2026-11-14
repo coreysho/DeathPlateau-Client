@@ -1500,6 +1500,28 @@ public class Client extends GameShell implements PixMap.Target {
 		String value = System.getProperty(property);
 		return value != null ? value : System.getenv(env);
 	}
+
+	/**
+	 * WHERE A SETTING CAME FROM, for the session log. The log has said which address the client is
+	 * dialling since the first tunnel went wrong; what it has never said is WHY that address, and
+	 * twice now that has cost an evening.
+	 *
+	 * On 2026-11-14 a staff client could not reach the dev world and the log showed two playit.gg
+	 * tunnels that had not existed since 3 November. Three explanations fit it exactly - a stale
+	 * environment variable, a -D left in a shortcut, or a jar built before the relay replaced those
+	 * defaults - and the three have three different fixes. It was the last, found by comparing file
+	 * dates. With this, the same log reads "host from built in" beside an address that is not the
+	 * built-in default any more, which names the jar on the first line instead of the third hour.
+	 */
+	private static String origin(String property, String env) {
+		if (System.getProperty(property) != null) {
+			return "-D" + property;
+		}
+		if (System.getenv(env) != null) {
+			return "$" + env;
+		}
+		return "built in";
+	}
 	private static final String RELAY_HOST = "216.128.157.152";
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
 	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : RELAY_HOST;
@@ -2693,6 +2715,14 @@ public class Client extends GameShell implements PixMap.Target {
 			// opposite fixes. Every log now answers it before the first frame.
 			DevLog.log("SESSION", "game " + gameAddress() + "  cache " + webAddress() + "  jaggrab "
 				+ (jaggrabUsable(JAGGRAB_PORT, WS_URL) ? WEB_HOST + ":" + JAGGRAB_PORT : "off"));
+			// ...and where each of those came from, which is the half that was missing. Naming the
+			// built-in default beside them is what makes a stale jar obvious: an address that does
+			// not match it, from no property and no variable, can only have been compiled in.
+			DevLog.log("SESSION", "host from " + origin("lostcity.host", "LOSTCITY_HOST")
+				+ ", port from " + origin("lostcity.port", "LOSTCITY_PORT")
+				+ ", cache host from " + origin("lostcity.webhost", "LOSTCITY_WEBHOST")
+				+ ", cache port from " + origin("lostcity.webport", "LOSTCITY_WEBPORT")
+				+ " (built in: " + RELAY_HOST + ", game 43594, cache 8888)");
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
