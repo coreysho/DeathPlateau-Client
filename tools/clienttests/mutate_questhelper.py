@@ -27,6 +27,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 PLUGIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/QuestHelperPlugin.java')
 CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
+# The menu's own resolver: which npc, loc or obj a clicked row acts on. The quest helper reads
+# the player's clicks through it, so a wrong answer here is a step that never moves.
+CLIENT = os.path.join(ROOT, 'src/main/java/jagex2/client/Client.java')
 RUNNER = os.path.join(HERE, 'run_questhelpertest.py')
 
 MUTS = [
@@ -60,11 +63,81 @@ MUTS = [
 
     # ---- WHOSE CHOICE. The plugin used to pick a quest for the player and got it wrong five
     # ---- times in six, which is worse than an empty page with a list on it.
-    (PLUGIN, 'a quest picked for the player again, the first started one in table order',
-     '\t\tif (this.pinned == null) {\n\t\t\treturn null;\n\t\t}',
-     '\t\tif (this.pinned == null) {\n\t\t\tfor (Quest q : this.quests) {\n'
+    (PLUGIN, 'a quest guessed for the player again, the first started one in table order',
+     '\t\tif (this.trackedQuest == null || this.trackedQuest.isEmpty()) {\n\t\t\treturn null;\n\t\t}',
+     '\t\tif (this.trackedQuest == null || this.trackedQuest.isEmpty()) {\n\t\t\tfor (Quest q : this.quests) {\n'
      '\t\t\t\tif (this.started(q) && !this.finished(q)) {\n\t\t\t\t\treturn q;\n\t\t\t\t}\n\t\t\t}\n'
      '\t\t\treturn null;\n\t\t}'),
+    (PLUGIN, 'any one of several quests under way followed, which is the guess one layer down',
+     '\t\tif (count == 1) {',
+     '\t\tif (count >= 1) {'),
+    (PLUGIN, 'the quest under way never picked up, so the player says so twice',
+     '\t\tif (count == 1) {',
+     '\t\tif (false) {'),
+    (PLUGIN, 'the login settle skipped, so the values arriving at login read as progress',
+     '\t\t\tthis.settling = SETTLING;',
+     '\t\t\tthis.settling = 0;'),
+    (PLUGIN, 'a quest reaching its end followed, so finishing one takes the page back to it',
+     '\t\t\tif (this.settling <= 0 && now > 0 && !this.finished(q)) {',
+     '\t\t\tif (this.settling <= 0 && now > 0) {'),
+    (PLUGIN, 'a move never followed, so only the Track button chooses',
+     '\t\t\tif (this.settling <= 0 && now > 0 && !this.finished(q)) {',
+     '\t\t\tif (false) {'),
+    (PLUGIN, 'the pin never written down, so the choice is lost when the client closes',
+     '\t\t\t\t\tthis.config.set(items.get(i), want);',
+     '\t\t\t\t\tthis.trackedQuest = want;'),
+
+    # ---- THE STEP YOU HAVE JUST TAKEN. A talk leaves no trace at all, so the click and the
+    # ---- conversation it opens are the only record there is - and a click that led nowhere is
+    # ---- not a step.
+    (PLUGIN, 'a click counted as the step at once, before the conversation it started',
+     '\t\tif ("talk".equals(w.kind)) {\n\t\t\tdone = w.sawDialogue;',
+     '\t\tif ("talk".equals(w.kind)) {\n\t\t\tdone = true;'),
+    (PLUGIN, 'the conversation never watched, so a talk is never seen to finish',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}',
+     '\t\tif (false) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}'),
+    (PLUGIN, 'the step dropped while the conversation is still open, and the option mark with it',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t}'),
+    (PLUGIN, 'a click never written off, so a conversation long afterwards finishes it',
+     '\t\tif (this.tick - w.tick > GIVE_UP) {',
+     '\t\tif (false) {'),
+    (PLUGIN, 'a loc counted on the click rather than on walking to it',
+     '\t\t\tdone = w.sawDialogue || this.near(w.worldX, w.worldZ);',
+     '\t\t\tdone = true;'),
+    (PLUGIN, 'any click taken as the step, whatever the panel was naming',
+     '\t\tif (leg == null || on == null || !clicked(on, event.target)) {',
+     '\t\tif (leg == null || on == null) {'),
+    (PLUGIN, 'arriving not counted, so a walk you have already made is still the step',
+     '\t\t\tif (on != null && "walk".equals(on.kind) && on.at != null && on.at[2] == ctx.getPlane()',
+     '\t\t\tif (false && on != null && "walk".equals(on.kind) && on.at != null && on.at[2] == ctx.getPlane()'),
+    (PLUGIN, 'anywhere at all counted as arrived',
+     '\tprivate static final int CLOSE = 3;',
+     '\tprivate static final int CLOSE = 300;'),
+    (PLUGIN, 'the step marked done one short, so the panel names it over again',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo + 1;\n\t\t}',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo;\n\t\t}'),
+    (PLUGIN, 'the clicks taken as the whole answer, so what the bag said is thrown away',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo + 1;\n\t\t}',
+     '\t\tstart = st.doneTo + 1;'),
+    (PLUGIN, 'the clicks kept across a logout, so the next player starts half-way through',
+     '\t\tfor (Quest q : this.quests) {\n\t\t\tforget(q);\n\t\t}',
+     '\t\tfor (Quest q : this.quests) {\n\t\t\tif (false) {\n\t\t\t\tforget(q);\n\t\t\t}\n\t\t}'),
+
+    # ---- WHAT WAS CLICKED, which the client resolves and two places used to have to know.
+    (CLIENT, 'an npc\'s index reported as its id, which matches no step in any table',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.NPC, (int) npc.field1370.field1431, op,',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.NPC, index, op,'),
+    (CLIENT, 'a loc id read off the bottom of the word rather than out of its own bits',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA >> 14 & 0x7FFF, op, tileX, tileZ);',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA & 0x7FFF, op, tileX, tileZ);'),
+    (CLIENT, 'the op slots shifted by one, so Talk-to reads as the second word on the menu',
+     '\t\t\tcase 318:\n\t\t\t\treturn this.npcTarget(paramA, 1);',
+     '\t\t\tcase 318:\n\t\t\t\treturn this.npcTarget(paramA, 2);'),
+    (CLIENT, 'a loc row resolved as nothing at all, so no loc click is ever a step',
+     '\t\t\tcase 35:\n\t\t\t\treturn locTarget(paramA, 1, paramB, paramC);',
+     '\t\t\tcase 35:\n\t\t\t\treturn new jagex2.client.plugin.event.MenuOptionClicked.Target('
+     'jagex2.client.plugin.event.MenuOptionClicked.Target.NONE, -1, 0, -1, -1);'),
 
     # ---- WHERE. A world tile out of the table is not a scene tile, and the difference is the
     # ---- width of whatever chunk of the map happens to be loaded.

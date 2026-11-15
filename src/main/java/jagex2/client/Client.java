@@ -6595,59 +6595,103 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int[] BANKPIN_DIGIT_TEXT_IDS = {14883, 14884, 14885, 14886, 14887, 14888, 14889, 14890, 14891, 14892}; // a_text..j_text
 	private static final int[] BANKPIN_DIGIT_BUTTON_IDS = {14873, 14874, 14875, 14876, 14877, 14878, 14879, 14880, 14881, 14882}; // a_button..j_button
 
-	// DEV: best-effort description of a useMenuOption() target, based on the menuParamA/B/C
-	// conventions this client already uses per action family - see addNpcOptions() (npc index in
-	// paramA), addPlayerOptions() (player index in paramA), and the loc menu-building block in
-	// handleViewportOptions() (loc id packed into paramA, local tile x/z in paramB/paramC). These
-	// action ids are read directly from where each family actually assigns them, not guessed.
-	// Falls back to the raw params for anything else (interface-only clicks like bank/trade/
-	// spellbook, "Walk here", etc.) so nothing is silently dropped.
+	// DEV: best-effort description of a useMenuOption() target, built from resolveMenuTarget
+	// below so that the dev log and the plugins' click event can never disagree about what was
+	// clicked. Falls back to the raw params for anything else (interface-only clicks like bank/
+	// trade/spellbook, "Walk here", etc.) so nothing is silently dropped.
 	private String describeMenuTarget(int action, int paramA, int paramB, int paramC) {
-		switch (action) {
-			case 318:
-			case 921:
-			case 118:
-			case 553:
-			case 432:
-			case 1668:
-			case 67: {
-				// NPC actions (addNpcOptions): paramA = index into this.npcs[]
-				ClientNpc npc = paramA >= 0 && paramA < this.npcs.length ? this.npcs[paramA] : null;
-				if (npc != null) {
-					String name = npc.field1370 != null ? npc.field1370.field1455 : "?";
-					return "target=npc name=\"" + name + "\" coords=(" + (npc.routeTileX[0] + this.sceneBaseTileX) + "," + (npc.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-				}
-				break;
+		jagex2.client.plugin.event.MenuOptionClicked.Target target = this.resolveMenuTarget(action, paramA, paramB, paramC);
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.NPC)) {
+			ClientNpc npc = paramA >= 0 && paramA < this.npcs.length ? this.npcs[paramA] : null;
+			String name = npc != null && npc.field1370 != null ? npc.field1370.field1455 : "?";
+			return "target=npc id=" + target.id + " name=\"" + name + "\" coords=("
+				+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.LOC)) {
+			LocType loc = LocType.method561(target.id);
+			return "target=loc id=" + target.id + " name=\"" + (loc != null ? loc.field1630 : "?") + "\" coords=("
+				+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.PLAYER)) {
+			ClientPlayer p = paramA >= 0 && paramA < this.players.length ? this.players[paramA] : null;
+			if (p != null) {
+				return "target=player name=\"" + p.name + "\" coords=(" + (p.routeTileX[0] + this.sceneBaseTileX) + "," + (p.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
 			}
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.WORN)) {
+			return "target=item id=" + target.id + " slot=" + paramB + " (worn, option " + (action - WEAROP_ACTION + 1) + ")";
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.OBJ)) {
+			return "target=item id=" + target.id + " slot=" + paramB + " (inventory, no world coords)";
+		}
+		return "target=? action=" + action + " paramA=" + paramA + " paramB=" + paramB + " paramC=" + paramC;
+	}
+
+	/**
+	 * WHAT A MENU ROW ACTS ON: what kind of thing, which one, which op slot, and where.
+	 *
+	 * ONE LIST OF ACTION IDS, NOT TWO. Which parameter holds what depends on the action - paramA
+	 * is an index into npcs[] for an npc row and a packed loc id for a loc row - and that list
+	 * used to be written out for the dev log and nowhere else, so a plugin asking the same
+	 * question had to keep its own copy of it and go quietly stale when the menu changed. The ids
+	 * are read from where each family assigns them: addNpcOptions for the npc rows, the loc block
+	 * in handleViewportOptions for the loc rows, addPlayerOptions for the players.
+	 *
+	 * The op slot is which of the five the word came from. A row with no op word of its own -
+	 * "Use <item> with", a spell, Examine, Attack - is op 0.
+	 */
+	public jagex2.client.plugin.event.MenuOptionClicked.Target resolveMenuTarget(int action, int paramA, int paramB, int paramC) {
+		switch (action) {
+			// NPC rows: paramA = index into this.npcs[]. 318/921/118/553/432 are ops 1-5 (and the
+			// same ids plus 2000 when the npc outlevels you, taken off before this is called);
+			// 347 is "Use <item> with", 1668 Examine, 67 a spell.
+			case 318:
+				return this.npcTarget(paramA, 1);
+			case 921:
+				return this.npcTarget(paramA, 2);
+			case 118:
+				return this.npcTarget(paramA, 3);
+			case 553:
+				return this.npcTarget(paramA, 4);
+			case 432:
+				return this.npcTarget(paramA, 5);
+			case 347:
+			case 1668:
+			case 67:
+				return this.npcTarget(paramA, 0);
+			// Loc rows: the loc id is packed into paramA at bits 14-28 and paramB/paramC are the
+			// local scene tile. 35/389/888/892/1280 are ops 1-5; 467 is "Use <item> with", 1412
+			// Examine, 376 a spell.
+			case 35:
+				return locTarget(paramA, 1, paramB, paramC);
+			case 389:
+				return locTarget(paramA, 2, paramB, paramC);
+			case 888:
+				return locTarget(paramA, 3, paramB, paramC);
+			case 892:
+				return locTarget(paramA, 4, paramB, paramC);
+			case 1280:
+				return locTarget(paramA, 5, paramB, paramC);
+			case 467:
+			case 1412:
+			case 376:
+				return locTarget(paramA, 0, paramB, paramC);
+			// Player rows: paramA = index into this.players[].
 			case 200:
 			case 493:
 			case 408:
 			case 677:
 			case 876:
 			case 918:
-			case 596: {
-				// Player actions (addPlayerOptions): paramA = index into this.players[]
-				ClientPlayer p = paramA >= 0 && paramA < this.players.length ? this.players[paramA] : null;
-				if (p != null) {
-					return "target=player name=\"" + p.name + "\" coords=(" + (p.routeTileX[0] + this.sceneBaseTileX) + "," + (p.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-				}
-				break;
-			}
-			case 35:
-			case 389:
-			case 888:
-			case 892:
-			case 1280:
-			case 1412:
-			case 467:
-			case 376: {
-				// Loc actions (handleViewportOptions): paramA packs the loc id at bits 14-28,
-				// paramB/paramC are the local scene tile x/z (add sceneBaseTileX/Z for world coords).
-				int locId = paramA >> 14 & 0x7FFF;
-				LocType loc = LocType.method561(locId);
-				String name = loc != null ? loc.field1630 : "?";
-				return "target=loc id=" + locId + " name=\"" + name + "\" coords=(" + (paramB + this.sceneBaseTileX) + "," + (paramC + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-			}
+			case 596:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.PLAYER, paramA, 0, -1, -1);
+			// An obj in the bag or on the body: paramA IS the obj id and paramB the slot, and
+			// neither is anywhere in the world.
+			case 891:
+			case 894:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.OBJ, paramA, 0, -1, -1);
 			case WEAROP_ACTION:
 			case WEAROP_ACTION + 1:
 			case WEAROP_ACTION + 2:
@@ -6655,20 +6699,36 @@ public class Client extends GameShell implements PixMap.Target {
 			case WEAROP_ACTION + 4:
 			case WEAROP_ACTION + 5:
 			case WEAROP_ACTION + 6:
-			case WEAROP_ACTION + 7: {
-				// Worn options: paramA = obj id, paramB = worn slot
-				return "target=item id=" + paramA + " slot=" + paramB + " (worn, option " + (action - WEAROP_ACTION + 1) + ")";
-			}
-			case 891:
-			case 894: {
-				// Inventory item actions (OPHELD5/INV_BUTTON5, incl. shift-click drop): paramA = obj
-				// id, paramB = inventory slot. No world coords - it's not placed anywhere.
-				return "target=item id=" + paramA + " slot=" + paramB + " (inventory, no world coords)";
-			}
+			case WEAROP_ACTION + 7:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.WORN, paramA, 0, -1, -1);
 			default:
-				break;
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.NONE, -1, 0, -1, -1);
 		}
-		return "target=? action=" + action + " paramA=" + paramA + " paramB=" + paramB + " paramC=" + paramC;
+	}
+
+	/**
+	 * An npc row's target: the CONFIG id a plugin matches on, and the tile it is standing on.
+	 *
+	 * The id is the one the server sent, which for a multinpc is the shell rather than the child
+	 * whose name is on screen - the same number PluginContext.getNpcs reports, so a plugin can
+	 * compare the two.
+	 */
+	private jagex2.client.plugin.event.MenuOptionClicked.Target npcTarget(int index, int op) {
+		ClientNpc npc = index >= 0 && index < this.npcs.length ? this.npcs[index] : null;
+		if (npc == null || npc.field1370 == null) {
+			return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+				jagex2.client.plugin.event.MenuOptionClicked.Target.NPC, -1, op, -1, -1);
+		}
+		return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+			jagex2.client.plugin.event.MenuOptionClicked.Target.NPC, (int) npc.field1370.field1431, op,
+			npc.routeTileX[0], npc.routeTileZ[0]);
+	}
+
+	private static jagex2.client.plugin.event.MenuOptionClicked.Target locTarget(int paramA, int op, int tileX, int tileZ) {
+		return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+			jagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA >> 14 & 0x7FFF, op, tileX, tileZ);
 	}
 
 	@ObfuscatedName("client.u(I)V")
@@ -12721,7 +12781,8 @@ public class Client extends GameShell implements PixMap.Target {
 		// Plugins see the click before anything is sent, and may stop it - how a plugin guards an
 		// action ("really drop that?"). Read from the raw action, before the 2000 offset below is
 		// taken off, so a plugin matching on an action id sees the same number the menu carried.
-		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4)) {
+		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4,
+			this.resolveMenuTarget(var5 >= 2000 ? var5 - 2000 : var5, var6, var3, var4))) {
 			return;
 		}
 		if (var5 >= 2000) {

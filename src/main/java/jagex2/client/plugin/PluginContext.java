@@ -639,6 +639,21 @@ public final class PluginContext {
 	}
 
 	/**
+	 * Whether a conversation is open in the chatbox: an npc talking, a player talking back, an
+	 * option box, a level-up - anything the chat area has been given over to.
+	 *
+	 * WHAT IT IS FOR. A talk is the one step in a quest that leaves no trace: nothing arrives in
+	 * the bag and no flag moves, so the only way to know a conversation happened is to watch one
+	 * happen. Open and then closed is a conversation that ran its course.
+	 *
+	 * It is the chatbox and not {@link #getOpenInterfaceId()}, which is the full-screen window a
+	 * bank or a shop takes.
+	 */
+	public boolean isDialogueOpen() {
+		return this.client.chatInterfaceId != -1;
+	}
+
+	/**
 	 * Where one of those lines sits, in the CHAT AREA's coordinates, for an
 	 * {@link Overlay#LAYER_CHAT} overlay. Null for an index that is not on screen.
 	 *

@@ -850,10 +850,19 @@ public final class PluginManager {
 
 	/** Returns true when a plugin consumed the click and the client should not act on it. */
 	public boolean onMenuOptionClicked(String option, int action, int paramA, int paramB, int paramC) {
+		return this.onMenuOptionClicked(option, action, paramA, paramB, paramC, null);
+	}
+
+	/**
+	 * The same, with the target the client has already resolved - which npc, loc or obj the row
+	 * acts on. Returns true when a plugin consumed the click.
+	 */
+	public boolean onMenuOptionClicked(String option, int action, int paramA, int paramB, int paramC,
+		MenuOptionClicked.Target target) {
 		if (this.idle()) {
 			return false;
 		}
-		MenuOptionClicked event = new MenuOptionClicked(option == null ? "" : option, action, paramA, paramB, paramC);
+		MenuOptionClicked event = new MenuOptionClicked(option == null ? "" : option, action, paramA, paramB, paramC, target);
 		this.bus.post(event);
 		return event.isConsumed();
 	}
