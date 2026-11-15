@@ -6602,10 +6602,13 @@ public class Client extends GameShell implements PixMap.Target {
 	private String describeMenuTarget(int action, int paramA, int paramB, int paramC) {
 		jagex2.client.plugin.event.MenuOptionClicked.Target target = this.resolveMenuTarget(action, paramA, paramB, paramC);
 		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.NPC)) {
+			// The npc itself, for its name - and when it has gone from the scene between the
+			// click and this line, the raw parameters at the bottom say more than "npc id=-1".
 			ClientNpc npc = paramA >= 0 && paramA < this.npcs.length ? this.npcs[paramA] : null;
-			String name = npc != null && npc.field1370 != null ? npc.field1370.field1455 : "?";
-			return "target=npc id=" + target.id + " name=\"" + name + "\" coords=("
-				+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+			if (npc != null && npc.field1370 != null) {
+				return "target=npc id=" + target.id + " name=\"" + npc.field1370.field1455 + "\" coords=("
+					+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+			}
 		}
 		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.LOC)) {
 			LocType loc = LocType.method561(target.id);

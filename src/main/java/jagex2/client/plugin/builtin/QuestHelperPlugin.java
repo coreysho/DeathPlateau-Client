@@ -1717,7 +1717,18 @@ public final class QuestHelperPlugin extends Plugin {
 						// The one the marker is pointing at, so the list reads as a position in the
 						// leg and not just as its contents.
 						Spot sp = spot(st);
-						return sp != null && sp.step == st.steps.get(i) ? "now" : null;
+						if (sp != null && sp.step == st.steps.get(i)) {
+							return "now";
+						}
+						// AND THE ONES BEHIND YOU. Everything above the step being named is what
+						// the bag, the quest's flags and the player's own clicks say is already
+						// taken - the same answer the panel is drawn from, said on the page where
+						// a player reads the leg. A note is nobody's step and gets nothing.
+						int live = sp == null || sp.step == null ? -1 : indexOf(st, sp.step);
+						if (live > 0 && i < live && !"note".equals(st.steps.get(i).kind)) {
+							return "done";
+						}
+						return null;
 					}
 					List<Need> items = bringing(st);
 					int at = i - st.steps.size();

@@ -477,16 +477,24 @@ public class QuestHelperTest {
 
 	static void pickTests() throws Exception {
 		spawn(ALI_NAME, ALI, MID_X, MID_Z);
-		// A QUEST ALREADY IN PROGRESS, which is the state the guess used to fire in: with every
-		// varp at zero there is nothing to guess and the check below would pass either way.
+		// TWO QUESTS ALREADY IN PROGRESS, which is the state the guess used to fire in: with
+		// every varp at zero there is nothing to guess and the check below would pass either
+		// way - and with ONE there is a quest to follow and no guess in following it, which is
+		// section 16's business.
 		client.varps[GHOST_VARP] = 2;
+		client.varps[MYREQUE_VARP] = 4;
+		logOut();
+		logIn();
+		gameTicks(8);
 		settle();
 
 		// NOTHING IS GUESSED. Picking the first started-and-unfinished quest in table order meant
 		// a player part-way through six quests was handed whichever sorted earliest.
 		check(scene().isEmpty() && screen().isEmpty(),
-			"with a quest in progress but none picked, nothing is drawn - no marker and no panel");
+			"with two quests in progress and none picked, nothing is drawn - no marker and no panel");
 		client.varps[GHOST_VARP] = 0;
+		client.varps[MYREQUE_VARP] = 0;
+		gameTicks(1);
 
 		track(FEUD);
 		check(!screen().isEmpty(), "picking The Feud puts the panel on screen");
@@ -1634,9 +1642,13 @@ public class QuestHelperTest {
 		check(followed() == null, "with no quest begun, the page is the list and follows nothing");
 		check(screen().isEmpty(), "...and there is no panel on screen to follow it with");
 
-		// ONE QUEST UNDERWAY. Nothing was pressed, nothing moved while the plugin watched: this
-		// is the state a player is in every time they log in part-way through something.
+		// ONE QUEST UNDERWAY. Nothing pressed, and nothing moving: logged out and in again with
+		// the value already written, which is the state a player is in every time they log in
+		// part-way through something. A varp written under a RUNNING plugin is a move, and would
+		// be answered by the rule below this one rather than by this one.
 		client.varps[GHOST_VARP] = 1;
+		logOut();
+		logIn();
 		gameTicks(2);
 		check(GHOST.equals(followed()),
 			"a quest already under way is picked up without the player saying so again");
@@ -1798,6 +1810,9 @@ public class QuestHelperTest {
 		check(said(screen(), "Talk to " + RADIGAD_NAME),
 			"the conversation closing moves the panel to the next person, with the first still standing there");
 		check(said(scene(), RADIGAD_NAME), "...and the marker moves to him too");
+		ConfigList.Row harold = row(page(), "Talk to " + HAROLD_NAME + ".");
+		check(harold != null && "done".equals(harold.value),
+			"...and the page strikes his off as done (" + (harold == null ? "no row" : harold.value) + ")");
 
 		// A CLICK THAT LED NOWHERE. No conversation ever opened - clicked the wrong thing, walked
 		// away, interrupted - so the panel is where it was rather than a step further on.
