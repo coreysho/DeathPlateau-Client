@@ -117,9 +117,9 @@ MUTS = [
     (PLUGIN, 'the page striking nothing off, so the leg never reads as a position in it',
      '\t\t\t\t\t\tif (live > 0 && i < live && !"note".equals(st.steps.get(i).kind)) {',
      '\t\t\t\t\t\tif (false) {'),
-    (PLUGIN, 'the page striking off the step you are on as well as the ones behind it',
-     '\t\t\t\t\t\tif (live > 0 && i < live && !"note".equals(st.steps.get(i).kind)) {',
-     '\t\t\t\t\t\tif (live > 0 && i <= live && !"note".equals(st.steps.get(i).kind)) {'),
+    # An "i <= live" mutation would go here, striking off the step you are standing on as well as
+    # the ones behind it, and is NOT here: the row being named returns "now" two lines above and
+    # never reaches that test, so the mutation changes nothing a player or a check can see.
     (PLUGIN, 'the step marked done one short, so the panel names it over again',
      '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo + 1;\n\t\t}',
      '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo;\n\t\t}'),
