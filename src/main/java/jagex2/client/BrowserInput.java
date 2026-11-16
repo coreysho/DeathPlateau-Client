@@ -126,10 +126,61 @@ public class BrowserInput {
 			browserReady();
 		} catch (Throwable ignore) {
 			// no page: nothing to tell, and nothing above this will ever be written
+			noNative = true;
 		}
 	}
 
 	private static native void browserReady();
+
+	// ------------------------------------------------------------------ asking, not being told
+
+	/**
+	 * AND THE PAGE WRITING A FIELD WAS NEVER PROVEN TO WORK (2026-11-16).
+	 *
+	 * Everything above crosses by the page writing a static field through the library handle. That
+	 * is what the camera drag has always claimed to do, and it may well be true - but it has never
+	 * been demonstrated, and after the handle itself turned out to be missing on the login screen
+	 * the keyboard still typed nothing. Two unproven mechanisms in a row is one too many.
+	 *
+	 * A NATIVE CALLED FROM JAVA IS PROVEN, because it is how the game talks at all: WsSocket's four
+	 * natives carry every byte of the protocol, including values returned from the page to Java.
+	 * So the client ASKS for its keys rather than waiting to be handed them. Nothing has to reach
+	 * into a running program from outside, and there is no handle to go missing.
+	 *
+	 * noNative latches on the first failure. A desktop client has no page, and an
+	 * UnsatisfiedLinkError thrown fifty times a second for the rest of the session is not free.
+	 */
+	private static boolean noNative;
+
+	/** The next key the page has for us in the client's key space, or -1. */
+	private static native int nextKey();
+
+	/** The next long press, as x in the high half and y in the low, or -1. */
+	private static native int nextTap();
+
+	public static int takeKey() {
+		if (noNative) {
+			return -1;
+		}
+		try {
+			return nextKey();
+		} catch (Throwable ignore) {
+			noNative = true;
+			return -1;
+		}
+	}
+
+	public static int takeTap() {
+		if (noNative) {
+			return -1;
+		}
+		try {
+			return nextTap();
+		} catch (Throwable ignore) {
+			noNative = true;
+			return -1;
+		}
+	}
 
 	private BrowserInput() {
 	}
