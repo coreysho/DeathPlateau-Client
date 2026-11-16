@@ -63,6 +63,21 @@ public class WindowProbe implements LauncherWindow.Actions {
     public void onDev() {
     }
 
+    // The Discord sign-in's four, added when LauncherWindow grew the block for them. A probe
+    // that does not implement the whole of Actions does not compile, which is how this file
+    // finds out that the window changed.
+    public void onDiscordSignIn() {
+    }
+
+    public void onDiscordCancel() {
+    }
+
+    public void onDiscordCode() {
+    }
+
+    public void onDiscordSignOut() {
+    }
+
     public static void main(String[] args) throws Exception {
         LauncherWindow window = new LauncherWindow("probe", "0", new WindowProbe());
         JFrame frame = window.frame();
