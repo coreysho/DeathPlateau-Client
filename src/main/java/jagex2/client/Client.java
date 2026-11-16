@@ -17583,6 +17583,15 @@ public class Client extends GameShell implements PixMap.Target {
 			// straight to the Graphics here would land at its unscaled position, over the top.
 			if (this.frameBuffer != null) {
 				copyRect(area.data, area.width, 0, 0, area.width, area.height, this.frameBuffer, Layout.FIXED_W, Layout.FIXED_H, x, y);
+				// AND PUT IT UP NOW IF NOTHING ELSE IS GOING TO. The frame is normally assembled
+				// from many areas and blitted once, at the end of draw() - but draw() only runs
+				// once the client is in its main loop, and load() spends its whole life drawing
+				// the progress screen before that. Diverting those draws into the buffer without
+				// flushing them leaves the screen black for the whole of loading, which is what a
+				// phone showed. Resizable mode has the same escape hatch, for the same reason.
+				if (!this.ingame || area == super.drawArea) {
+					this.presentScaled();
+				}
 			}
 			return true;
 		}
@@ -17723,6 +17732,12 @@ public class Client extends GameShell implements PixMap.Target {
 	 * centred rectangle.
 	 */
 	private void presentScaled() {
+		if (this.screenGraphics == null) {
+			// applyScale asks for one too, but the component may not have been ready to give it
+			// yet - and in fixed mode it is asked for nowhere else, so without this it would stay
+			// null for the rest of the session and nothing would ever reach the window.
+			this.screenGraphics = this.acquireGraphics();
+		}
 		if (this.scaledArea == null || this.frameBuffer == null || this.screenGraphics == null || this.scaleCols == null) {
 			return;
 		}
