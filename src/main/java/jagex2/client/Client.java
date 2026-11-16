@@ -17149,6 +17149,8 @@ public class Client extends GameShell implements PixMap.Target {
 	private int[] scaleCols;
 	/** The window, at the window's size: what is actually handed to the Graphics. */
 	private PixMap scaledArea;
+	/** When the frame was last put on the window, for the throttle in the loading path below. */
+	private long scaledAt;
 	/**
 	 * How small the blurred copy is kept. 128x84 holds the 765x503 art's shape to within a pixel of
 	 * its aspect, and shrinking that far is itself most of the blur: one pixel of it is the average
@@ -17590,7 +17592,20 @@ public class Client extends GameShell implements PixMap.Target {
 				// flushing them leaves the screen black for the whole of loading, which is what a
 				// phone showed. Resizable mode has the same escape hatch, for the same reason.
 				if (!this.ingame || area == super.drawArea) {
-					this.presentScaled();
+					// THROTTLED, BECAUSE EVERY ONE OF THESE IS A WHOLE WINDOW. PixMap.drawDirect
+					// calls setPixels(), which hands the consumer the entire buffer however little
+					// of it changed - so the cost of putting the frame up does not depend on the
+					// size of the area that was drawn into it. The progress screen draws several
+					// small areas per update, and flushing each one separately meant several full
+					// windows per tick: measured as the loading screen crawling on a phone, where
+					// the canvas is also three times the size in each direction. Twenty-five a
+					// second is more than a progress bar needs, and the frame after this one puts
+					// up anything a skipped flush would have shown.
+					long now = System.currentTimeMillis();
+					if (now - this.scaledAt >= 40L) {
+						this.scaledAt = now;
+						this.presentScaled();
+					}
 				}
 			}
 			return true;
@@ -17732,6 +17747,7 @@ public class Client extends GameShell implements PixMap.Target {
 	 * centred rectangle.
 	 */
 	private void presentScaled() {
+		this.scaledAt = System.currentTimeMillis();
 		if (this.screenGraphics == null) {
 			// applyScale asks for one too, but the component may not have been ready to give it
 			// yet - and in fixed mode it is asked for nowhere else, so without this it would stay
