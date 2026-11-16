@@ -118,6 +118,9 @@ public final class Launcher {
      *      console and its output was gone exactly when it was wanted
      *   5  the game's own stdout and stderr go to ~/.deathplateau/client.log, so an exception that
      *      ends GameShell's loop can be read afterwards instead of just freezing the window
+     *  12  Sign in with Discord, so the login screen offers the characters linked to that
+     *      Discord account on a computer that has never seen them - names only, and the password
+     *      is still typed once per machine. The bump is what carries it, as ever.
      *   6  the Death Plateau badge on the launcher's own window, instead of the default Java cup.
      *      The bump is what carries it: a player who downloaded their launcher months ago runs
      *      that jar, and only a higher version in client.jar makes it step aside for one that has
@@ -138,7 +141,7 @@ public final class Launcher {
      * would leave every launcher already out there - all of them 6 and 7 - permanently convinced
      * that it is the newer one.
      */
-    private static final int VERSION = 11;
+    private static final int VERSION = 12;
 
     /**
      * The first launcher version whose client writes the window marker (see awaitClientWindow).
@@ -234,6 +237,9 @@ public final class Launcher {
 
         if (!check) {
             window();
+            // After the window, so its answer has somewhere to go, and before the update check,
+            // so the two network calls overlap rather than queueing.
+            refreshDiscord();
         }
 
         if (System.getProperty(CHECKED) != null) {
@@ -389,6 +395,12 @@ public final class Launcher {
     private static String setting(String property, String env) {
         String value = System.getProperty(property);
         return value != null ? value : System.getenv(env);
+    }
+
+    /** ...and with something to fall back on, which is what a setting with a real default needs. */
+    static String setting(String property, String env, String fallback) {
+        String value = setting(property, env);
+        return value != null && value.trim().length() > 0 ? value.trim().replaceAll("/+$", "") : fallback;
     }
 
     // ~/.lostcity is where the client lived before the server was named Death Plateau. Its client
@@ -750,7 +762,68 @@ public final class Launcher {
                 public void onDev() {
                     choose(DEV);
                 }
+
+                // OFF THE SWING THREAD, both of them: signIn() waits for a browser and a person,
+                // and refresh() and signOut() each make an HTTP request. Any of those on the EDT
+                // is a launcher that stops painting - which, with a browser window on top of it,
+                // reads as the launcher having crashed.
+                public void onDiscordSignIn() {
+                    Thread worker = new Thread(new Runnable() {
+
+                        public void run() {
+                            DiscordSignIn.Result result = DiscordSignIn.signIn();
+                            showSignIn(result);
+                        }
+                    }, "discord-signin");
+                    worker.setDaemon(true);
+                    worker.start();
+                }
+
+                public void onDiscordCancel() {
+                    DiscordSignIn.cancel();
+                }
+
+                public void onDiscordCode() {
+                    // THE DIALOG IS ON THE SWING THREAD and the check that follows is not. A real
+                    // text field rather than something painted, because this is the one place in
+                    // the launcher where a player has to paste: Ctrl+V, right-click paste and the
+                    // clipboard all have to work, and they do in a JTextField and in nothing we
+                    // could draw ourselves in an afternoon.
+                    String typed = (String) JOptionPane.showInputDialog(owner(),
+                        "Paste the code the website showed you.", "Sign in with Discord",
+                        JOptionPane.PLAIN_MESSAGE, null, null, clipboard());
+                    if (typed == null) {
+                        return;
+                    }
+                    final String code = typed;
+                    Thread worker = new Thread(new Runnable() {
+
+                        public void run() {
+                            showSignIn(DiscordSignIn.paste(code));
+                        }
+                    }, "discord-code");
+                    worker.setDaemon(true);
+                    worker.start();
+                }
+
+                public void onDiscordSignOut() {
+                    Thread worker = new Thread(new Runnable() {
+
+                        public void run() {
+                            DiscordSignIn.signOut();
+                            // Launcher.run, not this Runnable's own run(): the anonymous class shadows it.
+                            Launcher.run(() -> {
+                                if (ui != null) {
+                                    ui.setDiscord(false, 0, "Signed out of Discord.", false);
+                                }
+                            });
+                        }
+                    }, "discord-signout");
+                    worker.setDaemon(true);
+                    worker.start();
+                }
             });
+            ui.setDiscord(DiscordSignIn.signedIn(), DiscordSignIn.accounts().size(), null, false);
             boolean open;
             synchronized (choiceLock) {
                 open = choice == null;
@@ -760,6 +833,70 @@ public final class Launcher {
             // between the two, which is the thing the splash is there to avoid.
             closeSplash();
         });
+    }
+
+    /**
+     * What the window says once a sign-in attempt comes back.
+     *
+     * THE PASTE CASE IS NOT A FAILURE and is not shown as one: the loopback could not be used, so
+     * the website is printing a code and the window opens a box to paste it into. The address is
+     * put in a dialog as well when no browser could be opened at all, because there is nothing else
+     * a player can do with it.
+     */
+    private void showSignIn(DiscordSignIn.Result result) {
+        run(() -> {
+            if (ui != null) {
+                ui.setDiscord(DiscordSignIn.signedIn(), DiscordSignIn.accounts().size(), result.message, result.paste);
+            }
+        });
+        if (result.paste && result.url != null) {
+            log("discord: paste path, " + result.url);
+        }
+    }
+
+    /**
+     * The character list, re-read at every start so a character linked since the last one is offered.
+     *
+     * ON A THREAD AND NEVER WAITED FOR. This is one HTTP request to the website, and the game must
+     * start whether or not it answers: a launcher that sat on a dead site before showing Play would
+     * be a worse launcher than the one that has no Discord sign-in at all. What the client reads is
+     * whatever is on disk when it starts, which is last run's list if this one has not answered yet.
+     */
+    private void refreshDiscord() {
+        if (!DiscordSignIn.signedIn()) {
+            return;
+        }
+        Thread worker = new Thread(new Runnable() {
+
+            public void run() {
+                DiscordSignIn.refresh();
+                Launcher.run(() -> {
+                    if (ui != null) {
+                        ui.setDiscord(DiscordSignIn.signedIn(), DiscordSignIn.accounts().size(), null, false);
+                    }
+                });
+            }
+        }, "discord-refresh");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * What is on the clipboard, if it looks like a code, so the box is already filled in.
+     *
+     * The player has just been told to copy it, so nine times in ten this saves them the paste.
+     * Anything else - no clipboard, an image on it, a security manager refusing - is an empty box,
+     * which is what they would have had anyway.
+     */
+    private static String clipboard() {
+        try {
+            Object text = java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                .getData(java.awt.datatransfer.DataFlavor.stringFlavor);
+            String value = text == null ? "" : text.toString().trim();
+            return DiscordSignIn.looksLikeToken(value.toLowerCase()) ? value.toLowerCase() : "";
+        } catch (Throwable none) {
+            return "";
+        }
     }
 
     /** Takes the splash down, from any thread, once or never. */
@@ -855,7 +992,9 @@ public final class Launcher {
     private static final long LOG_MAX = 256L * 1024L;
     private static boolean logStarted;
 
-    private static void log(String text) {
+    // Package-visible, so DiscordSignIn writes to the same launcher.log rather than to a
+    // stdout that a double-clicked launcher does not have.
+    static void log(String text) {
         System.out.println("[launcher] " + text);
         // NOTHING in here may throw. A launcher that dies because it could not write its own log is
         // worse than a launcher with no log, and this runs before the window exists, so a failure

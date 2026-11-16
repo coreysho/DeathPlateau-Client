@@ -116,6 +116,8 @@ public class LoginTokenTest extends Client {
 			stalePhase(user);
 		} else if (phase.equals("legacy")) {
 			legacyPhase(user, password);
+		} else if (phase.equals("launcher")) {
+			launcherPhase(user, password);
 		} else if (phase.equals("noremember")) {
 			noRememberPhase(user, password);
 		} else {
@@ -275,6 +277,59 @@ public class LoginTokenTest extends Client {
 		check(saved.size() == 1 && saved.get(0).token.length() == 0, "with nothing to sign in with");
 		check(!saved.isEmpty() && !saved.get(0).canSignIn(), "so the card asks for the password instead of signing in");
 		check(!fileText().contains(password), "and the password is not on the disk either");
+	}
+
+	// ---------------------------------------------------------------- 6. a signed-in launcher
+	/**
+	 * A LOGIN FROM A LAUNCHER SIGNED IN TO DISCORD, which puts a sixth field in the RSA envelope.
+	 *
+	 * THE ASSERTION THAT MATTERS IS THE FIRST ONE: it gets in. The launcher's sign-in rides inside
+	 * the same envelope as the password, behind a bit in the flag byte that used to be a plain 0
+	 * or 1, and the whole block is one RSA plaintext the server reads field by field. A client that
+	 * wrote that bit without writing the field, or an engine reading the field when the bit is
+	 * clear, is not a subtle bug - it is every login on the world failing at once. Only a real
+	 * login through a real engine can say that the two agree, which is why this phase exists at all
+	 * and why it does not need Discord to be configured to be worth running: the server does
+	 * nothing with the token unless its Discord relay is up, and reading the envelope is the part
+	 * that can break everybody.
+	 *
+	 * The rest asserts what the login screen does with the names: cards that fill the name in and
+	 * cannot sign in, and nothing written into profiles.properties, which is "accounts on this
+	 * machine" and not "accounts your Discord says are yours".
+	 */
+	/** A launcher sign-in of the right shape that no server ever issued. */
+	static final String LAUNCHER_TOKEN = "q7w8e9r1t2y3u4i5o6p0";
+
+	static void launcherPhase(String user, String password) throws Exception {
+		File dir = new File(System.getProperty("user.home"), ".deathplateau");
+		dir.mkdirs();
+		// Written by hand, exactly as the launcher's DiscordSignIn writes it. A token of the right
+		// shape that no server ever issued, which is all this needs: nothing here honours it.
+		java.io.OutputStream out = new java.io.FileOutputStream(new File(dir, "launcher.properties"));
+		out.write(("discord.token=" + LAUNCHER_TOKEN + "\r\n"
+			+ "discord.accounts=linkedone,linkedtwo\r\n").getBytes("UTF-8"));
+		out.close();
+		LauncherAccounts.reload();
+		LoginProfiles.reload();
+
+		check(LAUNCHER_TOKEN.equals(LauncherAccounts.token()), "the launcher's sign-in is read off the disk");
+		List<LoginProfiles.Profile> cards = LoginProfiles.cards();
+		check(cards.size() == 2, "and its characters are offered on the login screen: " + cards.size());
+		check(cards.size() == 2 && cards.get(0).fromLauncher && !cards.get(0).canSignIn(),
+			"A LINKED CARD CANNOT SIGN IN - it fills the name in and asks for the password");
+
+		set("username", user);
+		set("password", password);
+		set("rememberLogin", Boolean.FALSE);
+		boolean in = signIn(true);
+		check(in, "A LOGIN CARRYING A LAUNCHER SIGN-IN STILL GETS IN - the engine read the envelope" + why());
+		if (!in) {
+			return;
+		}
+
+		check(!fileText().contains(LAUNCHER_TOKEN),
+			"the launcher's token is not copied into profiles.properties");
+		check(!fileText().contains("linkedone"), "nor are the names it offered - they are not this machine's");
 	}
 
 	/** The pre-382 login block, start to finish, and whatever byte the engine answers with. */

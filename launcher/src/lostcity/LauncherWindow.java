@@ -51,7 +51,9 @@ import javax.swing.Timer;
  */
 final class LauncherWindow {
 
-	private static final int W = 580, H = 300;
+	// 360 rather than 300: the Discord block below the caption needs the room, and the column
+	// reads as a list of things you can do rather than a stack with no air in it.
+	private static final int W = 580, H = 360;
 
 	/** The rule between the two columns, and what sits either side of it. */
 	private static final int DIVIDER_X = 236;
@@ -68,7 +70,12 @@ final class LauncherWindow {
 
 	private static final int HEADLINE_BASELINE = 64;
 	private static final int CAPTION_BASELINE = 174;
-	private static final int DEV_BASELINE = 220;
+	/** The Discord block: what it is, what you can do about it, and what just happened. */
+	private static final int DISCORD_BASELINE = 220;
+	private static final int DISCORD_ACTION_BASELINE = 236;
+	private static final int DISCORD_MESSAGE_BASELINE = 254;
+	private static final int DISCORD_LINE = 14;
+	private static final int DEV_BASELINE = 296;
 	private static final int FOOTER_RULE = H - 40;
 	private static final int FOOTER_BASELINE = H - 15;
 
@@ -82,6 +89,23 @@ final class LauncherWindow {
 
 		/** The dev world, which only staff can get into and only staff are told about. */
 		void onDev();
+
+		/**
+		 * Sign in with Discord, so the login screen offers the characters linked to it.
+		 *
+		 * EVERY ONE OF THESE WAITS ON SOMETHING - a browser, a person, an HTTP request - so none of
+		 * them may be answered on the Swing thread. The launcher puts each on a thread of its own
+		 * and reports back through setDiscord; this window only ever says a click happened.
+		 */
+		void onDiscordSignIn();
+
+		/** Stop waiting for the browser. */
+		void onDiscordCancel();
+
+		/** The fallback for a machine where nothing may listen on a socket: type the code in. */
+		void onDiscordCode();
+
+		void onDiscordSignOut();
 	}
 
 	private final JFrame frame;
@@ -102,6 +126,16 @@ final class LauncherWindow {
 	private Rectangle playBox = new Rectangle();
 	private Rectangle devBox = new Rectangle();
 	private boolean playHot, devHot;
+
+	/** 0 idle, 1 waiting for the browser, 2 the website is showing a code to be typed in. */
+	private int discordState;
+	private boolean discordSignedIn;
+	private int discordAccounts;
+	/** The last thing that happened, in words for the player, or null for the standing caption. */
+	private String discordMessage;
+	private Rectangle discordBox = new Rectangle();
+	private Rectangle discordActionBox = new Rectangle();
+	private boolean discordHot, discordActionHot;
 
 	LauncherWindow(String title, String version, Actions actions) {
 		this.actions = actions;
@@ -200,6 +234,30 @@ final class LauncherWindow {
 		this.face.repaint();
 	}
 
+	/**
+	 * What the Discord block says. Called from the launcher's threads through its own run(), so it
+	 * is always on the Swing thread by the time it gets here.
+	 *
+	 * `code` IS NOT A FAILURE. It means the loopback socket could not be bound - a firewall, an
+	 * antivirus, a locked-down machine - so the website is printing a code instead and this offers
+	 * somewhere to put it. Shown in the same place and the same colour as everything else here,
+	 * because to the player it is simply the other half of the same sign-in.
+	 */
+	void setDiscord(boolean signedIn, int accounts, String message, boolean code) {
+		this.discordSignedIn = signedIn;
+		this.discordAccounts = accounts;
+		this.discordMessage = message;
+		this.discordState = code ? 2 : 0;
+		this.face.repaint();
+	}
+
+	/** The browser is open and nothing can be done here but wait, or cancel. */
+	void setDiscordWaiting(String message) {
+		this.discordState = 1;
+		this.discordMessage = message;
+		this.face.repaint();
+	}
+
 	/** Whether Play and the dev link answer a click at all. */
 	void setChoosable(boolean choosable) {
 		this.choosable = choosable;
@@ -255,12 +313,18 @@ final class LauncherWindow {
 		private void hover(MouseEvent event) {
 			boolean play = this.live() && LauncherWindow.this.playBox.contains(event.getPoint());
 			boolean dev = LauncherWindow.this.choosable && LauncherWindow.this.devBox.contains(event.getPoint());
-			if (play == LauncherWindow.this.playHot && dev == LauncherWindow.this.devHot) {
+			boolean discord = LauncherWindow.this.discordBox.contains(event.getPoint());
+			boolean discordAction = LauncherWindow.this.discordActionBox.contains(event.getPoint());
+			if (play == LauncherWindow.this.playHot && dev == LauncherWindow.this.devHot
+				&& discord == LauncherWindow.this.discordHot && discordAction == LauncherWindow.this.discordActionHot) {
 				return;
 			}
 			LauncherWindow.this.playHot = play;
 			LauncherWindow.this.devHot = dev;
-			this.setCursor(Cursor.getPredefinedCursor(play || dev ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+			LauncherWindow.this.discordHot = discord;
+			LauncherWindow.this.discordActionHot = discordAction;
+			this.setCursor(Cursor.getPredefinedCursor(play || dev || discord || discordAction
+				? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
 			this.repaint();
 		}
 
@@ -269,6 +333,23 @@ final class LauncherWindow {
 				LauncherWindow.this.actions.onPlay();
 			} else if (LauncherWindow.this.choosable && LauncherWindow.this.devBox.contains(event.getPoint())) {
 				LauncherWindow.this.actions.onDev();
+			} else if (LauncherWindow.this.discordBox.contains(event.getPoint())) {
+				// The headline of the block only does anything when it is an invitation to sign in;
+				// when it is reporting what is signed in, the action is the line below it.
+				// NOT "Waiting for your browser" again - that is the headline this click puts up.
+				// The line underneath is for the thing the player has to go and do.
+				LauncherWindow.this.setDiscordWaiting("Authorise Death Plateau in the page that just opened.");
+				LauncherWindow.this.actions.onDiscordSignIn();
+			} else if (LauncherWindow.this.discordActionBox.contains(event.getPoint())) {
+				if (LauncherWindow.this.discordState == 1) {
+					LauncherWindow.this.setDiscord(LauncherWindow.this.discordSignedIn,
+						LauncherWindow.this.discordAccounts, "Sign-in cancelled.", false);
+					LauncherWindow.this.actions.onDiscordCancel();
+				} else if (LauncherWindow.this.discordState == 2) {
+					LauncherWindow.this.actions.onDiscordCode();
+				} else if (LauncherWindow.this.discordSignedIn) {
+					LauncherWindow.this.actions.onDiscordSignOut();
+				}
 			}
 		}
 
@@ -341,7 +422,101 @@ final class LauncherWindow {
 				this.play(g2);
 			}
 			this.caption(g2);
+			this.discord(g2);
 			this.dev(g2);
+		}
+
+		/**
+		 * SIGN IN WITH DISCORD, which is about the login screen and not about this window - so it
+		 * sits under the caption as a line of its own rather than competing with Play.
+		 *
+		 * WHAT IT SAYS WHEN SIGNED IN IS A COUNT, not a Discord name. The launcher is never told the
+		 * name (the website answers with character names and nothing else, and the paste path
+		 * carries no name at all), and a count is the thing a player wants to check anyway: whether
+		 * their characters are going to be offered on the next computer.
+		 */
+		private void discord(Graphics2D g2) {
+			g2.setFont(Theme.FONT_SMALL);
+			FontMetrics fm = g2.getFontMetrics();
+			int state = LauncherWindow.this.discordState;
+			boolean signedIn = LauncherWindow.this.discordSignedIn;
+
+			String head = state == 1 ? "Waiting for your browser..."
+				: signedIn ? (LauncherWindow.this.discordAccounts == 1
+					? "Discord: 1 character linked"
+					: "Discord: " + LauncherWindow.this.discordAccounts + " characters linked")
+				: "Sign in with Discord \u203a";
+			// Only an invitation is a link. The report of what is signed in is text, and its action
+			// is Sign out below it.
+			boolean headLive = state == 0 && !signedIn;
+			int headWidth = fm.stringWidth(head);
+			LauncherWindow.this.discordBox = headLive
+				? new Rectangle(COL_X - 4, DISCORD_BASELINE - fm.getAscent() - 3, headWidth + 8, fm.getHeight() + 6)
+				: new Rectangle();
+			boolean headHot = headLive && LauncherWindow.this.discordHot;
+			g2.setColor(headHot ? Theme.ACCENT_BRIGHT : headLive ? new Color(0x9A, 0x86, 0x84) : Theme.TEXT_DIM);
+			g2.drawString(head, COL_X, DISCORD_BASELINE);
+			if (headHot) {
+				g2.drawLine(COL_X, DISCORD_BASELINE + 2, COL_X + headWidth, DISCORD_BASELINE + 2);
+			}
+
+			String action = state == 1 ? "Cancel"
+				: state == 2 ? "Enter the code \u203a"
+				: signedIn ? "Sign out" : null;
+			if (action == null) {
+				LauncherWindow.this.discordActionBox = new Rectangle();
+				// Nothing signed in and nothing happening: say what the thing is for, once.
+				g2.setColor(new Color(0x6A, 0x5A, 0x58));
+				g2.drawString("Your characters follow you between computers", COL_X, DISCORD_ACTION_BASELINE);
+			} else {
+				int width = fm.stringWidth(action);
+				LauncherWindow.this.discordActionBox = new Rectangle(COL_X - 4,
+					DISCORD_ACTION_BASELINE - fm.getAscent() - 3, width + 8, fm.getHeight() + 6);
+				boolean hot = LauncherWindow.this.discordActionHot;
+				g2.setColor(hot ? Theme.ACCENT_BRIGHT : new Color(0x8A, 0x76, 0x74));
+				g2.drawString(action, COL_X, DISCORD_ACTION_BASELINE);
+				if (hot) {
+					g2.drawLine(COL_X, DISCORD_ACTION_BASELINE + 2, COL_X + width, DISCORD_ACTION_BASELINE + 2);
+				}
+			}
+
+			// WHAT JUST HAPPENED, wrapped over at most two lines. These sentences are written for a
+			// player rather than for a log - "No characters are linked to your Discord yet - type
+			// ::discord in game to link one" is the whole of what somebody in that position needs -
+			// and a sentence that long does not fit a 286 pixel column on one line.
+			String message = LauncherWindow.this.discordMessage;
+			if (message == null || message.length() == 0) {
+				// "" is a sign-in that worked and has nothing to add: the headline above already
+				// says how many characters are linked. See DiscordSignIn.finish.
+				return;
+			}
+			g2.setColor(new Color(0x7A, 0x66, 0x64));
+			int y = DISCORD_MESSAGE_BASELINE;
+			String rest = message;
+			for (int line = 0; line < 2 && rest.length() > 0; line++) {
+				int cut = fit(fm, rest, COL_W);
+				g2.drawString(rest.substring(0, cut).trim(), COL_X, y);
+				rest = rest.substring(cut).trim();
+				y += DISCORD_LINE;
+			}
+		}
+
+		/**
+		 * How much of `text` fits in `width`, broken at a space where there is one.
+		 *
+		 * Java 8 has no line breaker worth the LineBreakMeasurer ceremony for two lines of small
+		 * print, and a message cut mid-word reads as a message that was truncated by accident.
+		 */
+		private int fit(FontMetrics fm, String text, int width) {
+			if (fm.stringWidth(text) <= width) {
+				return text.length();
+			}
+			int cut = text.length();
+			while (cut > 1 && fm.stringWidth(text.substring(0, cut)) > width) {
+				cut--;
+			}
+			int space = text.lastIndexOf(' ', cut);
+			return space > width / 20 ? space : cut;
 		}
 
 		private void play(Graphics2D g2) {

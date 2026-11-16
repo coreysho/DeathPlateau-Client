@@ -505,20 +505,20 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	 * instant, and there is no release to come, so marking it held would leave it held for ever.
 	 */
 	public void pollBrowserKeys() {
-		int seq = BrowserInput.typedSeq;
-		if (seq == BrowserInput.typedAck) {
-			return;
+		// Up to a few per frame so a paste arrives quickly without ever looping on a page that
+		// keeps handing keys back.
+		for (int i = 0; i < 16; i++) {
+			int ch = BrowserInput.takeKey();
+			if (ch <= 0) {
+				return;
+			}
+			if (ch != 8 && ch != 9 && ch != 10 && (ch < 32 || ch > 126)) {
+				continue;
+			}
+			this.idleCycles = 0;
+			this.keyQueue[this.keyQueueWritePos] = ch;
+			this.keyQueueWritePos = this.keyQueueWritePos + 1 & 0x7F;
 		}
-		int ch = BrowserInput.typedKey;
-		// Taken before the key is used, and after it is read: the page writes the next one only
-		// once it sees this, so the read above cannot be of a key that is already being replaced.
-		BrowserInput.typedAck = seq;
-		if (ch != 8 && ch != 9 && ch != 10 && (ch < 32 || ch > 126)) {
-			return;
-		}
-		this.idleCycles = 0;
-		this.keyQueue[this.keyQueueWritePos] = ch;
-		this.keyQueueWritePos = this.keyQueueWritePos + 1 & 0x7F;
 	}
 
 	/**
@@ -535,13 +535,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	 * mapInput with everything else.
 	 */
 	public void pollBrowserTap() {
-		int seq = BrowserInput.tapSeq;
-		if (seq == BrowserInput.tapAck) {
+		int packed = BrowserInput.takeTap();
+		if (packed < 0) {
 			return;
 		}
-		int x = BrowserInput.tapX;
-		int y = BrowserInput.tapY;
-		BrowserInput.tapAck = seq;
+		int x = packed >>> 16;
+		int y = packed & 0xFFFF;
 		this.idleCycles = 0;
 		this.rawMouseX = x;
 		this.rawMouseY = y;
