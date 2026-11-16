@@ -89,6 +89,43 @@ public class QuestHelperTest {
 	static final String HAROLD_NAME = "Harold Evans";
 	/** Longer than the plugin waits for a click's conversation, whatever that is. */
 	static final int PATIENCE = 24;
+
+	/**
+	 * Monkey Madness, whose table has TWO legs recorded at stage 12.
+	 *
+	 * The varp does not move between the Grand Tree and Lumdo, so the sim's two runs of steps
+	 * both carry that value - and only one of them can be the leg a player at 12 is shown.
+	 */
+	static final String MONKEY = "MONKEY MADNESS";
+	static final int MONKEY_VARP = 365;
+
+	/**
+	 * Death Plateau's stage 50: two talks with Harold, and then a note.
+	 *
+	 * Four legs in the table end with an explanation rather than an instruction, and this is the
+	 * one whose progress is a plain varp. Once both talks are behind the player the only thing
+	 * left in the leg is "Roll the dice", which is nobody's step.
+	 */
+	/** Fight Arena's first walk, which names the floor it is on: [2569, 3198, 0]. */
+	static final String ARENA = "FIGHT ARENA";
+	static final int ARENA_VARP = 17;
+	static final int SERVIL_X = 2569;
+	static final int SERVIL_Z = 3198;
+
+	static final String PLATEAU = "DEATH PLATEAU";
+	static final int PLATEAU_VARP = 314;
+	/** Not Myreque's Harold Evans above: Death Plateau's Harold, who runs the dice game. */
+	static final int DICE_HAROLD = 1078;
+	static final String DICE_HAROLD_NAME = "Harold";
+
+	/**
+	 * Big Chompy Bird Hunting, whose stage 35 has no steps at all.
+	 *
+	 * The leg is "Rantz takes his shot and misses": a wait and a lucky roll, neither of which is
+	 * anything a player clicks, so the exporter has nothing to write for it.
+	 */
+	static final String CHOMPY = "BIG CHOMPY BIRD HUNTING";
+	static final int CHOMPY_VARP = 293;
 	static final int IVAN = 1574;
 	static final String IVAN_NAME = "Ivan Strom";
 
@@ -290,6 +327,8 @@ public class QuestHelperTest {
 		followTests();
 		System.out.println("17. the step you have just taken");
 		stepTests();
+		System.out.println("18. the shapes in the table that left the panel with nothing to say");
+		shapeTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -1886,6 +1925,18 @@ public class QuestHelperTest {
 		settle();
 		check(said(screen(), "Search " + BOOKCASE_NAME),
 			"clicking it from across the room is not the search yet");
+
+		// AND A CONVERSATION DOES NOT STAND IN FOR WALKING THERE. Nobody talks to a bookcase
+		// from eight tiles away, so a chatbox that opens on the way - a level-up, most often -
+		// is somebody else's news.
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Search " + BOOKCASE_NAME),
+			"...and a conversation on the way there is not the search either");
+
 		stand(MID_X, MID_Z);
 		gameTicks(1);
 		settle();
@@ -1896,6 +1947,126 @@ public class QuestHelperTest {
 		client.scene = null;
 		client.sceneBaseTileX = BAZAAR_X - MID_X;
 		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
+		clearNpcs();
+		wipeQuests();
+		setPin("");
+		gameTicks(8);
+	}
+
+	// ---------------------------------------------------------------- 18
+
+	/**
+	 * THE SHAPES IN THE TABLE THE PANEL USED TO FALL OVER, each read off the table itself rather
+	 * than invented here: a tile with no floor, two legs at one value, and a leg with no steps.
+	 *
+	 * NONE OF THESE WERE VISIBLE FROM A QUEST PICKED BY HAND. Every section above chooses a
+	 * quest, a leg and a scene, and all three of these are quests nobody had chosen - which is
+	 * the same gap the sweep in section 15 exists for, one level further in: the sweep proves
+	 * nothing throws, and a panel that says "No step recorded for this stage" throws nothing.
+	 */
+	static void shapeTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		wipeQuests();
+
+		// LOGGED OUT FIRST, because section 17 walked The Feud's first step and the plugin
+		// remembers that for as long as the character is logged in - which is the point of it.
+		// This section is about a player who has done none of it.
+		logOut();
+		logIn();
+
+		// A TILE WITH NO FLOOR ON IT. 2677 of the table's tiles are a bare pair of coordinates,
+		// because the sim stood there with a `go [x,z]` that never named a level - and the plugin
+		// read the missing third number as the ground floor, so every one of them was thrown away
+		// the moment the player went upstairs. The Feud's first walk is one of them.
+		track(FEUD);
+		client.sceneBaseTileX = BAZAAR_X - MID_X;
+		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
+		client.currentLevel = 1;
+		stand(MID_X + 8, MID_Z + 8);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Go to the bazaar"), "a step whose tile names no floor is still the step upstairs");
+		check(painted() > 0, "...and its tile is still marked, rather than dropped for not being plane 0");
+		stand(MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "Go to the bazaar"), "...and standing on it upstairs is still arriving");
+		client.currentLevel = 0;
+
+		// AND A TILE THAT DOES NAME A FLOOR IS STILL HELD TO IT, which is the other half of the
+		// same fix: 849 of the table's tiles say "plane 0" out loud, and a marker on the ground
+		// floor is no use to somebody standing on the first. Fight Arena's walk to Lady Servil
+		// names it.
+		clearNpcs();
+		wipeQuests();
+		logOut();
+		logIn();
+		track(ARENA);
+		client.sceneBaseTileX = SERVIL_X - MID_X;
+		client.sceneBaseTileZ = SERVIL_Z - MID_Z;
+		stand(MID_X + 8, MID_Z + 8);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Go to Lady Servil"), "the leg opens on the walk to Lady Servil");
+		check(painted() > 0, "...and on her own floor the tile is marked");
+		client.currentLevel = 1;
+		settle();
+		check(painted() == 0, "...but a floor up it is not, because that tile said which floor it is on");
+		check(said(screen(), "Go to Lady Servil"), "...while the panel still says where to go");
+		client.currentLevel = 0;
+
+		// TWO LEGS AT ONE STAGE VALUE. Monkey Madness records nine steps and then five, both at
+		// stage 12, and the later of them used to win - so the nine were somewhere no player
+		// could reach.
+		clearNpcs();
+		wipeQuests();
+		track(MONKEY);
+		client.varps[MONKEY_VARP] = 12;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Grand Tree"), "of two legs at one stage value, the first is the one shown");
+		check(!said(screen(), "Go to Lumdo"), "...and not the later one that used to hide it");
+		List<ConfigList.Row> rows = page();
+		check(rows.size() > 9, "...with its own steps under it on the page (" + rows.size() + " rows)");
+
+		// A LEG THAT ENDS IN AN EXPLANATION. Death Plateau's stage 50 is "talk to Harold, talk to
+		// Harold again, roll the dice" - and with both talks behind you the only thing left is
+		// the note, which the panel cannot name. It used to say "No step recorded for this
+		// stage" at the exact moment the player had done everything right.
+		clearNpcs();
+		wipeQuests();
+		logOut();
+		logIn();
+		track(PLATEAU);
+		client.varps[PLATEAU_VARP] = 50;
+		spawn(DICE_HAROLD_NAME, DICE_HAROLD, MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + DICE_HAROLD_NAME), "the leg opens on the first talk with Harold");
+		for (int i = 0; i < 2; i++) {
+			clickNpc(DICE_HAROLD);
+			openDialogue(new String[] { "Yes.", "No." });
+			gameTicks(1);
+			closeDialogue();
+			gameTicks(1);
+			settle();
+		}
+		check(!said(screen(), "No step recorded"),
+			"with both talks done, the note left behind is not a step and does not empty the panel");
+		check(said(screen(), "Read Iou"), "...the next leg is what is next (" + firstLine() + ")");
+
+		// A LEG WITH NO STEPS IN IT. Big Chompy's stage 35 is a wait while Rantz misses, so there
+		// is nothing to click and nothing for the table to say - and an empty leg used to be the
+		// answer, which read as "No step recorded for this stage".
+		wipeQuests();
+		track(CHOMPY);
+		client.varps[CHOMPY_VARP] = 35;
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "No step recorded"), "a leg with no steps in it does not leave the panel empty");
+		check(said(screen(), "Rantz"), "...it gives what is next instead (Rantz, two steps later)");
+
 		clearNpcs();
 		wipeQuests();
 		setPin("");
@@ -1941,6 +2112,12 @@ public class QuestHelperTest {
 	static void logIn() {
 		client.ingame = true;
 		manager.onClientTick(ticks++);
+	}
+
+	/** The first line the on-screen panel drew, for a check that wants to say what it saw. */
+	static String firstLine() {
+		List<Drawn> drawn = screen();
+		return drawn.isEmpty() ? "nothing drawn" : strip(drawn.get(0).text);
 	}
 
 	/** The label of the row the page marks as the step to do now, or "". */

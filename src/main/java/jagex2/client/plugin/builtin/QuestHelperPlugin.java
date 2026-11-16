@@ -178,6 +178,16 @@ public final class QuestHelperPlugin extends Plugin {
 
 	/** No items at all: a walk, a note, a talk. Shared so a frame does not allocate for each. */
 	private static final int[] NONE = new int[0];
+
+	/**
+	 * The plane of a tile the table recorded without one: match whatever floor you are on.
+	 *
+	 * Two thirds of the tiles in the table are a bare pair of coordinates, and a pair says
+	 * nothing about the floor either way - so the only honest reading is "wherever you are".
+	 * The ones that DO name a level are still held to it: a tile on the top floor of the Temple
+	 * of Light is not where to stand while you are at the bottom of it.
+	 */
+	private static final int ANY_PLANE = -1;
 	private static final String[] NO_PICKS = new String[0];
 
 	/** A step's dialogue picks, as written. */
@@ -445,7 +455,12 @@ public final class QuestHelperPlugin extends Plugin {
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
 				List<?> at = Json.array(m, "at");
 				if (at != null && at.size() >= 2) {
-					step.at = new int[] { num(at.get(0)), num(at.get(1)), at.size() > 2 ? num(at.get(2)) : 0 };
+					// A MISSING PLANE IS UNKNOWN AND NOT ZERO, which is what this read as before:
+					// 2677 of the table's tiles are a pair, because the sim stood there with a
+					// `go [x,z]` that never named a level, and taking that as the ground floor
+					// threw every one of them away the moment the player climbed a staircase -
+					// no marker on an upper floor, and a walk that could never be arrived at.
+					step.at = new int[] { num(at.get(0)), num(at.get(1)), at.size() > 2 ? num(at.get(2)) : ANY_PLANE };
 				}
 				st.steps.add(step);
 			}
@@ -675,12 +690,19 @@ public final class QuestHelperPlugin extends Plugin {
 		}
 	}
 
-	/** The leg of the quest the varp says you are on: the last stage whose `from` you have passed. */
+	/**
+	 * The leg of the quest the varp says you are on: the last stage whose `from` you have passed.
+	 *
+	 * AND THE FIRST OF TWO THAT SHARE A VALUE. Monkey Madness records two legs at stage 12 -
+	 * the varp does not move between the Grand Tree and Lumdo - and taking the later of them
+	 * put nine steps where no player could ever see them. The earlier one is where somebody at
+	 * stage 12 is, and {@link #legNow} walks on to the other when its steps are behind them.
+	 */
 	private Stage stageNow(Quest q) {
 		int value = this.questValue(q);
 		Stage best = null;
 		for (Stage st : q.stages) {
-			if (st.from <= value && (best == null || st.from >= best.from)) {
+			if (st.from <= value && (best == null || st.from > best.from)) {
 				best = st;
 			}
 		}
@@ -701,7 +723,14 @@ public final class QuestHelperPlugin extends Plugin {
 	private Stage legNow(Quest q) {
 		Stage st = this.stageNow(q);
 		for (int guard = 0; st != null && guard < 8; guard++) {
-			if (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {
+			// A LEG IS OVER WHEN NOTHING IN IT IS LEFT TO DO, which is not the same as having run
+			// off the end of its list. Four legs in the table END with an explanation rather than
+			// an instruction - Death Plateau's two talks with Harold are followed by "Roll the
+			// dice" - and once the talks were behind you the only thing left was a note, which
+			// the panel cannot name: it said "No step recorded for this stage" and the marker
+			// went out. A leg with NO instructions at all is the same case with the count at
+			// zero, which is Big Chompy's stage 35, a wait while Rantz misses.
+			if (this.reached(q, st) <= lastAction(st)) {
 				return st;
 			}
 			Stage next = null;
@@ -716,6 +745,19 @@ public final class QuestHelperPlugin extends Plugin {
 			st = next;
 		}
 		return st;
+	}
+
+	/** The last step of a leg that names something to do, or -1 when the leg names nothing. */
+	private static int lastAction(Stage st) {
+		if (st == null) {
+			return -1;
+		}
+		for (int i = st.steps.size() - 1; i >= 0; i--) {
+			if (!"note".equals(st.steps.get(i).kind)) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/** The first step of the current leg that names something to go and do. */
@@ -939,7 +981,7 @@ public final class QuestHelperPlugin extends Plugin {
 		// a guess at a direction.
 		for (int i = start; i < st.steps.size(); i++) {
 			Step s = st.steps.get(i);
-			if (s.at == null || s.at[2] != ctx.getPlane()) {
+			if (s.at == null || !this.onThisFloor(s)) {
 				continue;
 			}
 			int x = ctx.worldToSceneX(s.at[0]);
@@ -1052,15 +1094,6 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	/**
-	 * What this leg wants that you have not got - and only what you were meant to BRING.
-	 *
-	 * A leg's item list is everything you must be holding by the end of it, which includes what
-	 * the quest hands over while you are in it: the battered key is sewn into a book you have not
-	 * found, so "need Battered key" was an instruction nobody could follow. Those rows are still
-	 * in the table and still on the page, where they read as what is coming; they are just not
-	 * counted as missing.
-	 */
-	/**
 	 * The items of a leg worth showing anybody: the ones to BRING.
 	 *
 	 * The rest are what the quest hands over while you are in it, and a row for those is a row
@@ -1081,6 +1114,15 @@ public final class QuestHelperPlugin extends Plugin {
 		return out;
 	}
 
+	/**
+	 * What this leg wants that you have not got - and only what you were meant to BRING.
+	 *
+	 * A leg's item list is everything you must be holding by the end of it, which includes what
+	 * the quest hands over while you are in it: the battered key is sewn into a book you have not
+	 * found, so "need Battered key" was an instruction nobody could follow. Those rows are still
+	 * in the table and still on the page, where they read as what is coming; they are just not
+	 * counted as missing.
+	 */
 	private List<Need> missing(Stage st) {
 		List<Need> out = new ArrayList<>();
 		if (st == null) {
@@ -1338,7 +1380,7 @@ public final class QuestHelperPlugin extends Plugin {
 		if (leg != null) {
 			Spot sp = this.spot(leg);
 			Step on = sp == null ? null : sp.step;
-			if (on != null && "walk".equals(on.kind) && on.at != null && on.at[2] == ctx.getPlane()
+			if (on != null && "walk".equals(on.kind) && on.at != null && this.onThisFloor(on)
 				&& this.near(on.at[0], on.at[1])) {
 				this.took(leg, indexOf(leg, on));
 			}
@@ -1359,7 +1401,11 @@ public final class QuestHelperPlugin extends Plugin {
 			// player already is - so the tick after the click is the end of it.
 			done = w.sawDialogue || this.tick != w.tick;
 		} else {
-			done = w.sawDialogue || this.near(w.worldX, w.worldZ);
+			// WALKING TO IT IS THE WHOLE OF IT, and a conversation is NOT enough on its own:
+			// nobody talks to a door from across the room, so a chatbox that opens on the way
+			// there - a level-up, most often - is somebody else's news and not this step
+			// finishing. A chest that does talk has been walked to by the time it does.
+			done = this.near(w.worldX, w.worldZ);
 		}
 		if (done) {
 			this.took(w.leg, w.step);
@@ -1384,6 +1430,11 @@ public final class QuestHelperPlugin extends Plugin {
 		}
 		leg.doneTo = at;
 		this.heldFor = null;
+	}
+
+	/** Whether this step's tile is on the floor the player is on, or names no floor at all. */
+	private boolean onThisFloor(Step step) {
+		return step.at != null && (step.at[2] == ANY_PLANE || step.at[2] == ctx.getPlane());
 	}
 
 	/** Whether the player is standing at a world tile, give or take {@link #CLOSE}. */
@@ -1551,9 +1602,16 @@ public final class QuestHelperPlugin extends Plugin {
 				break;
 			}
 		}
+		// PARSED INSIDE THE GUARD, because this runs while the chatbox is being drawn: the digits
+		// are the table's and a long enough run of them overflows an int, and five throws out of
+		// an overlay is what PluginManager disables a plugin at.
 		if (numeric) {
-			int at = Integer.parseInt(pick) - 1;
-			return at >= 0 && at < options.size() ? at : -1;
+			try {
+				int at = Integer.parseInt(pick) - 1;
+				return at >= 0 && at < options.size() ? at : -1;
+			} catch (NumberFormatException overflow) {
+				return -1;
+			}
 		}
 		String[] wants = pick.split("\\|\\|");
 		for (int i = 0; i < options.size(); i++) {
