@@ -1978,8 +1978,24 @@ public class ResizableShots extends Client {
 	 *
 	 * Run it twice on the same skill and the second time is the ordinary line - the server first has
 	 * been claimed by the first - which is how both forms get into one run.
+	 *
+	 * THIS MODE NO LONGER WORKS, and is kept for the shots it already took and for whatever
+	 * replaces it. Since 2026-11-16 a stat written by a staff command marks the account
+	 * (%milestone_cheated) and nothing it does is announced afterwards - which is the point of the
+	 * change, and it takes ::advancestat with it, because the mark is set before the experience is.
+	 * ::setvar milestone_cheated 0 straight afterwards does not get it back either: the suppression
+	 * is read by [label,levelup] off the ENGINE queue a tick or more later, so clearing it races
+	 * the thing it is clearing it for.
+	 *
+	 * Anything that photographs these lines again has to trigger them the way a player does -
+	 * earned experience - or be handed a command that grants it without marking the account. The
+	 * engine-side sim (engine tools/sim/milestones.ts) covers which lines are sent, to whom, and
+	 * that none of them is wide enough to wrap; what it cannot cover is how they look.
 	 */
 	static void milestones(String prefix) throws Exception {
+		say("NOTE: ::advancestat no longer announces anything - a stat set by a command marks the");
+		say("account and mutes its milestones. This mode will photograph an empty chatbox. See the");
+		say("comment above milestones() in ResizableShots.java.");
 		// Out of the tutorial, or every broadcast is swallowed: World.broadcastMilestone skips a
 		// player with a lesson open, because the client turns a game message into a modal there.
 		command("::setvar tutorial 1000");
