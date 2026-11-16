@@ -2750,7 +2750,7 @@ public class Client extends GameShell implements PixMap.Target {
 				signlink.startpriv(InetAddress.getLocalHost());
 
 				Client app = new Client();
-				app.initApplication(503, 765);
+				app.initApplication(DisplaySettings.startHeight(), DisplaySettings.startWidth());
 			} else if (args.length == 0) {
 				// default args: 10 0 highmem members 32
 				nodeId = 10;
@@ -2762,7 +2762,7 @@ public class Client extends GameShell implements PixMap.Target {
 				signlink.startpriv(InetAddress.getLocalHost());
 
 				Client app = new Client();
-				app.initApplication(503, 765);
+				app.initApplication(DisplaySettings.startHeight(), DisplaySettings.startWidth());
 			} else {
 				System.out.println("Usage: node-id, port-offset, [lowmem/highmem], [free/members], storeid");
 			}
@@ -3603,6 +3603,10 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.screenshotWanted) {
 			this.screenshotWanted = false;
 			this.writeScreenshot();
+		}
+
+		if (this.scaled) {
+			this.presentScaled();
 		}
 
 		this.dragCycles = 0;
@@ -6821,6 +6825,8 @@ public class Client extends GameShell implements PixMap.Target {
 			// instead and this is where its drag joins the real one - see BrowserInput. A desktop
 			// client reads two zeroes and carries on.
 			super.pollBrowserCameraDrag();
+			super.pollBrowserKeys();
+			super.pollBrowserTap();
 			if (super.cameraDragDeltaX != 0 || super.cameraDragDeltaY != 0) {
 				if (QolSettings.on(QolSettings.MMB_CAMERA)) {
 					this.orbitCameraYaw = this.orbitCameraYaw + super.cameraDragDeltaX * CAMERA_DRAG_YAW_NUM / CAMERA_DRAG_DIV & 0x7FF;
@@ -17107,6 +17113,42 @@ public class Client extends GameShell implements PixMap.Target {
 	private boolean letterCleared;
 	/** The title art shrunk, blurred and dimmed, for filling the window around the centred screen. */
 	private PixMap titleBlur;
+
+	// ---------------------------------------------------------------- A WINDOW SMALLER THAN THE GAME
+	//
+	// A PHONE CANNOT BE FITTED BY MOVING THE PANELS (2026-11-16). Resizable mode lays the three
+	// panels out at their own pixel size, so the smallest window it can fill is about 760x491 - the
+	// chatbox (519 wide) beside the right-hand column (241), and the minimap (156 tall) above the
+	// tab column (335). A phone held sideways is around 844x390. The height is not close, and no
+	// rearranging of panels that are each a fixed lump of 377's art will make it close.
+	//
+	// NOR BY SCALING THE PAGE. CheerpJ maps a CSS pixel to an AWT pixel one for one and takes the
+	// mouse off the canvas's own rectangle, so a CSS transform on the display moves the picture and
+	// not the clicks. Measured: at scale 0.5 a tap on a widget's visible position misses it, and the
+	// far half of the window cannot be reached at all, because the events never land on the canvas.
+	//
+	// So the game keeps its 765x503 frame and this draws that frame smaller. Every area is composed
+	// into frameBuffer - the same buffer and the same PixMap.Target route resizable mode already
+	// uses - and the whole frame is then put on the window scaled to fit and centred, with the
+	// mouse scaled back the other way in mapInput(). Nothing above this layer knows: every hit
+	// test, panel position and interface coordinate is the fixed frame's, exactly as it always was.
+	//
+	// IT IS ONLY EVER ON WHERE THE WINDOW IS TOO SMALL FOR THE GAME, which on a desktop is never -
+	// ViewBox.applyMinimumSize keeps the window at Layout.MIN_W/MIN_H and the browser's own display
+	// is made larger than that. A desktop client takes none of this code.
+	private boolean scaled;
+	/** The frame's size on the window, and where it sits in it. */
+	private int scaleW;
+	private int scaleH;
+	private int scalePadX;
+	private int scalePadY;
+	/** The window size this scale was worked out for, so the work is not redone every frame. */
+	private int scaleForW;
+	private int scaleForH;
+	/** Source column for each destination column: one multiply and divide per frame, not per pixel. */
+	private int[] scaleCols;
+	/** The window, at the window's size: what is actually handed to the Graphics. */
+	private PixMap scaledArea;
 	/**
 	 * How small the blurred copy is kept. 128x84 holds the 765x503 art's shape to within a pixel of
 	 * its aspect, and shrinking that far is itself most of the blur: one pixel of it is the average
@@ -17164,6 +17206,22 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** Bring the layout into line with the request and the window's size. Game thread only. */
 	public void syncLayout() {
+		java.awt.Component sized = this.getBaseComponent();
+		int cw = sized.getWidth();
+		int ch = sized.getHeight();
+		if (cw > 0 && ch > 0) {
+			// Every frame, off the component's own size, so turning a phone sideways is picked up
+			// with nothing else to tell us about it.
+			this.applyScale(cw, ch);
+		}
+		if (this.scaled) {
+			// The frame is the fixed one whatever the player asked for: the window is too small to
+			// lay the panels out in, which is the whole reason the scale is on.
+			if (this.layout.resizable) {
+				this.applyLayout(Layout.fixed());
+			}
+			return;
+		}
 		Layout next;
 		if (this.wantMode == Layout.FIXED) {
 			if (!this.layout.resizable) {
@@ -17196,8 +17254,10 @@ public class Client extends GameShell implements PixMap.Target {
 		Layout was = this.layout;
 		boolean first = was.resizable != next.resizable;
 		this.layout = next;
-		super.remapMouse = next.resizable;
-		PixMap.target = next.resizable ? this : null;
+		// Scaled mode is the fixed layout composed into frameBuffer, so it wants the target and the
+		// remapped mouse that resizable wants, while its layout says fixed.
+		super.remapMouse = next.resizable || this.scaled;
+		PixMap.target = next.resizable || this.scaled ? this : null;
 
 		java.awt.Graphics g = this.acquireGraphics();
 		if (g != null) {
@@ -17218,7 +17278,7 @@ public class Client extends GameShell implements PixMap.Target {
 				g.fillRect(0, 0, was.width, was.height);
 			}
 		}
-		if (next.resizable) {
+		if (next.resizable || this.scaled) {
 			if (this.frameBuffer == null) {
 				this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
 			}
@@ -17242,7 +17302,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.menuVisible = false;
 			this.menuSwapMode = false;
 		}
-		if (!next.resizable) {
+		if (!next.resizable && !this.scaled) {
 			super.mouseX = super.rawMouseX;
 			super.mouseY = super.rawMouseY;
 		}
@@ -17308,6 +17368,18 @@ public class Client extends GameShell implements PixMap.Target {
 	 */
 	public void mapInput() {
 		this.syncLayout();
+		if (this.scaled) {
+			// The window's point, back into the frame the game thinks it is drawing. The -1 pair is
+			// GameShell's "the mouse is not over the canvas" and has to stay that exact pair.
+			int rx = super.rawMouseX;
+			int ry = super.rawMouseY;
+			boolean off = rx == -1 && ry == -1;
+			super.mouseX = off ? -1 : scaleBack(rx, this.scalePadX, this.scaleW, Layout.FIXED_W);
+			super.mouseY = off ? -1 : scaleBack(ry, this.scalePadY, this.scaleH, Layout.FIXED_H);
+			super.mouseClickX = scaleBack(super.rawClickX, this.scalePadX, this.scaleW, Layout.FIXED_W);
+			super.mouseClickY = scaleBack(super.rawClickY, this.scalePadY, this.scaleH, Layout.FIXED_H);
+			return;
+		}
 		if (!this.layout.resizable) {
 			return;
 		}
@@ -17505,6 +17577,15 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** PixMap.target: see the top of this section. */
 	public boolean draw(PixMap area, int x, int y, java.awt.Graphics g) {
+		if (this.scaled) {
+			// EVERY area, the viewport and the whole-screen one included: the frame is assembled
+			// in one piece and put on the window once, at the end of draw(). Anything that went
+			// straight to the Graphics here would land at its unscaled position, over the top.
+			if (this.frameBuffer != null) {
+				copyRect(area.data, area.width, 0, 0, area.width, area.height, this.frameBuffer, Layout.FIXED_W, Layout.FIXED_H, x, y);
+			}
+			return true;
+		}
 		if (!this.layout.resizable || this.letterGraphics == null) {
 			return false;
 		}
@@ -17560,6 +17641,104 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.screenGraphics != null) {
 			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
 		}
+	}
+
+	/**
+	 * Decide whether the frame has to be drawn smaller than it is, and how much smaller.
+	 *
+	 * Called every frame with the window's live size, and does nothing at all unless that size has
+	 * changed - which on a desktop means it does nothing for the whole session.
+	 */
+	private void applyScale(int w, int h) {
+		boolean want = w < Layout.FIXED_W || h < Layout.FIXED_H;
+		if (want == this.scaled && w == this.scaleForW && h == this.scaleForH) {
+			return;
+		}
+		this.scaleForW = w;
+		this.scaleForH = h;
+		this.scaled = want;
+		if (!want) {
+			// Back to a window the game fits in: everything goes where it went before.
+			this.scaledArea = null;
+			this.scaleCols = null;
+			super.remapMouse = this.layout.resizable;
+			PixMap.target = this.layout.resizable ? this : null;
+			this.redrawFrame = true;
+			return;
+		}
+		// The largest the frame can be drawn in this window with its shape kept, centred, with
+		// whatever is left over as black bars the frame never writes into.
+		int sw = w;
+		int sh = sw * Layout.FIXED_H / Layout.FIXED_W;
+		if (sh > h) {
+			sh = h;
+			sw = sh * Layout.FIXED_W / Layout.FIXED_H;
+		}
+		if (sw < 1 || sh < 1) {
+			this.scaled = false;
+			return;
+		}
+		this.scaleW = sw;
+		this.scaleH = sh;
+		this.scalePadX = (w - sw) / 2;
+		this.scalePadY = (h - sh) / 2;
+		this.scaleCols = new int[sw];
+		for (int x = 0; x < sw; x++) {
+			this.scaleCols[x] = x * Layout.FIXED_W / sw;
+		}
+		if (this.frameBuffer == null) {
+			this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
+		}
+		this.scaledArea = new PixMap(h, this.getBaseComponent(), w);
+		if (this.screenGraphics == null) {
+			this.screenGraphics = this.acquireGraphics();
+		}
+		super.remapMouse = true;
+		PixMap.target = this;
+		this.redrawFrame = true;
+	}
+
+	/**
+	 * A point on the window, back into the 765x503 frame. Clamped rather than allowed out of the
+	 * frame: a tap on a black bar then lands on the frame's own stone edge, which does nothing,
+	 * where a coordinate outside the frame would be a number no hit test was written to expect.
+	 */
+	private static int scaleBack(int v, int pad, int size, int fixed) {
+		if (size <= 0) {
+			return v;
+		}
+		int out = (v - pad) * fixed / size;
+		if (out < 0) {
+			return 0;
+		}
+		return out > fixed - 1 ? fixed - 1 : out;
+	}
+
+	/**
+	 * The assembled frame onto the window, scaled and centred.
+	 *
+	 * Nearest neighbour, by a column table worked out once per size: the 377 frame is sharp-edged
+	 * art and small text, and averaging it at these ratios turns the font to mud. The black bars
+	 * need no clearing - a new int[] is already black and nothing below ever writes outside the
+	 * centred rectangle.
+	 */
+	private void presentScaled() {
+		if (this.scaledArea == null || this.frameBuffer == null || this.screenGraphics == null || this.scaleCols == null) {
+			return;
+		}
+		int[] dst = this.scaledArea.data;
+		int[] src = this.frameBuffer;
+		int[] cols = this.scaleCols;
+		int dw = this.scaledArea.width;
+		int w = this.scaleW;
+		for (int y = 0; y < this.scaleH; y++) {
+			int srow = y * Layout.FIXED_H / this.scaleH * Layout.FIXED_W;
+			int drow = (y + this.scalePadY) * dw + this.scalePadX;
+			for (int x = 0; x < w; x++) {
+				dst[drow + x] = src[srow + cols[x]];
+			}
+		}
+		this.scaledArea.drawDirect(0, 0, this.screenGraphics);
 	}
 
 	/**

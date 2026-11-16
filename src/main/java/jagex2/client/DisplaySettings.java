@@ -34,6 +34,60 @@ public final class DisplaySettings {
 	 */
 	public static final int[] DRAW_DISTANCES = { 25, 35, 45, 52 };
 
+	// ------------------------------------------------------------------ the browser's own screen
+
+	/**
+	 * HOW BIG THE SCREEN REALLY IS, WHEN THE PAGE KNOWS BETTER (2026-11-16).
+	 *
+	 * The game opens at 765x503 and ViewBox will not let the window go under Layout.MIN_W/MIN_H,
+	 * which is right for a desktop: the panels are fixed lumps of 377's art and they overlap under
+	 * that. A phone is smaller than that in at least one direction whichever way up it is held, so
+	 * on a phone those two rules between them mean the window can never be the size of the screen
+	 * it is on, and Client's scaled mode - which only turns on when the window IS smaller than the
+	 * game - could never turn on at all.
+	 *
+	 * So rs2.cgi passes the display it made, and these let the window be that size. Nothing else
+	 * sets them: a desktop client reads nothing, every number below is Layout's, and the minimum
+	 * that keeps a dragged window from squeezing the panels is exactly as it was.
+	 *
+	 * Read once, here, rather than per call: a system property lookup is cheap but this is asked
+	 * on every window resize.
+	 */
+	private static final int browserW = browserSize("lostcity.screenwidth");
+	private static final int browserH = browserSize("lostcity.screenheight");
+
+	/**
+	 * One of the page's two sizes, or 0 for "not a browser, or a size not worth having". Anything
+	 * under 200 is refused rather than honoured: a window that small is a mistake somewhere, and
+	 * the game at the fixed size with its edges off the display beats a game four pixels tall.
+	 */
+	private static int browserSize(String name) {
+		try {
+			int v = Integer.parseInt(System.getProperty(name, "0"));
+			return v >= 200 && v <= 8192 ? v : 0;
+		} catch (Exception ignore) {
+			return 0;
+		}
+	}
+
+	/** The size the game opens at. */
+	public static int startWidth() {
+		return browserW > 0 ? browserW : Layout.FIXED_W;
+	}
+
+	public static int startHeight() {
+		return browserH > 0 ? browserH : Layout.FIXED_H;
+	}
+
+	/** The smallest the window may be made. Never larger than the screen there is to put it on. */
+	public static int minWidth() {
+		return browserW > 0 && browserW < Layout.MIN_W ? browserW : Layout.MIN_W;
+	}
+
+	public static int minHeight() {
+		return browserH > 0 && browserH < Layout.MIN_H ? browserH : Layout.MIN_H;
+	}
+
 	private DisplaySettings() {
 	}
 

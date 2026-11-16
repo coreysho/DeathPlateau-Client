@@ -484,6 +484,75 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		}
 	}
 
+	/**
+	 * One keystroke from the page's hidden input, if it is offering one - see
+	 * {@link BrowserInput#typedKey}, which explains why a phone's keyboard cannot reach AWT on its
+	 * own and why this is a handshake rather than a running total.
+	 *
+	 * The key arrives in the client's OWN key space, the one {@link #keyPressed} produces rather
+	 * than AWT's: a printable character as itself, 8 for backspace, 9 for tab and 10 for enter. So
+	 * all that is left to do here is what keyPressed does with its answer - put it in the queue
+	 * that pollKey() reads.
+	 *
+	 * NOTHING IS TAKEN ON TRUST. The page is the only thing that writes these, but it is still the
+	 * page, and a bad value here would be a character the game never expects: anything outside
+	 * what a phone's keyboard can actually produce is dropped rather than queued. The held-key
+	 * table (actionKey) is deliberately left alone - a soft key is pressed and released in the same
+	 * instant, and there is no release to come, so marking it held would leave it held for ever.
+	 */
+	public void pollBrowserKeys() {
+		int seq = BrowserInput.typedSeq;
+		if (seq == BrowserInput.typedAck) {
+			return;
+		}
+		int ch = BrowserInput.typedKey;
+		// Taken before the key is used, and after it is read: the page writes the next one only
+		// once it sees this, so the read above cannot be of a key that is already being replaced.
+		BrowserInput.typedAck = seq;
+		if (ch != 8 && ch != 9 && ch != 10 && (ch < 32 || ch > 126)) {
+			return;
+		}
+		this.idleCycles = 0;
+		this.keyQueue[this.keyQueueWritePos] = ch;
+		this.keyQueueWritePos = this.keyQueueWritePos + 1 & 0x7F;
+	}
+
+	/**
+	 * A long press from the page, as the right-button press it stands in for - see
+	 * {@link BrowserInput#tapX}, which explains why CheerpJ's own long-press cannot do this.
+	 *
+	 * This is deliberately the latch and nothing else. mouseButton - the "a button is down right
+	 * now" flag that drives dragging - is left at 0, because by the time the page has decided a
+	 * press was long the finger is still down but the gesture is over, and a button the game
+	 * believes is held with no release coming would leave it dragging for ever.
+	 *
+	 * The point arrives in the canvas's own pixels, so it goes into the raw fields beside the
+	 * ordinary ones exactly as mousePressed puts it there, and a scaled frame maps it back in
+	 * mapInput with everything else.
+	 */
+	public void pollBrowserTap() {
+		int seq = BrowserInput.tapSeq;
+		if (seq == BrowserInput.tapAck) {
+			return;
+		}
+		int x = BrowserInput.tapX;
+		int y = BrowserInput.tapY;
+		BrowserInput.tapAck = seq;
+		this.idleCycles = 0;
+		this.rawMouseX = x;
+		this.rawMouseY = y;
+		// The button goes in last, as everywhere else: it is what tells the game thread there is a
+		// press to take.
+		synchronized (this.clickLock) {
+			this.nextRawClickX = x;
+			this.nextRawClickY = y;
+			this.nextMouseClickX = x;
+			this.nextMouseClickY = y;
+			this.nextMouseClickTime = System.currentTimeMillis();
+			this.nextMouseClickButton = 2;
+		}
+	}
+
 	public void mousePressed(MouseEvent e) {
 		int x = e.getX();
 		int y = e.getY();
