@@ -517,6 +517,42 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		this.keyQueueWritePos = this.keyQueueWritePos + 1 & 0x7F;
 	}
 
+	/**
+	 * A long press from the page, as the right-button press it stands in for - see
+	 * {@link BrowserInput#tapX}, which explains why CheerpJ's own long-press cannot do this.
+	 *
+	 * This is deliberately the latch and nothing else. mouseButton - the "a button is down right
+	 * now" flag that drives dragging - is left at 0, because by the time the page has decided a
+	 * press was long the finger is still down but the gesture is over, and a button the game
+	 * believes is held with no release coming would leave it dragging for ever.
+	 *
+	 * The point arrives in the canvas's own pixels, so it goes into the raw fields beside the
+	 * ordinary ones exactly as mousePressed puts it there, and a scaled frame maps it back in
+	 * mapInput with everything else.
+	 */
+	public void pollBrowserTap() {
+		int seq = BrowserInput.tapSeq;
+		if (seq == BrowserInput.tapAck) {
+			return;
+		}
+		int x = BrowserInput.tapX;
+		int y = BrowserInput.tapY;
+		BrowserInput.tapAck = seq;
+		this.idleCycles = 0;
+		this.rawMouseX = x;
+		this.rawMouseY = y;
+		// The button goes in last, as everywhere else: it is what tells the game thread there is a
+		// press to take.
+		synchronized (this.clickLock) {
+			this.nextRawClickX = x;
+			this.nextRawClickY = y;
+			this.nextMouseClickX = x;
+			this.nextMouseClickY = y;
+			this.nextMouseClickTime = System.currentTimeMillis();
+			this.nextMouseClickButton = 2;
+		}
+	}
+
 	public void mousePressed(MouseEvent e) {
 		int x = e.getX();
 		int y = e.getY();

@@ -68,6 +68,37 @@ public class BrowserInput {
 	/** Raised by the game thread once it has taken that key. */
 	public static volatile int typedAck;
 
+	// ------------------------------------------------------------------ and no second button
+
+	/**
+	 * AND NO RIGHT BUTTON EITHER (2026-11-16).
+	 *
+	 * Half of this game is the right-click menu, and a finger has no second button. CheerpJ 4.3
+	 * added long-press, but it delivers it as a mouse HOVER - which is what a Swing menu bar wants
+	 * and not what this is: 377 opens its menu on a right PRESS, and no amount of hovering will
+	 * produce one.
+	 *
+	 * So the page watches for the press itself - held, and not dragged - and sends where it
+	 * happened. {@link GameShell#pollBrowserTap()} then latches it exactly as a real right press
+	 * would, so the menu opens where the finger is and everything downstream is the ordinary path.
+	 *
+	 * The point is in the game canvas's own pixels, which is what AWT would have reported. When the
+	 * frame is being drawn scaled (a phone), mapInput scales it back with every other mouse
+	 * coordinate - there is nothing special for this to do about it.
+	 *
+	 * Acknowledged like the keyboard: a dropped menu would be a click that did nothing, which is
+	 * worse than a slow one.
+	 */
+	public static volatile int tapX;
+
+	public static volatile int tapY;
+
+	/** Raised by the page once tapX/tapY hold a long press the game has not been offered yet. */
+	public static volatile int tapSeq;
+
+	/** Raised by the game thread once it has taken that press. */
+	public static volatile int tapAck;
+
 	private BrowserInput() {
 	}
 }
