@@ -3535,6 +3535,16 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 
+		// EVERY CYCLE, WHATEVER IS ON SCREEN (2026-11-16). These were next to the camera drag in
+		// updateOrbitCamera, which was the wrong company to keep: the drag is in-game by nature -
+		// nothing is dragged before there is a world - and updateOrbitCamera runs only once the
+		// player is in it. The keyboard is the opposite case. It exists to type a name on the LOGIN
+		// screen, which is before any of that, so the one place it was needed was the one place it
+		// was never called. Verified against a running client: with the poll in updateOrbitCamera
+		// the page was asked for a key exactly zero times.
+		super.pollBrowserKeys();
+		super.pollBrowserTap();
+
 		loopCycle++;
 
 		if (this.ingame) {
@@ -6832,8 +6842,6 @@ public class Client extends GameShell implements PixMap.Target {
 			// instead and this is where its drag joins the real one - see BrowserInput. A desktop
 			// client reads two zeroes and carries on.
 			super.pollBrowserCameraDrag();
-			super.pollBrowserKeys();
-			super.pollBrowserTap();
 			if (super.cameraDragDeltaX != 0 || super.cameraDragDeltaY != 0) {
 				if (QolSettings.on(QolSettings.MMB_CAMERA)) {
 					this.orbitCameraYaw = this.orbitCameraYaw + super.cameraDragDeltaX * CAMERA_DRAG_YAW_NUM / CAMERA_DRAG_DIV & 0x7FF;
