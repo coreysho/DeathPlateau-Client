@@ -538,6 +538,10 @@ public class ResizableShots extends Client {
 			doll(prefix);
 			return;
 		}
+		if (mode.equals("milestones")) {
+			milestones(prefix);
+			return;
+		}
 		/*
 		 * WEAR MODE: dress a player in what shots.wear names and photograph him from four sides with
 		 * the CLIENT'S OWN RENDERER.
@@ -1959,6 +1963,69 @@ public class ResizableShots extends Client {
 	 * Weapons are wielded from Equipment Stats' own side panel (equipment_side.if), which is where
 	 * the bug was reported: that leaves the window open, so the doll is asked to change pose in place.
 	 */
+	/**
+	 * MILESTONE ANNOUNCEMENTS, photographed in the chatbox that draws them.
+	 *
+	 * The engine-side sim (engine tools/sim/milestones.ts) proves which lines are sent and to whom.
+	 * It cannot show what they look like: the colours are tags the CLIENT turns into pixels, the
+	 * rank and XP-mode icons are sprites it substitutes for "@cr3@", and the chatbox is parchment,
+	 * which is the whole reason the labels are shadowed. So this triggers the real thing on a real
+	 * world and photographs the result.
+	 *
+	 * ::advancestat is the trigger on purpose: it zeroes the skill and calls addXp, which is the
+	 * only path that fires [advancestat] and so [label,levelup]. ::setstat writes the number
+	 * straight into the save and announces nothing.
+	 *
+	 * Run it twice on the same skill and the second time is the ordinary line - the server first has
+	 * been claimed by the first - which is how both forms get into one run.
+	 */
+	static void milestones(String prefix) throws Exception {
+		// Out of the tutorial, or every broadcast is swallowed: World.broadcastMilestone skips a
+		// player with a lesson open, because the client turns a game message into a modal there.
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		// AND THE LEVEL-UP POPUP OFF, or there is nothing to photograph: the popup is a modal drawn
+		// OVER the chatbox, so the first run of this came back with pictures of "Click here to
+		// continue" and the broadcast hidden behind it. It is also what every player who levels more
+		// than occasionally turns off.
+		command("::setvar option_levelup 1");
+		waitFrames(20);
+
+		// THE NEW-PLAYER LINE IS SENT BY [login,_] AND NOWHERE ELSE, so it takes a relog to see.
+		command("::setvar milestone_welcomed 0");
+		waitFrames(10);
+		relogin();
+		waitFrames(30);
+		shot(prefix + "_newplayer");
+
+		command("::advancestat fishing 99");
+		waitFrames(50);
+		shot(prefix + "_99_first");
+
+		command("::advancestat fishing 99");
+		waitFrames(50);
+		shot(prefix + "_99_again");
+
+		String[] combat = { "attack", "strength", "defence", "hitpoints", "ranged", "magic", "prayer" };
+		for (String stat : combat) {
+			command("::advancestat " + stat + " 99");
+			waitFrames(30);
+		}
+		shot(prefix + "_combat126");
+
+		String[] rest = { "cooking", "woodcutting", "fletching", "firemaking", "crafting", "smithing",
+			"mining", "herblore", "agility", "thieving", "slayer", "farming", "runecraft", "construction", "hunter" };
+		for (String stat : rest) {
+			command("::advancestat " + stat + " 99");
+			waitFrames(30);
+		}
+		shot(prefix + "_maxcape");
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
 	static void doll(String prefix) throws Exception {
 		String[] weapons = System.getProperty("shots.weapons", "staff_of_air,bronze_sword").split(",");
 		// A throwaway account's first login lands it on Tutorial Island, where login.rs2 jumps to
