@@ -542,6 +542,10 @@ public class ResizableShots extends Client {
 			milestones(prefix);
 			return;
 		}
+		if (mode.equals("broadcastlook")) {
+			broadcastlook(prefix);
+			return;
+		}
 		/*
 		 * WEAR MODE: dress a player in what shots.wear names and photograph him from four sides with
 		 * the CLIENT'S OWN RENDERER.
@@ -1992,6 +1996,95 @@ public class ResizableShots extends Client {
 	 * engine-side sim (engine tools/sim/milestones.ts) covers which lines are sent, to whom, and
 	 * that none of them is wide enough to wrap; what it cannot cover is how they look.
 	 */
+	/**
+	 * WHAT A BROADCAST LOOKS LIKE, drawn by the client, from text the SERVER wrote.
+	 *
+	 * -Dshots.lines=<file> is the output of the engine's tools/sim/milestonelines.ts: "## " starts
+	 * a group and every other line is one broadcast, exactly as World.broadcastMilestone would
+	 * send it. Each group is photographed on its own.
+	 *
+	 * WHY NOT END TO END, like milestones() above tried to be. Every way to reach these lines from
+	 * inside the game is a staff command, and since 2026-11-16 a staff command marks the account
+	 * and mutes its milestones - on purpose. Nothing that can be typed into a client can make an
+	 * account earn 200m experience or fill a collection log page legitimately, so a sim produces
+	 * the text and this draws it.
+	 *
+	 * The division is the honest one. What a line SAYS is the server's, and comes from the real
+	 * procs through the real broadcast path - retyping it here would photograph something nobody
+	 * will ever see. What it LOOKS like is the client's: the colours are tags it turns into
+	 * pixels, "@cr3@" is a sprite it substitutes, and the 456-pixel wrap is its own. addMessage is
+	 * the single choke point every server game message arrives at (Client.java:10659 passes
+	 * exactly these three arguments), so this enters the client where a real broadcast does.
+	 */
+	static void broadcastlook(String prefix) throws Exception {
+		String file = System.getProperty("shots.lines", "");
+		if (file.isEmpty()) {
+			say("FAIL -Dshots.lines=<file> is required");
+			log.close();
+			System.exit(1);
+		}
+		// OUT OF THE TUTORIAL, AND THEN A RELOG. The varp is the server's side of it; the client
+		// has its own - stickyChatInterfaceId, the lesson's chatbox - and while that is set it
+		// turns every game message into a "Click to continue" modal drawn over the top. The first
+		// run of this came back with exactly that: one line of the two, under a modal. Only a
+		// fresh login clears it, because that is when login.rs2 takes the non-tutorial branch.
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		relogin();
+		waitFrames(30);
+
+		List<String> titles = new ArrayList<String>();
+		List<List<String>> groups = new ArrayList<List<String>>();
+		for (String raw : java.nio.file.Files.readAllLines(java.nio.file.Paths.get(file))) {
+			String line = raw.trim();
+			if (line.isEmpty()) {
+				continue;
+			}
+			if (line.startsWith("## ")) {
+				titles.add(line.substring(3));
+				groups.add(new ArrayList<String>());
+			} else if (!groups.isEmpty()) {
+				groups.get(groups.size() - 1).add(line);
+			}
+		}
+		say("read " + groups.size() + " group(s) from " + file);
+
+		for (int i = 0; i < groups.size(); i++) {
+			clearChatbox();
+			for (String line : groups.get(i)) {
+				// "" sender and type 0: a server game message, the same three arguments the
+				// MESSAGE_GAME packet hands addMessage.
+				call("addMessage", "", line, Integer.valueOf(0));
+			}
+			set("redrawChatback", Boolean.TRUE);
+			waitFrames(10);
+			say("group " + (i + 1) + ": " + titles.get(i));
+			for (String line : groups.get(i)) {
+				say("   " + line);
+			}
+			shot(prefix + "_broadcast" + (i + 1));
+		}
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/** Empty the chatbox so one group of lines is photographed on its own. */
+	static void clearChatbox() throws Exception {
+		synchronized (LOCK) {
+			String[] text = (String[]) get("messageText");
+			String[] sender = (String[]) get("messageSender");
+			int[] type = (int[]) get("messageType");
+			for (int i = 0; i < text.length; i++) {
+				text[i] = null;
+				sender[i] = null;
+				type[i] = 0;
+			}
+		}
+		set("redrawChatback", Boolean.TRUE);
+		waitFrames(4);
+	}
+
 	static void milestones(String prefix) throws Exception {
 		say("NOTE: ::advancestat no longer announces anything - a stat set by a command marks the");
 		say("account and mutes its milestones. This mode will photograph an empty chatbox. See the");
