@@ -99,6 +99,38 @@ public class BrowserInput {
 	/** Raised by the game thread once it has taken that press. */
 	public static volatile int tapAck;
 
+	// ------------------------------------------------------------------ saying hello
+
+	/**
+	 * THE PAGE CANNOT REACH ANY OF THE ABOVE UNTIL IT HAS BEEN HANDED THE LIBRARY (2026-11-16).
+	 *
+	 * Every CheerpJ native is passed a handle to the running program, and that handle is the only
+	 * way the page can read or write a static field. rs2.cgi used to take it from the first
+	 * WsSocket native - which was fine while the only thing that crossed was a camera drag, since
+	 * nothing can be dragged before there is a game to drag.
+	 *
+	 * The keyboard broke that assumption. A socket is not opened until the player presses ENTER,
+	 * and the keyboard is what they need in order to TYPE the name they press ENTER with: on the
+	 * login screen there is no socket, so there was no handle, so every key the page collected sat
+	 * in its queue for ever. Reported from a phone: "the keyboard does not type anything".
+	 *
+	 * So the client says hello instead of waiting to be spoken to. This runs once, before the
+	 * title screen, and the page takes the handle from it.
+	 *
+	 * A DESKTOP CLIENT HAS NO PAGE AND NO NATIVE, so the call throws UnsatisfiedLinkError - which
+	 * is exactly the right answer there, and is why this is wrapped rather than declared and left
+	 * to the caller.
+	 */
+	public static void announce() {
+		try {
+			browserReady();
+		} catch (Throwable ignore) {
+			// no page: nothing to tell, and nothing above this will ever be written
+		}
+	}
+
+	private static native void browserReady();
+
 	private BrowserInput() {
 	}
 }

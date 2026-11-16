@@ -203,6 +203,10 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	}
 
 	public void run() {
+		// Before anything is drawn: the page needs the library handle to reach BrowserInput at all,
+		// and the keyboard it carries is wanted on the login screen - long before the first socket
+		// the handle used to arrive with. See BrowserInput.announce().
+		BrowserInput.announce();
 		this.getBaseComponent().addMouseListener(this);
 		this.getBaseComponent().addMouseMotionListener(this);
 		this.getBaseComponent().addMouseWheelListener(this);
