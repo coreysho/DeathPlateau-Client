@@ -257,9 +257,11 @@ public class ViewBox extends JFrame implements TitleBar.Actions {
 		}
 		Insets in = this.getInsets();
 		Insets chrome = this.chromeInsets();
+		// DisplaySettings, not Layout, because a phone's screen is smaller than the smallest window
+		// the panels can be laid out in - and there, the game is drawn scaled instead (Client).
 		this.setMinimumSize(new Dimension(
-			Layout.MIN_W + this.sidebarWidth() + in.left + in.right + chrome.left + chrome.right,
-			Layout.MIN_H + in.top + in.bottom + chrome.top + chrome.bottom));
+			DisplaySettings.minWidth() + this.sidebarWidth() + in.left + in.right + chrome.left + chrome.right,
+			DisplaySettings.minHeight() + in.top + in.bottom + chrome.top + chrome.bottom));
 	}
 
 	/**
