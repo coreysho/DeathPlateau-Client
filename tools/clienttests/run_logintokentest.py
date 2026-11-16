@@ -308,7 +308,7 @@ def main():
         # that: the engine is somebody else's and its authority is not ours to claim.
         first_label = ('the engine already on %d' % port) if args.port else (
             'a login server' if args.authority == 'server' else 'local accounts')
-        failed = run_phases(java, classes, rsan, work, port, webport, first_label, USER)
+        failed = run_phases(java, classes, rsan, work, port, webport, first_label, USER, args.engine)
 
         # AND AGAIN, AGAINST A LOGIN SERVER. Only when this run started the engine: with --port
         # there is one engine, somebody else's, and its authority is whatever they configured.
@@ -321,7 +321,7 @@ def main():
             print('starting a second engine, this one delegating to a login server (log: %s)' % log)
             engine = start_engine(args.engine, log, port, webport, mgmtport, server_env(port))
             print('engine ready')
-            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server', SERVER_USER)
+            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server', SERVER_USER, args.engine)
 
         print()
         if failed == 0:
@@ -339,7 +339,40 @@ def main():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def run_phases(java, classes, rsan, work, port, webport, label, user):
+def free_account(engine, user):
+    """Mark this suite's own account as logged out before the pass starts.
+
+    WHY IT HAS TO BE DONE. Every phase ends by killing the client's JVM - which is the point, the
+    next phase has to work after the client was closed - so the world never sees a logout and the
+    row keeps `logged_in` set. A new engine clears that at world_startup, but only for its OWN node
+    id and profile, and the leftover is from a different one.
+
+    The local pass tolerates it. The LOGIN SERVER pass, which is the shape the live world runs,
+    does not: it answers reply 5 and adds a sixty-second hop timer, so the first phase fails and
+    every phase after it fails the same way. That made the suite pass once on a clean database and
+    fail on every run after it, with a symptom - "Your account is already logged in" - that reads
+    as a bug in whatever was being tested. Found on 2026-11-16 with `tokentest` still marked logged
+    in from 2 November.
+
+    Only this suite's own two accounts, only this file, and a failure is ignored: a database that
+    cannot be written is the state the suite was already in.
+    """
+    db = os.path.join(engine, 'db.sqlite')
+    if not os.path.exists(db):
+        return
+    try:
+        import sqlite3
+        con = sqlite3.connect(db, timeout=5)
+        con.execute('pragma busy_timeout = 5000')
+        con.execute('update account_login set logged_in = 0, login_time = null where account_id in '
+                    '(select id from account where username = ?)', (user,))
+        con.commit()
+        con.close()
+    except Exception as leave_it:
+        print('could not clear %s\'s login state: %s' % (user, leave_it))
+
+
+def run_phases(java, classes, rsan, work, port, webport, label, user, engine=ENGINE):
     """The five phases against whatever engine is on these ports. Returns how many failed.
 
     `user` is this pass's own account. The two passes share a data directory, and the first
@@ -349,6 +382,7 @@ def run_phases(java, classes, rsan, work, port, webport, label, user):
     """
     print()
     print('==== %s ====' % label)
+    free_account(engine, user)
     # Homes of this pass's own, so the second pass starts where the first did: with a machine that
     # has never saved a login. They are named for the pass because --keep is for looking at them.
     tag = label.replace(' ', '-')
