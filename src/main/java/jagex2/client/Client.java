@@ -1031,6 +1031,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 			public void run() {
 				try {
+					if (DisplaySettings.smallScreen()) {
+						// Beside the game, so on a phone it is taken straight out of the only
+						// width there is - and its rail is a column of icons no finger can hit.
+						// The in-canvas panel is the fallback, exactly as when one fails to build.
+						DevLog.log("PLUGIN", "sidebar not attached: the screen is smaller than the game");
+						return;
+					}
 					jagex2.client.plugin.ui.Sidebar sidebar = new jagex2.client.plugin.ui.Sidebar(manager);
 					window.setSidebar(sidebar);
 					Client.this.pluginSidebar = sidebar;

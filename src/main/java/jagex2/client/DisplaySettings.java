@@ -79,6 +79,20 @@ public final class DisplaySettings {
 		return browserH > 0 ? browserH : Layout.FIXED_H;
 	}
 
+	/**
+	 * True when the page reported a screen the game does not fit on - a phone, in practice.
+	 *
+	 * Things that are worth their space on a desktop are not worth it here. The plugin sidebar is
+	 * the first of them: it is beside the game, so on a 390-wide screen its icon rail alone takes
+	 * an eighth of the width the game has left to be drawn in, and none of it can be used by a
+	 * finger anyway. The in-canvas panel (F8) is the fallback and is already what runs when no
+	 * sidebar was attached.
+	 */
+	public static boolean smallScreen() {
+		return (browserW > 0 || browserH > 0)
+			&& (startWidth() < Layout.MIN_W || startHeight() < Layout.MIN_H);
+	}
+
 	/** The smallest the window may be made. Never larger than the screen there is to put it on. */
 	public static int minWidth() {
 		return browserW > 0 && browserW < Layout.MIN_W ? browserW : Layout.MIN_W;
