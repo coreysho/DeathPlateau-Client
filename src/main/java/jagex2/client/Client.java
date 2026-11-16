@@ -1719,6 +1719,24 @@ public class Client extends GameShell implements PixMap.Target {
 	// settled by WEB_HOST and WEB_PORT above, which read lostcity.webhost and .webport themselves.
 	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL");
 
+	/**
+	 * THE WEBSITE, which is not the cache host above and is the mistake waiting to be made here.
+	 * WEB_HOST and WEB_URL are where the client fetches cache files from - the relay, on 8888. This
+	 * is deathplateau.com, where a person reads things. ::vote opens a page on it.
+	 *
+	 * DEFAULTED RATHER THAN LEFT NULL, because unlike the cache there is only ever one of these and
+	 * a client that cannot find the website simply has nothing to offer: a null here would mean
+	 * ::vote building "null/vote" and sending somebody to it. Overridable all the same, so a dev
+	 * world pointed at a local site works - and so this is never a reason to edit the source.
+	 */
+	public static final String SITE_URL = stripSlash(setting("lostcity.site", "LOSTCITY_SITE"), "https://deathplateau.com");
+
+	/** The configured value with any trailing slash off, or the fallback. One place, so no caller doubles a slash. */
+	private static String stripSlash(String value, String fallback) {
+		String url = value != null && value.length() > 0 ? value : fallback;
+		return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+	}
+
 	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
 	// A diagnostic that names a different host than the one the client actually dials is worse
 	// than no diagnostic at all, so there is one expression here and both callers read it.
@@ -2730,6 +2748,10 @@ public class Client extends GameShell implements PixMap.Target {
 				+ ", cache host from " + origin("lostcity.webhost", "LOSTCITY_WEBHOST")
 				+ ", cache port from " + origin("lostcity.webport", "LOSTCITY_WEBPORT")
 				+ " (built in: " + RELAY_HOST + ", game 43594, cache 8888)");
+			// The WEBSITE, separately, because it is the setting most easily confused with the cache
+			// host above and the only way to see what ::vote will open. Printed as the resolved url
+			// rather than only its source: a trailing slash or a wrong scheme is invisible otherwise.
+			DevLog.log("SESSION", "site from " + origin("lostcity.site", "LOSTCITY_SITE") + " = " + SITE_URL);
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -3676,6 +3698,67 @@ public class Client extends GameShell implements PixMap.Target {
 			DevLog.log("SHOT", "screenshot failed: " + error);
 			this.addMessage("", "The screenshot could not be saved: " + error, 0);
 		}
+	}
+
+	/**
+	 * ::vote - open the website's voting page in a browser, with this player's name in it.
+	 *
+	 * WHY THE NAME MATTERS. The page cannot show anybody their own cooldowns, or build links that
+	 * actually pay a ticket, without knowing who is asking - and the one person who should never
+	 * have to type their name in is the player sitting in game. The page takes ?name= already.
+	 *
+	 * SPACES BECOME UNDERSCORES AND NOTHING ELSE IS ESCAPED, deliberately rather than reaching for
+	 * URLEncoder. A username is at most twelve characters of letters, digits, spaces and
+	 * underscores, so once the spaces are converted there is nothing left that a url minds - and
+	 * underscores are what the server stores anyway, since every lookup there goes through a base37
+	 * round trip. "Lord Fooby" and "lord_fooby" are the same account to the site.
+	 *
+	 * ON ANOTHER THREAD, because Desktop.browse hands off to whatever the desktop has registered
+	 * and that is not reliably quick - on a machine with no browser set up it can sit there. The
+	 * game loop must not wait for somebody else's software to start.
+	 *
+	 * AND IT PRINTS THE URL WHEN IT CANNOT OPEN ONE. Headless, a locked-down desktop, an exception
+	 * from the window manager: the player still gets the address. They have to type it, which is
+	 * why it is kept short.
+	 */
+	private void openVotePage() {
+		String name = this.username == null ? "" : this.username.trim().replace(' ', '_');
+		final String url = name.length() > 0 ? SITE_URL + "/vote?name=" + name : SITE_URL + "/vote";
+
+		boolean canBrowse = false;
+		try {
+			canBrowse = java.awt.Desktop.isDesktopSupported()
+				&& java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE);
+		} catch (Throwable ignored) {
+			// Some headless and sandboxed setups throw rather than answering false.
+			canBrowse = false;
+		}
+
+		if (!canBrowse) {
+			DevLog.log("VOTE", "no browser available, printed " + url);
+			this.addMessage("", "Vote at " + url, 0);
+			return;
+		}
+
+		// BOTH LINES, ALWAYS, and the second one is the point. The browse happens on another thread,
+		// so if it throws there is no safe way to correct the chatbox afterwards - addMessage is the
+		// game loop's, not this thread's. Telling the player the address now means the failure case
+		// needs no apology: they already have what they need, and "if nothing opens" costs a line.
+		this.addMessage("", "Opening the voting page in your browser.", 0);
+		this.addMessage("", "If nothing opens: " + url, 0);
+
+		final String target = url;
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					java.awt.Desktop.getDesktop().browse(new java.net.URI(target));
+					DevLog.log("VOTE", "opened " + target);
+				} catch (Throwable error) {
+					DevLog.log("VOTE", "could not open " + target + ": " + error);
+				}
+			}
+		}, "open-vote-page").start();
 	}
 
 	@ObfuscatedName("client.b(I)V")
@@ -7401,6 +7484,23 @@ public class Client extends GameShell implements PixMap.Target {
 								displayFps = true;
 							} else if (this.chatTyped.equals("::fpsoff")) {
 								displayFps = false;
+							} else if (this.chatTyped.equals("::vote")) {
+								// ::vote OPENS THE VOTING PAGE, with this player's name already in it
+								// (2026-11-16). Asked for because the page needs the name typed in to
+								// show anybody their own cooldowns, and the player sitting in game is
+								// the one person who should never have to type it.
+								//
+								// CLIENT-SIDE, like ::fpson above, so this needs no packet and no
+								// engine change: the client already knows which account it logged in
+								// as. It still goes to the server as a CLIENT_CHEAT, which is why the
+								// administrator command that used to own this name was renamed to
+								// ::voteledger - otherwise bare ::vote would have opened a browser AND
+								// printed a ledger for the three people holding rank 3.
+								//
+								// EXACT MATCH ONLY. ::vote with anything after it is left alone and
+								// goes to the server, so there is room for that to mean something again
+								// later without this swallowing it.
+								this.openVotePage();
 							}
 
 							// >= 2, not == 2: the login rank is 4 for a developer since the purple crown, and
