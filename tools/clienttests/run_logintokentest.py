@@ -7,7 +7,7 @@ back. LoginProfilesTest proves what the client writes to disk; the engine's own 
 does with a token; neither can prove the two read the same envelope, and a disagreement there is
 not a subtle bug - it is nobody being able to log in.
 
-Five phases, each a fresh JVM, the first four sharing one scratch user.home because "it still works
+Six phases, each a fresh JVM, the first four sharing one scratch user.home because "it still works
 after you close the client" is the whole feature:
 
     password     type a password with Remember me ticked, and be handed a token
@@ -15,6 +15,9 @@ after you close the client" is the whole feature:
     stale        hold a token the server never issued, and be refused in words a player can act on
     legacy       send the login block of a client from before saved logins, and still be let in
     noremember   log in with Remember me OFF, in a home of its own, and be given nothing to keep
+    launcher     log in from a launcher signed in to Discord, which puts a sixth field in the RSA
+                 envelope, and still get in - a disagreement about that envelope is every login on
+                 the world failing at once
 
 AND ALL FIVE TWICE, against the two kinds of world there are. A world either checks passwords
 itself or delegates to a login server (LOGIN_SERVER), and the default is false - so every run of
@@ -358,9 +361,15 @@ def run_phases(java, classes, rsan, work, port, webport, label, user):
     # arranged.
     alone = os.path.join(work, 'home-' + tag + '-noremember')
     os.makedirs(alone)
+    # AND ONE MORE for the launcher phase, which writes a launcher.properties and then asserts
+    # that nothing of it reached profiles.properties. Sharing a home with the phases that save on
+    # purpose would make that assertion read the wrong file's contents.
+    launcher = os.path.join(work, 'home-' + tag + '-launcher')
+    os.makedirs(launcher)
 
     failed = 0
-    phases = (('password', home), ('token', home), ('stale', home), ('legacy', home), ('noremember', alone))
+    phases = (('password', home), ('token', home), ('stale', home), ('legacy', home),
+              ('noremember', alone), ('launcher', launcher))
     for i, (phase, where) in enumerate(phases):
             if i:
                 # THE WORLD IS STILL LOGGING THE LAST PHASE OUT. Its socket went when that JVM

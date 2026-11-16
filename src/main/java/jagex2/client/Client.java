@@ -4120,7 +4120,9 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 
-		java.util.List<LoginProfiles.Profile> saved = LoginProfiles.all();
+		// cards(), not all(): the launcher's Discord sign-in adds the characters linked to it,
+		// and the click handling below has to be looking at the same row the drawing is.
+		java.util.List<LoginProfiles.Profile> saved = LoginProfiles.cards();
 		int count = saved.size();
 
 		// The highlight. Only a change is worth a repaint: the accounts sit outside the piece
@@ -4137,8 +4139,11 @@ public class Client extends GameShell implements PixMap.Target {
 
 			// THE x IS TESTED BEFORE THE CARD IT SITS IN. The other way round, every attempt to
 			// remove an account would sign into it instead.
+			// ...and a launcher card has no x drawn on it, so a click where one would be is a
+			// click on the card. Falling through rather than returning is what makes that true:
+			// forgetting one would do nothing visible and the card would be back next frame.
 			int forget = TitleScreen.forgetAt(x, y, count);
-			if (forget >= 0) {
+			if (forget >= 0 && !saved.get(forget).fromLauncher) {
 				LoginProfiles.forget(saved.get(forget).username);
 				// ...and the face with it. The heads are cached by account name, so an account
 				// removed and later saved again would otherwise come back wearing the kit it had
@@ -4298,13 +4303,27 @@ public class Client extends GameShell implements PixMap.Target {
 				// Only a typed password can ask for one: a token login already has a token, and
 				// the server pushes its month out from today every time one is used.
 				boolean wantsToken = this.rememberLogin && this.loginToken.length() == 0;
+				// THE LAUNCHER'S DISCORD SIGN-IN, if this client was started from one. It is not a
+				// credential and cannot stand in for the password - the server reads it from its
+				// own field and uses it for one thing, recording the Discord link so that a
+				// launcher player never has to type ::discord. It rides inside the RSA envelope
+				// with the others because everything in the login block does, and the envelope
+				// has the room: a 1024-bit key carries 127 bytes and this makes it 98.
+				String launcher = LauncherAccounts.token();
 				// To client.log, because when a saved login does not save, the first question is
 				// whether this client ever asked - and the answer was not written down anywhere.
 				DevLog.log("SESSION", this.loginToken.length() > 0 ? "signing in with a saved login"
 					: wantsToken ? "asking for a saved login to keep"
 					: "not asking for a saved login (Remember me is off)");
-				this.out.p1(wantsToken ? 1 : 0);
+				// A FLAG BYTE, not a boolean, which is what lets this ship without a revision
+				// bump. Bit 0 is what it always was - "mint me a saved login" - and bit 1 says a
+				// launcher sign-in follows, so a server reads the extra field only when the client
+				// says it wrote one and an older client's 0 or 1 still means exactly what it did.
+				this.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));
 				this.out.pjstr(this.loginToken);
+				if (launcher.length() > 0) {
+					this.out.pjstr(launcher);
+				}
 				this.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);
 				this.login.pos = 0;
 				if (arg2) {
@@ -8101,7 +8120,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		TitleScreen.paint(this.titleCanvas, this.fontBold12, this.fontPlain12, this.username,
 			this.password, this.titleLoginField, this.rememberLogin, this.loginMessage0, this.loginMessage1,
-			LoginProfiles.all(), this.titleHover, -1, loopCycle);
+			LoginProfiles.cards(), this.titleHover, -1, loopCycle);
 
 		// The middle piece every frame, because the cursor blinks there and nowhere else. The
 		// other eight only when something outside it moved, which is what redrawFrame has always
