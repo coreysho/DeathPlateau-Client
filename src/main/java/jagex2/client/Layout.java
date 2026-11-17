@@ -46,6 +46,15 @@ public final class Layout {
 	/** Where viewport points go in the mouse's coordinates in resizable mode (see above). */
 	public static final int FAR_Y = 10000;
 
+	/**
+	 * The HUD scale steps, as percentages of 377's own pixel size. 100 is the client as it always
+	 * was. Nearest-neighbour doubling is what draws them (Client.scaleRect), so these are chunky
+	 * rather than redrawn: the art in the cache has no higher-resolution version, and sharpening it
+	 * would mean new sprites, not a bigger blit.
+	 */
+	public static final int[] SCALES = { 100, 125, 150, 200 };
+	public static final int SCALE_FIXED = 100;
+
 	/** The three display modes, in the order the F9 row steps through them. */
 	public static final int FIXED = 0;
 	public static final int CLASSIC = 1;
@@ -121,6 +130,12 @@ public final class Layout {
 	/** FIXED, CLASSIC or MODERN. */
 	public final int mode;
 	public final boolean resizable;
+	/**
+	 * The HUD scale actually in use, as a percentage - what the player asked for, or the largest
+	 * step that fits this window (fit). Always SCALE_FIXED in the fixed layout, which is 377's
+	 * screen and not ours to stretch.
+	 */
+	public final int scale;
 	/** The window's drawing area. */
 	public final int width;
 	public final int height;
@@ -160,13 +175,17 @@ public final class Layout {
 	private final int[] panelH = new int[PANELS];
 	private final int[] panelScreenX = new int[PANELS];
 	private final int[] panelScreenY = new int[PANELS];
+	/** The size the panel lands at: panelW/panelH times the scale. */
+	private final int[] panelScreenW = new int[PANELS];
+	private final int[] panelScreenH = new int[PANELS];
 	private final int[] panelAlpha = new int[PANELS];
 
-	private Layout(int mode, int width, int height) {
+	private Layout(int mode, int width, int height, int scale) {
 		this.mode = mode;
 		this.resizable = mode != FIXED;
 		this.width = width;
 		this.height = height;
+		this.scale = mode == FIXED ? SCALE_FIXED : scale;
 		this.panels = mode == MODERN ? PANELS : 3;
 		for (int p = 0; p < PANELS; p++) {
 			this.panelX[p] = PANEL_RECT[p][0];
@@ -180,6 +199,10 @@ public final class Layout {
 			this.panelY[SIDEBAR] = MODERN_SIDEBAR[1];
 			this.panelW[SIDEBAR] = MODERN_SIDEBAR[2];
 			this.panelH[SIDEBAR] = MODERN_SIDEBAR[3];
+		}
+		for (int p = 0; p < PANELS; p++) {
+			this.panelScreenW[p] = scaled(this.panelW[p], this.scale);
+			this.panelScreenH[p] = scaled(this.panelH[p], this.scale);
 		}
 		if (mode == FIXED) {
 			this.vpX = 4;
@@ -207,34 +230,52 @@ public final class Layout {
 		this.vpH = height;
 		this.vpScreenX = 0;
 		this.vpScreenY = 0;
-		this.openW = width - PANEL_RECT[SIDEBAR][2];
-		this.openH = height - PANEL_RECT[CHAT][3];
+		// The column and the chatbox at their LANDED size, so a scaled HUD takes its room out of
+		// the open area the same way the unscaled one does. openW/openH are what every corner
+		// thing anchors to (the XP drops, the multicombat icon), so they move in with the panels.
+		this.openW = width - scaled(PANEL_RECT[SIDEBAR][2], this.scale);
+		this.openH = height - scaled(PANEL_RECT[CHAT][3], this.scale);
 		this.mainX = Math.max(0, (this.openW - VIEWPORT_W) / 2);
 		this.mainY = Math.max(0, (this.openH - VIEWPORT_H) / 2);
 		this.letterX = (width - FIXED_W) / 2;
 		this.letterY = (height - FIXED_H) / 2;
 		this.zoom = zoomFor(this.openH);
 		this.panelScreenX[CHAT] = 0;
-		this.panelScreenY[CHAT] = height - this.panelH[CHAT];
-		this.panelScreenX[MINIMAP] = width - this.panelW[MINIMAP];
+		this.panelScreenY[CHAT] = height - this.panelScreenH[CHAT];
+		this.panelScreenX[MINIMAP] = width - this.panelScreenW[MINIMAP];
 		this.panelScreenY[MINIMAP] = 0;
-		int right = width - PANEL_RECT[SIDEBAR][2];
+		int right = width - scaled(PANEL_RECT[SIDEBAR][2], this.scale);
 		if (mode == MODERN) {
 			// up from the bottom-right corner: the bottom row of tabs, the top row, then the panel
 			this.panelScreenX[TABS_BOTTOM] = right;
-			this.panelScreenY[TABS_BOTTOM] = height - this.panelH[TABS_BOTTOM];
+			this.panelScreenY[TABS_BOTTOM] = height - this.panelScreenH[TABS_BOTTOM];
 			this.panelScreenX[TABS_TOP] = right;
-			this.panelScreenY[TABS_TOP] = this.panelScreenY[TABS_BOTTOM] - this.panelH[TABS_TOP];
+			this.panelScreenY[TABS_TOP] = this.panelScreenY[TABS_BOTTOM] - this.panelScreenH[TABS_TOP];
 			this.panelScreenX[SIDEBAR] = right;
-			this.panelScreenY[SIDEBAR] = this.panelScreenY[TABS_TOP] - this.panelH[SIDEBAR];
+			this.panelScreenY[SIDEBAR] = this.panelScreenY[TABS_TOP] - this.panelScreenH[SIDEBAR];
 		} else {
 			this.panelScreenX[SIDEBAR] = right;
-			this.panelScreenY[SIDEBAR] = height - this.panelH[SIDEBAR];
+			this.panelScreenY[SIDEBAR] = height - this.panelScreenH[SIDEBAR];
 		}
 	}
 
+	/**
+	 * A fixed-frame length at the HUD scale, ROUNDED UP.
+	 *
+	 * Up and not down because the panel's last row and column have to be drawn. The blit reads
+	 * source offset i*100/scale for each destination offset i, so a destination that is a pixel
+	 * short stops one source pixel short as well: at 125% a rounded-down chatbox is 648 wide and
+	 * its 519th column - the parchment's own right-hand edge - is never reached, and the same
+	 * arithmetic run backwards in unscaled() leaves the last column of the side tabs unclickable.
+	 * Rounding up costs at most one pixel of window and makes the two ends line up exactly, which
+	 * the layout test checks for every panel at every scale.
+	 */
+	private static int scaled(int v, int scale) {
+		return scale == SCALE_FIXED ? v : (v * scale + 99) / 100;
+	}
+
 	public static Layout fixed() {
-		return new Layout(FIXED, FIXED_W, FIXED_H);
+		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED);
 	}
 
 	/** A window smaller than the fixed frame is laid out as the fixed frame (and clipped). */
@@ -243,11 +284,62 @@ public final class Layout {
 	}
 
 	public static Layout resizable(int mode, int width, int height) {
-		return new Layout(mode == MODERN ? MODERN : CLASSIC, Math.max(width, MIN_W), Math.max(height, MIN_H));
+		return resizable(mode, width, height, SCALE_FIXED);
+	}
+
+	public static Layout resizable(int mode, int width, int height, int scale) {
+		int w = Math.max(width, MIN_W);
+		int h = Math.max(height, MIN_H);
+		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h));
 	}
 
 	public static Layout of(int mode, int width, int height) {
-		return mode == FIXED ? fixed() : resizable(mode, width, height);
+		return of(mode, width, height, SCALE_FIXED);
+	}
+
+	public static Layout of(int mode, int width, int height, int scale) {
+		return mode == FIXED ? fixed() : resizable(mode, width, height, scale);
+	}
+
+	/**
+	 * The largest step no bigger than `scale` whose panels still fit a width x height window.
+	 *
+	 * Two rules, which are the two ways scaled panels run into each other: the chatbox and the
+	 * right-hand column share the bottom edge, and the minimap sits on top of that column. Nothing
+	 * else can collide - the chatbox is left of the column by the first rule, and what is left over
+	 * is the open area, which the first two rules keep at 519x326 or better whatever the scale.
+	 *
+	 * An unknown scale (a hand-edited properties file, an older build's number) comes back as the
+	 * nearest step at or below it, and anything under the smallest is 100.
+	 */
+	public static int fit(int scale, int width, int height) {
+		int best = SCALE_FIXED;
+		for (int i = 0; i < SCALES.length; i++) {
+			int s = SCALES[i];
+			if (s > scale) {
+				continue;
+			}
+			if (scaled(PANEL_RECT[CHAT][2] + PANEL_RECT[SIDEBAR][2], s) > width) {
+				continue;
+			}
+			if (scaled(PANEL_RECT[MINIMAP][3] + PANEL_RECT[SIDEBAR][3], s) > height) {
+				continue;
+			}
+			if (s > best) {
+				best = s;
+			}
+		}
+		return best;
+	}
+
+	/** The next step round the SCALES ring, for a control that steps rather than slides. */
+	public static int nextScale(int scale) {
+		for (int i = 0; i < SCALES.length; i++) {
+			if (SCALES[i] == scale) {
+				return SCALES[(i + 1) % SCALES.length];
+			}
+		}
+		return SCALES[0];
 	}
 
 	/**
@@ -267,7 +359,8 @@ public final class Layout {
 	}
 
 	public boolean sameAs(Layout other) {
-		return other != null && other.mode == this.mode && other.width == this.width && other.height == this.height;
+		return other != null && other.mode == this.mode && other.width == this.width && other.height == this.height
+			&& other.scale == this.scale;
 	}
 
 	public int panelFixedX(int panel) {
@@ -286,6 +379,16 @@ public final class Layout {
 		return this.panelH[panel];
 	}
 
+	/** How wide the panel lands on the window: panelWidth at the HUD scale. */
+	public int panelScreenWidth(int panel) {
+		return this.panelScreenW[panel];
+	}
+
+	/** How tall the panel lands on the window: panelHeight at the HUD scale. */
+	public int panelScreenHeight(int panel) {
+		return this.panelScreenH[panel];
+	}
+
 	/** Out of 256: how much of the panel is drawn, the rest being the scene behind it. */
 	public int panelAlpha(int panel) {
 		return this.panelAlpha[panel];
@@ -302,7 +405,7 @@ public final class Layout {
 	/** The panel over window point (x, y), or VIEWPORT. In fixed mode the frame is not the viewport, but it is only ever asked in resizable. */
 	public int areaAt(int x, int y) {
 		for (int p = 0; p < this.panels; p++) {
-			if (x >= this.panelScreenX[p] && x < this.panelScreenX[p] + this.panelW[p] && y >= this.panelScreenY[p] && y < this.panelScreenY[p] + this.panelH[p]) {
+			if (x >= this.panelScreenX[p] && x < this.panelScreenX[p] + this.panelScreenW[p] && y >= this.panelScreenY[p] && y < this.panelScreenY[p] + this.panelScreenH[p]) {
 				return p;
 			}
 		}
@@ -325,7 +428,7 @@ public final class Layout {
 		if (area == VIEWPORT) {
 			return x - this.vpScreenX + this.vpX;
 		}
-		return x - this.panelScreenX[area] + this.panelX[area];
+		return unscaled(x - this.panelScreenX[area]) + this.panelX[area];
 	}
 
 	public int mapY(int x, int y, int area) {
@@ -338,7 +441,22 @@ public final class Layout {
 		if (area == VIEWPORT) {
 			return y - this.vpScreenY + this.vpY;
 		}
-		return y - this.panelScreenY[area] + this.panelY[area];
+		return unscaled(y - this.panelScreenY[area]) + this.panelY[area];
+	}
+
+	/**
+	 * A length on the window back to the fixed frame length it was drawn from - the inverse of the
+	 * blit, and the whole reason a scaled HUD needs nothing else to change. Negative offsets happen
+	 * (a menu or a drag that has left its panel keeps counting past the edge), and integer division
+	 * truncates towards zero rather than down, so those are divided away from zero by hand: without
+	 * that, the first scaled pixel outside a panel's left edge maps to 0, the same as the first
+	 * pixel inside it, and a drag stalls for one pixel before it starts moving.
+	 */
+	private int unscaled(int v) {
+		if (this.scale == SCALE_FIXED) {
+			return v;
+		}
+		return v >= 0 ? v * 100 / this.scale : -((-v * 100 + this.scale - 1) / this.scale);
 	}
 
 	/** Is mouse point (x, y) inside the viewport? In fixed mode, 377's own 4 < x < 516, 4 < y < 338. */

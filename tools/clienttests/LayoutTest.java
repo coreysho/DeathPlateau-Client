@@ -179,6 +179,139 @@ public class LayoutTest {
 			"the title screen is centred");
 
 		System.out.println();
+		System.out.println("8. the HUD scale: bigger panels, the same 377 coordinates underneath");
+		// 100% IS THE CLIENT AS IT WAS. Not "close to": the same numbers, or every check above this
+		// one is testing a layout nobody runs.
+		for (int[] s : SIZES) {
+			for (int mode = Layout.CLASSIC; mode <= Layout.MODERN; mode++) {
+				Layout plain = Layout.resizable(mode, s[0], s[1]);
+				Layout one = Layout.resizable(mode, s[0], s[1], Layout.SCALE_FIXED);
+				boolean same = plain.openW == one.openW && plain.openH == one.openH && plain.zoom == one.zoom;
+				for (int p = 0; p < plain.panels; p++) {
+					same &= plain.panelScreenX(p) == one.panelScreenX(p) && plain.panelScreenY(p) == one.panelScreenY(p)
+						&& one.panelScreenWidth(p) == one.panelWidth(p) && one.panelScreenHeight(p) == one.panelHeight(p);
+				}
+				if (!same) {
+					check(false, s[0] + "x" + s[1] + " " + Layout.modeName(mode) + ": 100% is not the unscaled layout");
+				}
+			}
+		}
+		check(true, "at 100% every layout is the one that was there before, panel for panel");
+
+		int corners = 0;
+		int strayed = 0;
+		int offEdge = 0;
+		int overlaps = 0;
+		int unreachable = 0;
+		for (int[] s : SIZES) {
+			for (int mode = Layout.CLASSIC; mode <= Layout.MODERN; mode++) {
+				for (int i = 0; i < Layout.SCALES.length; i++) {
+					int want = Layout.SCALES[i];
+					Layout r = Layout.resizable(mode, s[0], s[1], want);
+					if (r.scale > want) {
+						strayed++;
+					}
+					for (int p = 0; p < r.panels; p++) {
+						int px = r.panelScreenX(p);
+						int py = r.panelScreenY(p);
+						int pw = r.panelScreenWidth(p);
+						int ph = r.panelScreenHeight(p);
+						// THE TWO ENDS. The panel's first on-screen pixel must be its first pixel in
+						// the fixed frame and its last must be its last: a mouse at the far edge of
+						// the inventory has to land on the far edge of the inventory, and a column
+						// the inverse never reaches is a column no click can ever hit.
+						if (r.mapX(px, py, p) != r.panelFixedX(p) || r.mapY(px, py, p) != r.panelFixedY(p)) {
+							corners++;
+						}
+						if (r.mapX(px + pw - 1, py, p) != r.panelFixedX(p) + r.panelWidth(p) - 1
+							|| r.mapY(px, py + ph - 1, p) != r.panelFixedY(p) + r.panelHeight(p) - 1) {
+							corners++;
+						}
+						// Every source column and row reachable from somewhere on screen.
+						boolean[] seenX = new boolean[r.panelWidth(p)];
+						for (int x = 0; x < pw; x++) {
+							int src = r.mapX(px + x, py, p) - r.panelFixedX(p);
+							if (src < 0 || src >= seenX.length) {
+								strayed++;
+								continue;
+							}
+							seenX[src] = true;
+						}
+						for (int col = 0; col < seenX.length; col++) {
+							if (!seenX[col]) {
+								unreachable++;
+							}
+						}
+						// On the window, and in its corner.
+						if (px < 0 || py < 0 || px + pw > r.width || py + ph > r.height) {
+							offEdge++;
+						}
+						for (int q = p + 1; q < r.panels; q++) {
+							int qx = r.panelScreenX(q);
+							int qy = r.panelScreenY(q);
+							if (px < qx + r.panelScreenWidth(q) && qx < px + pw
+								&& py < qy + r.panelScreenHeight(q) && qy < py + ph) {
+								overlaps++;
+							}
+						}
+					}
+				}
+			}
+		}
+		check(corners == 0, "a panel's first and last pixel are its first and last in the fixed frame (" + corners + " are not)");
+		check(unreachable == 0, "no column of a panel is unreachable by the mouse (" + unreachable + " are)");
+		check(strayed == 0, "no point on a panel maps outside it, and no window gets a scale it was not asked for (" + strayed + ")");
+		check(offEdge == 0, "every scaled panel is inside the window (" + offEdge + " are not)");
+		check(overlaps == 0, "no two scaled panels overlap, at any size or scale (" + overlaps + " do)");
+
+		// FIT. The point of it is that a setting can be carried between machines, so what matters is
+		// that it never returns something that does not fit and never refuses something that does.
+		check(Layout.fit(200, 765, 503) == 100, "the smallest window takes no scale above 100%");
+		check(Layout.fit(200, 3840, 2160) == 200, "a 4K window takes the largest step");
+		check(Layout.fit(100, 3840, 2160) == 100, "and still gives 100% to somebody who asked for it");
+		check(Layout.fit(137, 3840, 2160) == 125, "a number that is not a step comes back as the step below it");
+		check(Layout.fit(-5, 1920, 1080) == 100 && Layout.fit(0, 1920, 1080) == 100, "nonsense comes back as 100%");
+		boolean monotonic = true;
+		int prev = 0;
+		for (int[] s : SIZES) {
+			int got = Layout.fit(200, s[0], s[1]);
+			if (got < prev) {
+				monotonic = false;
+			}
+			prev = got;
+		}
+		check(monotonic, "a bigger window never allows a smaller scale: 765x503 " + Layout.fit(200, 765, 503)
+			+ ", 1280x800 " + Layout.fit(200, 1280, 800) + ", 1920x1080 " + Layout.fit(200, 1920, 1080)
+			+ ", 3840x2160 " + Layout.fit(200, 3840, 2160));
+
+		// THE OPEN AREA is what the XP drops and the multicombat icon hang off, so it has to give
+		// way as the panels grow - and never to nothing.
+		Layout small = Layout.resizable(Layout.CLASSIC, 1920, 1080, 100);
+		Layout big = Layout.resizable(Layout.CLASSIC, 1920, 1080, 200);
+		check(big.scale == 200 && big.openW < small.openW && big.openH < small.openH && big.openW > 0 && big.openH > 0,
+			"the open area gives way to a bigger HUD: 1920x1080 goes from " + small.openW + "x" + small.openH
+			+ " to " + big.openW + "x" + big.openH);
+		check(big.mainX >= 0 && big.mainY >= 0, "a bank still has somewhere to open");
+
+		// A DRAG THAT LEAVES ITS PANEL keeps counting, and at a scale it has to keep counting
+		// smoothly: integer division truncates towards zero, so without unscaled()'s negative arm
+		// the first pixel outside the left edge reads the same as the first pixel inside it.
+		int dsx = big.panelScreenX(Layout.SIDEBAR);
+		int dsy = big.panelScreenY(Layout.SIDEBAR) + 40;
+		boolean smooth = true;
+		int lastMapped = Integer.MIN_VALUE;
+		for (int off = -40; off <= 40; off++) {
+			int m = big.mapX(dsx + off, dsy, Layout.SIDEBAR);
+			if (m < lastMapped) {
+				smooth = false;
+			}
+			lastMapped = m;
+		}
+		check(smooth, "a drag off the side panel's edge keeps moving the same way at 200%");
+		check(big.mapX(dsx - 2, dsy, Layout.SIDEBAR) < big.mapX(dsx, dsy, Layout.SIDEBAR),
+			"and a point outside the panel is outside it, not on its first column");
+
+		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS") : (fail + " FAILED of " + (pass + fail)));
 		System.exit(fail == 0 ? 0 : 1);
 	}

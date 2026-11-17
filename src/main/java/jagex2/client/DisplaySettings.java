@@ -27,6 +27,7 @@ public final class DisplaySettings {
 	private static int height = 768;
 	private static boolean maximized;
 	private static int drawDistance = 25;                    // World3D.MIN_DISTANCE, 377's own
+	private static int panelScale = Layout.SCALE_FIXED;      // the HUD at 377's own pixel size
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
@@ -125,6 +126,7 @@ public final class DisplaySettings {
 			height = Math.max(Layout.MIN_H, Integer.parseInt(p.getProperty("height", "" + height).trim()));
 			maximized = "true".equals(p.getProperty("maximized", "false").trim());
 			drawDistance = clampDistance(Integer.parseInt(p.getProperty("drawdistance", "" + drawDistance).trim()));
+			panelScale = clampScale(Integer.parseInt(p.getProperty("panelscale", "" + panelScale).trim()));
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -248,6 +250,43 @@ public final class DisplaySettings {
 		return (mode + 1) % Layout.MODES;
 	}
 
+	/**
+	 * How big the chatbox, minimap and side tabs are drawn, as a percentage of 377's own size.
+	 *
+	 * What was ASKED for, which is not always what is used: a window too small for it gets the
+	 * largest step that fits (Layout.fit). Keeping the request rather than the result is what lets
+	 * one account carry 200% between a 4K desktop and a laptop that can only show 150%, instead of
+	 * the number ratcheting down to the smallest screen it was ever opened on.
+	 */
+	public static synchronized int panelScale() {
+		if (!loaded) {
+			load();
+		}
+		return panelScale;
+	}
+
+	public static synchronized void setPanelScale(int percent) {
+		if (!loaded) {
+			load();
+		}
+		percent = clampScale(percent);
+		if (panelScale != percent) {
+			panelScale = percent;
+			save();
+		}
+	}
+
+	/** A value that is not one of Layout.SCALES is rounded down to the nearest one. */
+	private static int clampScale(int percent) {
+		int best = Layout.SCALES[0];
+		for (int i = 0; i < Layout.SCALES.length; i++) {
+			if (Layout.SCALES[i] <= percent) {
+				best = Layout.SCALES[i];
+			}
+		}
+		return best;
+	}
+
 	/** The size a resizable window was left at, to open at next time. Saved only when it changes. */
 	public static synchronized void setWindow(int w, int h, boolean max) {
 		if (!loaded) {
@@ -282,8 +321,9 @@ public final class DisplaySettings {
 			p.setProperty("height", "" + height);
 			p.setProperty("maximized", "" + maximized);
 			p.setProperty("drawdistance", "" + drawDistance);
+			p.setProperty("panelscale", "" + panelScale);
 			out = new FileOutputStream(f);
-			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it)");
+			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {
 		} finally {
 			try {

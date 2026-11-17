@@ -17271,6 +17271,9 @@ public class Client extends GameShell implements PixMap.Target {
 	// ViewBox.applyMinimumSize keeps the window at Layout.MIN_W/MIN_H and the browser's own display
 	// is made larger than that. A desktop client takes none of this code.
 	private boolean scaled;
+	/** The HUD scale's dest->source table, and the scale it was built for (hudCols). */
+	private int[] hudCols;
+	private int hudColsFor;
 	/** The frame's size on the window, and where it sits in it. */
 	private int scaleW;
 	private int scaleH;
@@ -17327,6 +17330,17 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 	}
 
+	/**
+	 * What the HUD is actually drawn at, as a percentage: what was asked for (DisplaySettings), or
+	 * less where the window cannot hold it (Layout.fit). The sidebar's Display page says which.
+	 *
+	 * The fixed layout is always 100. That screen is 377's, 765x503 of art laid out around panels
+	 * that are part of it, and scaling a piece of it would tear a hole in the middle of the stone.
+	 */
+	public int panelScaleInUse() {
+		return this.layout.scale;
+	}
+
 	/** Fixed or the classic layout; kept for what only wants to know whether the window is free. */
 	public void setResizable(boolean on) {
 		this.setDisplayMode(on ? Layout.CLASSIC : Layout.FIXED);
@@ -17371,7 +17385,7 @@ public class Client extends GameShell implements PixMap.Target {
 			if (w <= 0 || h <= 0) {
 				return;
 			}
-			next = Layout.resizable(this.wantMode, w, h);
+			next = Layout.resizable(this.wantMode, w, h, DisplaySettings.panelScale());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -17781,15 +17795,21 @@ public class Client extends GameShell implements PixMap.Target {
 		int[] dst = this.areaViewport.data;
 		int dw = this.areaViewport.width;
 		int dh = this.areaViewport.height;
+		int[] cols = this.layout.scale == Layout.SCALE_FIXED ? null : this.hudCols(this.layout.scale);
 		for (int p = 0; p < this.layout.panels; p++) {
 			int alpha = this.layout.panelAlpha(p);
 			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
 			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
-			if (alpha >= Layout.OPAQUE) {
-				copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
-			} else {
-				blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+			if (cols == null) {
+				if (alpha >= Layout.OPAQUE) {
+					copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
+				} else {
+					blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+				}
+				continue;
 			}
+			scaleRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p),
+				dst, dw, dh, dx, dy, this.layout.panelScreenWidth(p), this.layout.panelScreenHeight(p), cols, alpha);
 		}
 		if (menu && this.menuVisible && this.menuArea == 0) {
 			this.areaViewport.bind();
@@ -17948,6 +17968,80 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	/** A w x h block of src (stride sw) at (sx, sy) to dst (dw x dh) at (dx, dy), clipped to dst. */
+	/**
+	 * dest offset -> source offset for the HUD scale, built once per scale.
+	 *
+	 * One table for both axes: the scale is the same in each direction, and no panel is taller than
+	 * the frame is wide. Integer division, which is the nearest-neighbour rule - at 150% the source
+	 * columns come out 0,0,1,2,2,3,4,4..., so every third one is doubled and the panel grows by
+	 * half without a single pixel being averaged with its neighbour.
+	 */
+	private int[] hudCols(int scale) {
+		int n = Math.max(Layout.FIXED_W, Layout.FIXED_H) * scale / 100 + 1;
+		if (this.hudCols == null || this.hudColsFor != scale || this.hudCols.length < n) {
+			int[] cols = new int[n];
+			for (int i = 0; i < n; i++) {
+				cols[i] = i * 100 / scale;
+			}
+			this.hudCols = cols;
+			this.hudColsFor = scale;
+		}
+		return this.hudCols;
+	}
+
+	/**
+	 * One panel onto the window, stretched to w x h by the table - and mixed with what is there if
+	 * alpha says so, which is the modern layout's see-through panels.
+	 *
+	 * w and h are the DESTINATION size; the source rectangle is whatever those map back to. The
+	 * clipping is copyRect's, with one addition: a destination column that falls off the left edge
+	 * takes its table entry with it, so the part that survives still reads the source columns it
+	 * would have read. Getting that wrong does not clip, it shears.
+	 */
+	private static void scaleRect(int[] src, int sw, int sx, int sy, int[] dst, int dw, int dh, int dx, int dy, int w, int h, int[] cols, int alpha) {
+		int col0 = 0;
+		int row0 = 0;
+		if (dx < 0) {
+			col0 = -dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			row0 = -dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		boolean solid = alpha >= Layout.OPAQUE;
+		int rest = 256 - alpha;
+		for (int row = 0; row < h; row++) {
+			int from = (sy + cols[row0 + row]) * sw + sx;
+			int to = (dy + row) * dw + dx;
+			if (solid) {
+				for (int col = 0; col < w; col++) {
+					dst[to + col] = src[from + cols[col0 + col]];
+				}
+				continue;
+			}
+			for (int col = 0; col < w; col++) {
+				int a = src[from + cols[col0 + col]];
+				int b = dst[to + col];
+				// red and blue in one multiply, green in another - blendRect's arithmetic exactly.
+				int rb = ((a & 0xFF00FF) * alpha + (b & 0xFF00FF) * rest) >>> 8 & 0xFF00FF;
+				int g = ((a & 0xFF00) * alpha + (b & 0xFF00) * rest) >>> 8 & 0xFF00;
+				dst[to + col] = rb | g;
+			}
+		}
+	}
+
 	private static void copyRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy) {
 		if (dx < 0) {
 			sx -= dx;

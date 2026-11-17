@@ -393,6 +393,23 @@ public final class Icons {
 		};
 	}
 
+	/** A screen on a stand: the Display page, which is about how big things are drawn on one. */
+	public static Icon monitor(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int size) {
+				int w = size - 6;
+				int h = Math.max(4, (size - 8) * 3 / 4);
+				g.drawRect(3, 3, w, h);
+				// The stand: a neck in the middle and a foot under it, both centred on the screen
+				// so the icon still reads as a monitor at 20px where the outline is all there is.
+				int mid = 3 + w / 2;
+				g.fillRect(mid - 1, 3 + h, 2, 3);
+				g.fillRect(mid - w / 4, 3 + h + 3, w / 2, 1);
+			}
+		};
+	}
+
 	/** Three stacked lines: the plain one, for a page that is simply a list of things. */
 	public static Icon list(int size, Color colour) {
 		return new Vector(size, colour) {

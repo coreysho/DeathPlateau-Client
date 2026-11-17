@@ -54,6 +54,7 @@ public final class Sidebar extends JPanel {
 	private static final String CARD_LIST = "list";
 	private static final String CARD_CONFIG = "config";
 	private static final String CARD_HUB = "hub";
+	private static final String CARD_DISPLAY = "display";
 
 	/** A plugin's own page. One card, reused: the rail decides which panel it is showing. */
 	private static final String CARD_PANEL = "panel";
@@ -65,6 +66,7 @@ public final class Sidebar extends JPanel {
 	private final ConfigPanel config;
 	private final HubPanel hubPanel;
 	private final PanelPage panel;
+	private final DisplayPanel display;
 
 	/** The rail, kept so plugin tabs can be rebuilt into it when plugins come and go. */
 	private JPanel rail;
@@ -88,6 +90,7 @@ public final class Sidebar extends JPanel {
 		this.config = new ConfigPanel(manager, this);
 		this.hubPanel = new HubPanel(new jagex2.client.plugin.hub.Hub(manager));
 		this.panel = new PanelPage(manager);
+		this.display = new DisplayPanel(manager);
 
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.BACKGROUND);
@@ -99,6 +102,7 @@ public final class Sidebar extends JPanel {
 		this.pages.add(this.config, CARD_CONFIG);
 		this.pages.add(this.hubPanel, CARD_HUB);
 		this.pages.add(this.panel, CARD_PANEL);
+		this.pages.add(this.display, CARD_DISPLAY);
 		this.add(this.pages, BorderLayout.CENTER);
 
 		this.add(this.buildRail(), BorderLayout.EAST);
@@ -114,6 +118,12 @@ public final class Sidebar extends JPanel {
 			public void actionPerformed(java.awt.event.ActionEvent event) {
 				if (CARD_PANEL.equals(Sidebar.this.openCard) && Sidebar.this.isPanelOpen()) {
 					Sidebar.this.readPanels();
+				}
+				// The same reason, for the Display page: dragging the window changes which scales
+				// fit, so the line under the control would otherwise be frozen at what fitted when
+				// the page was opened.
+				if (CARD_DISPLAY.equals(Sidebar.this.openCard) && Sidebar.this.isPanelOpen()) {
+					Sidebar.this.display.refresh();
 				}
 			}
 		});
@@ -198,6 +208,7 @@ public final class Sidebar extends JPanel {
 
 		this.tabs.add(new Tab(Icons.wrench(20, Theme.ACCENT), CARD_LIST, "Plugins"));
 		this.tabs.add(new Tab(Icons.download(20, Theme.ACCENT), CARD_HUB, "Plugin hub"));
+		this.tabs.add(new Tab(Icons.monitor(20, Theme.ACCENT), CARD_DISPLAY, "Display"));
 		this.fixedTabs = this.tabs.size();
 		this.rail = rail;
 		this.layOutRail();

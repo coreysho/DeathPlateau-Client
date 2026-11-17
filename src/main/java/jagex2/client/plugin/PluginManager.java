@@ -757,6 +757,18 @@ public final class PluginManager {
 		});
 	}
 
+	/**
+	 * What the HUD is being drawn at, as a percentage - which is what was asked for, or less when
+	 * the window is too small for it (Layout.fit). For the sidebar's Display page, which can read
+	 * and write the REQUEST through DisplaySettings on its own but cannot see the layout.
+	 *
+	 * Safe off the game thread: Layout is immutable and this reads one of its final fields, so the
+	 * worst that can happen is an answer one frame old.
+	 */
+	public int hudScaleInUse() {
+		return this.client.panelScaleInUse();
+	}
+
 	// ------------------------------------------------------------------ hooks Client.java calls
 
 	/** True when nothing is running, which lets every hook below cost one field read. */
