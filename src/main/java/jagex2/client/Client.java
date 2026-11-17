@@ -18164,6 +18164,20 @@ public class Client extends GameShell implements PixMap.Target {
 		super.remapMouse = true;
 		PixMap.target = this;
 		this.redrawFrame = true;
+		// AND PUT THE VIEWPORT BACK. Every PixMap constructor ends with bind(), so the two built
+		// above have left Pix2D pointing at the window-sized area while Pix3D.lineOffset is still
+		// the viewport's. Drawing the scene into that pair indexes a 334-row table with a y the
+		// 537-row buffer allowed - prepareGame ends with these same two statements for the same
+		// reason, and this was the one place building an area outside a draw that did not.
+		this.rebindViewport();
+	}
+
+	/** The scene's buffer and its line offsets, as a pair. Neither is any use without the other. */
+	private void rebindViewport() {
+		if (this.areaViewport != null && this.areaViewportOffset != null) {
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+		}
 	}
 
 	/**
