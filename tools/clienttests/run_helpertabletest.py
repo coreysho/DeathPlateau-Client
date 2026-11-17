@@ -53,6 +53,13 @@ SHIPPED = os.path.join(ROOT, 'src/main/resources/deathplateau/quests.json')
 def _engine():
     """The engine beside this checkout, under either name it goes by - Engine-TS on CI and on a
     laptop that followed the README, DeathPlateau-Engine on one that cloned it by its own name."""
+    # DP_ENGINE first, which is how a build tree or a worktree is pointed at: the comparison is
+    # only as true as the cache the exporter reads, so being able to run it against a checkout
+    # whose pack was built from current content - rather than whichever one happens to sit beside
+    # this - is the difference between proving the table and guessing at it.
+    named = os.environ.get('DP_ENGINE')
+    if named and os.path.isfile(os.path.join(named, 'tools/quest/ExportHelper.ts')):
+        return named
     beside = os.path.dirname(ROOT)
     for name in ('Engine-TS', 'DeathPlateau-Engine'):
         if os.path.isfile(os.path.join(beside, name, 'tools/quest/ExportHelper.ts')):
@@ -87,14 +94,38 @@ def report(what, left, lname, right, rname):
     return False
 
 
+def _exporter_runner(engine):
+    """How to run a TypeScript file in the engine: [node, tsx-cli] for preference, else [npx, tsx].
+
+    NOT npx FIRST. On Windows npx is npx.cmd, shutil.which finds it, and subprocess cannot start
+    it - CreateProcess does not run .cmd - so the suite died with a FileNotFoundError before it
+    compared anything, on the very machine where somebody is most likely to be regenerating the
+    table by hand. node is an .exe and tsx is a file in the engine's node_modules, so this needs
+    no launcher and behaves the same on every platform. The engine's own EvalManifest had the
+    same bug and the same fix.
+    """
+    node = shutil.which('node')
+    if node:
+        for rel in ('node_modules/tsx/dist/cli.mjs', 'node_modules/tsx/dist/cli.js'):
+            cli = os.path.join(engine, rel)
+            if os.path.isfile(cli):
+                return [node, cli]
+    npx = shutil.which('npx')
+    # A bare 'npx' and not the resolved path: on Windows the resolved path is the .cmd this cannot
+    # start, and on everything else the two are the same thing.
+    return ['npx', 'tsx'] if npx and os.name != 'nt' else None
+
+
 def main():
     engine = _engine()
     if engine is None:
         print('run_helpertabletest: SKIP - no Engine-TS or DeathPlateau-Engine beside this '
               'checkout, so there is no exporter to compare against')
         return 2
-    if not shutil.which('npx'):
-        print('run_helpertabletest: SKIP - needs npx on PATH to run the engine\'s exporter')
+    runner = _exporter_runner(engine)
+    if runner is None:
+        print('run_helpertabletest: SKIP - needs node (with the engine\'s tsx) or npx on PATH '
+              'to run the engine\'s exporter')
         return 2
 
     committed = os.path.join(engine, 'data/quests.json')
@@ -105,7 +136,7 @@ def main():
     work = tempfile.mkdtemp(prefix='helpertabletest')
     try:
         fresh_path = os.path.join(work, 'fresh.json')
-        r = subprocess.run(['npx', 'tsx', 'tools/quest/ExportHelper.ts', fresh_path],
+        r = subprocess.run(runner + ['tools/quest/ExportHelper.ts', fresh_path],
                            cwd=engine, capture_output=True, text=True)
         if r.returncode != 0 or not os.path.isfile(fresh_path):
             # NOT a failure of this client. The exporter reads the packed cache to resolve its
