@@ -158,15 +158,15 @@ public final class Layout {
 		{ 522, 466, 241, 37 },     // TABS_BOTTOM: the bottom row of seven
 	};
 	/**
-	 * SIDEBAR in both resizable layouts: the open tab's panel on its own, without the rows - and
-	 * without the fixed screen's pillars either side of it.
+	 * SIDEBAR in both resizable layouts: the open tab's panel on its own, without the tab rows.
 	 *
-	 * areaSidebar is 190 wide and drawn at SIDE_X=547, so the column's own 241 carries 25 pixels
-	 * of stone pillar on each flank. In the fixed screen those are the frame; over a window they
-	 * are furniture from a screen that is not there, and Old School shows none. The 25 is kept
-	 * below as the offset the panel sits at inside its column, so it still lines up with the tabs.
+	 * THE FULL WIDTH OF THE COLUMN, pillars included. areaSidebar is only 190 wide and the column
+	 * is 241, so the 25 pixels on each flank are the stone pillars either side of the inventory -
+	 * and those are the panel's own frame, not furniture from the screen around it. Old School's
+	 * classic layout has them, and trimming them to the art left the tab rows standing proud of
+	 * the panel by exactly that much on each side, which is the step the pillars fill.
 	 */
-	private static final int[] SIDE_PANEL = { 547, 205, 190, 261 };
+	private static final int[] SIDE_PANEL = { 522, 205, 241, 261 };
 
 	/**
 	 * How much of each panel is drawn in modern, out of 256 - SOLID, every one of them (owner, 2026-09-28,
@@ -333,7 +333,8 @@ public final class Layout {
 		// classic keeps the fixed frame's own order with a row at each end of the panel.
 		//
 		// The panel is indented inside the column by as much as it is indented inside the fixed
-		// screen, so a 190-wide panel sits under the middle of a 241-wide row of tabs.
+		// screen - zero, now that it is the column's full width, and kept as arithmetic rather
+		// than assumed so that narrowing it again would still line up under the tabs.
 		int indent = scaled(SIDE_PANEL[0] - PANEL_RECT[SIDEBAR][0], this.scale);
 		this.panelScreenX[TABS_BOTTOM] = right;
 		this.panelScreenY[TABS_BOTTOM] = height - this.panelScreenH[TABS_BOTTOM];

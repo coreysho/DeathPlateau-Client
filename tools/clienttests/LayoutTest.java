@@ -124,10 +124,10 @@ public class LayoutTest {
 			// THE SAME SEVEN IN BOTH LAYOUTS. All that separates classic from modern now is which
 			// way up the side column is stacked, which is all it ever was.
 			int[][] want = { { 0, 338, 519, 117 }, { 0, 455, 519, 25 }, { 0, 480, 519, 23 },
-				{ 545, 4, 172, 156 }, { 547, 205, 190, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } };
+				{ 545, 4, 172, 156 }, { 522, 205, 241, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } };
 			String[] named = { "the chatbox: the log alone", "the chat input: the line you type on",
 				"the chat bar: the row of buttons under it", "the minimap: areaMapback alone",
-				"the open tab's panel, without the screen's pillars",
+				"the open tab's panel, pillars and all, between the rows",
 				"the top row of seven tabs", "the bottom row of seven tabs" };
 			check(r.panels == want.length, "this layout has " + r.panels + " panels");
 			for (int p = 0; p < r.panels; p++) {
