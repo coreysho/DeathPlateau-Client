@@ -2602,6 +2602,12 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.wh")
 	public Pix8 imageMapback;
+	/**
+	 * Which pixels of the minimap panel are the rectangle's dead corners rather than its frame -
+	 * true meaning "do not put this on the window". Built once from the sprite (minimapRing), and
+	 * read only when the panel is lifted out onto a window.
+	 */
+	private boolean[] minimapMask;
 
 	@ObfuscatedName("client.xh")
 	public Pix8 imageChatback;
@@ -3270,6 +3276,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.imageInvback = new Pix8(jagMedia, "invback", 0);
 			this.imageChatback = new Pix8(jagMedia, "chatback", 0);
 			this.imageMapback = new Pix8(jagMedia, "mapback", 0);
+			this.minimapMask = minimapRing(this.imageMapback);
 			this.imageBackbase1 = new Pix8(jagMedia, "backbase1", 0);
 			this.imageBackbase2 = new Pix8(jagMedia, "backbase2", 0);
 			this.imageBackhmid1 = new Pix8(jagMedia, "backhmid1", 0);
@@ -17776,6 +17783,73 @@ public class Client extends GameShell implements PixMap.Target {
 		return offset > -8 && offset < 8 ? 0 : offset;
 	}
 
+	/** How much of the minimap's frame is kept past the map itself, in pixels. */
+	private static final int MINIMAP_RING = 14;
+
+	/**
+	 * The dead corners of the minimap sprite: stone that is further from the map than the frame is
+	 * thick.
+	 *
+	 * The sprite is the frame with a hole in it, and the hole is the transparent index - so a
+	 * breadth-first walk outwards from every transparent pixel gives each pixel's distance from
+	 * the map. Past MINIMAP_RING of that, what is left is the flat stone that fills the rectangle
+	 * out to its corners, which on the fixed screen meets the frame around it and over a window is
+	 * a grey box with a round picture in it.
+	 *
+	 * Null if the sprite is not the size the panel expects, which means something else has gone
+	 * wrong and a mask built on a guess would hide it.
+	 */
+	private static boolean[] minimapRing(Pix8 sprite) {
+		if (sprite == null || sprite.pixels == null || sprite.wi != 172 || sprite.hi != 156) {
+			return null;
+		}
+		int w = sprite.wi;
+		int h = sprite.hi;
+		int[] dist = new int[w * h];
+		int[] queue = new int[w * h];
+		int head = 0;
+		int tail = 0;
+		for (int i = 0; i < w * h; i++) {
+			if (sprite.pixels[i] == 0) {
+				dist[i] = 0;
+				queue[tail++] = i;
+			} else {
+				dist[i] = Integer.MAX_VALUE;
+			}
+		}
+		if (tail == 0) {
+			return null;
+		}
+		while (head < tail) {
+			int at = queue[head++];
+			int x = at % w;
+			int y = at / w;
+			int next = dist[at] + 1;
+			if (next > MINIMAP_RING) {
+				// Nothing past the ring needs a distance of its own - it is all masked anyway, and
+				// stopping here is most of the walk.
+				continue;
+			}
+			for (int d = 0; d < 4; d++) {
+				int nx = x + (d == 0 ? 1 : d == 1 ? -1 : 0);
+				int ny = y + (d == 2 ? 1 : d == 3 ? -1 : 0);
+				if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
+					continue;
+				}
+				int to = ny * w + nx;
+				if (dist[to] > next) {
+					dist[to] = next;
+					queue[tail++] = to;
+				}
+			}
+		}
+		boolean[] mask = new boolean[w * h];
+		for (int i = 0; i < w * h; i++) {
+			mask[i] = sprite.pixels[i] != 0 && dist[i] > MINIMAP_RING;
+		}
+		return mask;
+	}
+
 	private int mouseArea() {
 		if (this.menuVisible) {
 			return this.menuArea == 1 ? Layout.SIDEBAR : this.menuArea == 2 ? Layout.CHAT : Layout.VIEWPORT;
@@ -18033,8 +18107,13 @@ public class Client extends GameShell implements PixMap.Target {
 			int alpha = this.layout.panelAlpha(p);
 			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
 			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
+			// The minimap is the one panel that is not a rectangle: past its frame the sprite is
+			// the fixed screen's stone, which over a window is a grey box around a round picture.
+			boolean[] mask = p == Layout.MINIMAP ? this.minimapMask : null;
 			if (cols == null) {
-				if (alpha >= Layout.OPAQUE) {
+				if (mask != null) {
+					copyRectMasked(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, mask);
+				} else if (alpha >= Layout.OPAQUE) {
 					copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
 				} else {
 					blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
@@ -18042,7 +18121,8 @@ public class Client extends GameShell implements PixMap.Target {
 				continue;
 			}
 			scaleRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p),
-				dst, dw, dh, dx, dy, this.layout.panelScreenWidth(p), this.layout.panelScreenHeight(p), cols, alpha);
+				dst, dw, dh, dx, dy, this.layout.panelScreenWidth(p), this.layout.panelScreenHeight(p), cols, alpha,
+				mask, this.layout.panelWidth(p));
 		}
 		if (menu && this.menuVisible && this.menuArea == 0) {
 			this.areaViewport.bind();
@@ -18496,7 +18576,52 @@ public class Client extends GameShell implements PixMap.Target {
 	 * takes its table entry with it, so the part that survives still reads the source columns it
 	 * would have read. Getting that wrong does not clip, it shears.
 	 */
-	private static void scaleRect(int[] src, int sw, int sx, int sy, int[] dst, int dw, int dh, int dx, int dy, int w, int h, int[] cols, int alpha) {
+	/**
+	 * One panel onto the window at 1:1, leaving out whatever the mask says is not part of it.
+	 *
+	 * A separate method rather than a flag on copyRect: that one is arraycopy a row at a time,
+	 * which is most of why the unscaled path is cheap, and a mask has to be asked about every
+	 * pixel. Only the minimap uses this.
+	 */
+	private static void copyRectMasked(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy, boolean[] mask) {
+		// The mask has a row per row of the PANEL, so its stride is the panel's width - not what
+		// is left of it after the clipping below. A dragged minimap half off the edge read the
+		// mask in short rows and masked a diagonal band across itself.
+		final int maskW = w;
+		int col0 = 0;
+		int row0 = 0;
+		if (dx < 0) {
+			col0 = -dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			row0 = -dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		for (int row = 0; row < h; row++) {
+			int from = (sy + row0 + row) * sw + sx + col0;
+			int to = (dy + row) * dw + dx;
+			int maskRow = (row0 + row) * maskW;
+			for (int col = 0; col < w; col++) {
+				if (!mask[maskRow + col0 + col]) {
+					dst[to + col] = src[from + col];
+				}
+			}
+		}
+	}
+
+	private static void scaleRect(int[] src, int sw, int sx, int sy, int[] dst, int dw, int dh, int dx, int dy, int w, int h, int[] cols, int alpha, boolean[] mask, int maskW) {
 		int col0 = 0;
 		int row0 = 0;
 		if (dx < 0) {
@@ -18523,13 +18648,20 @@ public class Client extends GameShell implements PixMap.Target {
 		for (int row = 0; row < h; row++) {
 			int from = (sy + cols[row0 + row]) * sw + sx;
 			int to = (dy + row) * dw + dx;
+			int maskRow = mask == null ? 0 : cols[row0 + row] * maskW;
 			if (solid) {
 				for (int col = 0; col < w; col++) {
+					if (mask != null && mask[maskRow + cols[col0 + col]]) {
+						continue;
+					}
 					dst[to + col] = src[from + cols[col0 + col]];
 				}
 				continue;
 			}
 			for (int col = 0; col < w; col++) {
+				if (mask != null && mask[maskRow + cols[col0 + col]]) {
+					continue;
+				}
 				int a = src[from + cols[col0 + col]];
 				int b = dst[to + col];
 				// red and blue in one multiply, green in another - blendRect's arithmetic exactly.
