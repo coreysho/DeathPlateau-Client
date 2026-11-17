@@ -17473,9 +17473,24 @@ public class Client extends GameShell implements PixMap.Target {
 			this.screenGraphics = g;
 			if (next.resizable) {
 				this.letterGraphics = g.create();
-				this.letterGraphics.translate(
-					this.stretching ? (this.stretchWinW - Layout.FIXED_W) / 2 : next.letterX,
-					this.stretching ? (this.stretchWinH - Layout.FIXED_H) / 2 : next.letterY);
+				if (this.stretching) {
+					// A scale transform, so the title screen's own 765x503 drawing lands enlarged
+					// without a line of it knowing. The hint goes on the same Graphics: it is a
+					// copy, and nothing else draws through it.
+					int lw = (int) ((long) Layout.FIXED_W * this.stretchW / next.width);
+					int lh = (int) ((long) Layout.FIXED_H * this.stretchH / next.height);
+					this.letterGraphics.translate((this.stretchWinW - lw) / 2, (this.stretchWinH - lh) / 2);
+					if (this.letterGraphics instanceof java.awt.Graphics2D) {
+						java.awt.Graphics2D lg = (java.awt.Graphics2D) this.letterGraphics;
+						lg.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+							DisplaySettings.smoothScale()
+								? java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+								: java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+						lg.scale(lw / (double) Layout.FIXED_W, lh / (double) Layout.FIXED_H);
+					}
+				} else {
+					this.letterGraphics.translate(next.letterX, next.letterY);
+				}
 			} else {
 				this.letterGraphics = g;
 			}
@@ -17597,10 +17612,13 @@ public class Client extends GameShell implements PixMap.Target {
 		if (!this.ingame || this.fullscreenInterfaceId0 != -1) {
 			int lx = this.letterX();
 			int ly = this.letterY();
-			super.mouseX = rx == -1 && ry == -1 ? -1 : rx - lx;
-			super.mouseY = rx == -1 && ry == -1 ? -1 : ry - ly;
-			super.mouseClickX = cx - lx;
-			super.mouseClickY = cy - ly;
+			int lw = this.letterW();
+			int lh = this.letterH();
+			boolean off = rx == -1 && ry == -1;
+			super.mouseX = off ? -1 : this.letterBack(rx, lx, lw, Layout.FIXED_W);
+			super.mouseY = off ? -1 : this.letterBack(ry, ly, lh, Layout.FIXED_H);
+			super.mouseClickX = this.letterBack(cx, lx, lw, Layout.FIXED_W);
+			super.mouseClickY = this.letterBack(cy, ly, lh, Layout.FIXED_H);
 			return;
 		}
 		if (this.stretching) {
@@ -17649,7 +17667,12 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		boolean letter = !this.ingame || super.drawArea != null;
 		if (letter && !this.letterCleared) {
-			this.fillTitleSurround(this.screenGraphics, this.layout.width, this.layout.height);
+			// ACROSS THE WINDOW, not across the frame. With a game scale on the frame is a
+			// fraction of the window, and filling only that much would leave the rest of the
+			// screen showing whatever was there before.
+			this.fillTitleSurround(this.screenGraphics,
+				this.stretching ? this.stretchWinW : this.layout.width,
+				this.stretching ? this.stretchWinH : this.layout.height);
 			this.letterCleared = true;
 			this.redrawFrame = true;
 		} else if (!letter) {
@@ -17709,10 +17732,12 @@ public class Client extends GameShell implements PixMap.Target {
 			// and would wipe anything drawn inside it.
 			int lx = this.letterX();
 			int ly = this.letterY();
+			int lw = this.letterW();
+			int lh = this.letterH();
 			for (int i = 0; i < SHADOW; i++) {
 				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
 				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
-				g2.drawRect(lx - i - 1, ly - i - 1, Layout.FIXED_W + 2 * i + 1, Layout.FIXED_H + 2 * i + 1);
+				g2.drawRect(lx - i - 1, ly - i - 1, lw + 2 * i + 1, lh + 2 * i + 1);
 			}
 		}
 	}
@@ -17980,11 +18005,35 @@ public class Client extends GameShell implements PixMap.Target {
 	 * half of it is.
 	 */
 	private int letterX() {
-		return this.stretching ? (this.stretchWinW - Layout.FIXED_W) / 2 : this.layout.letterX;
+		return this.stretching ? (this.stretchWinW - this.letterW()) / 2 : this.layout.letterX;
 	}
 
 	private int letterY() {
-		return this.stretching ? (this.stretchWinH - Layout.FIXED_H) / 2 : this.layout.letterY;
+		return this.stretching ? (this.stretchWinH - this.letterH()) / 2 : this.layout.letterY;
+	}
+
+	/**
+	 * How big a 765x503 screen is drawn, with a game scale on: the frame's own factor, so that
+	 * logging in does not change the size of anything.
+	 *
+	 * Rounded once, here, and every other place asks this rather than multiplying for itself -
+	 * two roundings of the same number disagree by a pixel, and a pixel is the difference between
+	 * a shadow that hugs the screen and one that cuts a line across it.
+	 */
+	private int letterW() {
+		return this.stretching ? (int) ((long) Layout.FIXED_W * this.stretchW / this.layout.width) : Layout.FIXED_W;
+	}
+
+	private int letterH() {
+		return this.stretching ? (int) ((long) Layout.FIXED_H * this.stretchH / this.layout.height) : Layout.FIXED_H;
+	}
+
+	/** A window point back into the 765x503 screen it was drawn from. */
+	private int letterBack(int v, int pad, int size, int fixed) {
+		if (!this.stretching || size <= 0) {
+			return v - pad;
+		}
+		return (int) ((long) (v - pad) * fixed / size);
 	}
 
 	/** A window length back into the frame it was drawn from, for the mouse. */
