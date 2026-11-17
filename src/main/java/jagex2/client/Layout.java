@@ -148,8 +148,16 @@ public final class Layout {
 		{ 522, 168, 241, 37 },     // TABS_TOP: the top row of seven (modern)
 		{ 522, 466, 241, 37 },     // TABS_BOTTOM: the bottom row of seven (modern)
 	};
-	/** SIDEBAR in modern: the open tab's panel on its own, without the rows. */
-	private static final int[] MODERN_SIDEBAR = { 522, 205, 241, 261 };
+	/**
+	 * SIDEBAR in modern: the open tab's panel on its own, without the rows - and without the
+	 * fixed screen's pillars either side of it.
+	 *
+	 * areaSidebar is 190 wide and drawn at SIDE_X=547, so the column's own 241 carries 25 pixels
+	 * of stone pillar on each flank. In the fixed screen those are the frame; over a window they
+	 * are furniture from a screen that is not there, and Old School shows none. The 25 is kept
+	 * below as the offset the panel sits at inside its column, so it still lines up with the tabs.
+	 */
+	private static final int[] MODERN_SIDEBAR = { 547, 205, 190, 261 };
 
 	/**
 	 * How much of each panel is drawn in modern, out of 256 - SOLID, every one of them (owner, 2026-09-28,
@@ -311,7 +319,9 @@ public final class Layout {
 			this.panelScreenY[TABS_BOTTOM] = height - this.panelScreenH[TABS_BOTTOM];
 			this.panelScreenX[TABS_TOP] = right;
 			this.panelScreenY[TABS_TOP] = this.panelScreenY[TABS_BOTTOM] - this.panelScreenH[TABS_TOP];
-			this.panelScreenX[SIDEBAR] = right;
+			// Indented inside the column by as much as it is indented inside the fixed screen, so
+			// a 190-wide panel still sits under the middle of a 241-wide row of tabs.
+			this.panelScreenX[SIDEBAR] = right + scaled(MODERN_SIDEBAR[0] - PANEL_RECT[SIDEBAR][0], this.scale);
 			this.panelScreenY[SIDEBAR] = this.panelScreenY[TABS_TOP] - this.panelScreenH[SIDEBAR];
 		} else {
 			this.panelScreenX[SIDEBAR] = right;

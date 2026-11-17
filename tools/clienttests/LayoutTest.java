@@ -116,7 +116,7 @@ public class LayoutTest {
 			// Every panel rectangle is inside the 765x503 frame and clear of its 512x334 viewport, so no
 			// panel ever carries a copy of the scene; and each is the panel's own art, no wider.
 			int[][] want = mode == Layout.MODERN
-				? new int[][] { { 0, 338, 519, 142 }, { 0, 480, 519, 23 }, { 545, 4, 172, 156 }, { 522, 205, 241, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } }
+				? new int[][] { { 0, 338, 519, 142 }, { 0, 480, 519, 23 }, { 545, 4, 172, 156 }, { 547, 205, 190, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } }
 				: new int[][] { { 0, 338, 519, 142 }, { 0, 480, 519, 23 }, { 545, 4, 172, 156 }, { 522, 168, 241, 335 } };
 			String[] named = { "the chatbox: the parchment alone", "the chat bar: the row of buttons under it",
 				"the minimap: areaMapback alone",
