@@ -47,8 +47,8 @@ MUTS = [
     # login that never asks is accepted, played and logged like any other, and the only sign is a
     # card that says "name only" days later.
     (CLIENT, 'the remember byte never asking for a saved login',
-     '\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);',
-     '\t\t\t\tthis.out.p1(0);'),
+     '\t\t\t\tthis.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));',
+     '\t\t\t\tthis.out.p1(launcher.length() > 0 ? 2 : 0);'),
     (CLIENT, 'Remember me ignored, so every login asks for one',
      '\t\t\t\tboolean wantsToken = this.rememberLogin && this.loginToken.length() == 0;',
      '\t\t\t\tboolean wantsToken = this.loginToken.length() == 0;'),
@@ -64,15 +64,15 @@ MUTS = [
      '\t\t\t\tthis.out.pjstr(this.loginToken);',
      '\t\t\t\tthis.out.pjstr("");'),
     (CLIENT, 'the two fields written in the wrong order',
-     '\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);\n\t\t\t\tthis.out.pjstr(this.loginToken);',
-     '\t\t\t\tthis.out.pjstr(this.loginToken);\n\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);'),
+     '\t\t\t\tthis.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));\n\t\t\t\tthis.out.pjstr(this.loginToken);',
+     '\t\t\t\tthis.out.pjstr(this.loginToken);\n\t\t\t\tthis.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));'),
 
     # THE ENVELOPE. A token is worth the account until it is cancelled, so it has to travel inside
     # the RSA block exactly as the password does. Written after rsaenc it goes out in the clear -
     # and the login still works, which is what makes this worth a mutation.
     (CLIENT, 'the saved login sent in the clear, outside the RSA envelope',
-     '\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);\n\t\t\t\tthis.out.pjstr(this.loginToken);\n\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);',
-     '\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);\n\t\t\t\tthis.out.p1(wantsToken ? 1 : 0);\n\t\t\t\tthis.out.pjstr(this.loginToken);'),
+     '\t\t\t\tthis.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));\n\t\t\t\tthis.out.pjstr(this.loginToken);\n\t\t\t\tif (launcher.length() > 0) {\n\t\t\t\t\tthis.out.pjstr(launcher);\n\t\t\t\t}\n\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);',
+     '\t\t\t\tif (launcher.length() > 0) {\n\t\t\t\t\tthis.out.pjstr(launcher);\n\t\t\t\t}\n\t\t\t\tthis.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);\n\t\t\t\tthis.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));\n\t\t\t\tthis.out.pjstr(this.loginToken);'),
 
     # THE GATE. The build number is what tells the server the two fields are there to read. A
     # client that sends them under an older number has them read as something else entirely.
