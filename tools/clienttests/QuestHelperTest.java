@@ -323,6 +323,8 @@ public class QuestHelperTest {
 		dialogueTests();
 		System.out.println("15. every quest, at every leg, drawn");
 		sweepTests();
+		System.out.println("15b. and every value between the legs, where a player actually sits");
+		gapSweepTests();
 		System.out.println("16. the quest you are already in the middle of");
 		followTests();
 		System.out.println("17. the step you have just taken");
@@ -374,47 +376,15 @@ public class QuestHelperTest {
 	 * one that is lying.
 	 */
 	static void sweepTests() throws Exception {
-		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
-		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-		byte[] chunk = new byte[8192];
-		for (int n = in.read(chunk); n > 0; n = in.read(chunk)) {
-			buf.write(chunk, 0, n);
-		}
-		in.close();
-		Object root = jagex2.client.plugin.hub.Json.parse(new String(buf.toByteArray(), "UTF-8"));
-		List<?> all = jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) root, "quests");
+		List<?> all = questTable();
 
 		java.lang.reflect.Field errorsField = PluginManager.Entry.class.getDeclaredField("renderErrors");
 		errorsField.setAccessible(true);
 		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
 		enabledField.setAccessible(true);
 
-		// THE VARBIT TABLE THE CACHE WOULD HAVE GIVEN US, built from what the quests declare. Sized
-		// to the highest id in use; every other slot stays null, which is exactly what a cache that
-		// does not define an id looks like to varbitType(), so no OTHER varbit starts answering.
-		int widest = -1;
-		for (Object element : all) {
-			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
-			if (quest.get("stageBits") != null) {
-				widest = Math.max(widest, jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1));
-			}
-		}
-		VarbitType[] table = new VarbitType[widest + 1];
-		for (Object element : all) {
-			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
-			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
-			int id = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
-			if (bits == null || id < 0 || id >= table.length) {
-				continue;
-			}
-			VarbitType type = new VarbitType();
-			type.field1762 = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
-			type.field1763 = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
-			type.field1764 = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
-			table[id] = type;
-		}
 		VarbitType[] wasTable = VarbitType.field1760;
-		VarbitType.field1760 = table;
+		VarbitType.field1760 = varbitTable(all);
 
 		PluginContext ctx = context();
 		int legs = 0;
@@ -495,6 +465,178 @@ public class QuestHelperTest {
 			+ unreachable + " unreachable)");
 		VarbitType.field1760 = wasTable;
 	}
+
+	/** The shipped table, as the plugin's own loader reads it. */
+	static List<?> questTable() throws Exception {
+		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
+		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+		byte[] chunk = new byte[8192];
+		for (int n = in.read(chunk); n > 0; n = in.read(chunk)) {
+			buf.write(chunk, 0, n);
+		}
+		in.close();
+		Object root = jagex2.client.plugin.hub.Json.parse(new String(buf.toByteArray(), "UTF-8"));
+		return jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) root, "quests");
+	}
+
+	/**
+	 * THE VARBIT TABLE THE CACHE WOULD HAVE GIVEN US, built from what the quests declare. Sized
+	 * to the highest id in use; every other slot stays null, which is exactly what a cache that
+	 * does not define an id looks like to varbitType(), so no OTHER varbit starts answering.
+	 */
+	static VarbitType[] varbitTable(List<?> all) {
+		int widest = -1;
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			if (quest.get("stageBits") != null) {
+				widest = Math.max(widest, jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1));
+			}
+		}
+		VarbitType[] table = new VarbitType[widest + 1];
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
+			int id = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			if (bits == null || id < 0 || id >= table.length) {
+				continue;
+			}
+			VarbitType type = new VarbitType();
+			type.field1762 = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
+			type.field1763 = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
+			type.field1764 = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
+			table[id] = type;
+		}
+		return table;
+	}
+
+	// --------------------------------------------------------------- 15b
+
+	/**
+	 * AND EVERY VALUE BETWEEN THE LEGS, WHICH IS WHERE A PLAYER ACTUALLY SITS.
+	 *
+	 * WHY THE SWEEP ABOVE IS NOT ENOUGH. It walks the table's own legs - the 850 rows that exist -
+	 * and a leg exists only where a sim's playthrough passed through that progress value. A
+	 * `{ stage: N }` in a manifest ASSERTS the var equals N; it does not set it. So any value the
+	 * content can write that no sim route crosses has no row at all, and the sweep above cannot
+	 * reach it by construction: it iterates the rows. DeathPlateau-Bugs#16 counts 45 such (quest,
+	 * value) pairs across 20 quests, 44 of them somewhere a player can genuinely be sitting.
+	 *
+	 * What the plugin does there is fall back: {@link QuestHelperPlugin#stageNow} takes the last
+	 * leg whose `from` is at or below the value, so a player at a legless value is shown the
+	 * PREVIOUS leg - already done, and wrong. That is a wording bug, and #16 owns it.
+	 *
+	 * This check is for the other half: whether being there makes an overlay THROW. Four open
+	 * reports (#4, #10, #15, #17) are the helper turning itself off, which is PluginManager
+	 * counting five throws out of an overlay and disabling the plugin, and a legless value is the
+	 * one state no test had ever drawn. So every value from 0 to the quest's own `done` that is
+	 * not already a leg gets written into the progress var and drawn on all four layers.
+	 *
+	 * A value the var is too narrow to hold reads back as something else and is counted, not
+	 * drawn: a draw at a value the plugin never saw would be a draw of some other state.
+	 */
+	static void gapSweepTests() throws Exception {
+		List<?> all = questTable();
+
+		java.lang.reflect.Field errorsField = PluginManager.Entry.class.getDeclaredField("renderErrors");
+		errorsField.setAccessible(true);
+		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
+		enabledField.setAccessible(true);
+
+		VarbitType[] wasTable = VarbitType.field1760;
+		VarbitType.field1760 = varbitTable(all);
+
+		PluginContext ctx = context();
+		int drawn = 0;
+		int tooNarrow = 0;
+		List<String> threw = new ArrayList<String>();
+
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			String name = jagex2.client.plugin.hub.Json.string(quest, "name", "");
+			int varp = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			boolean varbit = Boolean.TRUE.equals(quest.get("stageIsVarbit"));
+			int done = jagex2.client.plugin.hub.Json.integer(quest, "done", 0);
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
+			List<?> stages = jagex2.client.plugin.hub.Json.array(quest, "stages");
+			if (stages == null) {
+				continue;
+			}
+			java.util.Set<Integer> legs = new java.util.HashSet<Integer>();
+			for (Object stage : stages) {
+				legs.add(jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stage, "from", 0));
+			}
+			try {
+				change();
+				track(name);
+			} catch (RuntimeException notListed) {
+				continue;
+			}
+			for (int value = 0; value <= done; value++) {
+				if (legs.contains(value)) {
+					continue;
+				}
+				if (varbit) {
+					writeBits(bits, value);
+				} else if (varp >= 0 && varp < client.varps.length) {
+					client.varps[varp] = value;
+				}
+				int saw = varp < 0 ? 0 : (varbit ? ctx.getVarbit(varp) : ctx.getVarp(varp));
+				if (saw != value) {
+					tooNarrow++;
+					continue;
+				}
+				manager.onClientTick(ticks++);
+				errorsField.setInt(entry, 0);
+				enabledField.setBoolean(entry, true);
+				screen();
+				scene();
+				sidebar();
+				// THE CHATBOX GETS THE FALLBACK LEG'S OWN PICKS, because that is the leg the
+				// plugin is about to show: optionFor is reached only through the leg stageNow
+				// settles on, so putting any other quest's options up would test nothing.
+				java.util.Map<?, ?> fallback = legBelow(stages, value);
+				if (fallback != null) {
+					openDialogue(optionsFor(fallback));
+					chat();
+					closeDialogue();
+				} else {
+					chat();
+				}
+				drawn++;
+				if (errorsField.getInt(entry) > 0) {
+					threw.add(name + " at value " + value + " (no leg; nearest below "
+						+ (fallback == null ? "none"
+							: String.valueOf(jagex2.client.plugin.hub.Json.integer(fallback, "from", 0)))
+						+ ")");
+				}
+			}
+		}
+
+		for (String bad : threw) {
+			System.out.println("       threw while drawing: " + bad);
+		}
+		check(threw.isEmpty(), "every value between the legs draws without throwing, on all four layers ("
+			+ drawn + " legless values drawn)");
+		check(tooNarrow == 0, "and every value up to done fits the var that carries it ("
+			+ tooNarrow + " too narrow)");
+		VarbitType.field1760 = wasTable;
+	}
+
+	/** The leg the plugin will fall back to at this value: the last whose `from` is at or below it. */
+	static java.util.Map<?, ?> legBelow(List<?> stages, int value) {
+		java.util.Map<?, ?> best = null;
+		int bestFrom = -1;
+		for (Object stage : stages) {
+			java.util.Map<?, ?> st = (java.util.Map<?, ?>) stage;
+			int from = jagex2.client.plugin.hub.Json.integer(st, "from", 0);
+			if (from <= value && from > bestFrom) {
+				best = st;
+				bestFrom = from;
+			}
+		}
+		return best;
+	}
+
 
 	/**
 	 * One varbit's value, written into the parent varp's bits. The inverse of
