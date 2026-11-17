@@ -4741,6 +4741,18 @@ public class Client extends GameShell implements PixMap.Target {
 		this.titleScreenState = 0;
 		this.username = "";
 		this.password = "";
+		// THE LOGIN FORM BACK TO A FRESH ONE. Without this the title screen comes up still saying
+		// "Connecting to server..." from the login that started the session now ending, which reads
+		// as a login in progress and is the only line on the page a player might wait on. The
+		// token goes with it: it belongs to the session that just ended, the card hands it back
+		// when it is clicked, and Enter clears it in any case.
+		this.loginMessage0 = "";
+		this.loginMessage1 = "";
+		this.loginToken = "";
+		this.titleLoginField = 0;
+		// The surround is refilled by prepareResizableFrame on the next frame; this is the title
+		// screen itself, which would otherwise wait for something else to ask for it.
+		this.redrawFrame = true;
 		this.clearCache();
 		this.scene.method274();
 		for (int var2 = 0; var2 < 4; var2++) {
