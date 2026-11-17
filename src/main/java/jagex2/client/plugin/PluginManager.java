@@ -769,6 +769,32 @@ public final class PluginManager {
 		return this.client.panelScaleInUse();
 	}
 
+	/**
+	 * The window mode and the draw distance, for the sidebar's Display page.
+	 *
+	 * BOTH WRITES GO TO THE CLIENT THREAD. setDisplayMode resizes the window and rebuilds the
+	 * layout; setDrawDistance rebuilds World3D's per-angle visibility tables, and its own comment
+	 * says game thread only - the tables and the radius that indexes them are two statics, and a
+	 * frame reading them half way through a change reads off the end of one.
+	 */
+	public void setDisplayMode(final int mode) {
+		this.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				PluginManager.this.client.setDisplayMode(mode);
+			}
+		});
+	}
+
+	public void setDrawDistance(final int tiles) {
+		this.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				PluginManager.this.client.setDrawDistance(tiles);
+			}
+		});
+	}
+
 	// ------------------------------------------------------------------ hooks Client.java calls
 
 	/** True when nothing is running, which lets every hook below cost one field read. */

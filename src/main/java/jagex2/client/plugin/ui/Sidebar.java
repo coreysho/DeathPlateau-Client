@@ -55,6 +55,7 @@ public final class Sidebar extends JPanel {
 	private static final String CARD_CONFIG = "config";
 	private static final String CARD_HUB = "hub";
 	private static final String CARD_DISPLAY = "display";
+	private static final String CARD_QOL = "qol";
 
 	/** A plugin's own page. One card, reused: the rail decides which panel it is showing. */
 	private static final String CARD_PANEL = "panel";
@@ -67,6 +68,7 @@ public final class Sidebar extends JPanel {
 	private final HubPanel hubPanel;
 	private final PanelPage panel;
 	private final DisplayPanel display;
+	private final QolPanel qol;
 
 	/** The rail, kept so plugin tabs can be rebuilt into it when plugins come and go. */
 	private JPanel rail;
@@ -91,6 +93,7 @@ public final class Sidebar extends JPanel {
 		this.hubPanel = new HubPanel(new jagex2.client.plugin.hub.Hub(manager));
 		this.panel = new PanelPage(manager);
 		this.display = new DisplayPanel(manager);
+		this.qol = new QolPanel(manager);
 
 		this.setLayout(new BorderLayout());
 		this.setBackground(Theme.BACKGROUND);
@@ -103,6 +106,7 @@ public final class Sidebar extends JPanel {
 		this.pages.add(this.hubPanel, CARD_HUB);
 		this.pages.add(this.panel, CARD_PANEL);
 		this.pages.add(this.display, CARD_DISPLAY);
+		this.pages.add(this.qol, CARD_QOL);
 		this.add(this.pages, BorderLayout.CENTER);
 
 		this.add(this.buildRail(), BorderLayout.EAST);
@@ -124,6 +128,11 @@ public final class Sidebar extends JPanel {
 				// the page was opened.
 				if (CARD_DISPLAY.equals(Sidebar.this.openCard) && Sidebar.this.isPanelOpen()) {
 					Sidebar.this.display.refresh();
+				}
+				// The same reason again: F9 and the title screen write the same settings, so a
+				// switch flipped there would otherwise sit stale on this page.
+				if (CARD_QOL.equals(Sidebar.this.openCard) && Sidebar.this.isPanelOpen()) {
+					Sidebar.this.qol.refresh();
 				}
 			}
 		});
@@ -209,6 +218,7 @@ public final class Sidebar extends JPanel {
 		this.tabs.add(new Tab(Icons.wrench(20, Theme.ACCENT), CARD_LIST, "Plugins"));
 		this.tabs.add(new Tab(Icons.download(20, Theme.ACCENT), CARD_HUB, "Plugin hub"));
 		this.tabs.add(new Tab(Icons.monitor(20, Theme.ACCENT), CARD_DISPLAY, "Display"));
+		this.tabs.add(new Tab(Icons.gear(20, Theme.ACCENT), CARD_QOL, "DP settings"));
 		this.fixedTabs = this.tabs.size();
 		this.rail = rail;
 		this.layOutRail();

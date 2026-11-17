@@ -45,6 +45,8 @@ final class DisplayPanel extends JPanel {
 	private final JPanel rows = new JPanel();
 	private final JLabel note = new JLabel();
 	private final JLabel gameNote = new JLabel();
+	private JComboBox<String> windowBox;
+	private JComboBox<String> distanceBox;
 	private JComboBox<String> sizeBox;
 	private JComboBox<String> gameBox;
 	private ToggleSwitch smooth;
@@ -89,16 +91,49 @@ final class DisplayPanel extends JPanel {
 
 	/** Built once: nothing on this page appears or disappears, only its values change. */
 	private void build() {
+		// ---- WINDOW, first, because what the rest of this page can do depends on it.
+		String[] modes = new String[Layout.MODES];
+		for (int i = 0; i < Layout.MODES; i++) {
+			modes[i] = Layout.modeName(i);
+		}
+		this.windowBox = this.combo(modes, 150);
+		this.windowBox.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				if (DisplayPanel.this.filling) {
+					return;
+				}
+				DisplayPanel.this.manager.setDisplayMode(Math.max(0, DisplayPanel.this.windowBox.getSelectedIndex()));
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Window", "Fixed is the 2006 screen. The resizable layouts give the "
+			+ "world the whole window.", this.windowBox));
+
+		String[] distances = new String[DisplaySettings.DRAW_DISTANCES.length];
+		for (int i = 0; i < DisplaySettings.DRAW_DISTANCES.length; i++) {
+			distances[i] = DisplaySettings.DRAW_DISTANCES[i] + " tiles";
+		}
+		this.distanceBox = this.combo(distances, 90);
+		this.distanceBox.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				if (DisplayPanel.this.filling) {
+					return;
+				}
+				int i = Math.max(0, DisplayPanel.this.distanceBox.getSelectedIndex());
+				DisplayPanel.this.manager.setDrawDistance(DisplaySettings.DRAW_DISTANCES[i]);
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Draw distance", "How far into the world is drawn. Further costs "
+			+ "frames; 25 tiles is what the client has always done.", this.distanceBox));
+
 		String[] options = new String[Layout.SCALES.length];
 		for (int i = 0; i < Layout.SCALES.length; i++) {
 			options[i] = percent(Layout.SCALES[i]);
 		}
-		this.sizeBox = new JComboBox<String>(options);
-		this.sizeBox.setFont(Theme.FONT);
-		this.sizeBox.setBackground(Theme.DARKER);
-		this.sizeBox.setForeground(Theme.TEXT);
-		this.sizeBox.setBorder(BorderFactory.createEmptyBorder());
-		this.sizeBox.setPreferredSize(new Dimension(80, 22));
+		this.sizeBox = this.combo(options, 80);
 		this.sizeBox.addActionListener(new ActionListener() {
 
 			public void actionPerformed(ActionEvent event) {
@@ -130,12 +165,7 @@ final class DisplayPanel extends JPanel {
 		for (int i = 0; i < DisplaySettings.GAME_SCALES.length; i++) {
 			gameOptions[i] = percent(DisplaySettings.GAME_SCALES[i]);
 		}
-		this.gameBox = new JComboBox<String>(gameOptions);
-		this.gameBox.setFont(Theme.FONT);
-		this.gameBox.setBackground(Theme.DARKER);
-		this.gameBox.setForeground(Theme.TEXT);
-		this.gameBox.setBorder(BorderFactory.createEmptyBorder());
-		this.gameBox.setPreferredSize(new Dimension(80, 22));
+		this.gameBox = this.combo(gameOptions, 80);
 		this.gameBox.addActionListener(new ActionListener() {
 
 			public void actionPerformed(ActionEvent event) {
@@ -245,6 +275,17 @@ final class DisplayPanel extends JPanel {
 		this.rows.add(stretchNoteRow);
 	}
 
+	/** The page's one kind of dropdown, so five of them cannot drift apart. */
+	private JComboBox<String> combo(String[] options, int width) {
+		JComboBox<String> box = new JComboBox<String>(options);
+		box.setFont(Theme.FONT);
+		box.setBackground(Theme.DARKER);
+		box.setForeground(Theme.TEXT);
+		box.setBorder(BorderFactory.createEmptyBorder());
+		box.setPreferredSize(new Dimension(width, 22));
+		return box;
+	}
+
 	/** One setting: its name, a dimmer line under it, and the control on the right. */
 	private JPanel row(String name, String about, java.awt.Component editor) {
 		JPanel text = new JPanel();
@@ -280,6 +321,15 @@ final class DisplayPanel extends JPanel {
 	void refresh() {
 		this.refreshGame();
 		this.refreshStretch();
+		this.filling = true;
+		this.windowBox.setSelectedIndex(Math.max(0, Math.min(Layout.MODES - 1, DisplaySettings.mode())));
+		int tiles = DisplaySettings.drawDistance();
+		for (int i = 0; i < DisplaySettings.DRAW_DISTANCES.length; i++) {
+			if (DisplaySettings.DRAW_DISTANCES[i] == tiles) {
+				this.distanceBox.setSelectedIndex(i);
+			}
+		}
+		this.filling = false;
 		int want = DisplaySettings.panelScale();
 		int using = this.manager.hudScaleInUse();
 		this.filling = true;
@@ -290,8 +340,8 @@ final class DisplayPanel extends JPanel {
 		}
 		this.filling = false;
 		if (!DisplaySettings.resizable()) {
-			this.note.setText("<html>The window is on the fixed screen, so this changes nothing yet."
-				+ " F9 switches to a resizable layout.</html>");
+			this.note.setText("<html>The window is on the fixed screen, so this changes nothing yet -"
+				+ " pick a resizable layout above.</html>");
 			return;
 		}
 		if (using < want) {
