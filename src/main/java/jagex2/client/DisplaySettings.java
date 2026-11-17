@@ -28,12 +28,25 @@ public final class DisplaySettings {
 	private static boolean maximized;
 	private static int drawDistance = 25;                    // World3D.MIN_DISTANCE, 377's own
 	private static int panelScale = Layout.SCALE_FIXED;      // the HUD at 377's own pixel size
+	private static int gameScale = 100;                      // the whole frame at its own size
+	private static boolean smoothScale = true;               // bilinear rather than blocky
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
 	 * the server loads. 25 first, so nobody's frame rate changes until they ask for it.
 	 */
 	public static final int[] DRAW_DISTANCES = { 25, 35, 45, 52 };
+
+	/**
+	 * What the whole game can be stretched by, as a percentage. 100 is the client as it was: the
+	 * frame is the window and nothing is scaled.
+	 *
+	 * 200 LAST AND WORTH REACHING FOR: at exactly double, one source pixel becomes four and the
+	 * picture is as sharp as the original, whichever way it is smoothed. The fractions in between
+	 * cannot be - something has to be invented between the pixels - so they are offered because
+	 * the alternative is a game too small to read, not because they are free.
+	 */
+	public static final int[] GAME_SCALES = { 100, 125, 150, 200 };
 
 	// ------------------------------------------------------------------ the browser's own screen
 
@@ -127,6 +140,8 @@ public final class DisplaySettings {
 			maximized = "true".equals(p.getProperty("maximized", "false").trim());
 			drawDistance = clampDistance(Integer.parseInt(p.getProperty("drawdistance", "" + drawDistance).trim()));
 			panelScale = clampScale(Integer.parseInt(p.getProperty("panelscale", "" + panelScale).trim()));
+			gameScale = clampGameScale(Integer.parseInt(p.getProperty("gamescale", "" + gameScale).trim()));
+			smoothScale = !"false".equals(p.getProperty("smoothscale", "true").trim());
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -287,6 +302,60 @@ public final class DisplaySettings {
 		return best;
 	}
 
+	/**
+	 * How much the whole frame is stretched by, as a percentage - the world, the panels and the
+	 * text together. 100 is off, and off is the default.
+	 *
+	 * Unlike panelScale this has no fitting to do: the layout is built for the smaller frame, so
+	 * there is no window too small for it and nothing that can overlap. What it costs is sharpness,
+	 * and smoothScale decides which kind.
+	 */
+	public static synchronized int gameScale() {
+		if (!loaded) {
+			load();
+		}
+		return gameScale;
+	}
+
+	public static synchronized void setGameScale(int percent) {
+		if (!loaded) {
+			load();
+		}
+		percent = clampGameScale(percent);
+		if (gameScale != percent) {
+			gameScale = percent;
+			save();
+		}
+	}
+
+	/** Bilinear rather than nearest neighbour when anything is stretched. */
+	public static synchronized boolean smoothScale() {
+		if (!loaded) {
+			load();
+		}
+		return smoothScale;
+	}
+
+	public static synchronized void setSmoothScale(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (smoothScale != on) {
+			smoothScale = on;
+			save();
+		}
+	}
+
+	private static int clampGameScale(int percent) {
+		int best = GAME_SCALES[0];
+		for (int i = 0; i < GAME_SCALES.length; i++) {
+			if (GAME_SCALES[i] <= percent) {
+				best = GAME_SCALES[i];
+			}
+		}
+		return best;
+	}
+
 	/** The size a resizable window was left at, to open at next time. Saved only when it changes. */
 	public static synchronized void setWindow(int w, int h, boolean max) {
 		if (!loaded) {
@@ -322,6 +391,8 @@ public final class DisplaySettings {
 			p.setProperty("maximized", "" + maximized);
 			p.setProperty("drawdistance", "" + drawDistance);
 			p.setProperty("panelscale", "" + panelScale);
+			p.setProperty("gamescale", "" + gameScale);
+			p.setProperty("smoothscale", "" + smoothScale);
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {

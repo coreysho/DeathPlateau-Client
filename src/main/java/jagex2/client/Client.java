@@ -17286,6 +17286,24 @@ public class Client extends GameShell implements PixMap.Target {
 	/** The HUD scale's dest->source table, and the scale it was built for (hudCols). */
 	private int[] hudCols;
 	private int hudColsFor;
+
+	// ---------------------------------------------------------------- THE GAME DRAWN SMALLER AND STRETCHED
+	//
+	// DisplaySettings.gameScale: the whole resizable frame at a fraction of the window, enlarged to
+	// fill it. The layout is built for the smaller size, so the world, the panels and the text grow
+	// together and the panels cannot run into each other the way HUD size can - what is lost is
+	// sharpness rather than room.
+	//
+	// stretchW/H is where the frame lands and is the window exactly, except on a window so small
+	// that the logical size hit Layout.MIN_W/MIN_H; then the shape is kept and the remainder is a
+	// border, because a stretched-out-of-shape game is worse than a bordered one.
+	private boolean stretching;
+	/** The border wants painting: the rectangle moved, and nothing else writes outside it. */
+	private boolean stretchBorder;
+	private int stretchX;
+	private int stretchY;
+	private int stretchW;
+	private int stretchH;
 	/** The frame's size on the window, and where it sits in it. */
 	private int scaleW;
 	private int scaleH;
@@ -17378,7 +17396,10 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		if (this.scaled) {
 			// The frame is the fixed one whatever the player asked for: the window is too small to
-			// lay the panels out in, which is the whole reason the scale is on.
+			// lay the panels out in, which is the whole reason the scale is on. That path does its
+			// own scaling, so this one stands down rather than having the two divide the mouse by
+			// a rectangle each.
+			this.stretching = false;
 			if (this.layout.resizable) {
 				this.applyLayout(Layout.fixed());
 			}
@@ -17386,6 +17407,9 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		Layout next;
 		if (this.wantMode == Layout.FIXED) {
+			// The fixed screen is never stretched by this: it is 765x503 of art and the phone path
+			// above owns the one case where that frame is drawn at another size.
+			this.stretching = false;
 			if (!this.layout.resizable) {
 				return;
 			}
@@ -17397,7 +17421,15 @@ public class Client extends GameShell implements PixMap.Target {
 			if (w <= 0 || h <= 0) {
 				return;
 			}
-			next = Layout.resizable(this.wantMode, w, h, DisplaySettings.panelScale());
+			// THE LAYOUT IS BUILT FOR THE FRAME, NOT THE WINDOW. At 150% the frame is two thirds
+			// of the window in each direction and is stretched back over it at the end, so every
+			// size below here - the viewport buffer, the scene's visibility tables, where the
+			// panels sit - is the frame's.
+			int gs = DisplaySettings.gameScale();
+			int lw = gs == 100 ? w : Math.max(Layout.MIN_W, w * 100 / gs);
+			int lh = gs == 100 ? h : Math.max(Layout.MIN_H, h * 100 / gs);
+			this.setStretch(w, h, lw, lh);
+			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -17557,6 +17589,19 @@ public class Client extends GameShell implements PixMap.Target {
 			super.mouseClickX = cx - lx;
 			super.mouseClickY = cy - ly;
 			return;
+		}
+		if (this.stretching) {
+			// Back through the blit before Layout sees it, so every hit test below is still
+			// reading the frame's own coordinates. Clamped, as presentScaled's own mapping is: a
+			// click on the border lands on the frame's edge rather than on a number no hit test
+			// was written for.
+			boolean off = rx == -1 && ry == -1;
+			if (!off) {
+				rx = this.stretchBack(rx, this.stretchX, this.stretchW, this.layout.width);
+				ry = this.stretchBack(ry, this.stretchY, this.stretchH, this.layout.height);
+			}
+			cx = this.stretchBack(cx, this.stretchX, this.stretchW, this.layout.width);
+			cy = this.stretchBack(cy, this.stretchY, this.stretchH, this.layout.height);
 		}
 		int area = this.mouseArea();
 		super.mouseX = this.layout.mapX(rx, ry, area);
@@ -17829,8 +17874,95 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawMenu();
 		}
 		if (this.screenGraphics != null) {
-			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+			if (this.stretching) {
+				this.drawStretched(this.areaViewport, this.screenGraphics);
+			} else {
+				this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+			}
 		}
+	}
+
+	/**
+	 * Where the frame lands on the window, worked out once per layout rather than per frame.
+	 *
+	 * The logical size is the window divided by the scale, so the two have the same shape and the
+	 * frame fills the window exactly - until the division hits Layout.MIN_W/MIN_H on a small
+	 * window, where the shapes part company. Then the larger of the two factors would stretch the
+	 * game out of shape, so the smaller is used and what is left over is a border.
+	 */
+	private void setStretch(int winW, int winH, int frameW, int frameH) {
+		if (winW == frameW && winH == frameH) {
+			if (this.stretching) {
+				// Back to 1:1: the border this was drawing into is no longer written by anything.
+				this.letterCleared = false;
+			}
+			this.stretching = false;
+			return;
+		}
+		int sw = winW;
+		int sh = (int) ((long) sw * frameH / frameW);
+		if (sh > winH) {
+			sh = winH;
+			sw = (int) ((long) sh * frameW / frameH);
+		}
+		if (sw != this.stretchW || sh != this.stretchH || !this.stretching) {
+			// The strip the blit will not write into, painted once. Only ever there when the
+			// logical size was clamped, so this is the small-window case and not the usual one.
+			this.stretchBorder = true;
+		}
+		this.stretching = sw > 0 && sh > 0;
+		this.stretchW = sw;
+		this.stretchH = sh;
+		this.stretchX = (winW - sw) / 2;
+		this.stretchY = (winH - sh) / 2;
+	}
+
+	/**
+	 * One area onto the window, enlarged, by the platform's own scaling.
+	 *
+	 * drawImage with an interpolation hint rather than a table of our own: the JDK's loops are
+	 * faster than anything written here and the hint is the whole of the smoothing option -
+	 * bilinear invents a blend between the pixels, nearest neighbour repeats them. At 200% the two
+	 * are the same picture, because one pixel becomes exactly four and there is nothing in between
+	 * to invent; the difference is all at the fractions.
+	 *
+	 * The hint is put back afterwards: this Graphics belongs to the window, not to this call.
+	 */
+	private void drawStretched(PixMap area, java.awt.Graphics g) {
+		if (this.stretchBorder) {
+			this.stretchBorder = false;
+			if (this.stretchX > 0 || this.stretchY > 0) {
+				g.setColor(java.awt.Color.black);
+				g.fillRect(0, 0, this.layout.width + this.stretchX * 2, this.stretchY);
+				g.fillRect(0, this.stretchY + this.stretchH, this.stretchW + this.stretchX * 2, this.stretchY + 1);
+				g.fillRect(0, 0, this.stretchX, this.stretchY + this.stretchH);
+				g.fillRect(this.stretchX + this.stretchW, 0, this.stretchX + 1, this.stretchY + this.stretchH);
+			}
+		}
+		area.setPixels();
+		if (!(g instanceof java.awt.Graphics2D)) {
+			g.drawImage(area.image, this.stretchX, this.stretchY, this.stretchW, this.stretchH, null);
+			return;
+		}
+		java.awt.Graphics2D g2 = (java.awt.Graphics2D) g;
+		Object was = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+		g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+			DisplaySettings.smoothScale()
+				? java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+				: java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		g2.drawImage(area.image, this.stretchX, this.stretchY, this.stretchW, this.stretchH, null);
+		if (was != null) {
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, was);
+		}
+	}
+
+	/** A window length back into the frame it was drawn from, for the mouse. */
+	private int stretchBack(int v, int pad, int size, int frame) {
+		if (size <= 0) {
+			return v;
+		}
+		int out = (int) ((long) (v - pad) * frame / size);
+		return out < 0 ? 0 : out > frame - 1 ? frame - 1 : out;
 	}
 
 	/**

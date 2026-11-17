@@ -44,7 +44,10 @@ final class DisplayPanel extends JPanel {
 	private final PluginManager manager;
 	private final JPanel rows = new JPanel();
 	private final JLabel note = new JLabel();
+	private final JLabel gameNote = new JLabel();
 	private JComboBox<String> sizeBox;
+	private JComboBox<String> gameBox;
+	private ToggleSwitch smooth;
 
 	/** Set while rebuild() is filling the control, so its own setSelectedItem writes nothing. */
 	private boolean filling;
@@ -65,6 +68,7 @@ final class DisplayPanel extends JPanel {
 
 		this.build();
 		this.refresh();
+		this.refreshGame();
 	}
 
 	private JPanel buildHeader() {
@@ -104,7 +108,8 @@ final class DisplayPanel extends JPanel {
 			}
 		});
 
-		this.rows.add(this.row("HUD size", "The chatbox, minimap and side tabs, drawn bigger.", this.sizeBox));
+		this.rows.add(this.row("HUD size", "The chatbox, minimap and side tabs, drawn bigger. "
+			+ "The world keeps the whole window and all of its sharpness.", this.sizeBox));
 
 		this.note.setFont(Theme.FONT_SMALL);
 		this.note.setForeground(Theme.TEXT_DIM);
@@ -115,8 +120,56 @@ final class DisplayPanel extends JPanel {
 		noteRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60));
 		this.rows.add(noteRow);
 
-		JLabel fixedNote = new JLabel("<html>Only in resizable mode. The fixed screen is one piece of"
-			+ " 377's art and is left as it is.</html>");
+		// ---- GAME SCALE, the other way to answer the same question.
+		String[] gameOptions = new String[DisplaySettings.GAME_SCALES.length];
+		for (int i = 0; i < DisplaySettings.GAME_SCALES.length; i++) {
+			gameOptions[i] = percent(DisplaySettings.GAME_SCALES[i]);
+		}
+		this.gameBox = new JComboBox<String>(gameOptions);
+		this.gameBox.setFont(Theme.FONT);
+		this.gameBox.setBackground(Theme.DARKER);
+		this.gameBox.setForeground(Theme.TEXT);
+		this.gameBox.setBorder(BorderFactory.createEmptyBorder());
+		this.gameBox.setPreferredSize(new Dimension(80, 22));
+		this.gameBox.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				if (DisplayPanel.this.filling) {
+					return;
+				}
+				int picked = DisplaySettings.GAME_SCALES[Math.max(0, DisplayPanel.this.gameBox.getSelectedIndex())];
+				DisplaySettings.setGameScale(picked);
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Game scale", "Everything at once - the world, the panels and the "
+			+ "text. The game is drawn smaller and stretched to the window.", this.gameBox));
+
+		this.gameNote.setFont(Theme.FONT_SMALL);
+		this.gameNote.setForeground(Theme.TEXT_DIM);
+		this.gameNote.setBorder(BorderFactory.createEmptyBorder(2, 10, 10, 10));
+		JPanel gameNoteRow = new JPanel(new BorderLayout());
+		gameNoteRow.setBackground(Theme.BACKGROUND);
+		gameNoteRow.add(this.gameNote, BorderLayout.CENTER);
+		gameNoteRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
+		this.rows.add(gameNoteRow);
+
+		// ---- SMOOTHING, which is what to do with the pixels in between.
+		this.smooth = new ToggleSwitch();
+		this.smooth.setOn(DisplaySettings.smoothScale());
+		this.smooth.setListener(new ToggleSwitch.Listener() {
+
+			public void onToggled(ToggleSwitch source) {
+				DisplaySettings.setSmoothScale(source.isOn());
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Smooth game scale", "Soft rather than blocky where the game is "
+			+ "stretched. Off is sharper edges and uneven text; at 200% the two are the same "
+			+ "picture. HUD size is always drawn with whole pixels.", this.smooth));
+
+		JLabel fixedNote = new JLabel("<html>Both are for the resizable layouts. The fixed screen is"
+			+ " one piece of 377's art and is left as it is.</html>");
 		fixedNote.setFont(Theme.FONT_SMALL);
 		fixedNote.setForeground(Theme.TEXT_DIM);
 		fixedNote.setBorder(BorderFactory.createEmptyBorder(6, 10, 10, 10));
@@ -160,6 +213,7 @@ final class DisplayPanel extends JPanel {
 
 	/** Catches the control and the line up with what is saved and what is on screen. */
 	void refresh() {
+		this.refreshGame();
 		int want = DisplaySettings.panelScale();
 		int using = this.manager.hudScaleInUse();
 		this.filling = true;
@@ -182,6 +236,26 @@ final class DisplayPanel extends JPanel {
 		this.note.setText(want == Layout.SCALE_FIXED
 			? "<html>The size the client has always drawn them.</html>"
 			: "<html>Showing " + percent(using) + ".</html>");
+	}
+
+	/** The game-scale line: what it is doing, and the trade it is making. */
+	private void refreshGame() {
+		int game = DisplaySettings.gameScale();
+		this.filling = true;
+		for (int i = 0; i < DisplaySettings.GAME_SCALES.length; i++) {
+			if (DisplaySettings.GAME_SCALES[i] == game) {
+				this.gameBox.setSelectedIndex(i);
+			}
+		}
+		this.smooth.setOn(DisplaySettings.smoothScale());
+		this.filling = false;
+		if (game == 100) {
+			this.gameNote.setText("<html>Off: the game is drawn at the window's own size.</html>");
+			return;
+		}
+		this.gameNote.setText("<html>The game is drawn at " + (10000 / game) + "% of the window and"
+			+ " enlarged, so it is softer than it was - and there is no size it cannot reach, which"
+			+ " HUD size has.</html>");
 	}
 
 	private void refreshLater() {
