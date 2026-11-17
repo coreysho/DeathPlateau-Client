@@ -3624,6 +3624,9 @@ public class Client extends GameShell implements PixMap.Target {
 			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
 				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
 				this.layout.openW, this.layout.openH);
+			// After the overlays, and only if they are not holding anything: they are smaller and
+			// float over the viewport, so a cursor on one of them means that one.
+			this.dragHud(super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1);
 			// Asked for only while a plugin is actually reading it, and only when nothing else
 			// has armed the scene's single pick slot this frame. The answer arrives in the next
 			// frame's updateGame, which is as fast as this scene can answer the question at all.
@@ -17351,6 +17354,18 @@ public class Client extends GameShell implements PixMap.Target {
 	// stretchW/H is where the frame lands and is the window exactly, except on a window so small
 	// that the logical size hit Layout.MIN_W/MIN_H; then the shape is kept and the remainder is a
 	// border, because a stretched-out-of-shape game is worse than a bordered one.
+	/**
+	 * The mouse in the layout's own space - the window point with the stretch taken back out, but
+	 * before any panel has been subtracted from it. Dragging a panel needs this: super.mouseX is
+	 * measured FROM the panel, so it stands still while the panel moves under it.
+	 */
+	private int layoutMouseX;
+	private int layoutMouseY;
+	/** The HUD group being dragged with Alt, or -1, and where inside it the cursor took hold. */
+	private int hudDragGroup = -1;
+	private int hudGrabX;
+	private int hudGrabY;
+
 	private boolean stretching;
 	/** The border wants painting: the rectangle moved, and nothing else writes outside it. */
 	private boolean stretchBorder;
@@ -17504,7 +17519,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.setStretch(w, h, lw, lh, 0);
 			}
 			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale(),
-				DisplaySettings.hideSidebar(), DisplaySettings.hideChat());
+				DisplaySettings.hideSidebar(), DisplaySettings.hideChat(), DisplaySettings.hudOffsets());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -17696,11 +17711,69 @@ public class Client extends GameShell implements PixMap.Target {
 			cx = this.stretchBack(cx, this.stretchX, this.stretchW, this.layout.width);
 			cy = this.stretchBack(cy, this.stretchY, this.stretchH, this.layout.height);
 		}
+		this.layoutMouseX = rx;
+		this.layoutMouseY = ry;
 		int area = this.mouseArea();
 		super.mouseX = this.layout.mapX(rx, ry, area);
 		super.mouseY = this.layout.mapY(rx, ry, area);
 		super.mouseClickX = this.layout.mapX(cx, cy, area);
 		super.mouseClickY = this.layout.mapY(cx, cy, area);
+	}
+
+	/**
+	 * Alt and drag to move a piece of the HUD: the chatbox with its buttons, the minimap, or the
+	 * side column with its tabs.
+	 *
+	 * Offsets, not positions, so a moved panel still finds its corner when the window changes
+	 * size - and the clamping is Layout's, which runs on every resize as well as on every drag.
+	 * A panel can be put back by dropping it within a few pixels of where it started.
+	 */
+	private void dragHud(int button, boolean alt) {
+		if (!this.layout.resizable || !this.ingame) {
+			this.hudDragGroup = -1;
+			return;
+		}
+		if (!alt || button != 1) {
+			// Letting go, or letting go of Alt: it stays where it is rather than springing back,
+			// which is what somebody who changed their mind expects.
+			if (this.hudDragGroup != -1) {
+				int[] at = DisplaySettings.hudOffsets();
+				int g = this.hudDragGroup;
+				DisplaySettings.setHudOffset(g, snapHud(at[g * 2]), snapHud(at[g * 2 + 1]));
+				DevLog.log("QOL", "HUD group " + g + " moved to " + at[g * 2] + "," + at[g * 2 + 1]);
+				this.hudDragGroup = -1;
+			}
+			return;
+		}
+		if (this.hudDragGroup == -1) {
+			if (this.plugins != null && this.plugins.draggingOverlay()) {
+				return;
+			}
+			int panel = this.layout.areaAt(this.layoutMouseX, this.layoutMouseY);
+			if (panel == Layout.VIEWPORT) {
+				return;
+			}
+			this.hudDragGroup = Layout.groupOf(panel);
+			int[] at = DisplaySettings.hudOffsets();
+			// The grab point, so the panel does not jump its own corner to the cursor.
+			this.hudGrabX = this.layoutMouseX - at[this.hudDragGroup * 2];
+			this.hudGrabY = this.layoutMouseY - at[this.hudDragGroup * 2 + 1];
+			return;
+		}
+		// Written to the settings as it moves so the next frame's layout picks it up; saved only
+		// on release, which is what setHudOffset's own write does when the value settles.
+		DisplaySettings.setHudOffset(this.hudDragGroup,
+			this.layoutMouseX - this.hudGrabX, this.layoutMouseY - this.hudGrabY);
+	}
+
+	/**
+	 * A drop near home goes exactly home.
+	 *
+	 * Without it a panel nudged back towards its corner sits two pixels out for ever, because
+	 * that is what a mouse gives you. OverlayPositions.SNAP is the same eight pixels.
+	 */
+	private static int snapHud(int offset) {
+		return offset > -8 && offset < 8 ? 0 : offset;
 	}
 
 	private int mouseArea() {

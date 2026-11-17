@@ -394,6 +394,66 @@ public class LayoutTest {
 			"and nor does folding the inventory");
 
 		System.out.println();
+		System.out.println("11. a HUD the player has dragged");
+		int[] dragOffsets = new int[Layout.GROUPS * 2];
+		dragOffsets[Layout.GROUP_CHAT * 2] = 60;
+		dragOffsets[Layout.GROUP_CHAT * 2 + 1] = -40;
+		Layout home = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED);
+		Layout drag = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED, false, false, dragOffsets);
+		check(drag.panelScreenX(Layout.CHAT) == home.panelScreenX(Layout.CHAT) + 60
+				&& drag.panelScreenY(Layout.CHAT) == home.panelScreenY(Layout.CHAT) - 40,
+			"the chatbox lands where it was dropped");
+		check(drag.panelScreenX(Layout.CHAT_BAR) == home.panelScreenX(Layout.CHAT_BAR) + 60
+				&& drag.panelScreenY(Layout.CHAT_BAR) == home.panelScreenY(Layout.CHAT_BAR) - 40,
+			"and its row of buttons goes with it, by the same amount");
+		check(drag.panelScreenX(Layout.MINIMAP) == home.panelScreenX(Layout.MINIMAP)
+				&& drag.panelScreenY(Layout.SIDEBAR) == home.panelScreenY(Layout.SIDEBAR),
+			"and nothing else moves");
+		check(!drag.sameAs(home), "a dragged layout is not the same layout, so the frame is rebuilt");
+
+		// THE INVERSE IS THE ONE THAT MATTERS. Every hit test above this layer works in the fixed
+		// frame's coordinates, and mapX gets there by subtracting where the panel landed. A panel
+		// that moves while its inverse does not is an inventory whose squares are all one row out.
+		int mapBad = 0;
+		for (int p = 0; p < drag.panels; p++) {
+			int px = drag.panelScreenX(p);
+			int py = drag.panelScreenY(p);
+			if (drag.mapX(px, py, p) != drag.panelFixedX(p) || drag.mapY(px, py, p) != drag.panelFixedY(p)) {
+				mapBad++;
+			}
+			int lastX = px + drag.panelScreenWidth(p) - 1;
+			int lastY = py + drag.panelScreenHeight(p) - 1;
+			if (drag.mapX(lastX, py, p) != drag.panelFixedX(p) + drag.panelWidth(p) - 1
+				|| drag.mapY(px, lastY, p) != drag.panelFixedY(p) + drag.panelHeight(p) - 1) {
+				mapBad++;
+			}
+			if (drag.areaAt(px + 2, py + 2) != p) {
+				mapBad++;
+			}
+		}
+		check(mapBad == 0, "a dragged panel still maps its own corners and answers its own clicks (" + mapBad + " do not)");
+
+		// Dragged at a HUD scale as well: the two offsets are in different units and multiplying
+		// one by the other is the mistake waiting to be made here.
+		Layout dragScaled = Layout.resizable(Layout.CLASSIC, 1920, 1080, 200, false, false, dragOffsets);
+		check(dragScaled.mapX(dragScaled.panelScreenX(Layout.CHAT), dragScaled.panelScreenY(Layout.CHAT), Layout.CHAT) == dragScaled.panelFixedX(Layout.CHAT),
+			"and still does at 200%, where a window pixel is half a frame pixel");
+
+		// OFF THE EDGE IS GONE, so it is not allowed: a panel with nothing on screen has nothing
+		// left to grab, and a window made smaller can do this without any drag at all.
+		int[] far = new int[Layout.GROUPS * 2];
+		far[Layout.GROUP_MINIMAP * 2] = 99999;
+		far[Layout.GROUP_MINIMAP * 2 + 1] = -99999;
+		Layout pushed = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED, false, false, far);
+		int mpx = pushed.panelScreenX(Layout.MINIMAP);
+		int mpy = pushed.panelScreenY(Layout.MINIMAP);
+		int mpw = pushed.panelScreenWidth(Layout.MINIMAP);
+		int mph = pushed.panelScreenHeight(Layout.MINIMAP);
+		check(mpx < 1920 && mpx + mpw > 0 && mpy < 1080 && mpy + mph > 0, "a panel dragged at the horizon stays on the window");
+		check(1920 - mpx >= Layout.KEEP_VISIBLE && mpy + mph >= Layout.KEEP_VISIBLE,
+			"with enough of it left to take hold of again (" + Layout.KEEP_VISIBLE + "px)");
+
+		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS") : (fail + " FAILED of " + (pass + fail)));
 		System.exit(fail == 0 ? 0 : 1);
 	}

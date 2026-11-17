@@ -220,6 +220,25 @@ final class DisplayPanel extends JPanel {
 			+ "or nine, so nothing is uneven. Applies to the game scale and to stretched mode; "
 			+ "costs the leftover as a border.", this.integer));
 
+		// MOVING THE HUD, and the way back from it. A thing that can be dragged and not put back
+		// is one bad drag from a client somebody cannot use, and the drag itself leaves nothing on
+		// screen to explain itself.
+		javax.swing.JButton putBack = new javax.swing.JButton("Put the HUD back");
+		putBack.setFont(Theme.FONT);
+		putBack.setForeground(Theme.TEXT);
+		putBack.setBackground(Theme.ROW);
+		putBack.setFocusPainted(false);
+		putBack.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+		putBack.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				DisplaySettings.resetHudOffsets();
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Move the HUD", "Hold Alt and drag the chatbox, the minimap or the "
+			+ "side tabs anywhere in the window.", putBack));
+
 		JLabel fixedNote = new JLabel("<html>Those are for the resizable layouts. Whole sizes also"
 			+ " applies to the fixed screen below.</html>");
 		fixedNote.setFont(Theme.FONT_SMALL);

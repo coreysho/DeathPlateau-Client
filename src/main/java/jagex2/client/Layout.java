@@ -61,6 +61,17 @@ public final class Layout {
 	public static final int MODERN = 2;
 	public static final int MODES = 3;
 
+	/** Which movable group a panel belongs to. */
+	public static int groupOf(int panel) {
+		if (panel == CHAT || panel == CHAT_BAR) {
+			return GROUP_CHAT;
+		}
+		if (panel == MINIMAP) {
+			return GROUP_MINIMAP;
+		}
+		return GROUP_SIDEBAR;
+	}
+
 	public static String modeName(int mode) {
 		return mode == MODERN ? "Resizable - modern layout" : mode == CLASSIC ? "Resizable - classic layout" : "Fixed";
 	}
@@ -82,6 +93,24 @@ public final class Layout {
 	public static final int SIDEBAR = 3;
 	public static final int TABS_TOP = 4;
 	public static final int TABS_BOTTOM = 5;
+	/**
+	 * THE MOVABLE PIECES, which are not the panels one for one. The chatbox is a parchment and the
+	 * row of buttons beneath it; the side column in modern is a panel with a row of tabs above and
+	 * below. Each of those is one thing to a player, and letting a drag separate a panel from its
+	 * own tabs would be a way of taking the client apart rather than arranging it.
+	 */
+	public static final int GROUP_CHAT = 0;
+	public static final int GROUP_MINIMAP = 1;
+	public static final int GROUP_SIDEBAR = 2;
+	public static final int GROUPS = 3;
+
+	/**
+	 * How much of a dragged group must stay on screen, in pixels. OverlayPositions keeps 12 of an
+	 * overlay; a panel is bigger and hangs off a corner, so it keeps more - enough to be a target
+	 * for the mouse that put it there.
+	 */
+	public static final int KEEP_VISIBLE = 32;
+
 	/** The most panels any mode has; the panels field is how many THIS layout has. */
 	public static final int PANELS = 6;
 	public static final int VIEWPORT = -1;
@@ -195,7 +224,7 @@ public final class Layout {
 	private final int[] panelScreenH = new int[PANELS];
 	private final int[] panelAlpha = new int[PANELS];
 
-	private Layout(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat) {
+	private Layout(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat, int[] moved) {
 		this.mode = mode;
 		this.resizable = mode != FIXED;
 		this.width = width;
@@ -288,6 +317,72 @@ public final class Layout {
 			this.panelScreenX[SIDEBAR] = right;
 			this.panelScreenY[SIDEBAR] = height - this.panelScreenH[SIDEBAR];
 		}
+		this.applyMoves(moved);
+	}
+
+	/**
+	 * Shifts each group by where the player dragged it, as far as the window allows.
+	 *
+	 * BY GROUP AND NOT BY PANEL. The union of a group's rectangles is clamped once and every panel
+	 * in it moves by the same amount, so a chatbox dragged to the top of the window takes its
+	 * buttons with it and the side tabs stay against their panel.
+	 */
+	private void applyMoves(int[] moved) {
+		if (moved == null) {
+			return;
+		}
+		for (int g = 0; g < GROUPS; g++) {
+			int dx = g * 2 < moved.length ? moved[g * 2] : 0;
+			int dy = g * 2 + 1 < moved.length ? moved[g * 2 + 1] : 0;
+			if (dx == 0 && dy == 0) {
+				continue;
+			}
+			int left = Integer.MAX_VALUE;
+			int top = Integer.MAX_VALUE;
+			int rightEdge = Integer.MIN_VALUE;
+			int bottom = Integer.MIN_VALUE;
+			for (int p = 0; p < this.panels; p++) {
+				if (groupOf(p) != g || this.hiddenPanel(p)) {
+					continue;
+				}
+				left = Math.min(left, this.panelScreenX[p]);
+				top = Math.min(top, this.panelScreenY[p]);
+				rightEdge = Math.max(rightEdge, this.panelScreenX[p] + this.panelScreenW[p]);
+				bottom = Math.max(bottom, this.panelScreenY[p] + this.panelScreenH[p]);
+			}
+			if (left == Integer.MAX_VALUE) {
+				continue;
+			}
+			dx = clampMove(dx, left, rightEdge, this.width);
+			dy = clampMove(dy, top, bottom, this.height);
+			for (int p = 0; p < this.panels; p++) {
+				if (groupOf(p) != g) {
+					continue;
+				}
+				this.panelScreenX[p] += dx;
+				this.panelScreenY[p] += dy;
+			}
+		}
+	}
+
+	/**
+	 * An offset cut back so that KEEP_VISIBLE pixels of the group are still on the window.
+	 *
+	 * Both ends, because a window that has been made smaller can push a group off an edge it was
+	 * nowhere near when it was dropped - which is why this is here and not only in the drag.
+	 */
+	static int clampMove(int offset, int from, int to, int limit) {
+		int size = to - from;
+		int keep = Math.min(KEEP_VISIBLE, size);
+		int lowest = -from - size + keep;
+		int highest = limit - from - keep;
+		if (offset < lowest) {
+			offset = lowest;
+		}
+		if (offset > highest) {
+			offset = highest;
+		}
+		return offset;
 	}
 
 	/**
@@ -306,7 +401,7 @@ public final class Layout {
 	}
 
 	public static Layout fixed() {
-		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED, false, false);
+		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED, false, false, null);
 	}
 
 	/** A window smaller than the fixed frame is laid out as the fixed frame (and clipped). */
@@ -327,9 +422,13 @@ public final class Layout {
 	}
 
 	public static Layout resizable(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat) {
+		return resizable(mode, width, height, scale, hideSidebar, hideChat, null);
+	}
+
+	public static Layout resizable(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat, int[] moved) {
 		int w = Math.max(width, MIN_W);
 		int h = Math.max(height, MIN_H);
-		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h), hideSidebar, hideChat);
+		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h), hideSidebar, hideChat, moved);
 	}
 
 	public static Layout of(int mode, int width, int height) {
@@ -400,7 +499,17 @@ public final class Layout {
 	public boolean sameAs(Layout other) {
 		return other != null && other.mode == this.mode && other.width == this.width && other.height == this.height
 			&& other.scale == this.scale && other.sidebarHidden == this.sidebarHidden
-			&& other.chatHidden == this.chatHidden;
+			&& other.chatHidden == this.chatHidden && this.sameMoves(other);
+	}
+
+	/** Two layouts agree about where the HUD is only if every panel landed in the same place. */
+	private boolean sameMoves(Layout other) {
+		for (int p = 0; p < this.panels; p++) {
+			if (other.panelScreenX[p] != this.panelScreenX[p] || other.panelScreenY[p] != this.panelScreenY[p]) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	public int panelFixedX(int panel) {

@@ -35,6 +35,8 @@ public final class DisplaySettings {
 	private static boolean stretchInteger;                   // ...and by a whole number only
 	private static boolean hideSidebar;                      // the open tab's panel folded away
 	private static boolean hideChat;                         // the chatbox parchment folded away
+	/** Where each HUD group has been dragged, as x,y pairs - see Layout.GROUPS. */
+	private static final int[] hudOffsets = new int[Layout.GROUPS * 2];
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
@@ -152,6 +154,10 @@ public final class DisplaySettings {
 			stretchInteger = "true".equals(p.getProperty("stretchinteger", "false").trim());
 			hideSidebar = "true".equals(p.getProperty("hidesidebar", "false").trim());
 			hideChat = "true".equals(p.getProperty("hidechat", "false").trim());
+			for (int g = 0; g < Layout.GROUPS; g++) {
+				hudOffsets[g * 2] = Integer.parseInt(p.getProperty("hudmove." + g + ".x", "0").trim());
+				hudOffsets[g * 2 + 1] = Integer.parseInt(p.getProperty("hudmove." + g + ".y", "0").trim());
+			}
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -464,6 +470,64 @@ public final class DisplaySettings {
 		}
 	}
 
+	/**
+	 * Where each HUD group has been dragged to, as x,y pairs.
+	 *
+	 * A COPY, because the layout holds on to what it is given and this array is written whenever
+	 * somebody drags something - handing out the real one would let a drag in progress change the
+	 * geometry of a layout that was built before it.
+	 */
+	public static synchronized int[] hudOffsets() {
+		if (!loaded) {
+			load();
+		}
+		int[] out = new int[hudOffsets.length];
+		System.arraycopy(hudOffsets, 0, out, 0, hudOffsets.length);
+		return out;
+	}
+
+	public static synchronized void setHudOffset(int group, int x, int y) {
+		if (!loaded) {
+			load();
+		}
+		if (group < 0 || group >= Layout.GROUPS) {
+			return;
+		}
+		if (hudOffsets[group * 2] == x && hudOffsets[group * 2 + 1] == y) {
+			return;
+		}
+		hudOffsets[group * 2] = x;
+		hudOffsets[group * 2 + 1] = y;
+		save();
+	}
+
+	/** Every piece of the HUD back to the corner it was drawn for. */
+	public static synchronized void resetHudOffsets() {
+		if (!loaded) {
+			load();
+		}
+		boolean moved = false;
+		for (int i = 0; i < hudOffsets.length; i++) {
+			moved |= hudOffsets[i] != 0;
+			hudOffsets[i] = 0;
+		}
+		if (moved) {
+			save();
+		}
+	}
+
+	public static synchronized boolean hudMoved() {
+		if (!loaded) {
+			load();
+		}
+		for (int i = 0; i < hudOffsets.length; i++) {
+			if (hudOffsets[i] != 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static int clampGameScale(int percent) {
 		int best = GAME_SCALES[0];
 		for (int i = 0; i < GAME_SCALES.length; i++) {
@@ -516,6 +580,10 @@ public final class DisplaySettings {
 			p.setProperty("stretchinteger", "" + stretchInteger);
 			p.setProperty("hidesidebar", "" + hideSidebar);
 			p.setProperty("hidechat", "" + hideChat);
+			for (int g = 0; g < Layout.GROUPS; g++) {
+				p.setProperty("hudmove." + g + ".x", "" + hudOffsets[g * 2]);
+				p.setProperty("hudmove." + g + ".y", "" + hudOffsets[g * 2 + 1]);
+			}
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {

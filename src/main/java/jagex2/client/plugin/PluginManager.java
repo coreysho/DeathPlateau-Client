@@ -1017,6 +1017,15 @@ public final class PluginManager {
 	 * is a key held with no button, and its own controls are on the right button, while this
 	 * needs a LEFT press on something a screen overlay drew.
 	 */
+	/**
+	 * True while an overlay is being dragged, so the HUD does not grab a panel out from under it.
+	 * The overlays float over the viewport and are the smaller target, so a cursor on one of them
+	 * means that one.
+	 */
+	public boolean draggingOverlay() {
+		return this.dragging != null;
+	}
+
 	public void onOverlayDrag(int x, int y, int button, boolean alt, int width, int height) {
 		if (this.idle()) {
 			return;
