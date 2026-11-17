@@ -53,4 +53,78 @@ public final class DevLog {
 			fileOut.println(line);
 		}
 	}
+
+	/** Distinct failures whose frames have already been written out once. */
+	private static final java.util.Set<String> TRACED = new java.util.HashSet<String>();
+
+	/** Frames written under a failure, which is plenty to cross the plugin boundary and stop. */
+	private static final int FRAMES = 8;
+
+	/** A ceiling on TRACED, so a failure whose message varies every time cannot grow it forever. */
+	private static final int DISTINCT = 256;
+
+	/**
+	 * A caught-and-swallowed failure, recorded with WHERE it happened.
+	 *
+	 * WHY THE FRAMES AND NOT JUST THE EXCEPTION. Every catch in the plugin system logs
+	 * {@code "... : " + error}, which is {@link Throwable#toString()}: the class, its message,
+	 * and not one frame. Four reports of the Quest helper switching itself off (tracker 4, 10,
+	 * 15 and 17) all came down to one line of a player's dev-client.log, and that line named a
+	 * 1,864-line plugin with four overlays in it and nothing more. The sweep in
+	 * QuestHelperTest draws all 845 legs without a throw, so the cause is in what the player had
+	 * around them - and a player who sends the line back has still not told us where.
+	 *
+	 * THE TOP FRAME GOES ON THE SAME LINE as the exception, because the one thing a player is
+	 * ever asked to do is search for a phrase and copy the line that matches it. A trace indented
+	 * underneath is worth only the chance they copy that too; a file and a line number on the
+	 * matching line itself is worth the whole report.
+	 *
+	 * AND THE REST OF THE TRACE ONCE. The frames below are written the FIRST time a given failure
+	 * is seen and never again. An overlay throws at most five times before PluginManager switches
+	 * it off, but a config list or a panel button throws on every frame it is drawn, and a full
+	 * trace per frame would fill dev-client.log at sixty a second - the log a player is asked to
+	 * search is no use if it is a hundred megabytes of the same eight lines.
+	 *
+	 * THE CAUSE, where there is one, because reflection wraps: an {@code @Subscribe} handler
+	 * reaches the bus through Method.invoke and arrives as InvocationTargetException, whose own
+	 * top frame is inside the JDK and says nothing about the plugin.
+	 */
+	public static void log(String category, String detail, Throwable error) {
+		if (error == null) {
+			log(category, detail);
+			return;
+		}
+		StackTraceElement[] frames = error.getStackTrace();
+		String where = frames != null && frames.length > 0 ? frames[0].toString() : "no stack trace";
+		log(category, detail + ": " + error + "  at " + where);
+
+		// WHAT COUNTS AS THE SAME FAILURE: the same thing failing the same way in the same place.
+		// Not the message, which carries an index or a name that moves between frames and would
+		// make every throw look new.
+		String signature = category + '|' + detail + '|' + error.getClass().getName() + '|' + where;
+		synchronized (TRACED) {
+			if (TRACED.size() >= DISTINCT) {
+				TRACED.clear();
+			}
+			if (!TRACED.add(signature)) {
+				return;
+			}
+		}
+		if (frames == null || frames.length == 0) {
+			return;
+		}
+		int shown = frames.length < FRAMES ? frames.length : FRAMES;
+		for (int i = 0; i < shown; i++) {
+			log(category, "    at " + frames[i]);
+		}
+		if (frames.length > shown) {
+			log(category, "    ... " + (frames.length - shown) + " more");
+		}
+		Throwable cause = error.getCause();
+		if (cause != null && cause != error) {
+			StackTraceElement[] under = cause.getStackTrace();
+			log(category, "    caused by " + cause
+				+ (under != null && under.length > 0 ? "  at " + under[0] : ""));
+		}
+	}
 }

@@ -131,7 +131,7 @@ public final class EventBus {
 				Throwable cause = error.getCause() == null ? error : error.getCause();
 				handler.errors++;
 				DevLog.log("PLUGIN", handler.subscriber.getClass().getSimpleName() + "."
-					+ handler.method.getName() + " threw " + cause);
+					+ handler.method.getName() + " threw", cause);
 				if (handler.errors >= MAX_ERRORS) {
 					// Dropped here rather than left to the listener to deal with: the bus must stop
 					// calling a handler it has given up on whatever the listener does about it, or

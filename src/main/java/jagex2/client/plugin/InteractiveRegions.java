@@ -81,7 +81,7 @@ public final class InteractiveRegions {
 			try {
 				region.click.run();
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", "an overlay's click handler threw: " + error);
+				DevLog.log("PLUGIN", "an overlay's click handler threw", error);
 			}
 			return true;
 		}
@@ -98,7 +98,7 @@ public final class InteractiveRegions {
 			try {
 				region.scroll.onScroll(delta);
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", "an overlay's scroll handler threw: " + error);
+				DevLog.log("PLUGIN", "an overlay's scroll handler threw", error);
 			}
 			return true;
 		}
