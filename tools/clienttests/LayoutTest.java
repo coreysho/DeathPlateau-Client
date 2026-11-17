@@ -383,7 +383,15 @@ public class LayoutTest {
 			check(folded.openH > shown.openH,
 				name + ": the open area grows by the parchment's height (" + shown.openH + " -> " + folded.openH + ")");
 			check(!folded.sameAs(shown), name + ": a folded layout is not the same layout");
+			// THE ONE THAT WAS WRONG IN GAME. zoomFor grows the projection with the open area, so
+			// handing it the chatbox's 142 pixels zoomed the camera in on anyone who folded it.
+			// The projection follows the window, not what is folded.
+			check(folded.zoom == shown.zoom,
+				name + ": folding does not move the camera (zoom " + shown.zoom + " either way)");
 		}
+		Layout hidTabs = Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED, true, false);
+		check(hidTabs.zoom == Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED).zoom,
+			"and nor does folding the inventory");
 
 		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS") : (fail + " FAILED of " + (pass + fail)));

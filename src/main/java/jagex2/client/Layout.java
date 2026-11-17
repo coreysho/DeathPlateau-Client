@@ -255,14 +255,18 @@ public final class Layout {
 		// when it is folded - so what hangs off the bottom of the open area moves down into the
 		// room the chatbox was taking. Summed from the landed sizes rather than scaled again:
 		// scaling a sum and summing two scaled numbers disagree by a pixel.
-		this.openH = height - (this.chatHidden
-			? scaled(PANEL_RECT[CHAT_BAR][3], this.scale)
-			: scaled(PANEL_RECT[CHAT][3], this.scale) + scaled(PANEL_RECT[CHAT_BAR][3], this.scale));
+		int chatColumn = scaled(PANEL_RECT[CHAT][3], this.scale) + scaled(PANEL_RECT[CHAT_BAR][3], this.scale);
+		this.openH = height - (this.chatHidden ? scaled(PANEL_RECT[CHAT_BAR][3], this.scale) : chatColumn);
 		this.mainX = Math.max(0, (this.openW - VIEWPORT_W) / 2);
 		this.mainY = Math.max(0, (this.openH - VIEWPORT_H) / 2);
 		this.letterX = (width - FIXED_W) / 2;
 		this.letterY = (height - FIXED_H) / 2;
-		this.zoom = zoomFor(this.openH);
+		// MEASURED AS IF NOTHING WERE FOLDED. zoomFor grows the projection with the open area so
+		// that a taller window draws the world bigger - and folding the chatbox hands 142 pixels
+		// to that area, which zoomed the camera in on anyone who put it away. The window is what
+		// the projection should follow, not what is folded, so this is the number every player has
+		// always had and folding changes what is covered rather than how big it is.
+		this.zoom = zoomFor(height - chatColumn);
 		// The bar sits on the bottom edge and the parchment stacks on top of it, so folding the
 		// parchment leaves the bar where it was rather than sliding it down the window.
 		this.panelScreenX[CHAT_BAR] = 0;
