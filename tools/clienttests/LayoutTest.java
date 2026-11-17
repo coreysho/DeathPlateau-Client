@@ -39,7 +39,8 @@ public class LayoutTest {
 		check(f.vpX == 4 && f.vpY == 4 && f.vpW == 512 && f.vpH == 334, "the viewport is 512x334 at (4,4)");
 		check(f.mainX == 0 && f.mainY == 0 && f.openW == 512 && f.openH == 334 && f.zoom == 512,
 			"main interfaces at the viewport's corner, the corners where they were, the projection 512");
-		check(f.mode == Layout.FIXED && !f.resizable && f.panels == 3, "the fixed screen is FIXED, and has the three panels");
+		check(f.mode == Layout.FIXED && !f.resizable && f.panels == 4,
+			"the fixed screen is FIXED, and has four panels: the chatbox, its button row, the minimap and the side tabs");
 
 		for (int mode = Layout.CLASSIC; mode <= Layout.MODERN; mode++) {
 			String name = Layout.modeName(mode);
@@ -81,8 +82,13 @@ public class LayoutTest {
 
 			System.out.println("3. the panels sit in this layout's corners, and never on each other");
 			Layout r = Layout.resizable(mode, 1280, 800);
-			check(r.panelScreenX(Layout.CHAT) == 0 && r.panelScreenY(Layout.CHAT) + r.panelHeight(Layout.CHAT) == 800,
-				"the chatbox in the bottom-left corner");
+			// The BAR is what sits on the bottom edge now; the parchment stacks on top of it, so
+			// folding the parchment leaves the buttons where they were.
+			check(r.panelScreenX(Layout.CHAT_BAR) == 0
+					&& r.panelScreenY(Layout.CHAT_BAR) + r.panelHeight(Layout.CHAT_BAR) == 800
+					&& r.panelScreenX(Layout.CHAT) == 0
+					&& r.panelScreenY(Layout.CHAT) + r.panelHeight(Layout.CHAT) == r.panelScreenY(Layout.CHAT_BAR),
+				"the chatbox in the bottom-left corner, its buttons on the edge beneath it");
 			check(r.panelScreenX(Layout.MINIMAP) + r.panelWidth(Layout.MINIMAP) == 1280 && r.panelScreenY(Layout.MINIMAP) == 0,
 				"the minimap in the top-right corner");
 			int lowest = mode == Layout.MODERN ? Layout.TABS_BOTTOM : Layout.SIDEBAR;
@@ -110,9 +116,10 @@ public class LayoutTest {
 			// Every panel rectangle is inside the 765x503 frame and clear of its 512x334 viewport, so no
 			// panel ever carries a copy of the scene; and each is the panel's own art, no wider.
 			int[][] want = mode == Layout.MODERN
-				? new int[][] { { 0, 338, 519, 165 }, { 545, 4, 172, 156 }, { 522, 205, 241, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } }
-				: new int[][] { { 0, 338, 519, 165 }, { 545, 4, 172, 156 }, { 522, 168, 241, 335 } };
-			String[] named = { "the chatbox: the parchment and the button row", "the minimap: areaMapback alone",
+				? new int[][] { { 0, 338, 519, 142 }, { 0, 480, 519, 23 }, { 545, 4, 172, 156 }, { 522, 205, 241, 261 }, { 522, 168, 241, 37 }, { 522, 466, 241, 37 } }
+				: new int[][] { { 0, 338, 519, 142 }, { 0, 480, 519, 23 }, { 545, 4, 172, 156 }, { 522, 168, 241, 335 } };
+			String[] named = { "the chatbox: the parchment alone", "the chat bar: the row of buttons under it",
+				"the minimap: areaMapback alone",
 				mode == Layout.MODERN ? "the open tab's panel, between the rows" : "the side tabs: 548's first tab stone to its last",
 				"the top row of seven tabs", "the bottom row of seven tabs" };
 			check(r.panels == want.length, "this layout has " + r.panels + " panels");
@@ -312,6 +319,18 @@ public class LayoutTest {
 			"and a point outside the panel is outside it, not on its first column");
 
 		System.out.println();
+		System.out.println("8b. the chatbox is the two pieces the one rectangle used to be");
+		Layout cc = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED);
+		boolean joined = cc.panelFixedY(Layout.CHAT) == 338
+			&& cc.panelFixedY(Layout.CHAT_BAR) == cc.panelFixedY(Layout.CHAT) + cc.panelHeight(Layout.CHAT)
+			&& cc.panelFixedY(Layout.CHAT_BAR) + cc.panelHeight(Layout.CHAT_BAR) == 503
+			&& cc.panelWidth(Layout.CHAT) == cc.panelWidth(Layout.CHAT_BAR);
+		check(joined, "the parchment and the bar laid end to end are the old 519x165 at (0,338)");
+		check(cc.panelScreenY(Layout.CHAT_BAR) + cc.panelScreenHeight(Layout.CHAT_BAR) == 1080
+			&& cc.panelScreenY(Layout.CHAT) + cc.panelScreenHeight(Layout.CHAT) == cc.panelScreenY(Layout.CHAT_BAR),
+			"on screen the bar is on the bottom edge with the parchment stacked on it");
+
+		System.out.println();
 		System.out.println("9. the open tab's panel, folded away");
 		Layout mh = Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED, true);
 		Layout ch = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED, true);
@@ -344,6 +363,27 @@ public class LayoutTest {
 		check(!mh.sameAs(ms), "a folded layout is not the same layout, so the frame is rebuilt");
 		check(mh.openW == ms.openW && mh.openH == ms.openH,
 			"the open area is unchanged: the tab rows are as wide as the panel was");
+
+		System.out.println();
+		System.out.println("10. the chatbox, folded away");
+		for (int mode = Layout.CLASSIC; mode <= Layout.MODERN; mode++) {
+			Layout shown = Layout.resizable(mode, 1920, 1080, Layout.SCALE_FIXED, false, false);
+			Layout folded = Layout.resizable(mode, 1920, 1080, Layout.SCALE_FIXED, false, true);
+			String name = Layout.modeName(mode);
+			check(folded.chatHidden && folded.hiddenPanel(Layout.CHAT) && !folded.hiddenPanel(Layout.CHAT_BAR),
+				name + ": the parchment folds and the buttons do not");
+			int cx = shown.panelScreenX(Layout.CHAT) + 20;
+			int cy = shown.panelScreenY(Layout.CHAT) + 20;
+			check(shown.areaAt(cx, cy) == Layout.CHAT && folded.areaAt(cx, cy) == Layout.VIEWPORT,
+				name + ": a click there hits the chatbox, and the scene once it is folded");
+			int bx = shown.panelScreenX(Layout.CHAT_BAR) + 20;
+			int by = shown.panelScreenY(Layout.CHAT_BAR) + 10;
+			check(folded.areaAt(bx, by) == Layout.CHAT_BAR,
+				name + ": the buttons still answer, so folding is not one-way");
+			check(folded.openH > shown.openH,
+				name + ": the open area grows by the parchment's height (" + shown.openH + " -> " + folded.openH + ")");
+			check(!folded.sameAs(shown), name + ": a folded layout is not the same layout");
+		}
 
 		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS") : (fail + " FAILED of " + (pass + fail)));

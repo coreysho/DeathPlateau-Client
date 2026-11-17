@@ -71,12 +71,19 @@ public final class Layout {
 	 * classic they are part of SIDEBAR and these two are not used - the panels field says how many).
 	 */
 	public static final int CHAT = 0;
-	public static final int MINIMAP = 1;
-	public static final int SIDEBAR = 2;
-	public static final int TABS_TOP = 3;
-	public static final int TABS_BOTTOM = 4;
+	/**
+	 * The row of buttons under the chatbox - All, Game, Public, Private, Clan, Trade, Report abuse.
+	 * Its own panel so that the parchment above it can be folded away and this stays, which is the
+	 * only thing that makes folding reversible. Index 1 and not the end of the table: the panel
+	 * loop runs 0 to panels-1, so what a layout uses has to come first.
+	 */
+	public static final int CHAT_BAR = 1;
+	public static final int MINIMAP = 2;
+	public static final int SIDEBAR = 3;
+	public static final int TABS_TOP = 4;
+	public static final int TABS_BOTTOM = 5;
 	/** The most panels any mode has; the panels field is how many THIS layout has. */
-	public static final int PANELS = 5;
+	public static final int PANELS = 6;
 	public static final int VIEWPORT = -1;
 	/** mapX/mapY: whatever is under the point. */
 	public static final int ANY = -2;
@@ -105,7 +112,8 @@ public final class Layout {
 	// between them at (522,205). Laid end to end they are the classic rectangle exactly, which is
 	// why modern needs no art the fixed frame does not already draw.
 	private static final int[][] PANEL_RECT = {
-		{ 0, 338, 519, 165 },      // CHAT: the parchment and the button row
+		{ 0, 338, 519, 142 },      // CHAT: the parchment, down to the buttons
+		{ 0, 480, 519, 23 },       // CHAT_BAR: the row of buttons under it
 		{ 545, 4, 172, 156 },      // MINIMAP: areaMapback
 		{ 522, 168, 241, 335 },    // SIDEBAR: both tab rows and the panel between them
 		{ 522, 168, 241, 37 },     // TABS_TOP: the top row of seven (modern)
@@ -125,7 +133,7 @@ public final class Layout {
 	 * sprites, new ids, a cache rebuild); until that happens modern is the full-window viewport with the
 	 * panels moved, and nothing is washed out. blendRect and panelAlpha stay, so it is one table away.
 	 */
-	private static final int[] MODERN_ALPHA = { OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE };
+	private static final int[] MODERN_ALPHA = { OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE };
 
 	/** FIXED, CLASSIC or MODERN. */
 	public final int mode;
@@ -141,6 +149,8 @@ public final class Layout {
 	 * its tabs inside the rectangle this would hide, so there would be nothing left to click.
 	 */
 	public final boolean sidebarHidden;
+	/** The chatbox parchment is folded away, leaving its row of buttons. Either resizable layout. */
+	public final boolean chatHidden;
 	/** The window's drawing area. */
 	public final int width;
 	public final int height;
@@ -185,14 +195,15 @@ public final class Layout {
 	private final int[] panelScreenH = new int[PANELS];
 	private final int[] panelAlpha = new int[PANELS];
 
-	private Layout(int mode, int width, int height, int scale, boolean hideSidebar) {
+	private Layout(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat) {
 		this.mode = mode;
 		this.resizable = mode != FIXED;
 		this.width = width;
 		this.height = height;
 		this.scale = mode == FIXED ? SCALE_FIXED : scale;
 		this.sidebarHidden = hideSidebar && mode == MODERN;
-		this.panels = mode == MODERN ? PANELS : 3;
+		this.chatHidden = hideChat && mode != FIXED;
+		this.panels = mode == MODERN ? PANELS : 4;
 		for (int p = 0; p < PANELS; p++) {
 			this.panelX[p] = PANEL_RECT[p][0];
 			this.panelY[p] = PANEL_RECT[p][1];
@@ -240,14 +251,24 @@ public final class Layout {
 		// the open area the same way the unscaled one does. openW/openH are what every corner
 		// thing anchors to (the XP drops, the multicombat icon), so they move in with the panels.
 		this.openW = width - scaled(PANEL_RECT[SIDEBAR][2], this.scale);
-		this.openH = height - scaled(PANEL_RECT[CHAT][3], this.scale);
+		// The chatbox gives up the parchment AND the bar while it is showing, and only the bar
+		// when it is folded - so what hangs off the bottom of the open area moves down into the
+		// room the chatbox was taking. Summed from the landed sizes rather than scaled again:
+		// scaling a sum and summing two scaled numbers disagree by a pixel.
+		this.openH = height - (this.chatHidden
+			? scaled(PANEL_RECT[CHAT_BAR][3], this.scale)
+			: scaled(PANEL_RECT[CHAT][3], this.scale) + scaled(PANEL_RECT[CHAT_BAR][3], this.scale));
 		this.mainX = Math.max(0, (this.openW - VIEWPORT_W) / 2);
 		this.mainY = Math.max(0, (this.openH - VIEWPORT_H) / 2);
 		this.letterX = (width - FIXED_W) / 2;
 		this.letterY = (height - FIXED_H) / 2;
 		this.zoom = zoomFor(this.openH);
+		// The bar sits on the bottom edge and the parchment stacks on top of it, so folding the
+		// parchment leaves the bar where it was rather than sliding it down the window.
+		this.panelScreenX[CHAT_BAR] = 0;
+		this.panelScreenY[CHAT_BAR] = height - this.panelScreenH[CHAT_BAR];
 		this.panelScreenX[CHAT] = 0;
-		this.panelScreenY[CHAT] = height - this.panelScreenH[CHAT];
+		this.panelScreenY[CHAT] = this.panelScreenY[CHAT_BAR] - this.panelScreenH[CHAT];
 		this.panelScreenX[MINIMAP] = width - this.panelScreenW[MINIMAP];
 		this.panelScreenY[MINIMAP] = 0;
 		int right = width - scaled(PANEL_RECT[SIDEBAR][2], this.scale);
@@ -281,7 +302,7 @@ public final class Layout {
 	}
 
 	public static Layout fixed() {
-		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED, false);
+		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED, false, false);
 	}
 
 	/** A window smaller than the fixed frame is laid out as the fixed frame (and clipped). */
@@ -294,13 +315,17 @@ public final class Layout {
 	}
 
 	public static Layout resizable(int mode, int width, int height, int scale) {
-		return resizable(mode, width, height, scale, false);
+		return resizable(mode, width, height, scale, false, false);
 	}
 
 	public static Layout resizable(int mode, int width, int height, int scale, boolean hideSidebar) {
+		return resizable(mode, width, height, scale, hideSidebar, false);
+	}
+
+	public static Layout resizable(int mode, int width, int height, int scale, boolean hideSidebar, boolean hideChat) {
 		int w = Math.max(width, MIN_W);
 		int h = Math.max(height, MIN_H);
-		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h), hideSidebar);
+		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h), hideSidebar, hideChat);
 	}
 
 	public static Layout of(int mode, int width, int height) {
@@ -370,7 +395,8 @@ public final class Layout {
 
 	public boolean sameAs(Layout other) {
 		return other != null && other.mode == this.mode && other.width == this.width && other.height == this.height
-			&& other.scale == this.scale && other.sidebarHidden == this.sidebarHidden;
+			&& other.scale == this.scale && other.sidebarHidden == this.sidebarHidden
+			&& other.chatHidden == this.chatHidden;
 	}
 
 	public int panelFixedX(int panel) {
@@ -391,7 +417,7 @@ public final class Layout {
 
 	/** True when this panel is folded away and should be neither drawn nor clicked. */
 	public boolean hiddenPanel(int panel) {
-		return this.sidebarHidden && panel == SIDEBAR;
+		return (this.sidebarHidden && panel == SIDEBAR) || (this.chatHidden && panel == CHAT);
 	}
 
 	/** How wide the panel lands on the window: panelWidth at the HUD scale. */

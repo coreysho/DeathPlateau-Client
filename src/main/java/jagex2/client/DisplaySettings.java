@@ -34,6 +34,7 @@ public final class DisplaySettings {
 	private static boolean stretchAspect = true;             // ...keeping its shape
 	private static boolean stretchInteger;                   // ...and by a whole number only
 	private static boolean hideSidebar;                      // the open tab's panel folded away
+	private static boolean hideChat;                         // the chatbox parchment folded away
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
@@ -150,6 +151,7 @@ public final class DisplaySettings {
 			stretchAspect = !"false".equals(p.getProperty("stretchaspect", "true").trim());
 			stretchInteger = "true".equals(p.getProperty("stretchinteger", "false").trim());
 			hideSidebar = "true".equals(p.getProperty("hidesidebar", "false").trim());
+			hideChat = "true".equals(p.getProperty("hidechat", "false").trim());
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -441,6 +443,27 @@ public final class DisplaySettings {
 		}
 	}
 
+	/**
+	 * The chatbox parchment is folded away, leaving its row of buttons - what clicking the lit
+	 * chat tab does in either resizable layout. Remembered between sessions.
+	 */
+	public static synchronized boolean hideChat() {
+		if (!loaded) {
+			load();
+		}
+		return hideChat;
+	}
+
+	public static synchronized void setHideChat(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (hideChat != on) {
+			hideChat = on;
+			save();
+		}
+	}
+
 	private static int clampGameScale(int percent) {
 		int best = GAME_SCALES[0];
 		for (int i = 0; i < GAME_SCALES.length; i++) {
@@ -492,6 +515,7 @@ public final class DisplaySettings {
 			p.setProperty("stretchaspect", "" + stretchAspect);
 			p.setProperty("stretchinteger", "" + stretchInteger);
 			p.setProperty("hidesidebar", "" + hideSidebar);
+			p.setProperty("hidechat", "" + hideChat);
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {

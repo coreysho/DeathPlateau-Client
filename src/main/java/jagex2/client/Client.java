@@ -6575,6 +6575,16 @@ public class Client extends GameShell implements PixMap.Target {
 		int button = this.chatBarButtonAt(super.mouseClickX, super.mouseClickY);
 		if (button == 0 || button == 1) {
 			// All / Game: what the chatbox lists. Nothing to tell the server - it is a view.
+			//
+			// AND THE LIT ONE FOLDS IT AWAY, as the lit side tab folds the inventory. Only these
+			// two, because only these two are the chatbox's own tabs; the rest cycle a privacy
+			// mode and have the server to answer to. The row of buttons is its own panel and is
+			// never folded, so there is always something here to click to bring it back.
+			if (this.chatFilter == button && this.layout.resizable) {
+				DisplaySettings.setHideChat(!DisplaySettings.hideChat());
+			} else {
+				DisplaySettings.setHideChat(false);
+			}
 			if (this.chatFilter != button) {
 				this.chatFilter = button;
 				this.chatScrollOffset = 0;
@@ -17494,7 +17504,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.setStretch(w, h, lw, lh, 0);
 			}
 			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale(),
-				DisplaySettings.hideSidebar());
+				DisplaySettings.hideSidebar(), DisplaySettings.hideChat());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
