@@ -174,7 +174,7 @@ public final class PanelPage extends JPanel {
 					acting.act(index);
 				} catch (Throwable error) {
 					// A plugin's own code on the game thread: one bad button, not a dead client.
-					jagex2.client.DevLog.log("PLUGIN", "a panel button threw: " + error);
+					jagex2.client.DevLog.log("PLUGIN", "a panel button threw", error);
 				}
 			}
 		});
@@ -262,7 +262,7 @@ public final class PanelPage extends JPanel {
 				} catch (Throwable error) {
 					// As press(): a plugin's own code on the game thread, so one bad tab is a
 					// log line and not a dead client.
-					jagex2.client.DevLog.log("PLUGIN", "a panel tab threw: " + error);
+					jagex2.client.DevLog.log("PLUGIN", "a panel tab threw", error);
 				}
 			}
 		});

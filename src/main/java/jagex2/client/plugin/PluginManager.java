@@ -355,7 +355,7 @@ public final class PluginManager {
 		try {
 			listener.run();
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", "the plugin sidebar threw while refreshing: " + error);
+			DevLog.log("PLUGIN", "the plugin sidebar threw while refreshing", error);
 		}
 	}
 
@@ -633,7 +633,7 @@ public final class PluginManager {
 			DevLog.log("PLUGIN", entry.name + " started");
 		} catch (LinkageError error) {
 			// Half-started is worse than off: unwind whatever it managed before it threw.
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = false;
 			this.stopQuietly(entry);
 			// Said in chat, not just the log. This is the case that sent us looking for API
@@ -652,7 +652,7 @@ public final class PluginManager {
 				}
 			});
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = false;
 			this.stopQuietly(entry);
 		}
@@ -673,7 +673,7 @@ public final class PluginManager {
 			entry.plugin.setRunning(false);
 			entry.plugin.shutDown();
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", entry.name + " threw on shutdown: " + error);
+			DevLog.log("PLUGIN", entry.name + " threw on shutdown", error);
 		}
 		entry.plugin.clearOverlays();
 		this.rebuildOverlays();
@@ -804,7 +804,7 @@ public final class PluginManager {
 			try {
 				task.run();
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", "a queued plugin task threw: " + error);
+				DevLog.log("PLUGIN", "a queued plugin task threw", error);
 			}
 		}
 	}
@@ -942,7 +942,7 @@ public final class PluginManager {
 				}
 			} catch (Throwable error) {
 				Entry entry = this.entryOf(overlay.owner);
-				DevLog.log("PLUGIN", (entry == null ? "an overlay" : entry.name) + " threw while drawing: " + error);
+				DevLog.log("PLUGIN", (entry == null ? "an overlay" : entry.name) + " threw while drawing", error);
 				if (entry != null && ++entry.renderErrors >= MAX_RENDER_ERRORS) {
 					this.disableFaulty(entry.plugin, "it kept throwing while drawing");
 					return;                            // disabling edits the list being walked
@@ -1284,7 +1284,7 @@ public final class PluginManager {
 			try {
 				out.add(new ListSnapshot(named.title, named.list));
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", entry.name + "'s \"" + named.title + "\" list threw: " + error);
+				DevLog.log("PLUGIN", entry.name + "'s \"" + named.title + "\" list threw", error);
 			}
 		}
 		return out;

@@ -457,6 +457,19 @@ public class QuestHelperTest {
 				screen();
 				scene();
 				sidebar();
+				// AND THE CHATBOX, which nothing drew until now. The sweep ran three of the
+				// plugin's four overlays: panel, marker and bag. The fourth draws a box round the
+				// dialogue option a step would pick, and it is the only one that reads the
+				// table's `picks` - 884 of them across the table, parsed by optionFor while the
+				// chatbox is being painted. A pick has already been a fault once (a run of digits
+				// long enough to overflow an int, guarded there now), and with no dialogue on
+				// screen optionNow returns before optionFor is ever reached, so drawing the layer
+				// alone proves nothing. The leg's own picks go up as the options so that the
+				// matching path is the one taken.
+				String[] lines = optionsFor((java.util.Map<?, ?>) stage);
+				openDialogue(lines);
+				chat();
+				closeDialogue();
 				legs++;
 				if (errorsField.getInt(entry) > 0) {
 					threw.add(name + " at leg " + from);
@@ -474,7 +487,8 @@ public class QuestHelperTest {
 		for (String bad : notWritten) {
 			System.out.println("       could not set: " + bad);
 		}
-		check(threw.isEmpty(), "every quest at every leg draws without throwing (" + legs + " legs drawn)");
+		check(threw.isEmpty(), "every quest at every leg draws without throwing, on all four layers ("
+			+ legs + " legs drawn)");
 		// THE SHORTFALL IS ITS OWN CHECK NOW, not a number in another check's name. While it was
 		// only ever printed, 225 legs went unswept for as long as nobody read the line.
 		check(unreachable == 0, "and every leg in the table could be set to begin with ("
@@ -1402,6 +1416,36 @@ public class QuestHelperTest {
 
 	static void closeDialogue() {
 		client.chatInterfaceId = -1;
+	}
+
+	/**
+	 * A "Select an Option" box for one leg, built out of that leg's own picks.
+	 *
+	 * Between two and five lines, because those are the boxes the client has. The leg's picks
+	 * come first so a step that picks is matched rather than missed; the rest is filler, which
+	 * is what an unrelated option looks like and is also what makes the no-match path run.
+	 */
+	static String[] optionsFor(java.util.Map<?, ?> stage) {
+		List<String> lines = new ArrayList<String>();
+		for (Object step : jagex2.client.plugin.hub.Json.array(stage, "steps")) {
+			for (Object pick : jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) step, "picks")) {
+				String text = String.valueOf(pick);
+				// A worded pick may offer alternatives for a question asked at random; the box a
+				// player sees carries one of them, so the first is what goes up.
+				int bar = text.indexOf("||");
+				if (bar >= 0) {
+					text = text.substring(0, bar);
+				}
+				if (!text.trim().isEmpty() && lines.size() < 4) {
+					lines.add(text);
+				}
+			}
+		}
+		lines.add("Nothing, I'm fine thanks.");
+		if (lines.size() < 2) {
+			lines.add("I'll come back later.");
+		}
+		return lines.toArray(new String[lines.size()]);
 	}
 
 	/** One chatbox-layer frame: what the option mark drew. */
