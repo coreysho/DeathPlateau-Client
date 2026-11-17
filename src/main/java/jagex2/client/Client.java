@@ -2608,6 +2608,12 @@ public class Client extends GameShell implements PixMap.Target {
 	 * read only when the panel is lifted out onto a window.
 	 */
 	private boolean[] minimapMask;
+	/**
+	 * What not to draw of each panel, for the layout in hand: the minimap's ring and the rounded
+	 * corners of each group, combined. Rebuilt when the layout changes, because the panels move
+	 * and the HUD scale changes how big a corner is.
+	 */
+	private boolean[][] hudMasks;
 
 	@ObfuscatedName("client.xh")
 	public Pix8 imageChatback;
@@ -17598,6 +17604,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		// Switching mode rebuilds the scene's visibility now; a window being dragged to a new size
 		// waits until it stops (syncLayout), drawing with the last size's tables meanwhile.
+		this.buildHudMasks(next);
 		this.layoutChangedAt = System.currentTimeMillis();
 		this.layoutSettled = false;
 		if (first || this.sceneVisW == 0) {
@@ -17785,6 +17792,99 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** How much of the minimap's frame is kept past the map itself, in pixels. */
 	private static final int MINIMAP_RING = 14;
+
+	/**
+	 * How far the HUD's outer corners are rounded, in the fixed frame's pixels.
+	 *
+	 * Small on purpose. The panels are 2006 art with hard edges and a corner any deeper starts
+	 * eating the frame rather than softening it; six is enough to read as a shape and not as a
+	 * bite. It is measured in the frame's pixels, so at a HUD scale it grows with everything else.
+	 */
+	private static final int HUD_CORNER = 6;
+
+	/**
+	 * The mask for every panel of this layout: the minimap's ring, and the rounded corners of the
+	 * group each panel belongs to.
+	 *
+	 * BY GROUP, NOT BY PANEL. The chatbox is three rectangles stacked and the side column three
+	 * more, so rounding each panel would notch every join between them. The corners that exist
+	 * are the four of the assembled group.
+	 */
+	private void buildHudMasks(Layout layout) {
+		this.hudMasks = new boolean[Layout.PANELS][];
+		if (!layout.resizable) {
+			return;
+		}
+		for (int g = 0; g < Layout.GROUPS; g++) {
+			int left = Integer.MAX_VALUE;
+			int top = Integer.MAX_VALUE;
+			int right = Integer.MIN_VALUE;
+			int bottom = Integer.MIN_VALUE;
+			for (int p = 0; p < layout.panels; p++) {
+				if (Layout.groupOf(p) != g || layout.hiddenPanel(p)) {
+					continue;
+				}
+				left = Math.min(left, layout.panelFixedX(p));
+				top = Math.min(top, layout.panelFixedY(p));
+				right = Math.max(right, layout.panelFixedX(p) + layout.panelWidth(p));
+				bottom = Math.max(bottom, layout.panelFixedY(p) + layout.panelHeight(p));
+			}
+			if (left == Integer.MAX_VALUE) {
+				continue;
+			}
+			int gw = right - left;
+			int gh = bottom - top;
+			for (int p = 0; p < layout.panels; p++) {
+				if (Layout.groupOf(p) != g || layout.hiddenPanel(p)) {
+					continue;
+				}
+				int w = layout.panelWidth(p);
+				int h = layout.panelHeight(p);
+				boolean[] mask = new boolean[w * h];
+				if (p == Layout.MINIMAP && this.minimapMask != null && this.minimapMask.length == mask.length) {
+					System.arraycopy(this.minimapMask, 0, mask, 0, mask.length);
+				}
+				int offX = layout.panelFixedX(p) - left;
+				int offY = layout.panelFixedY(p) - top;
+				for (int y = 0; y < h; y++) {
+					int gy = offY + y;
+					if (gy >= HUD_CORNER && gy < gh - HUD_CORNER) {
+						// Nowhere near a corner: the whole row is square, so skip it entirely.
+						continue;
+					}
+					for (int x = 0; x < w; x++) {
+						if (outsideCorner(offX + x, gy, gw, gh)) {
+							mask[y * w + x] = true;
+						}
+					}
+				}
+				this.hudMasks[p] = mask;
+			}
+		}
+	}
+
+	/** Is (x, y) in a w x h rectangle outside the rounded corner it is nearest to? */
+	private static boolean outsideCorner(int x, int y, int w, int h) {
+		int cx;
+		int cy;
+		if (x < HUD_CORNER) {
+			cx = HUD_CORNER;
+		} else if (x >= w - HUD_CORNER) {
+			cx = w - HUD_CORNER - 1;
+		} else {
+			return false;
+		}
+		if (y < HUD_CORNER) {
+			cy = HUD_CORNER;
+		} else if (y >= h - HUD_CORNER) {
+			cy = h - HUD_CORNER - 1;
+		} else {
+			return false;
+		}
+		int dx = x - cx;
+		int dy = y - cy;
+		return dx * dx + dy * dy > HUD_CORNER * HUD_CORNER;
+	}
 
 	/**
 	 * The dead corners of the minimap sprite: stone that is further from the map than the frame is
@@ -18109,7 +18209,7 @@ public class Client extends GameShell implements PixMap.Target {
 			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
 			// The minimap is the one panel that is not a rectangle: past its frame the sprite is
 			// the fixed screen's stone, which over a window is a grey box around a round picture.
-			boolean[] mask = p == Layout.MINIMAP ? this.minimapMask : null;
+			boolean[] mask = this.hudMasks == null ? null : this.hudMasks[p];
 			if (cols == null) {
 				if (mask != null) {
 					copyRectMasked(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, mask);
