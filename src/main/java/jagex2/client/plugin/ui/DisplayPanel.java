@@ -160,7 +160,10 @@ final class DisplayPanel extends JPanel {
 		this.smooth.setListener(new ToggleSwitch.Listener() {
 
 			public void onToggled(ToggleSwitch source) {
-				DisplaySettings.setSmoothScale(source.isOn());
+				// THE SWITCH DOES NOT FLIP ITSELF: onToggled is "the player clicked", and the
+				// value it still holds is the old one. Reading it here wrote the same setting
+				// back and the switch never moved.
+				DisplaySettings.setSmoothScale(!DisplaySettings.smoothScale());
 				DisplayPanel.this.refreshLater();
 			}
 		});

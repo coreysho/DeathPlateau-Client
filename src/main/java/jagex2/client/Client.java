@@ -17300,6 +17300,9 @@ public class Client extends GameShell implements PixMap.Target {
 	private boolean stretching;
 	/** The border wants painting: the rectangle moved, and nothing else writes outside it. */
 	private boolean stretchBorder;
+	/** The window the frame is stretched onto, for what is drawn on the window and not in the frame. */
+	private int stretchWinW;
+	private int stretchWinH;
 	private int stretchX;
 	private int stretchY;
 	private int stretchW;
@@ -17460,7 +17463,9 @@ public class Client extends GameShell implements PixMap.Target {
 			this.screenGraphics = g;
 			if (next.resizable) {
 				this.letterGraphics = g.create();
-				this.letterGraphics.translate(next.letterX, next.letterY);
+				this.letterGraphics.translate(
+					this.stretching ? (this.stretchWinW - Layout.FIXED_W) / 2 : next.letterX,
+					this.stretching ? (this.stretchWinH - Layout.FIXED_H) / 2 : next.letterY);
 			} else {
 				this.letterGraphics = g;
 			}
@@ -17582,8 +17587,8 @@ public class Client extends GameShell implements PixMap.Target {
 		int cx = super.rawClickX;
 		int cy = super.rawClickY;
 		if (!this.ingame || this.fullscreenInterfaceId0 != -1) {
-			int lx = this.layout.letterX;
-			int ly = this.layout.letterY;
+			int lx = this.letterX();
+			int ly = this.letterY();
 			super.mouseX = rx == -1 && ry == -1 ? -1 : rx - lx;
 			super.mouseY = rx == -1 && ry == -1 ? -1 : ry - ly;
 			super.mouseClickX = cx - lx;
@@ -17694,8 +17699,8 @@ public class Client extends GameShell implements PixMap.Target {
 			// the window rather than as the art stopping. Rings of black a pixel thick, fading outwards,
 			// drawn OUTSIDE the 765x503 - the title screen is blitted over that rectangle every frame
 			// and would wipe anything drawn inside it.
-			int lx = this.layout.letterX;
-			int ly = this.layout.letterY;
+			int lx = this.letterX();
+			int ly = this.letterY();
 			for (int i = 0; i < SHADOW; i++) {
 				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
 				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
@@ -17891,6 +17896,8 @@ public class Client extends GameShell implements PixMap.Target {
 	 * game out of shape, so the smaller is used and what is left over is a border.
 	 */
 	private void setStretch(int winW, int winH, int frameW, int frameH) {
+		this.stretchWinW = winW;
+		this.stretchWinH = winH;
 		if (winW == frameW && winH == frameH) {
 			if (this.stretching) {
 				// Back to 1:1: the border this was drawing into is no longer written by anything.
@@ -17954,6 +17961,22 @@ public class Client extends GameShell implements PixMap.Target {
 		if (was != null) {
 			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, was);
 		}
+	}
+
+	/**
+	 * Where a 765x503 screen goes - the title screen, a fullscreen interface.
+	 *
+	 * Layout.letterX centres it in the FRAME, which is what the game wants because the frame is
+	 * stretched over the window afterwards. These are drawn on the window instead, at their own
+	 * size, so with a game scale on they have to be centred on the window or they land wherever
+	 * half of it is.
+	 */
+	private int letterX() {
+		return this.stretching ? (this.stretchWinW - Layout.FIXED_W) / 2 : this.layout.letterX;
+	}
+
+	private int letterY() {
+		return this.stretching ? (this.stretchWinH - Layout.FIXED_H) / 2 : this.layout.letterY;
 	}
 
 	/** A window length back into the frame it was drawn from, for the mouse. */
