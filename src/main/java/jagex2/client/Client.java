@@ -6561,10 +6561,10 @@ public class Client extends GameShell implements PixMap.Target {
 				if (tab != -1 && this.tabInterfaceId[tab] != -1) {
 					// THE LIT ONE FOLDS THE PANEL AWAY, as it does in Old School. Clicking a tab
 					// that is already selected does nothing today, so this takes no behaviour from
-					// anyone; clicking any other brings the panel back with it. Modern only -
-					// Layout refuses it elsewhere, because classic's tabs live inside the
-					// rectangle that would be hidden and there would be nothing left to click.
-					if (tab == this.selectedTab && this.layout.mode == Layout.MODERN) {
+					// anyone; clicking any other brings the panel back with it. Both resizable
+					// layouts now that classic's column is the same three pieces as modern's: its
+					// own tab rows stay behind, which is what makes the fold reversible.
+					if (tab == this.selectedTab && this.layout.resizable) {
 						DisplaySettings.setHideSidebar(!DisplaySettings.hideSidebar());
 					} else {
 						DisplaySettings.setHideSidebar(false);

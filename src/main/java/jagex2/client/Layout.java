@@ -63,7 +63,7 @@ public final class Layout {
 
 	/** Which movable group a panel belongs to. */
 	public static int groupOf(int panel) {
-		if (panel == CHAT || panel == CHAT_BAR) {
+		if (panel == CHAT || panel == CHAT_INPUT || panel == CHAT_BAR) {
 			return GROUP_CHAT;
 		}
 		if (panel == MINIMAP) {
@@ -88,11 +88,19 @@ public final class Layout {
 	 * only thing that makes folding reversible. Index 1 and not the end of the table: the panel
 	 * loop runs 0 to panels-1, so what a layout uses has to come first.
 	 */
-	public static final int CHAT_BAR = 1;
-	public static final int MINIMAP = 2;
-	public static final int SIDEBAR = 3;
-	public static final int TABS_TOP = 4;
-	public static final int TABS_BOTTOM = 5;
+	public static final int CHAT_BAR = 2;
+	/**
+	 * The line you type on, and the parchment's bottom edge under it.
+	 *
+	 * Its own panel so that folding the chatbox hides the LOG and leaves this: the parchment held
+	 * both, so folding it took away the place your own words appear and you could type and see
+	 * nothing. Old School keeps this line visible for the same reason.
+	 */
+	public static final int CHAT_INPUT = 1;
+	public static final int MINIMAP = 3;
+	public static final int SIDEBAR = 4;
+	public static final int TABS_TOP = 5;
+	public static final int TABS_BOTTOM = 6;
 	/**
 	 * THE MOVABLE PIECES, which are not the panels one for one. The chatbox is a parchment and the
 	 * row of buttons beneath it; the side column in modern is a panel with a row of tabs above and
@@ -112,7 +120,7 @@ public final class Layout {
 	public static final int KEEP_VISIBLE = 32;
 
 	/** The most panels any mode has; the panels field is how many THIS layout has. */
-	public static final int PANELS = 6;
+	public static final int PANELS = 7;
 	public static final int VIEWPORT = -1;
 	/** mapX/mapY: whatever is under the point. */
 	public static final int ANY = -2;
@@ -141,23 +149,24 @@ public final class Layout {
 	// between them at (522,205). Laid end to end they are the classic rectangle exactly, which is
 	// why modern needs no art the fixed frame does not already draw.
 	private static final int[][] PANEL_RECT = {
-		{ 0, 338, 519, 142 },      // CHAT: the parchment, down to the buttons
+		{ 0, 338, 519, 117 },      // CHAT: the parchment, down to the line you type on
+		{ 0, 455, 519, 25 },       // CHAT_INPUT: that line, and the parchment's bottom edge
 		{ 0, 480, 519, 23 },       // CHAT_BAR: the row of buttons under it
 		{ 545, 4, 172, 156 },      // MINIMAP: areaMapback
-		{ 522, 168, 241, 335 },    // SIDEBAR: both tab rows and the panel between them
-		{ 522, 168, 241, 37 },     // TABS_TOP: the top row of seven (modern)
-		{ 522, 466, 241, 37 },     // TABS_BOTTOM: the bottom row of seven (modern)
+		{ 522, 168, 241, 335 },    // SIDEBAR: the whole column - what openW and fit measure
+		{ 522, 168, 241, 37 },     // TABS_TOP: the top row of seven
+		{ 522, 466, 241, 37 },     // TABS_BOTTOM: the bottom row of seven
 	};
 	/**
-	 * SIDEBAR in modern: the open tab's panel on its own, without the rows - and without the
-	 * fixed screen's pillars either side of it.
+	 * SIDEBAR in both resizable layouts: the open tab's panel on its own, without the rows - and
+	 * without the fixed screen's pillars either side of it.
 	 *
 	 * areaSidebar is 190 wide and drawn at SIDE_X=547, so the column's own 241 carries 25 pixels
 	 * of stone pillar on each flank. In the fixed screen those are the frame; over a window they
 	 * are furniture from a screen that is not there, and Old School shows none. The 25 is kept
 	 * below as the offset the panel sits at inside its column, so it still lines up with the tabs.
 	 */
-	private static final int[] MODERN_SIDEBAR = { 547, 205, 190, 261 };
+	private static final int[] SIDE_PANEL = { 547, 205, 190, 261 };
 
 	/**
 	 * How much of each panel is drawn in modern, out of 256 - SOLID, every one of them (owner, 2026-09-28,
@@ -170,7 +179,7 @@ public final class Layout {
 	 * sprites, new ids, a cache rebuild); until that happens modern is the full-window viewport with the
 	 * panels moved, and nothing is washed out. blendRect and panelAlpha stay, so it is one table away.
 	 */
-	private static final int[] MODERN_ALPHA = { OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE };
+	private static final int[] MODERN_ALPHA = { OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE, OPAQUE };
 
 	/** FIXED, CLASSIC or MODERN. */
 	public final int mode;
@@ -238,9 +247,12 @@ public final class Layout {
 		this.width = width;
 		this.height = height;
 		this.scale = mode == FIXED ? SCALE_FIXED : scale;
-		this.sidebarHidden = hideSidebar && mode == MODERN;
+		// Classic can fold now: its column is the same three pieces, so the tabs stay behind.
+		this.sidebarHidden = hideSidebar && mode != FIXED;
 		this.chatHidden = hideChat && mode != FIXED;
-		this.panels = mode == MODERN ? PANELS : 4;
+		// Both layouts use all of them now. They differ in the ORDER the side column is stacked,
+		// which is all classic and modern ever were.
+		this.panels = PANELS;
 		for (int p = 0; p < PANELS; p++) {
 			this.panelX[p] = PANEL_RECT[p][0];
 			this.panelY[p] = PANEL_RECT[p][1];
@@ -248,11 +260,11 @@ public final class Layout {
 			this.panelH[p] = PANEL_RECT[p][3];
 			this.panelAlpha[p] = mode == MODERN ? MODERN_ALPHA[p] : OPAQUE;
 		}
-		if (mode == MODERN) {
-			this.panelX[SIDEBAR] = MODERN_SIDEBAR[0];
-			this.panelY[SIDEBAR] = MODERN_SIDEBAR[1];
-			this.panelW[SIDEBAR] = MODERN_SIDEBAR[2];
-			this.panelH[SIDEBAR] = MODERN_SIDEBAR[3];
+		if (mode != FIXED) {
+			this.panelX[SIDEBAR] = SIDE_PANEL[0];
+			this.panelY[SIDEBAR] = SIDE_PANEL[1];
+			this.panelW[SIDEBAR] = SIDE_PANEL[2];
+			this.panelH[SIDEBAR] = SIDE_PANEL[3];
 		}
 		for (int p = 0; p < PANELS; p++) {
 			this.panelScreenW[p] = scaled(this.panelW[p], this.scale);
@@ -292,8 +304,9 @@ public final class Layout {
 		// when it is folded - so what hangs off the bottom of the open area moves down into the
 		// room the chatbox was taking. Summed from the landed sizes rather than scaled again:
 		// scaling a sum and summing two scaled numbers disagree by a pixel.
-		int chatColumn = scaled(PANEL_RECT[CHAT][3], this.scale) + scaled(PANEL_RECT[CHAT_BAR][3], this.scale);
-		this.openH = height - (this.chatHidden ? scaled(PANEL_RECT[CHAT_BAR][3], this.scale) : chatColumn);
+		int chatKept = scaled(PANEL_RECT[CHAT_INPUT][3], this.scale) + scaled(PANEL_RECT[CHAT_BAR][3], this.scale);
+		int chatColumn = scaled(PANEL_RECT[CHAT][3], this.scale) + chatKept;
+		this.openH = height - (this.chatHidden ? chatKept : chatColumn);
 		this.mainX = Math.max(0, (this.openW - VIEWPORT_W) / 2);
 		this.mainY = Math.max(0, (this.openH - VIEWPORT_H) / 2);
 		this.letterX = (width - FIXED_W) / 2;
@@ -308,24 +321,30 @@ public final class Layout {
 		// parchment leaves the bar where it was rather than sliding it down the window.
 		this.panelScreenX[CHAT_BAR] = 0;
 		this.panelScreenY[CHAT_BAR] = height - this.panelScreenH[CHAT_BAR];
+		this.panelScreenX[CHAT_INPUT] = 0;
+		this.panelScreenY[CHAT_INPUT] = this.panelScreenY[CHAT_BAR] - this.panelScreenH[CHAT_INPUT];
 		this.panelScreenX[CHAT] = 0;
-		this.panelScreenY[CHAT] = this.panelScreenY[CHAT_BAR] - this.panelScreenH[CHAT];
+		this.panelScreenY[CHAT] = this.panelScreenY[CHAT_INPUT] - this.panelScreenH[CHAT];
 		this.panelScreenX[MINIMAP] = width - this.panelScreenW[MINIMAP];
 		this.panelScreenY[MINIMAP] = 0;
 		int right = width - scaled(PANEL_RECT[SIDEBAR][2], this.scale);
+		// THE COLUMN, UP FROM THE BOTTOM-RIGHT CORNER, and the only thing that separates the two
+		// layouts: modern puts both rows of tabs together at the bottom with the panel above them,
+		// classic keeps the fixed frame's own order with a row at each end of the panel.
+		//
+		// The panel is indented inside the column by as much as it is indented inside the fixed
+		// screen, so a 190-wide panel sits under the middle of a 241-wide row of tabs.
+		int indent = scaled(SIDE_PANEL[0] - PANEL_RECT[SIDEBAR][0], this.scale);
+		this.panelScreenX[TABS_BOTTOM] = right;
+		this.panelScreenY[TABS_BOTTOM] = height - this.panelScreenH[TABS_BOTTOM];
+		this.panelScreenX[SIDEBAR] = right + indent;
+		this.panelScreenX[TABS_TOP] = right;
 		if (mode == MODERN) {
-			// up from the bottom-right corner: the bottom row of tabs, the top row, then the panel
-			this.panelScreenX[TABS_BOTTOM] = right;
-			this.panelScreenY[TABS_BOTTOM] = height - this.panelScreenH[TABS_BOTTOM];
-			this.panelScreenX[TABS_TOP] = right;
 			this.panelScreenY[TABS_TOP] = this.panelScreenY[TABS_BOTTOM] - this.panelScreenH[TABS_TOP];
-			// Indented inside the column by as much as it is indented inside the fixed screen, so
-			// a 190-wide panel still sits under the middle of a 241-wide row of tabs.
-			this.panelScreenX[SIDEBAR] = right + scaled(MODERN_SIDEBAR[0] - PANEL_RECT[SIDEBAR][0], this.scale);
 			this.panelScreenY[SIDEBAR] = this.panelScreenY[TABS_TOP] - this.panelScreenH[SIDEBAR];
 		} else {
-			this.panelScreenX[SIDEBAR] = right;
-			this.panelScreenY[SIDEBAR] = height - this.panelScreenH[SIDEBAR];
+			this.panelScreenY[SIDEBAR] = this.panelScreenY[TABS_BOTTOM] - this.panelScreenH[SIDEBAR];
+			this.panelScreenY[TABS_TOP] = this.panelScreenY[SIDEBAR] - this.panelScreenH[TABS_TOP];
 		}
 		this.applyMoves(moved);
 	}
