@@ -268,6 +268,7 @@ public final class OverlayGraphics {
 	 * the client's own colour tags, so "@gre@done" comes out green.
 	 */
 	public void text(int x, int y, String text, int colour) {
+		text = drawable(text);
 		if (text != null && this.font != null) {
 			this.markText(x, y, text);
 			this.font.drawStringTag(colour, this.tx(x), this.ty(y), true, text);
@@ -276,6 +277,7 @@ public final class OverlayGraphics {
 
 	/** Text with no shadow. Cheaper, and easier to read on a solid background. */
 	public void textFlat(int x, int y, String text, int colour) {
+		text = drawable(text);
 		if (text != null && this.font != null) {
 			this.markText(x, y, text);
 			this.font.drawString(this.tx(x), colour, this.ty(y), text);
@@ -284,6 +286,7 @@ public final class OverlayGraphics {
 
 	/** Shadowed text centred on x. */
 	public void textCentred(int x, int y, String text, int colour) {
+		text = drawable(text);
 		if (text != null && this.font != null) {
 			int centred = x - this.font.stringWidTag(text) / 2;
 			this.markText(centred, y, text);
@@ -303,6 +306,7 @@ public final class OverlayGraphics {
 	 * frame. The outline passes are flat, not shadowed, or each of them would cast its own.
 	 */
 	public void textCentredOutlined(int x, int y, String text, int colour) {
+		text = drawable(text);
 		if (text == null || this.font == null) {
 			return;
 		}
@@ -319,6 +323,7 @@ public final class OverlayGraphics {
 
 	/** Shadowed text ending at x, for right-aligned columns. */
 	public void textRight(int x, int y, String text, int colour) {
+		text = drawable(text);
 		if (text != null && this.font != null) {
 			int aligned = x - this.font.stringWidTag(text);
 			this.markText(aligned, y, text);
@@ -328,7 +333,75 @@ public final class OverlayGraphics {
 
 	/** Width the current font would need for the text, colour tags excluded. */
 	public int textWidth(String text) {
-		return this.font == null ? 0 : this.font.stringWidTag(text);
+		return this.font == null ? 0 : this.font.stringWidTag(drawable(text));
+	}
+
+	/**
+	 * THE TEXT AS THIS FONT CAN ACTUALLY DRAW IT, which is printable ASCII and nothing else.
+	 *
+	 * WHAT THIS IS FOR, because it reads like belt and braces and is not. PixFont keeps its
+	 * glyphs in arrays of 256 indexed by the character itself - charMask[c], charAdvance[c] -
+	 * so a character above 255 is an ArrayIndexOutOfBoundsException the moment anything measures
+	 * or draws it, and one between 127 and 255 the 2004 font never defined is a null mask and an
+	 * NPE inside plotLetter. Neither is catchable by the plugin that asked: it is five frames to
+	 * MAX_RENDER_ERRORS and the plugin is turned off, and back on it goes straight back to
+	 * drawing the same string.
+	 *
+	 * WHICH IS NOT HYPOTHETICAL. The quest helper's own step table carried a typographic
+	 * apostrophe in 32 rows across 16 quests - "Go to Doric's hut", written with a curly quote -
+	 * and The Knight's Sword had one in its FIRST leg, so the plugin died on the first step of an
+	 * early quest and died again every time a player switched it back on.
+	 *
+	 * A PLUGIN CANNOT BE EXPECTED TO KNOW THIS. Half the strings it draws come out of the cache
+	 * or off the wire - an npc's name, a step from a table, a line somebody typed - so the one
+	 * place that can be sure is the one that hands them to the font. The common typographic
+	 * characters come out as what they are imitations of, so "Doric's" still reads as "Doric's",
+	 * and anything else is a question mark rather than a dead plugin.
+	 *
+	 * Allocates NOTHING for text that is already drawable, which is nearly all of it.
+	 */
+	static String drawable(String text) {
+		if (text == null) {
+			return null;
+		}
+		int bad = -1;
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c < ' ' || c > '~') {
+				bad = i;
+				break;
+			}
+		}
+		if (bad < 0) {
+			return text;
+		}
+		StringBuilder out = new StringBuilder(text.length() + 8);
+		out.append(text, 0, bad);
+		for (int i = bad; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c >= ' ' && c <= '~') {
+				out.append(c);
+			} else if (c == '\u2018' || c == '\u2019' || c == '\u201A' || c == '\u201B' || c == '\u00B4') {
+				out.append('\'');
+			} else if (c == '\u201C' || c == '\u201D' || c == '\u201E' || c == '\u201F' || c == '\u00AB' || c == '\u00BB') {
+				out.append('"');
+			} else if (c >= '\u2010' && c <= '\u2015') {
+				out.append('-');
+			} else if (c == '\u2026') {
+				out.append("...");
+			} else if (c == '\u2022' || c == '\u00B7') {
+				out.append('*');
+			} else if (c == '\u00A0' || c == '\t' || (c >= '\u2000' && c <= '\u200A') || c == '\u202F') {
+				out.append(' ');
+			} else if (c == '\u00D7') {
+				out.append('x');
+			} else if (c == '\n' || c == '\r') {
+				out.append(' ');
+			} else {
+				out.append('?');
+			}
+		}
+		return out.toString();
 	}
 
 	/** Distance from one baseline to the next in the current font. */
