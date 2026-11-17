@@ -176,7 +176,22 @@ final class DisplayPanel extends JPanel {
 			+ "stretched. Off is sharper edges and uneven text; at 200% the two are the same "
 			+ "picture. HUD size is always drawn with whole pixels.", this.smooth));
 
-		JLabel fixedNote = new JLabel("<html>Those three are for the resizable layouts.</html>");
+		// WHOLE SIZES GOVERNS BOTH SCALES, so it sits with them rather than under the fixed
+		// screen's heading where it started.
+		this.integer = new ToggleSwitch();
+		this.integer.setListener(new ToggleSwitch.Listener() {
+
+			public void onToggled(ToggleSwitch source) {
+				DisplaySettings.setStretchInteger(!DisplaySettings.stretchInteger());
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Whole sizes only", "Double, triple - one pixel becomes exactly four "
+			+ "or nine, so nothing is uneven. Applies to the game scale and to stretched mode; "
+			+ "costs the leftover as a border.", this.integer));
+
+		JLabel fixedNote = new JLabel("<html>Those are for the resizable layouts. Whole sizes also"
+			+ " applies to the fixed screen below.</html>");
 		fixedNote.setFont(Theme.FONT_SMALL);
 		fixedNote.setForeground(Theme.TEXT_DIM);
 		fixedNote.setBorder(BorderFactory.createEmptyBorder(6, 10, 10, 10));
@@ -219,17 +234,6 @@ final class DisplayPanel extends JPanel {
 		this.rows.add(this.row("Keep its shape", "On, it grows until one side runs out and the rest "
 			+ "is a border. Off, it fills the window and the picture is stretched wider than it "
 			+ "was drawn.", this.aspect));
-
-		this.integer = new ToggleSwitch();
-		this.integer.setListener(new ToggleSwitch.Listener() {
-
-			public void onToggled(ToggleSwitch source) {
-				DisplaySettings.setStretchInteger(!DisplaySettings.stretchInteger());
-				DisplayPanel.this.refreshLater();
-			}
-		});
-		this.rows.add(this.row("Whole sizes only", "Double, triple - one pixel becomes exactly four "
-			+ "or nine, so nothing is uneven. Costs the leftover as a border.", this.integer));
 
 		this.stretchNote.setFont(Theme.FONT_SMALL);
 		this.stretchNote.setForeground(Theme.TEXT_DIM);
@@ -315,6 +319,19 @@ final class DisplayPanel extends JPanel {
 			this.gameNote.setText("<html>Off: the game is drawn at the window's own size.</html>");
 			return;
 		}
+		if (DisplaySettings.stretchInteger() && game / 100 < 2) {
+			// The honest answer rather than a silent one: a whole factor above 1 is what whole
+			// sizes needs, and 125% and 150% have none.
+			this.gameNote.setText("<html>Doing nothing: whole sizes only is on, and " + percent(game)
+				+ " is not a whole number of times. 200% is.</html>");
+			return;
+		}
+		if (DisplaySettings.stretchInteger()) {
+			this.gameNote.setText("<html>The game is drawn at " + (10000 / game) + "% of the window"
+				+ " and shown at exactly " + (game / 100) + "x, so every pixel is the same size."
+				+ " The few left over are a border.</html>");
+			return;
+		}
 		this.gameNote.setText("<html>The game is drawn at " + (10000 / game) + "% of the window and"
 			+ " enlarged, so it is softer than it was - and there is no size it cannot reach, which"
 			+ " HUD size has.</html>");
@@ -328,8 +345,9 @@ final class DisplayPanel extends JPanel {
 		this.aspect.setOn(DisplaySettings.stretchAspect());
 		this.integer.setOn(DisplaySettings.stretchInteger());
 		this.filling = false;
+		// Keep its shape is stretched mode's alone; whole sizes governs the game scale too, so it
+		// stays live whether or not stretched mode is on.
 		this.aspect.setEnabled(on);
-		this.integer.setEnabled(on);
 		if (!on) {
 			this.stretchNote.setText("<html>Off: the fixed screen is drawn at 765x503, the size its"
 				+ " art was made for.</html>");

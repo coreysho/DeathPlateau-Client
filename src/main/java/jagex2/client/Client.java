@@ -17439,9 +17439,22 @@ public class Client extends GameShell implements PixMap.Target {
 			// size below here - the viewport buffer, the scene's visibility tables, where the
 			// panels sit - is the frame's.
 			int gs = DisplaySettings.gameScale();
-			int lw = gs == 100 ? w : Math.max(Layout.MIN_W, w * 100 / gs);
-			int lh = gs == 100 ? h : Math.max(Layout.MIN_H, h * 100 / gs);
-			this.setStretch(w, h, lw, lh);
+			// WHOLE SIZES, when asked for: the frame at window/k for a whole k, shown at exactly
+			// k times that. Floor and not ceil, so k * lw never overruns the window; what is left
+			// over is fewer than k pixels of border. 125% and 150% have no whole factor above 1,
+			// so they come out as off - which is the honest answer and what the page reports.
+			int k = DisplaySettings.stretchInteger() ? gs / 100 : 0;
+			int lw;
+			int lh;
+			if (k > 1) {
+				lw = Math.max(Layout.MIN_W, w / k);
+				lh = Math.max(Layout.MIN_H, h / k);
+				this.setStretch(w, h, lw, lh, k);
+			} else {
+				lw = gs == 100 || k == 1 ? w : Math.max(Layout.MIN_W, w * 100 / gs);
+				lh = gs == 100 || k == 1 ? h : Math.max(Layout.MIN_H, h * 100 / gs);
+				this.setStretch(w, h, lw, lh, 0);
+			}
 			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale());
 		}
 		if (next.sameAs(this.layout)) {
@@ -17929,6 +17942,13 @@ public class Client extends GameShell implements PixMap.Target {
 	 * game out of shape, so the smaller is used and what is left over is a border.
 	 */
 	private void setStretch(int winW, int winH, int frameW, int frameH) {
+		this.setStretch(winW, winH, frameW, frameH, 0);
+	}
+
+	/**
+	 * @param exact a whole-number factor to show the frame at, or 0 to fill the window.
+	 */
+	private void setStretch(int winW, int winH, int frameW, int frameH, int exact) {
 		this.stretchWinW = winW;
 		this.stretchWinH = winH;
 		if (winW == frameW && winH == frameH) {
@@ -17939,11 +17959,30 @@ public class Client extends GameShell implements PixMap.Target {
 			this.stretching = false;
 			return;
 		}
-		int sw = winW;
-		int sh = (int) ((long) sw * frameH / frameW);
-		if (sh > winH) {
-			sh = winH;
-			sw = (int) ((long) sh * frameW / frameH);
+		int sw;
+		int sh;
+		if (exact > 1) {
+			// Exactly k source pixels to k on screen. The frame was divided down by the same k, so
+			// this lands inside the window with fewer than k pixels to spare on each axis.
+			sw = frameW * exact;
+			sh = frameH * exact;
+			if (sw > winW || sh > winH) {
+				// The frame hit Layout.MIN_W/MIN_H on the way down and is no longer winW/k, so the
+				// whole number no longer fits. Fall back to filling rather than overrunning.
+				sw = winW;
+				sh = (int) ((long) sw * frameH / frameW);
+				if (sh > winH) {
+					sh = winH;
+					sw = (int) ((long) sh * frameW / frameH);
+				}
+			}
+		} else {
+			sw = winW;
+			sh = (int) ((long) sw * frameH / frameW);
+			if (sh > winH) {
+				sh = winH;
+				sw = (int) ((long) sh * frameW / frameH);
+			}
 		}
 		if (sw != this.stretchW || sh != this.stretchH || !this.stretching) {
 			// The strip the blit will not write into, painted once. Only ever there when the
