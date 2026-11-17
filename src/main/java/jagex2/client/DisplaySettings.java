@@ -30,6 +30,9 @@ public final class DisplaySettings {
 	private static int panelScale = Layout.SCALE_FIXED;      // the HUD at 377's own pixel size
 	private static int gameScale = 100;                      // the whole frame at its own size
 	private static boolean smoothScale = true;               // bilinear rather than blocky
+	private static boolean stretched;                        // the fixed screen fills the window
+	private static boolean stretchAspect = true;             // ...keeping its shape
+	private static boolean stretchInteger;                   // ...and by a whole number only
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
@@ -142,6 +145,9 @@ public final class DisplaySettings {
 			panelScale = clampScale(Integer.parseInt(p.getProperty("panelscale", "" + panelScale).trim()));
 			gameScale = clampGameScale(Integer.parseInt(p.getProperty("gamescale", "" + gameScale).trim()));
 			smoothScale = !"false".equals(p.getProperty("smoothscale", "true").trim());
+			stretched = "true".equals(p.getProperty("stretched", "false").trim());
+			stretchAspect = !"false".equals(p.getProperty("stretchaspect", "true").trim());
+			stretchInteger = "true".equals(p.getProperty("stretchinteger", "false").trim());
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -346,6 +352,72 @@ public final class DisplaySettings {
 		}
 	}
 
+	/**
+	 * The fixed screen drawn to fill the window rather than sitting in the middle of it.
+	 *
+	 * Only the fixed layout: the resizable ones already use the whole window, and what they want
+	 * instead is gameScale. Off by default, because the fixed screen at its own size is what this
+	 * client has always shown and what its art was drawn for.
+	 */
+	public static synchronized boolean stretched() {
+		if (!loaded) {
+			load();
+		}
+		return stretched;
+	}
+
+	public static synchronized void setStretched(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (stretched != on) {
+			stretched = on;
+			save();
+		}
+	}
+
+	/** Grow until one side runs out and leave a border, rather than filling both and distorting. */
+	public static synchronized boolean stretchAspect() {
+		if (!loaded) {
+			load();
+		}
+		return stretchAspect;
+	}
+
+	public static synchronized void setStretchAspect(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (stretchAspect != on) {
+			stretchAspect = on;
+			save();
+		}
+	}
+
+	/**
+	 * Whole multiples only - double, triple - so one pixel becomes exactly four or nine.
+	 *
+	 * The answer to uneven text: at any other factor some rows of pixels are doubled and the ones
+	 * between them are not, and 2006 lettering is one pixel wide. The cost is the fractional part,
+	 * which becomes a border.
+	 */
+	public static synchronized boolean stretchInteger() {
+		if (!loaded) {
+			load();
+		}
+		return stretchInteger;
+	}
+
+	public static synchronized void setStretchInteger(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (stretchInteger != on) {
+			stretchInteger = on;
+			save();
+		}
+	}
+
 	private static int clampGameScale(int percent) {
 		int best = GAME_SCALES[0];
 		for (int i = 0; i < GAME_SCALES.length; i++) {
@@ -393,6 +465,9 @@ public final class DisplaySettings {
 			p.setProperty("panelscale", "" + panelScale);
 			p.setProperty("gamescale", "" + gameScale);
 			p.setProperty("smoothscale", "" + smoothScale);
+			p.setProperty("stretched", "" + stretched);
+			p.setProperty("stretchaspect", "" + stretchAspect);
+			p.setProperty("stretchinteger", "" + stretchInteger);
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {

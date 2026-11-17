@@ -48,6 +48,10 @@ final class DisplayPanel extends JPanel {
 	private JComboBox<String> sizeBox;
 	private JComboBox<String> gameBox;
 	private ToggleSwitch smooth;
+	private ToggleSwitch stretched;
+	private ToggleSwitch aspect;
+	private ToggleSwitch integer;
+	private final JLabel stretchNote = new JLabel();
 
 	/** Set while rebuild() is filling the control, so its own setSelectedItem writes nothing. */
 	private boolean filling;
@@ -69,6 +73,7 @@ final class DisplayPanel extends JPanel {
 		this.build();
 		this.refresh();
 		this.refreshGame();
+		this.refreshStretch();
 	}
 
 	private JPanel buildHeader() {
@@ -171,16 +176,69 @@ final class DisplayPanel extends JPanel {
 			+ "stretched. Off is sharper edges and uneven text; at 200% the two are the same "
 			+ "picture. HUD size is always drawn with whole pixels.", this.smooth));
 
-		JLabel fixedNote = new JLabel("<html>Both are for the resizable layouts. The fixed screen is"
-			+ " one piece of 377's art and is left as it is.</html>");
+		JLabel fixedNote = new JLabel("<html>Those three are for the resizable layouts.</html>");
 		fixedNote.setFont(Theme.FONT_SMALL);
 		fixedNote.setForeground(Theme.TEXT_DIM);
 		fixedNote.setBorder(BorderFactory.createEmptyBorder(6, 10, 10, 10));
 		JPanel fixedRow = new JPanel(new BorderLayout());
 		fixedRow.setBackground(Theme.BACKGROUND);
 		fixedRow.add(fixedNote, BorderLayout.CENTER);
-		fixedRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
+		fixedRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
 		this.rows.add(fixedRow);
+
+		// ---- STRETCHED MODE, which is the fixed screen's answer to the same question.
+		JLabel heading = new JLabel("On the fixed screen");
+		heading.setFont(Theme.FONT_BOLD);
+		heading.setForeground(Theme.ACCENT);
+		heading.setBorder(BorderFactory.createEmptyBorder(10, 10, 2, 10));
+		JPanel headingRow = new JPanel(new BorderLayout());
+		headingRow.setBackground(Theme.BACKGROUND);
+		headingRow.add(heading, BorderLayout.CENTER);
+		headingRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+		this.rows.add(headingRow);
+
+		this.stretched = new ToggleSwitch();
+		this.stretched.setListener(new ToggleSwitch.Listener() {
+
+			public void onToggled(ToggleSwitch source) {
+				DisplaySettings.setStretched(!DisplaySettings.stretched());
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Stretched mode", "The fixed screen drawn to fill the window instead "
+			+ "of sitting in the middle of it.", this.stretched));
+
+		this.aspect = new ToggleSwitch();
+		this.aspect.setListener(new ToggleSwitch.Listener() {
+
+			public void onToggled(ToggleSwitch source) {
+				DisplaySettings.setStretchAspect(!DisplaySettings.stretchAspect());
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Keep its shape", "On, it grows until one side runs out and the rest "
+			+ "is a border. Off, it fills the window and the picture is stretched wider than it "
+			+ "was drawn.", this.aspect));
+
+		this.integer = new ToggleSwitch();
+		this.integer.setListener(new ToggleSwitch.Listener() {
+
+			public void onToggled(ToggleSwitch source) {
+				DisplaySettings.setStretchInteger(!DisplaySettings.stretchInteger());
+				DisplayPanel.this.refreshLater();
+			}
+		});
+		this.rows.add(this.row("Whole sizes only", "Double, triple - one pixel becomes exactly four "
+			+ "or nine, so nothing is uneven. Costs the leftover as a border.", this.integer));
+
+		this.stretchNote.setFont(Theme.FONT_SMALL);
+		this.stretchNote.setForeground(Theme.TEXT_DIM);
+		this.stretchNote.setBorder(BorderFactory.createEmptyBorder(2, 10, 10, 10));
+		JPanel stretchNoteRow = new JPanel(new BorderLayout());
+		stretchNoteRow.setBackground(Theme.BACKGROUND);
+		stretchNoteRow.add(this.stretchNote, BorderLayout.CENTER);
+		stretchNoteRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 90));
+		this.rows.add(stretchNoteRow);
 	}
 
 	/** One setting: its name, a dimmer line under it, and the control on the right. */
@@ -217,6 +275,7 @@ final class DisplayPanel extends JPanel {
 	/** Catches the control and the line up with what is saved and what is on screen. */
 	void refresh() {
 		this.refreshGame();
+		this.refreshStretch();
 		int want = DisplaySettings.panelScale();
 		int using = this.manager.hudScaleInUse();
 		this.filling = true;
@@ -259,6 +318,32 @@ final class DisplayPanel extends JPanel {
 		this.gameNote.setText("<html>The game is drawn at " + (10000 / game) + "% of the window and"
 			+ " enlarged, so it is softer than it was - and there is no size it cannot reach, which"
 			+ " HUD size has.</html>");
+	}
+
+	/** The stretched-mode switches, and a line saying what they add up to. */
+	private void refreshStretch() {
+		boolean on = DisplaySettings.stretched();
+		this.filling = true;
+		this.stretched.setOn(on);
+		this.aspect.setOn(DisplaySettings.stretchAspect());
+		this.integer.setOn(DisplaySettings.stretchInteger());
+		this.filling = false;
+		this.aspect.setEnabled(on);
+		this.integer.setEnabled(on);
+		if (!on) {
+			this.stretchNote.setText("<html>Off: the fixed screen is drawn at 765x503, the size its"
+				+ " art was made for.</html>");
+			return;
+		}
+		if (DisplaySettings.stretchInteger()) {
+			this.stretchNote.setText("<html>Whole sizes wins where both are on: the shape is kept"
+				+ " either way, and the leftover is a border.</html>");
+			return;
+		}
+		this.stretchNote.setText(DisplaySettings.stretchAspect()
+			? "<html>Filling as much of the window as it can without changing shape.</html>"
+			: "<html>Filling the whole window. On a widescreen monitor the picture is noticeably"
+				+ " wider than it was drawn.</html>");
 	}
 
 	private void refreshLater() {

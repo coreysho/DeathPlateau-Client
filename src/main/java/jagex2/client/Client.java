@@ -17252,6 +17252,12 @@ public class Client extends GameShell implements PixMap.Target {
 	private int wantMode = Layout.FIXED;
 	/** The fixed frame the panels are cut from, in resizable mode. */
 	private int[] frameBuffer;
+	/**
+	 * The same pixels as a PixMap, for the one thing an int[] cannot do: be handed to drawImage
+	 * and enlarged with an interpolation hint. frameBuffer IS framePix.data - one allocation, and
+	 * nothing has to be copied between them.
+	 */
+	private PixMap framePix;
 	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
 	private java.awt.Graphics screenGraphics;
 	private java.awt.Graphics letterGraphics;
@@ -17315,6 +17321,10 @@ public class Client extends GameShell implements PixMap.Target {
 	/** The window size this scale was worked out for, so the work is not redone every frame. */
 	private int scaleForW;
 	private int scaleForH;
+	/** And the options it was worked out under, so changing one takes effect (scaleOptions). */
+	private int scaleForOptions = -1;
+	/** The bars around the frame want painting: the rectangle moved. */
+	private boolean scaleBorder;
 	/** Source column for each destination column: one multiply and divide per frame, not per pixel. */
 	private int[] scaleCols;
 	/** The window, at the window's size: what is actually handed to the Graphics. */
@@ -17478,9 +17488,7 @@ public class Client extends GameShell implements PixMap.Target {
 			}
 		}
 		if (next.resizable || this.scaled) {
-			if (this.frameBuffer == null) {
-				this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
-			}
+			this.ensureFrameBuffer();
 		} else {
 			this.frameBuffer = null;
 		}
@@ -17994,13 +18002,57 @@ public class Client extends GameShell implements PixMap.Target {
 	 * Called every frame with the window's live size, and does nothing at all unless that size has
 	 * changed - which on a desktop means it does nothing for the whole session.
 	 */
+	/**
+	 * The frame buffer, and the PixMap that shares its pixels. Idempotent: called from both places
+	 * that used to allocate the array, so neither can end up with one and not the other.
+	 */
+	private void ensureFrameBuffer() {
+		if (this.frameBuffer != null && this.framePix != null) {
+			return;
+		}
+		java.awt.Component c = this.getBaseComponent();
+		if (c != null) {
+			PixMap pix = new PixMap(Layout.FIXED_H, c, Layout.FIXED_W);
+			if (this.frameBuffer != null) {
+				// There was a bare array first, from a call made before the component existed.
+				// Its pixels are the frame on screen right now, so they come across rather than
+				// the player watching one frame of black.
+				System.arraycopy(this.frameBuffer, 0, pix.data, 0, this.frameBuffer.length);
+			}
+			this.framePix = pix;
+			this.frameBuffer = pix.data;
+			return;
+		}
+		if (this.frameBuffer != null) {
+			return;
+		}
+		// No component yet - the array alone, and the PixMap when one turns up. Only the smooth
+		// path needs it, and that cannot run before there is a window to draw on anyway.
+		this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
+	}
+
+	/** The options that change how the frame is sized, as one number to compare against. */
+	private int scaleOptions() {
+		return (DisplaySettings.stretched() ? 1 : 0)
+			| (DisplaySettings.stretchAspect() ? 2 : 0)
+			| (DisplaySettings.stretchInteger() ? 4 : 0)
+			| (this.wantMode == Layout.FIXED ? 8 : 0);
+	}
+
 	private void applyScale(int w, int h) {
-		boolean want = w < Layout.FIXED_W || h < Layout.FIXED_H;
-		if (want == this.scaled && w == this.scaleForW && h == this.scaleForH) {
+		// TOO SMALL FOR THE GAME, OR ASKED TO FILL THE WINDOW. The first is the phone and is not a
+		// choice; the second is stretched mode, and only for the fixed layout - the resizable ones
+		// already use the whole window, and what they want instead is the game scale.
+		boolean phone = w < Layout.FIXED_W || h < Layout.FIXED_H;
+		boolean stretch = DisplaySettings.stretched() && this.wantMode == Layout.FIXED;
+		boolean want = phone || stretch;
+		int options = this.scaleOptions();
+		if (want == this.scaled && w == this.scaleForW && h == this.scaleForH && options == this.scaleForOptions) {
 			return;
 		}
 		this.scaleForW = w;
 		this.scaleForH = h;
+		this.scaleForOptions = options;
 		this.scaled = want;
 		if (!want) {
 			// Back to a window the game fits in: everything goes where it went before.
@@ -18011,13 +18063,34 @@ public class Client extends GameShell implements PixMap.Target {
 			this.redrawFrame = true;
 			return;
 		}
-		// The largest the frame can be drawn in this window with its shape kept, centred, with
-		// whatever is left over as black bars the frame never writes into.
-		int sw = w;
-		int sh = sw * Layout.FIXED_H / Layout.FIXED_W;
-		if (sh > h) {
+		// How big, and what shape. See the note on this method for why the order is this one.
+		int sw;
+		int sh;
+		if (!phone && DisplaySettings.stretchInteger()) {
+			// Whole multiples only. Never below 1: a window that cannot hold the frame once has no
+			// whole multiple to offer, and that window is the phone, which is handled above.
+			int k = Math.min(w / Layout.FIXED_W, h / Layout.FIXED_H);
+			if (k < 1) {
+				k = 1;
+			}
+			sw = Layout.FIXED_W * k;
+			sh = Layout.FIXED_H * k;
+		} else if (phone || DisplaySettings.stretchAspect()) {
+			// The largest the frame can be drawn in this window with its shape kept, centred, with
+			// whatever is left over as black bars the frame never writes into. A window smaller
+			// than the game always keeps its shape: squashing a screen nobody can read any other
+			// way is not an option worth offering.
+			sw = w;
+			sh = sw * Layout.FIXED_H / Layout.FIXED_W;
+			if (sh > h) {
+				sh = h;
+				sw = sh * Layout.FIXED_W / Layout.FIXED_H;
+			}
+		} else {
+			// Both sides filled, and the picture out of shape. What "stretched" means to the
+			// people who ask for it by that name.
+			sw = w;
 			sh = h;
-			sw = sh * Layout.FIXED_W / Layout.FIXED_H;
 		}
 		if (sw < 1 || sh < 1) {
 			this.scaled = false;
@@ -18031,9 +18104,10 @@ public class Client extends GameShell implements PixMap.Target {
 		for (int x = 0; x < sw; x++) {
 			this.scaleCols[x] = x * Layout.FIXED_W / sw;
 		}
-		if (this.frameBuffer == null) {
-			this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
-		}
+		// The bars are only black because nothing has written there yet; a frame that used to be
+		// bigger leaves its own edges behind when the rectangle shrinks.
+		this.scaleBorder = true;
+		this.ensureFrameBuffer();
 		this.scaledArea = new PixMap(h, this.getBaseComponent(), w);
 		if (this.screenGraphics == null) {
 			this.screenGraphics = this.acquireGraphics();
@@ -18076,6 +18150,36 @@ public class Client extends GameShell implements PixMap.Target {
 			this.screenGraphics = this.acquireGraphics();
 		}
 		if (this.scaledArea == null || this.frameBuffer == null || this.screenGraphics == null || this.scaleCols == null) {
+			return;
+		}
+		if (this.scaleBorder) {
+			this.scaleBorder = false;
+			if (this.scalePadX > 0 || this.scalePadY > 0) {
+				this.screenGraphics.setColor(java.awt.Color.black);
+				this.screenGraphics.fillRect(0, 0, this.scaleForW, this.scalePadY);
+				this.screenGraphics.fillRect(0, this.scalePadY + this.scaleH, this.scaleForW, this.scaleForH);
+				this.screenGraphics.fillRect(0, 0, this.scalePadX, this.scaleForH);
+				this.screenGraphics.fillRect(this.scalePadX + this.scaleW, 0, this.scaleForW, this.scaleForH);
+			}
+		}
+		// SMOOTH IS THE PLATFORM'S, blocky is ours. The column table below is the cheaper of the
+		// two and is what a phone wants; bilinear wants drawImage, which wants an Image, which is
+		// what framePix is for.
+		if (DisplaySettings.smoothScale() && this.framePix != null && this.scaleW > Layout.FIXED_W) {
+			this.framePix.setPixels();
+			java.awt.Graphics g = this.screenGraphics;
+			if (g instanceof java.awt.Graphics2D) {
+				java.awt.Graphics2D g2 = (java.awt.Graphics2D) g;
+				Object was = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+				g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+					java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+				g2.drawImage(this.framePix.image, this.scalePadX, this.scalePadY, this.scaleW, this.scaleH, null);
+				if (was != null) {
+					g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, was);
+				}
+			} else {
+				g.drawImage(this.framePix.image, this.scalePadX, this.scalePadY, this.scaleW, this.scaleH, null);
+			}
 			return;
 		}
 		int[] dst = this.scaledArea.data;
