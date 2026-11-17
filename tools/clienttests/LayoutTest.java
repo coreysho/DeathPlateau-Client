@@ -312,6 +312,40 @@ public class LayoutTest {
 			"and a point outside the panel is outside it, not on its first column");
 
 		System.out.println();
+		System.out.println("9. the open tab's panel, folded away");
+		Layout mh = Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED, true);
+		Layout ch = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED, true);
+		check(mh.sidebarHidden && mh.hiddenPanel(Layout.SIDEBAR), "modern folds the side panel away when asked");
+		check(!ch.sidebarHidden && !ch.hiddenPanel(Layout.SIDEBAR),
+			"classic refuses: its tabs are inside that rectangle, so there would be nothing left to click");
+		boolean onlySidebar = true;
+		for (int p = 0; p < mh.panels; p++) {
+			if (p != Layout.SIDEBAR && mh.hiddenPanel(p)) {
+				onlySidebar = false;
+			}
+		}
+		check(onlySidebar, "and nothing else goes with it");
+
+		// THE HIT TEST IS THE ONE THAT MATTERS. A panel that is not drawn but still answers the
+		// mouse is a strip of window that eats clicks meant for the scene, and it looks like
+		// nothing is wrong at all.
+		int hx = mh.panelScreenX(Layout.SIDEBAR) + mh.panelScreenWidth(Layout.SIDEBAR) / 2;
+		int hy = mh.panelScreenY(Layout.SIDEBAR) + mh.panelScreenHeight(Layout.SIDEBAR) / 2;
+		check(mh.areaAt(hx, hy) == Layout.VIEWPORT, "a click where it was goes to the scene behind it");
+		Layout ms = Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED, false);
+		check(ms.areaAt(hx, hy) == Layout.SIDEBAR, "and lands on the panel when it is showing");
+
+		// The way back has to survive, or the fold is one-way.
+		int tx = mh.panelScreenX(Layout.TABS_BOTTOM) + 10;
+		int ty = mh.panelScreenY(Layout.TABS_BOTTOM) + 10;
+		check(mh.areaAt(tx, ty) == Layout.TABS_BOTTOM, "the bottom row of tabs still answers, so it can be brought back");
+		check(mh.areaAt(mh.panelScreenX(Layout.TABS_TOP) + 10, mh.panelScreenY(Layout.TABS_TOP) + 10) == Layout.TABS_TOP,
+			"and so does the top row");
+		check(!mh.sameAs(ms), "a folded layout is not the same layout, so the frame is rebuilt");
+		check(mh.openW == ms.openW && mh.openH == ms.openH,
+			"the open area is unchanged: the tab rows are as wide as the panel was");
+
+		System.out.println();
 		System.out.println(fail == 0 ? (pass + " CHECKS, ALL PASS") : (fail + " FAILED of " + (pass + fail)));
 		System.exit(fail == 0 ? 0 : 1);
 	}

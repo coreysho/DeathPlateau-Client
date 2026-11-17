@@ -6549,6 +6549,16 @@ public class Client extends GameShell implements PixMap.Target {
 					tab = col + 7;
 				}
 				if (tab != -1 && this.tabInterfaceId[tab] != -1) {
+					// THE LIT ONE FOLDS THE PANEL AWAY, as it does in Old School. Clicking a tab
+					// that is already selected does nothing today, so this takes no behaviour from
+					// anyone; clicking any other brings the panel back with it. Modern only -
+					// Layout refuses it elsewhere, because classic's tabs live inside the
+					// rectangle that would be hidden and there would be nothing left to click.
+					if (tab == this.selectedTab && this.layout.mode == Layout.MODERN) {
+						DisplaySettings.setHideSidebar(!DisplaySettings.hideSidebar());
+					} else {
+						DisplaySettings.setHideSidebar(false);
+					}
 					this.redrawSidebar = true;
 					this.selectedTab = tab;
 					this.redrawSideicons = true;
@@ -17483,7 +17493,8 @@ public class Client extends GameShell implements PixMap.Target {
 				lh = gs == 100 || k == 1 ? h : Math.max(Layout.MIN_H, h * 100 / gs);
 				this.setStretch(w, h, lw, lh, 0);
 			}
-			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale());
+			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale(),
+				DisplaySettings.hideSidebar());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -17933,6 +17944,9 @@ public class Client extends GameShell implements PixMap.Target {
 		int dh = this.areaViewport.height;
 		int[] cols = this.layout.scale == Layout.SCALE_FIXED ? null : this.hudCols(this.layout.scale);
 		for (int p = 0; p < this.layout.panels; p++) {
+			if (this.layout.hiddenPanel(p)) {
+				continue;
+			}
 			int alpha = this.layout.panelAlpha(p);
 			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
 			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;

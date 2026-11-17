@@ -33,6 +33,7 @@ public final class DisplaySettings {
 	private static boolean stretched;                        // the fixed screen fills the window
 	private static boolean stretchAspect = true;             // ...keeping its shape
 	private static boolean stretchInteger;                   // ...and by a whole number only
+	private static boolean hideSidebar;                      // the open tab's panel folded away
 
 	/**
 	 * What the F9 row steps through: 377's own 25 tiles, then out to the edge of the 104x104 scene
@@ -148,6 +149,7 @@ public final class DisplaySettings {
 			stretched = "true".equals(p.getProperty("stretched", "false").trim());
 			stretchAspect = !"false".equals(p.getProperty("stretchaspect", "true").trim());
 			stretchInteger = "true".equals(p.getProperty("stretchinteger", "false").trim());
+			hideSidebar = "true".equals(p.getProperty("hidesidebar", "false").trim());
 		} catch (Exception ignored) {
 		} finally {
 			try {
@@ -418,6 +420,27 @@ public final class DisplaySettings {
 		}
 	}
 
+	/**
+	 * The open tab's panel is folded away, leaving its two rows of tabs - what clicking the lit tab
+	 * does in the modern layout. Remembered between sessions, as Old School remembers it.
+	 */
+	public static synchronized boolean hideSidebar() {
+		if (!loaded) {
+			load();
+		}
+		return hideSidebar;
+	}
+
+	public static synchronized void setHideSidebar(boolean on) {
+		if (!loaded) {
+			load();
+		}
+		if (hideSidebar != on) {
+			hideSidebar = on;
+			save();
+		}
+	}
+
 	private static int clampGameScale(int percent) {
 		int best = GAME_SCALES[0];
 		for (int i = 0; i < GAME_SCALES.length; i++) {
@@ -468,6 +491,7 @@ public final class DisplaySettings {
 			p.setProperty("stretched", "" + stretched);
 			p.setProperty("stretchaspect", "" + stretchAspect);
 			p.setProperty("stretchinteger", "" + stretchInteger);
+			p.setProperty("hidesidebar", "" + hideSidebar);
 			out = new FileOutputStream(f);
 			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
 		} catch (Exception ignored) {

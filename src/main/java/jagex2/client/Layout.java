@@ -136,6 +136,11 @@ public final class Layout {
 	 * screen and not ours to stretch.
 	 */
 	public final int scale;
+	/**
+	 * The open tab's panel is folded away, leaving the two rows of tabs. Modern only: classic keeps
+	 * its tabs inside the rectangle this would hide, so there would be nothing left to click.
+	 */
+	public final boolean sidebarHidden;
 	/** The window's drawing area. */
 	public final int width;
 	public final int height;
@@ -180,12 +185,13 @@ public final class Layout {
 	private final int[] panelScreenH = new int[PANELS];
 	private final int[] panelAlpha = new int[PANELS];
 
-	private Layout(int mode, int width, int height, int scale) {
+	private Layout(int mode, int width, int height, int scale, boolean hideSidebar) {
 		this.mode = mode;
 		this.resizable = mode != FIXED;
 		this.width = width;
 		this.height = height;
 		this.scale = mode == FIXED ? SCALE_FIXED : scale;
+		this.sidebarHidden = hideSidebar && mode == MODERN;
 		this.panels = mode == MODERN ? PANELS : 3;
 		for (int p = 0; p < PANELS; p++) {
 			this.panelX[p] = PANEL_RECT[p][0];
@@ -275,7 +281,7 @@ public final class Layout {
 	}
 
 	public static Layout fixed() {
-		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED);
+		return new Layout(FIXED, FIXED_W, FIXED_H, SCALE_FIXED, false);
 	}
 
 	/** A window smaller than the fixed frame is laid out as the fixed frame (and clipped). */
@@ -288,9 +294,13 @@ public final class Layout {
 	}
 
 	public static Layout resizable(int mode, int width, int height, int scale) {
+		return resizable(mode, width, height, scale, false);
+	}
+
+	public static Layout resizable(int mode, int width, int height, int scale, boolean hideSidebar) {
 		int w = Math.max(width, MIN_W);
 		int h = Math.max(height, MIN_H);
-		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h));
+		return new Layout(mode == MODERN ? MODERN : CLASSIC, w, h, fit(scale, w, h), hideSidebar);
 	}
 
 	public static Layout of(int mode, int width, int height) {
@@ -360,7 +370,7 @@ public final class Layout {
 
 	public boolean sameAs(Layout other) {
 		return other != null && other.mode == this.mode && other.width == this.width && other.height == this.height
-			&& other.scale == this.scale;
+			&& other.scale == this.scale && other.sidebarHidden == this.sidebarHidden;
 	}
 
 	public int panelFixedX(int panel) {
@@ -377,6 +387,11 @@ public final class Layout {
 
 	public int panelHeight(int panel) {
 		return this.panelH[panel];
+	}
+
+	/** True when this panel is folded away and should be neither drawn nor clicked. */
+	public boolean hiddenPanel(int panel) {
+		return this.sidebarHidden && panel == SIDEBAR;
 	}
 
 	/** How wide the panel lands on the window: panelWidth at the HUD scale. */
@@ -405,6 +420,10 @@ public final class Layout {
 	/** The panel over window point (x, y), or VIEWPORT. In fixed mode the frame is not the viewport, but it is only ever asked in resizable. */
 	public int areaAt(int x, int y) {
 		for (int p = 0; p < this.panels; p++) {
+			// A folded panel is not there to be clicked: the point belongs to the scene behind it.
+			if (this.hiddenPanel(p)) {
+				continue;
+			}
 			if (x >= this.panelScreenX[p] && x < this.panelScreenX[p] + this.panelScreenW[p] && y >= this.panelScreenY[p] && y < this.panelScreenY[p] + this.panelScreenH[p]) {
 				return p;
 			}
