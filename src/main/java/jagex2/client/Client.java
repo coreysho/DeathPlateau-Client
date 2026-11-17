@@ -1129,6 +1129,24 @@ public class Client extends GameShell implements PixMap.Target {
 		});
 	}
 
+	/** Shows the sidebar if it is hidden and puts it on DP settings. Game thread safe. */
+	private void openSidebarSettings() {
+		final ViewBox window = super.frame;
+		final jagex2.client.plugin.ui.Sidebar sidebar = this.pluginSidebar;
+		if (sidebar == null) {
+			return;
+		}
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				if (window != null && !window.isSidebarVisible()) {
+					window.setSidebarVisible(true);
+				}
+				sidebar.openSettings();
+			}
+		});
+	}
+
 	private int pluginPanelRowCount() {
 		int rows = this.pluginPanelRows == null ? 1 : this.pluginPanelRows.size();
 		return rows > PLUGIN_PANEL_MAX_ROWS ? PLUGIN_PANEL_MAX_ROWS : rows;
@@ -7185,6 +7203,16 @@ public class Client extends GameShell implements PixMap.Target {
 					// QoL settings panel. Handled at the very top of the key loop so it works from
 					// any interface state, and so its keys are swallowed rather than reaching chat.
 					if (key == QOL_PANEL_KEY && this.ingame) {
+						// One key, two interfaces, exactly as F8 above: the sidebar where there is
+						// a window to put one in, the in-canvas panel where there is not. Every
+						// row this panel has is on the sidebar's two settings pages now, so on the
+						// desktop the panel is retired - and the key lands on DP settings rather
+						// than on whichever page the rail was left showing, because that is what
+						// it has always meant.
+						if (this.pluginSidebar != null) {
+							this.openSidebarSettings();
+							continue;
+						}
 						this.qolPanelOpen = !this.qolPanelOpen;
 						if (this.qolPanelOpen) {
 							// Opening closes whatever interface is up. The panel draws inside

@@ -422,6 +422,21 @@ public final class Sidebar extends JPanel {
 		this.show(CARD_HUB);
 	}
 
+	/**
+	 * DP settings, open and selected on the rail - what F9 does where there is a sidebar.
+	 *
+	 * show() and not showPanel(): that one is for a PLUGIN's page and hands PanelPage the snapshot
+	 * hanging off the tab, which a fixed tab does not have. show() is the fixed-tab path and lights
+	 * the rail icon itself, by matching cards.
+	 *
+	 * Refreshed on the way in because the in-canvas panel writes the same settings, so a switch
+	 * flipped there before the sidebar was opened would otherwise show stale for up to a tick.
+	 */
+	public void openSettings() {
+		this.show(CARD_QOL);
+		this.qol.refresh();
+	}
+
 	/** Refreshes whichever page is showing. Safe to call from the game thread. */
 	public void refreshLater() {
 		SwingUtilities.invokeLater(new Runnable() {
