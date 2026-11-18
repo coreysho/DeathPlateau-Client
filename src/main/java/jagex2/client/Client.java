@@ -8299,12 +8299,19 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.i(Z)V")
 	public void loadTitleImages() {
+		long at = System.currentTimeMillis();
 		this.imageTitlebox = new Pix8(this.jagTitle, "titlebox", 0);
 		this.imageTitlebutton = new Pix8(this.jagTitle, "titlebutton", 0);
+		// THE TWELVE RUNES OUT OF ONE READ OF EACH ENTRY. Read them per sprite, as this did, and
+		// the archive decompresses runes.dat twelve times and index.dat twelve more to produce
+		// twelve pictures - which is where a logout's twelve seconds went.
+		byte[] runeData = this.jagTitle.read("runes.dat", null);
+		byte[] runeIndex = this.jagTitle.read("index.dat", null);
 		this.imageRunes = new Pix8[12];
 		for (int var2 = 0; var2 < 12; var2++) {
-			this.imageRunes[var2] = new Pix8(this.jagTitle, "runes", var2);
+			this.imageRunes[var2] = new Pix8(runeData, runeIndex, var2);
 		}
+		at = phase("the title sprites", at);
 		this.imageFlamesLeft = new Pix32(128, 265);
 		this.imageFlamesRight = new Pix32(128, 265);
 		for (int var3 = 0; var3 < 33920; var3++) {
@@ -8358,7 +8365,9 @@ public class Client extends GameShell implements PixMap.Target {
 		this.updateFlameBuffer(null);
 		this.flameBuffer2 = new int[32768];
 		this.flameBuffer3 = new int[32768];
+		at = phase("the flame buffers", at);
 		this.drawProgress(10, "Connecting to fileserver");
+		phase("the loading screen repainted", at);
 		// THE FLAME COLUMNS ARE NOT STARTED. They animated the two top corners of the stone
 		// title screen; on this one those corners are black ground with the sigil's glow
 		// reaching into them, and two columns of fire there would be nonsense. Left unstarted
