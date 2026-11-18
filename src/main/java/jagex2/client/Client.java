@@ -3285,16 +3285,24 @@ public class Client extends GameShell implements PixMap.Target {
 
 			this.drawProgress(80, "Unpacking media");
 
-			this.imageInvback = new Pix8(jagMedia, "invback", 0);
-			this.imageChatback = new Pix8(jagMedia, "chatback", 0);
-			this.imageMapback = new Pix8(jagMedia, "mapback", 0);
-			this.imageBackbase1 = new Pix8(jagMedia, "backbase1", 0);
-			this.imageBackbase2 = new Pix8(jagMedia, "backbase2", 0);
-			this.imageBackhmid1 = new Pix8(jagMedia, "backhmid1", 0);
+			// ONE READ OF index.dat FOR THE WHOLE ARCHIVE, and one of each group's own entry below.
+			// Jagfile.read decompresses what it is asked for every single time (BZip2, per entry)
+			// and the per-sprite constructors ask twice each, so the groups here used to cost some
+			// eight hundred decompressions to produce four hundred pictures. The same mistake cost
+			// twelve seconds on the login screen; see Pix8(byte[], byte[], int).
+			byte[] mediaIndex = jagMedia.read("index.dat", null);
 
+			this.imageInvback = new Pix8(jagMedia.read("invback.dat", null), mediaIndex, 0);
+			this.imageChatback = new Pix8(jagMedia.read("chatback.dat", null), mediaIndex, 0);
+			this.imageMapback = new Pix8(jagMedia.read("mapback.dat", null), mediaIndex, 0);
+			this.imageBackbase1 = new Pix8(jagMedia.read("backbase1.dat", null), mediaIndex, 0);
+			this.imageBackbase2 = new Pix8(jagMedia.read("backbase2.dat", null), mediaIndex, 0);
+			this.imageBackhmid1 = new Pix8(jagMedia.read("backhmid1.dat", null), mediaIndex, 0);
+
+			byte[] sideiconsDat = jagMedia.read("sideicons.dat", null);
 			for (int i = 0; i < this.imageSideicons.length; i++) {
 				try {
-					this.imageSideicons[i] = new Pix8(jagMedia, "sideicons", i);
+					this.imageSideicons[i] = new Pix8(sideiconsDat, mediaIndex, i);
 				} catch (Exception e) {
 					// 15 and 16, the Ancient and Lunar magic icons, are newer than some servers' media
 					if (i < 15) {
@@ -3303,13 +3311,14 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
-			this.imageCompass = new Pix32(jagMedia, "compass", 0);
+			this.imageCompass = new Pix32(jagMedia.read("compass.dat", null), mediaIndex, 0);
 
-			this.imageMapedge = new Pix32(jagMedia, "mapedge", 0);
+			this.imageMapedge = new Pix32(jagMedia.read("mapedge.dat", null), mediaIndex, 0);
 			this.imageMapedge.trim();
 
+			byte[] mapsceneDat = jagMedia.read("mapscene.dat", null);
 			for (int i = 0; i < 72; i++) {
-				this.imageMapscene[i] = new Pix8(jagMedia, "mapscene", i);
+				this.imageMapscene[i] = new Pix8(mapsceneDat, mediaIndex, i);
 			}
 
 			// A SECOND, UNTINTED COPY FOR THE WORLD MAP. The ones above are about to be shifted
@@ -3318,17 +3327,18 @@ public class Client extends GameShell implements PixMap.Target {
 			// that moved with the login would undo that.
 			Pix8[] mapScenesForMap = new Pix8[72];
 			for (int i = 0; i < mapScenesForMap.length; i++) {
-				mapScenesForMap[i] = new Pix8(jagMedia, "mapscene", i);
+				mapScenesForMap[i] = new Pix8(mapsceneDat, mediaIndex, i);
 			}
 			jagex2.client.worldmap.MapSquare.useScenes(mapScenesForMap);
 
 			// And the icons the key names, for the same reason: these are tinted a moment
 			// later too, and a map whose bank icon is a different yellow every login looks
 			// broken rather than varied.
+			byte[] mapfunctionDat = jagMedia.read("mapfunction.dat", null);
 			Pix32[] mapIconsForMap = new Pix32[72];
 			for (int i = 0; i < mapIconsForMap.length; i++) {
 				try {
-					mapIconsForMap[i] = new Pix32(jagMedia, "mapfunction", i);
+					mapIconsForMap[i] = new Pix32(mapfunctionDat, mediaIndex, i);
 				} catch (Exception e) {
 					// 70 and 71 are newer than some servers' media, as below.
 					if (i < 70) {
@@ -3342,7 +3352,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// Emporium (Old School's kebbit), both newer than some servers' media
 			for (int i = 0; i < 72; i++) {
 				try {
-					this.imageMapfunction[i] = new Pix32(jagMedia, "mapfunction", i);
+					this.imageMapfunction[i] = new Pix32(mapfunctionDat, mediaIndex, i);
 				} catch (Exception e) {
 					if (i < 70) {
 						throw e;
@@ -3353,9 +3363,10 @@ public class Client extends GameShell implements PixMap.Target {
 			// 0-4 are 377's own (block, damage, poison, and the two disease splats); 5-7 are Old School's
 			// venom, heal and max hit, at the numbers Old School gives the first two. A server whose media
 			// stops at 4 leaves the rest null, and the draw falls back to the plain damage splat.
+			byte[] hitmarksDat = jagMedia.read("hitmarks.dat", null);
 			for (int i = 0; i < 8; i++) {
 				try {
-					this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+					this.imageHitmarks[i] = new Pix32(hitmarksDat, mediaIndex, i);
 				} catch (Exception e) {
 					if (i < 5) {
 						throw e;
@@ -3363,53 +3374,65 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
+			byte[] pkDat = jagMedia.read("headicons_pk.dat", null);
 			for (int i = 0; i < 6; i++) {
-				this.imageHeadiconsPk[i] = new Pix32(jagMedia, "headicons_pk", i);
+				this.imageHeadiconsPk[i] = new Pix32(pkDat, mediaIndex, i);
 			}
 
+			byte[] prayerDat = jagMedia.read("headicons_prayer.dat", null);
 			for (int i = 0; i < 9; i++) {
-				this.imageHeadiconsPrayer[i] = new Pix32(jagMedia, "headicons_prayer", i);
+				this.imageHeadiconsPrayer[i] = new Pix32(prayerDat, mediaIndex, i);
 			}
 
+			byte[] hintDat = jagMedia.read("headicons_hint.dat", null);
 			for (int i = 0; i < 6; i++) {
-				this.imageHeadiconsHint[i] = new Pix32(jagMedia, "headicons_hint", i);
+				this.imageHeadiconsHint[i] = new Pix32(hintDat, mediaIndex, i);
 			}
 
-			this.imageOverlayMultiway = new Pix32(jagMedia, "overlay_multiway", 0);
+			this.imageOverlayMultiway = new Pix32(jagMedia.read("overlay_multiway.dat", null), mediaIndex, 0);
 
-			this.imageMapmarker0 = new Pix32(jagMedia, "mapmarker", 0);
-			this.imageMapmarker1 = new Pix32(jagMedia, "mapmarker", 1);
+			byte[] markerDat = jagMedia.read("mapmarker.dat", null);
+			this.imageMapmarker0 = new Pix32(markerDat, mediaIndex, 0);
+			this.imageMapmarker1 = new Pix32(markerDat, mediaIndex, 1);
 
+			byte[] crossDat = jagMedia.read("cross.dat", null);
 			for (int i = 0; i < 8; i++) {
-				this.imageCross[i] = new Pix32(jagMedia, "cross", i);
+				this.imageCross[i] = new Pix32(crossDat, mediaIndex, i);
 			}
 
-			this.imageMapdot0 = new Pix32(jagMedia, "mapdots", 0);
-			this.imageMapdot1 = new Pix32(jagMedia, "mapdots", 1);
-			this.imageMapdot2 = new Pix32(jagMedia, "mapdots", 2);
-			this.imageMapdot3 = new Pix32(jagMedia, "mapdots", 3);
-			this.imageMapdot4 = new Pix32(jagMedia, "mapdots", 4);
+			byte[] mapdotsDat = jagMedia.read("mapdots.dat", null);
+			this.imageMapdot0 = new Pix32(mapdotsDat, mediaIndex, 0);
+			this.imageMapdot1 = new Pix32(mapdotsDat, mediaIndex, 1);
+			this.imageMapdot2 = new Pix32(mapdotsDat, mediaIndex, 2);
+			this.imageMapdot3 = new Pix32(mapdotsDat, mediaIndex, 3);
+			this.imageMapdot4 = new Pix32(mapdotsDat, mediaIndex, 4);
 
-			this.imageScrollbar0 = new Pix8(jagMedia, "scrollbar", 0);
-			this.imageScrollbar1 = new Pix8(jagMedia, "scrollbar", 1);
+			byte[] scrollbarDat = jagMedia.read("scrollbar.dat", null);
+			this.imageScrollbar0 = new Pix8(scrollbarDat, mediaIndex, 0);
+			this.imageScrollbar1 = new Pix8(scrollbarDat, mediaIndex, 1);
 
+			byte[] tabstonesDat = jagMedia.read("tabstones.dat", null);
 			for (int i = 0; i < this.imageTabstones.length; i++) {
-				this.imageTabstones[i] = new Pix8(jagMedia, "tabstones", i);
+				this.imageTabstones[i] = new Pix8(tabstonesDat, mediaIndex, i);
 			}
+			byte[] chatbuttonsDat = jagMedia.read("chatbuttons.dat", null);
 			for (int i = 0; i < this.imageChatbuttons.length; i++) {
-				this.imageChatbuttons[i] = new Pix8(jagMedia, "chatbuttons", i);
+				this.imageChatbuttons[i] = new Pix8(chatbuttonsDat, mediaIndex, i);
 			}
+			byte[] reportbuttonDat = jagMedia.read("reportbutton.dat", null);
 			for (int i = 0; i < this.imageReportbutton.length; i++) {
-				this.imageReportbutton[i] = new Pix8(jagMedia, "reportbutton", i);
+				this.imageReportbutton[i] = new Pix8(reportbuttonDat, mediaIndex, i);
 			}
 
+			byte[] modIconsDat = jagMedia.read("mod_icons.dat", null);
 			for (int i = 0; i < 2; i++) {
-				this.imageModIcons[i] = new Pix8(jagMedia, "mod_icons", i);
+				this.imageModIcons[i] = new Pix8(modIconsDat, mediaIndex, i);
 			}
 			// Clan rank icons - optional like the badges: a cache without them draws the list without icons.
+			byte[] clanrankDat = jagMedia.read("clanrank.dat", null);
 			for (int i = 0; i < this.imageClanRanks.length; i++) {
 				try {
-					this.imageClanRanks[i] = new Pix32(jagMedia, "clanrank", i);
+					this.imageClanRanks[i] = new Pix32(clanrankDat, mediaIndex, i);
 				} catch (Exception ignored) {
 					this.imageClanRanks[i] = null;
 				}
@@ -3418,41 +3441,41 @@ public class Client extends GameShell implements PixMap.Target {
 			// ChatIcons draws a missing sprite as nothing rather than failing the whole load.
 			for (int i = 2; i < this.imageModIcons.length; i++) {
 				try {
-					this.imageModIcons[i] = new Pix8(jagMedia, "mod_icons", i);
+					this.imageModIcons[i] = new Pix8(modIconsDat, mediaIndex, i);
 				} catch (Exception ignored) {
 					this.imageModIcons[i] = null;
 				}
 			}
 
-			Pix32 backleft1 = new Pix32(jagMedia, "backleft1", 0);
+			Pix32 backleft1 = new Pix32(jagMedia.read("backleft1.dat", null), mediaIndex, 0);
 			this.areaBackleft1 = new PixMap(backleft1.hi, this.getBaseComponent(), backleft1.wi);
 			backleft1.quickPlotSprite(0, 0);
 
-			Pix32 chatframe = new Pix32(jagMedia, "chatback", 0);
+			Pix32 chatframe = new Pix32(jagMedia.read("chatback.dat", null), mediaIndex, 0);
 			this.areaChatframe = new PixMap(chatframe.hi, this.getBaseComponent(), chatframe.wi);
 			chatframe.quickPlotSprite(0, 0);
 
-			Pix32 backright1 = new Pix32(jagMedia, "backright1", 0);
+			Pix32 backright1 = new Pix32(jagMedia.read("backright1.dat", null), mediaIndex, 0);
 			this.areaBackright1 = new PixMap(backright1.hi, this.getBaseComponent(), backright1.wi);
 			backright1.quickPlotSprite(0, 0);
 
-			Pix32 backright2 = new Pix32(jagMedia, "backright2", 0);
+			Pix32 backright2 = new Pix32(jagMedia.read("backright2.dat", null), mediaIndex, 0);
 			this.areaBackright2 = new PixMap(backright2.hi, this.getBaseComponent(), backright2.wi);
 			backright2.quickPlotSprite(0, 0);
 
-			Pix32 backtop1 = new Pix32(jagMedia, "backtop1", 0);
+			Pix32 backtop1 = new Pix32(jagMedia.read("backtop1.dat", null), mediaIndex, 0);
 			this.areaBacktop1 = new PixMap(backtop1.hi, this.getBaseComponent(), backtop1.wi);
 			backtop1.quickPlotSprite(0, 0);
 
-			Pix32 backvmid1 = new Pix32(jagMedia, "backvmid1", 0);
+			Pix32 backvmid1 = new Pix32(jagMedia.read("backvmid1.dat", null), mediaIndex, 0);
 			this.areaBackvmid1 = new PixMap(backvmid1.hi, this.getBaseComponent(), backvmid1.wi);
 			backvmid1.quickPlotSprite(0, 0);
 
-			Pix32 backvmid2 = new Pix32(jagMedia, "backvmid2", 0);
+			Pix32 backvmid2 = new Pix32(jagMedia.read("backvmid2.dat", null), mediaIndex, 0);
 			this.areaBackvmid2 = new PixMap(backvmid2.hi, this.getBaseComponent(), backvmid2.wi);
 			backvmid2.quickPlotSprite(0, 0);
 
-			Pix32 backvmid3 = new Pix32(jagMedia, "backvmid3", 0);
+			Pix32 backvmid3 = new Pix32(jagMedia.read("backvmid3.dat", null), mediaIndex, 0);
 			this.areaBackvmid3 = new PixMap(backvmid3.hi, this.getBaseComponent(), backvmid3.wi);
 			backvmid3.quickPlotSprite(0, 0);
 

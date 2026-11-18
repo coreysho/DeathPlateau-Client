@@ -1972,6 +1972,10 @@ public class ResizableShots extends Client {
 	 * is not running, and is what a window that will not close looks like.
 	 */
 	static void logoutTiming(String prefix) throws Exception {
+		// THE HUD BEFORE IT GOES, which is most of the media archive on one screen: the tab
+		// stones and their icons, the chat buttons, the minimap with its dots and compass, the
+		// map scenes. A sprite group loaded wrongly shows up here and nowhere else in this mode.
+		shot(prefix + "_ingame");
 		say("settled in game; logging out");
 		long t0 = System.nanoTime();
 		traceFrom = t0;
