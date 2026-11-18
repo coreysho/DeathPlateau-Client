@@ -18068,39 +18068,73 @@ public class Client extends GameShell implements PixMap.Target {
 	private void fillTitleSurround(java.awt.Graphics g, int w, int h) {
 		PixMap blur = this.titleBlur;
 		if (blur == null || this.ingame) {
+			// and the picture goes with it: a session should not hold a window-sized image of a
+			// screen it cannot see.
+			this.surround = null;
 			g.setColor(java.awt.Color.black);
 			g.fillRect(0, 0, w, h);
 			return;
 		}
-		blur.setPixels();
-		// Bilinear for this blit and this blit only. The hint lives on the Graphics, and the centred
-		// title screen is drawn through the same one - it must stay nearest-neighbour or every pixel
-		// of the login box goes soft.
-		java.awt.Graphics2D g2 = g instanceof java.awt.Graphics2D ? (java.awt.Graphics2D) g : null;
-		Object previous = null;
-		if (g2 != null) {
-			previous = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
-			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-		}
-		g.drawImage(blur.image, 0, 0, w, h, blur);
-		if (g2 != null) {
-			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-				previous == null ? java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR : previous);
+		int lx = this.letterX();
+		int ly = this.letterY();
+		int lw = this.letterW();
+		int lh = this.letterH();
+		if (this.surround == null || this.surroundW != w || this.surroundH != h
+				|| this.surroundFrom != blur || this.surroundX != lx || this.surroundY != ly
+				|| this.surroundBoxW != lw || this.surroundBoxH != lh) {
+			blur.setPixels();
+			this.surround = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			java.awt.Graphics2D og = this.surround.createGraphics();
+			// Bilinear for this blit and this blit only, which is now structural: the hint is set on
+			// an image of our own and the centred title screen is drawn through the window's own
+			// Graphics, which this never touches. It must stay nearest-neighbour there or every
+			// pixel of the login box goes soft.
+			og.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+				java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			og.drawImage(blur.image, 0, 0, w, h, blur);
 			// A shadow hugging the centred screen, so its edge reads as the edge of something laid on
 			// the window rather than as the art stopping. Rings of black a pixel thick, fading outwards,
 			// drawn OUTSIDE the 765x503 - the title screen is blitted over that rectangle every frame
 			// and would wipe anything drawn inside it.
-			int lx = this.letterX();
-			int ly = this.letterY();
-			int lw = this.letterW();
-			int lh = this.letterH();
 			for (int i = 0; i < SHADOW; i++) {
 				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
-				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
-				g2.drawRect(lx - i - 1, ly - i - 1, lw + 2 * i + 1, lh + 2 * i + 1);
+				og.setColor(new java.awt.Color(0, 0, 0, alpha));
+				og.drawRect(lx - i - 1, ly - i - 1, lw + 2 * i + 1, lh + 2 * i + 1);
 			}
+			og.dispose();
+			this.surroundW = w;
+			this.surroundH = h;
+			this.surroundFrom = blur;
+			this.surroundX = lx;
+			this.surroundY = ly;
+			this.surroundBoxW = lw;
+			this.surroundBoxH = lh;
 		}
+		g.drawImage(this.surround, 0, 0, null);
 	}
+
+	/**
+	 * The finished surround - the blurred backdrop with the shadow already on it - and what it was
+	 * built for.
+	 *
+	 * BUILT OFF SCREEN AND BLITTED ONCE, because the pieces cost ten seconds drawn straight onto a
+	 * window. Measured on a real 2560x1440 window: the bilinear upscale 120ms, the twenty-six
+	 * translucent rings 9819ms, the two of them composed here and blitted in one go 66ms. Each
+	 * translucent primitive drawn onto the window makes Java2D read a 3.7-megapixel surface back
+	 * out of video memory, blend it and write it again; done into an image of our own there is no
+	 * surface to read back. This is what a logout spent twelve seconds on.
+	 *
+	 * Kept until the window, the backdrop or the centred screen's rectangle changes - returning to
+	 * the title screen then costs one blit - and dropped the moment the game starts.
+	 */
+	private java.awt.image.BufferedImage surround;
+	private int surroundW;
+	private int surroundH;
+	private int surroundX;
+	private int surroundY;
+	private int surroundBoxW;
+	private int surroundBoxH;
+	private PixMap surroundFrom;
 
 	/**
 	 * The art shrunk, blurred and dimmed, for fillTitleSurround. Shrinking by averaging whole blocks
