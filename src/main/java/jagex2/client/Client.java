@@ -4412,6 +4412,14 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.a(Ljava/lang/String;Ljava/lang/String;Z)V")
 	public void login(String arg0, String arg1, boolean arg2) {
 		signlink.errorname = arg0;
+		// WHERE THE SECOND AT EVERY LOGIN GOES. Three of the steps below are round trips to a
+		// machine across the internet and one is a modular exponentiation, and all of them happen
+		// on the thread that draws - so the window neither repaints nor answers for as long as the
+		// slowest of them takes. Which one it is decides whether there is anything to fix.
+		long loginAt = System.currentTimeMillis();
+		long at = loginAt;
+		phases = new StringBuilder();
+		phaseSum = 0L;
 		try {
 			if (!arg2) {
 				this.loginMessage0 = "";
@@ -4419,6 +4427,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.drawTitle();
 			}
 			this.stream = new ClientStream(this.openSocket(portOffset + GAME_PORT), this);
+			at = phase("the socket opened", at);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
@@ -4429,11 +4438,13 @@ public class Client extends GameShell implements PixMap.Target {
 				this.stream.method234();
 			}
 			int var8 = this.stream.method234();
+			at = phase("the server's first answer", at);
 			int var9 = var8;
 			if (var8 == 0) {
 				this.stream.read(this.in.data, 0, 8);
 				this.in.pos = 0;
 				this.serverSeed = this.in.g8();
+				at = phase("the seed", at);
 				int[] var10 = new int[] { (int) (Math.random() * 9.9999999E7D), (int) (Math.random() * 9.9999999E7D), (int) (this.serverSeed >> 32), (int) this.serverSeed };
 				this.out.pos = 0;
 				this.out.p1(10);
@@ -4477,6 +4488,7 @@ public class Client extends GameShell implements PixMap.Target {
 					this.out.pjstr(launcher);
 				}
 				this.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);
+				at = phase("the login block encrypted", at);
 				this.login.pos = 0;
 				if (arg2) {
 					this.login.p1(18);
@@ -4507,6 +4519,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.randomIn = new Isaac(var10);
 				this.stream.write(this.login.pos, 0, this.login.data);
 				var8 = this.stream.method234();
+				at = phase("the server's answer to it", at);
 			}
 			if (var8 == 1) {
 				try {
@@ -4637,6 +4650,11 @@ public class Client extends GameShell implements PixMap.Target {
 				oplogic9 = 0;
 				oplogic10 = 0;
 				this.prepareGame();
+				phase("setting the game up", at);
+				// ONE LINE PER LOGIN, naming the five things the second is made of. A login that is
+				// mostly network is a login that is mostly network - but it should say so with
+				// numbers rather than be assumed to, which is what cost five rounds on the logout.
+				DevLog.log("SESSION", "login took " + (System.currentTimeMillis() - loginAt) + "ms" + phases);
 			} else if (var8 == 3) {
 				// BOTH CAUSES, because the login server cannot tell them apart and nor can this.
 				// An unknown name and a wrong password are one reply once accounts are made on
@@ -8140,8 +8158,8 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		long titleAt = System.currentTimeMillis();
-		titlePhases = new StringBuilder();
-		titlePhaseSum = 0L;
+		phases = new StringBuilder();
+		phaseSum = 0L;
 		super.drawArea = null;
 		this.areaChatback = null;
 		this.areaMapback = null;
@@ -8186,16 +8204,20 @@ public class Client extends GameShell implements PixMap.Target {
 		// phases at all against a twelve-second total, which said only that the time was somewhere
 		// unmeasured - so the remainder is now a number of its own and there is nowhere left to
 		// hide.
-		long rest = rebuilt - titlePhaseSum;
+		long rest = rebuilt - phaseSum;
 		DevLog.log("SESSION", "title screen rebuilt in " + rebuilt
 			+ "ms" + (this.jagTitle == null ? " (no archive yet, so nothing was drawn)" : "")
-			+ titlePhases + (rest >= 100L ? " | everything else " + rest + "ms" : ""));
+			+ phases + (rest >= 100L ? " | everything else " + rest + "ms" : ""));
 	}
 
-	/** Phase timings for the title screen's rebuild, collected by phase() and logged by loadTitle. */
-	private static StringBuilder titlePhases;
+	/**
+	 * Phase timings for whatever is being measured, collected by phase() and logged by whoever
+	 * started it. Used by the title screen's rebuild and by login(), which are the two things that
+	 * have been caught holding the thread that draws for seconds at a time.
+	 */
+	private static StringBuilder phases;
 	/** Every phase's time added up, whether or not it was big enough to be worth printing. */
-	private static long titlePhaseSum;
+	private static long phaseSum;
 
 	/**
 	 * Note how long the phase that ended now took, and return now - so phases chain.
@@ -8205,9 +8227,9 @@ public class Client extends GameShell implements PixMap.Target {
 	 */
 	private static long phase(String what, long since) {
 		long now = System.currentTimeMillis();
-		titlePhaseSum += now - since;
-		if (titlePhases != null && now - since >= 100L) {
-			titlePhases.append(" | ").append(what).append(' ').append(now - since).append("ms");
+		phaseSum += now - since;
+		if (phases != null && now - since >= 100L) {
+			phases.append(" | ").append(what).append(' ').append(now - since).append("ms");
 		}
 		return now;
 	}
