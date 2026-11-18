@@ -2945,8 +2945,20 @@ public class Client extends GameShell implements PixMap.Target {
 		if (WS_URL != null) {
 			return new jagex2.io.WsSocket(WS_URL);
 		}
-		return new Socket(InetAddress.getByName(SERVER_HOST), port);
+		// WITH A TIMEOUT, because the default is the operating system's. A host that refuses the
+		// connection says so at once; a host that is simply unreachable - a tunnel that is down, a
+		// laptop that has changed network, a firewall that drops rather than rejects - says nothing
+		// at all, and Windows waits about twenty-one seconds before giving up. This is called on
+		// the game thread (tryReconnect does it when a write fails), so those seconds are a client
+		// drawing nothing and answering no clicks. Five is longer than any server that is actually
+		// there needs, and short enough to be a pause rather than a hang.
+		Socket socket = new Socket();
+		socket.connect(new java.net.InetSocketAddress(InetAddress.getByName(SERVER_HOST), port), CONNECT_TIMEOUT);
+		return socket;
 	}
+
+	/** How long to wait for a connection before giving up, in milliseconds. See openSocket. */
+	private static final int CONNECT_TIMEOUT = 5000;
 
 	@ObfuscatedName("client.a(Ljava/lang/Runnable;I)V")
 	public void startThread(Runnable thread, int priority) {
@@ -4753,6 +4765,7 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.n(Z)V")
 	public void logout() {
 		DevLog.log("SESSION", "logged out, was \"" + this.username + "\"");
+		long logoutAt = System.currentTimeMillis();
 		try {
 			if (this.stream != null) {
 				this.stream.method233();
@@ -4787,6 +4800,9 @@ public class Client extends GameShell implements PixMap.Target {
 		this.nextMidiSong = -1;
 		this.midiSong = -1;
 		this.nextMusicDelay = 0;
+		// System.gc() above is a full collection, which stops every thread including the one
+		// drawing the window - so if a logout ever feels slow, this is the first number to read.
+		DevLog.log("SESSION", "logout() took " + (System.currentTimeMillis() - logoutAt) + "ms");
 	}
 
 	@ObfuscatedName("client.k(I)V")
@@ -5307,8 +5323,20 @@ public class Client extends GameShell implements PixMap.Target {
 		this.flagSceneTileX = 0;
 		ClientStream var2 = this.stream;
 		this.ingame = false;
-		this.loginRetryCount = 0;
+		// ONE ATTEMPT, NOT THREE. login() retries itself twice more when the server says nothing,
+		// sleeping two seconds between - which is fair on the title screen, where the player is
+		// watching a message that changes, and is not fair here: this runs on the game thread, so
+		// those sleeps are a frozen window with nothing drawn in it. A reconnect that does not
+		// work first time drops to the title screen, where trying again is a click and the player
+		// can SEE it happening.
+		this.loginRetryCount = 2;
+		long reconnectAt = System.currentTimeMillis();
 		this.login(this.username, this.password, true);
+		// THE LINE THAT NAMES A TWENTY-SECOND LOGOUT, if this is where it comes from. A reconnect
+		// is invisible from the outside: the window stops drawing and the player reports the thing
+		// that happened before it, which is why this was guessed at twice before it was measured.
+		DevLog.log("SESSION", "reconnect attempt took " + (System.currentTimeMillis() - reconnectAt)
+			+ "ms, back in game: " + this.ingame);
 		if (!this.ingame) {
 			this.logout();
 		}
@@ -8088,6 +8116,7 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.imageTitle2 != null) {
 			return;
 		}
+		long titleAt = System.currentTimeMillis();
 		super.drawArea = null;
 		this.areaChatback = null;
 		this.areaMapback = null;
@@ -8119,6 +8148,11 @@ public class Client extends GameShell implements PixMap.Target {
 			this.loadTitleImages();
 		}
 		this.redrawFrame = true;
+		// The other half of what a player sees as "the login screen took ages to come back": the
+		// nine pieces above are rebuilt from scratch every time the game is left, and this says
+		// how long that took rather than leaving it inside the same twenty seconds as everything
+		// else. loadTitleBackground ends in a System.gc() of its own.
+		DevLog.log("SESSION", "title screen rebuilt in " + (System.currentTimeMillis() - titleAt) + "ms");
 	}
 
 	@ObfuscatedName("client.r(Z)V")

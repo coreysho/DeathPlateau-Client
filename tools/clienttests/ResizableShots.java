@@ -62,15 +62,40 @@ public class ResizableShots extends Client {
 
 	public void update() {
 		updates++;
+		// ON THE GAME THREAD, which is the whole point: the real logout is called from the client's
+		// own update (the logout tab, or the server closing the socket), so calling it from the
+		// test thread would time a different thing and race the frame being drawn.
+		if (wantLogout) {
+			wantLogout = false;
+			long t = System.nanoTime();
+			this.logout();
+			logoutNanos = System.nanoTime() - t;
+		}
 		super.update();
 	}
+
+	/** Set by the logout mode; acted on by the game thread at the top of its next update. */
+	static volatile boolean wantLogout;
+	/** How long logout() itself took, which is where System.gc() would show up. */
+	static volatile long logoutNanos;
+	/** While set, every frame is timed and the slow ones are printed. */
+	static volatile boolean trace;
+	static volatile long traceFrom;
+	static volatile int traceFrames;
+	static volatile long traceSlowest;
 
 	public void useMenuOption(int option) {
 		menuOptions++;
 		super.useMenuOption(option);
 	}
 
+	/** A real ViewBox window rather than a BufferedImage: every `super.frame != null` branch taken. */
+	static final boolean realWindow = Boolean.getBoolean("shots.window");
+
 	public Graphics acquireGraphics() {
+		if (realWindow) {
+			return super.acquireGraphics();
+		}
 		int w = this.getWidth();
 		int h = this.getHeight();
 		if (w <= 0 || h <= 0) {
@@ -139,11 +164,26 @@ public class ResizableShots extends Client {
 					showSelf(true);
 				}
 			}
+			long took = System.nanoTime() - t;
 			if (this.ingame) {
-				drawNanos += System.nanoTime() - t;
+				drawNanos += took;
 				drawCount++;
 			}
 			frames++;
+			if (trace) {
+				traceFrames++;
+				if (took > traceSlowest) {
+					traceSlowest = took;
+				}
+				// A frame that took longer than three of them is worth a line of its own; at 50fps
+				// the loop is meant to come round every 20ms.
+				if (took > 60000000L) {
+					say(String.format("    frame %d at +%.2fs took %.2fs  (ingame=%s titleState=%d titleArt=%s)",
+						Integer.valueOf(traceFrames), Double.valueOf((System.nanoTime() - traceFrom) / 1e9),
+						Double.valueOf(took / 1e9), get("ingame"), Integer.valueOf(geti("titleScreenState")),
+						Boolean.valueOf(get("imageTitle4") != null)));
+				}
+			}
 		}
 		// Outside the lock: the padding is meant to slow the game thread's frame, not to keep the
 		// test thread out of the canvas for that long.
@@ -365,6 +405,10 @@ public class ResizableShots extends Client {
 	}
 
 	static void shot(String name) throws Exception {
+		if (realWindow && canvas == null) {
+			say("  (no shot: " + name + " - the frame went to a real window)");
+			return;
+		}
 		waitFrames(3);
 		BufferedImage copy;
 		synchronized (LOCK) {
@@ -429,6 +473,9 @@ public class ResizableShots extends Client {
 		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
 		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
 		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
+			// the logout mode in a window, because that is where it was reported and the fixed
+			// screen has no surround to be left looking at
+			|| mode.equals("logout")
 			// wear mode too: a player is sixty pixels tall in the fixed 512x334 viewport and the
 			// thing being judged is a seam between two garments. A bigger window is a bigger him.
 			|| mode.equals("cape")
@@ -469,7 +516,12 @@ public class ResizableShots extends Client {
 
 		app = new ResizableShots();
 		app.setSize(w, h);
-		app.initApplet(765, 503);
+		if (realWindow) {
+			// The player's own path: a frame, its rail, and a Graphics that belongs to the screen.
+			app.initApplication(h, w);
+		} else {
+			app.initApplet(765, 503);
+		}
 		if (app.graphics == null) {
 			synchronized (LOCK) {
 				app.graphics = app.acquireGraphics();
@@ -524,6 +576,10 @@ public class ResizableShots extends Client {
 		}
 		if (mode.equals("toggle")) {
 			toggle(prefix);
+			return;
+		}
+		if (mode.equals("logout")) {
+			logoutTiming(prefix);
 			return;
 		}
 		if (mode.equals("drawdist")) {
@@ -1905,6 +1961,62 @@ public class ResizableShots extends Client {
 		logIn(dollUser, winResizable, winW, winH);
 		waitFor("the scene", 60000, () -> geti("sceneState") == 2);
 		waitFrames(60);
+	}
+
+	/**
+	 * WHERE THE TIME AFTER A LOGOUT GOES.
+	 *
+	 * Printed as three separate numbers because they have three different fixes: logout() itself
+	 * (System.gc and the scene being thrown away), the frames after it (the title screen being
+	 * rebuilt), and any stretch of wall clock that belongs to neither - which would mean the loop
+	 * is not running, and is what a window that will not close looks like.
+	 */
+	static void logoutTiming(String prefix) throws Exception {
+		say("settled in game; logging out");
+		long t0 = System.nanoTime();
+		traceFrom = t0;
+		traceFrames = 0;
+		traceSlowest = 0L;
+		logoutNanos = 0L;
+		trace = true;
+		wantLogout = true;
+		// Up to a minute: the report is twenty seconds, so a run that reaches this limit is a
+		// different bug and should say so rather than pass.
+		long deadline = t0 + 60000000000L;
+		boolean back = false;
+		long leftGame = 0L;
+		while (System.nanoTime() < deadline) {
+			if (leftGame == 0L && Boolean.FALSE.equals(get("ingame"))) {
+				leftGame = System.nanoTime();
+			}
+			if (leftGame != 0L && get("imageTitle4") != null) {
+				back = true;
+				break;
+			}
+			Thread.sleep(10L);
+		}
+		long t1 = System.nanoTime();
+		trace = false;
+		say("");
+		say(String.format("  logout() itself          %.2fs", Double.valueOf(logoutNanos / 1e9)));
+		say(String.format("  until ingame went false  %.2fs", Double.valueOf((leftGame - t0) / 1e9)));
+		say(String.format("  until the title art back %.2fs", Double.valueOf((t1 - t0) / 1e9)));
+		say(String.format("  frames drawn meanwhile   %d, slowest %.2fs", Integer.valueOf(traceFrames),
+			Double.valueOf(traceSlowest / 1e9)));
+		// THE NUMBER THAT MATTERS. A frame rate anywhere near normal with seconds on the clock means
+		// the frames are not where the time is going; a handful of frames means the loop is stalled.
+		double seconds = (t1 - t0) / 1e9;
+		say(String.format("  which is %.1f frames a second", Double.valueOf(traceFrames / Math.max(0.001D, seconds))));
+		waitFrames(20);
+		shot(prefix + "_aftertitle");
+		say((back ? "  ok   " : "  FAIL ") + "the title screen comes back after a logout");
+		say((seconds < 3.0D ? "  ok   " : "  FAIL ")
+			+ String.format("and does so promptly (%.2fs)", Double.valueOf(seconds)));
+		// THE CLIENT'S OWN THREADS ARE NOT DAEMONS, so returning from here leaves the JVM up and
+		// the runner waiting on a process that will never exit. Every other mode that ends the run
+		// itself says so the same way.
+		log.close();
+		System.exit(0);
 	}
 
 	static void logIn(String user, boolean resizable, int w, int h) throws Exception {

@@ -402,6 +402,12 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 	@ObfuscatedName("JWWAIQPI.a(Z)V")
 	public void shutdown() {
+		// ONCE. The game loop calls this when it notices state == -1 and destroy()'s timer calls
+		// it when the loop does not, which is the point of the timer - but both reaching it would
+		// unload the client twice, and the window closing is exactly when that race is live.
+		if (this.state == -2) {
+			return;
+		}
 		this.state = -2;
 		this.unload();
 
@@ -437,17 +443,33 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		}
 	}
 
+	/**
+	 * The window has been asked to close.
+	 *
+	 * NOT ON THE EVENT THREAD. This is called from windowClosing, and it used to sleep ten seconds
+	 * here before doing anything - ten seconds of a window that has been told to go away and will
+	 * not repaint, answer a click or close, which is what a player reports as "it would not let me
+	 * close it". The wait itself is worth keeping: the game loop shuts itself down cleanly when it
+	 * notices state == -1, and letting it do that is the tidy exit. But it belongs on a thread of
+	 * its own, and shorter - a loop that is running needs nothing like three seconds to notice,
+	 * and a loop that is NOT running is exactly the case this exists to rescue.
+	 */
 	public void destroy() {
 		this.state = -1;
+		Thread closer = new Thread(new Runnable() {
 
-		try {
-			Thread.sleep(10000L);
-		} catch (Exception ignore) {
-		}
-
-		if (this.state == -1) {
-			this.shutdown();
-		}
+			public void run() {
+				try {
+					Thread.sleep(3000L);
+				} catch (Exception ignore) {
+				}
+				if (GameShell.this.state == -1) {
+					GameShell.this.shutdown();
+				}
+			}
+		}, "shutdown");
+		closer.setDaemon(true);
+		closer.start();
 	}
 
 	public void update(Graphics g) {
