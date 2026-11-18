@@ -2603,12 +2603,6 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.wh")
 	public Pix8 imageMapback;
 	/**
-	 * Which pixels of the minimap panel are the rectangle's dead corners rather than its frame -
-	 * true meaning "do not put this on the window". Built once from the sprite (minimapRing), and
-	 * read only when the panel is lifted out onto a window.
-	 */
-	private boolean[] minimapMask;
-	/**
 	 * What not to draw of each panel, for the layout in hand: the minimap's ring and the rounded
 	 * corners of each group, combined. Rebuilt when the layout changes, because the panels move
 	 * and the HUD scale changes how big a corner is.
@@ -3282,7 +3276,6 @@ public class Client extends GameShell implements PixMap.Target {
 			this.imageInvback = new Pix8(jagMedia, "invback", 0);
 			this.imageChatback = new Pix8(jagMedia, "chatback", 0);
 			this.imageMapback = new Pix8(jagMedia, "mapback", 0);
-			this.minimapMask = minimapRing(this.imageMapback);
 			this.imageBackbase1 = new Pix8(jagMedia, "backbase1", 0);
 			this.imageBackbase2 = new Pix8(jagMedia, "backbase2", 0);
 			this.imageBackhmid1 = new Pix8(jagMedia, "backhmid1", 0);
@@ -3637,9 +3630,6 @@ public class Client extends GameShell implements PixMap.Target {
 			this.plugins.onOverlayDrag(super.mouseX - this.layout.vpX, super.mouseY - this.layout.vpY,
 				super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1,
 				this.layout.openW, this.layout.openH);
-			// After the overlays, and only if they are not holding anything: they are smaller and
-			// float over the viewport, so a cursor on one of them means that one.
-			this.dragHud(super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1);
 			// Asked for only while a plugin is actually reading it, and only when nothing else
 			// has armed the scene's single pick slot this frame. The answer arrives in the next
 			// frame's updateGame, which is as fast as this scene can answer the question at all.
@@ -6567,10 +6557,10 @@ public class Client extends GameShell implements PixMap.Target {
 				if (tab != -1 && this.tabInterfaceId[tab] != -1) {
 					// THE LIT ONE FOLDS THE PANEL AWAY, as it does in Old School. Clicking a tab
 					// that is already selected does nothing today, so this takes no behaviour from
-					// anyone; clicking any other brings the panel back with it. Both resizable
-					// layouts now that classic's column is the same three pieces as modern's: its
-					// own tab rows stay behind, which is what makes the fold reversible.
-					if (tab == this.selectedTab && this.layout.resizable) {
+					// anyone; clicking any other brings the panel back with it. Modern only -
+					// classic's column could fold now that it is three pieces, but Old School's
+					// classic layout does not, and matching it is the point.
+					if (tab == this.selectedTab && this.layout.mode == Layout.MODERN) {
 						DisplaySettings.setHideSidebar(!DisplaySettings.hideSidebar());
 					} else {
 						DisplaySettings.setHideSidebar(false);
@@ -17727,6 +17717,10 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		this.layoutMouseX = rx;
 		this.layoutMouseY = ry;
+		// BEFORE THE GAME READS THE CLICK, which is why this is here and not in draw(). A drag
+		// handled after the update acts a frame late, and the click it was meant to take has
+		// already walked the player or used an item.
+		this.dragHud(super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1);
 		int area = this.mouseArea();
 		super.mouseX = this.layout.mapX(rx, ry, area);
 		super.mouseY = this.layout.mapY(rx, ry, area);
@@ -17746,6 +17740,15 @@ public class Client extends GameShell implements PixMap.Target {
 		if (!this.layout.resizable || !this.ingame) {
 			this.hudDragGroup = -1;
 			return;
+		}
+		// THE CLICK BELONGS TO THE DRAG, not to whatever is under it. Without this, picking the
+		// minimap up walks the player to where the grab landed, and picking the inventory up uses
+		// an item or changes tab. The overlays have the same rule in dragWantsClick; panels need
+		// it swallowed centrally, because half a dozen handlers read these clicks - the tabs, the
+		// items, the minimap walk, the chat bar - and each would otherwise take its own.
+		if (alt && (this.hudDragGroup != -1
+				|| this.layout.areaAt(this.layoutMouseX, this.layoutMouseY) != Layout.VIEWPORT)) {
+			super.mouseClickButton = 0;
 		}
 		if (!alt || button != 1) {
 			// Letting go, or letting go of Alt: it stays where it is rather than springing back,
@@ -17789,9 +17792,6 @@ public class Client extends GameShell implements PixMap.Target {
 	private static int snapHud(int offset) {
 		return offset > -8 && offset < 8 ? 0 : offset;
 	}
-
-	/** How much of the minimap's frame is kept past the map itself, in pixels. */
-	private static final int MINIMAP_RING = 14;
 
 	/**
 	 * How far the HUD's outer corners are rounded, in the fixed frame's pixels.
@@ -17841,9 +17841,6 @@ public class Client extends GameShell implements PixMap.Target {
 				int w = layout.panelWidth(p);
 				int h = layout.panelHeight(p);
 				boolean[] mask = new boolean[w * h];
-				if (p == Layout.MINIMAP && this.minimapMask != null && this.minimapMask.length == mask.length) {
-					System.arraycopy(this.minimapMask, 0, mask, 0, mask.length);
-				}
 				int offX = layout.panelFixedX(p) - left;
 				int offY = layout.panelFixedY(p) - top;
 				for (int y = 0; y < h; y++) {
@@ -17886,69 +17883,6 @@ public class Client extends GameShell implements PixMap.Target {
 		return dx * dx + dy * dy > HUD_CORNER * HUD_CORNER;
 	}
 
-	/**
-	 * The dead corners of the minimap sprite: stone that is further from the map than the frame is
-	 * thick.
-	 *
-	 * The sprite is the frame with a hole in it, and the hole is the transparent index - so a
-	 * breadth-first walk outwards from every transparent pixel gives each pixel's distance from
-	 * the map. Past MINIMAP_RING of that, what is left is the flat stone that fills the rectangle
-	 * out to its corners, which on the fixed screen meets the frame around it and over a window is
-	 * a grey box with a round picture in it.
-	 *
-	 * Null if the sprite is not the size the panel expects, which means something else has gone
-	 * wrong and a mask built on a guess would hide it.
-	 */
-	private static boolean[] minimapRing(Pix8 sprite) {
-		if (sprite == null || sprite.pixels == null || sprite.wi != 172 || sprite.hi != 156) {
-			return null;
-		}
-		int w = sprite.wi;
-		int h = sprite.hi;
-		int[] dist = new int[w * h];
-		int[] queue = new int[w * h];
-		int head = 0;
-		int tail = 0;
-		for (int i = 0; i < w * h; i++) {
-			if (sprite.pixels[i] == 0) {
-				dist[i] = 0;
-				queue[tail++] = i;
-			} else {
-				dist[i] = Integer.MAX_VALUE;
-			}
-		}
-		if (tail == 0) {
-			return null;
-		}
-		while (head < tail) {
-			int at = queue[head++];
-			int x = at % w;
-			int y = at / w;
-			int next = dist[at] + 1;
-			if (next > MINIMAP_RING) {
-				// Nothing past the ring needs a distance of its own - it is all masked anyway, and
-				// stopping here is most of the walk.
-				continue;
-			}
-			for (int d = 0; d < 4; d++) {
-				int nx = x + (d == 0 ? 1 : d == 1 ? -1 : 0);
-				int ny = y + (d == 2 ? 1 : d == 3 ? -1 : 0);
-				if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
-					continue;
-				}
-				int to = ny * w + nx;
-				if (dist[to] > next) {
-					dist[to] = next;
-					queue[tail++] = to;
-				}
-			}
-		}
-		boolean[] mask = new boolean[w * h];
-		for (int i = 0; i < w * h; i++) {
-			mask[i] = sprite.pixels[i] != 0 && dist[i] > MINIMAP_RING;
-		}
-		return mask;
-	}
 
 	private int mouseArea() {
 		if (this.menuVisible) {

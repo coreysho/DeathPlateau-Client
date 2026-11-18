@@ -247,8 +247,10 @@ public final class Layout {
 		this.width = width;
 		this.height = height;
 		this.scale = mode == FIXED ? SCALE_FIXED : scale;
-		// Classic can fold now: its column is the same three pieces, so the tabs stay behind.
-		this.sidebarHidden = hideSidebar && mode != FIXED;
+		// MODERN ONLY, by choice rather than by necessity. Classic's column is the same three
+		// pieces now, so it COULD fold and keep its tabs - but Old School's classic layout does
+		// not fold, and this one follows it.
+		this.sidebarHidden = hideSidebar && mode == MODERN;
 		this.chatHidden = hideChat && mode != FIXED;
 		// Both layouts use all of them now. They differ in the ORDER the side column is stacked,
 		// which is all classic and modern ever were.

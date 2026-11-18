@@ -356,9 +356,8 @@ public class LayoutTest {
 		Layout mh = Layout.resizable(Layout.MODERN, 1920, 1080, Layout.SCALE_FIXED, true);
 		Layout ch = Layout.resizable(Layout.CLASSIC, 1920, 1080, Layout.SCALE_FIXED, true);
 		check(mh.sidebarHidden && mh.hiddenPanel(Layout.SIDEBAR), "modern folds the side panel away when asked");
-		check(ch.sidebarHidden && ch.hiddenPanel(Layout.SIDEBAR) && !ch.hiddenPanel(Layout.TABS_TOP)
-				&& !ch.hiddenPanel(Layout.TABS_BOTTOM),
-			"and classic folds it too now, its own tab rows staying behind to bring it back");
+		check(!ch.sidebarHidden && !ch.hiddenPanel(Layout.SIDEBAR),
+			"and classic refuses, because Old School's classic layout does not fold either");
 		boolean onlySidebar = true;
 		for (int p = 0; p < mh.panels; p++) {
 			if (p != Layout.SIDEBAR && mh.hiddenPanel(p)) {
