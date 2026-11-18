@@ -286,7 +286,7 @@ public final class DisplaySettings {
 	 *
 	 * What was ASKED for, which is not always what is used: a window too small for it gets the
 	 * largest step that fits (Layout.fit). Keeping the request rather than the result is what lets
-	 * one account carry 200% between a 4K desktop and a laptop that can only show 150%, instead of
+	 * one account carry 300% between a 4K desktop and a laptop that can only show 200%, instead of
 	 * the number ratcheting down to the smallest screen it was ever opened on.
 	 */
 	public static synchronized int panelScale() {
@@ -307,7 +307,14 @@ public final class DisplaySettings {
 		}
 	}
 
-	/** A value that is not one of Layout.SCALES is rounded down to the nearest one. */
+	/**
+	 * A value that is not one of Layout.SCALES is rounded down to the nearest one.
+	 *
+	 * Which is also the migration for the steps that no longer exist: a settings file still saying
+	 * 125 or 150 comes back as 100. Down and not up because the rule everywhere here is never to
+	 * hand a window a size it cannot show - somebody who chose 150% did so on a screen too small
+	 * for 200%.
+	 */
 	private static int clampScale(int percent) {
 		int best = Layout.SCALES[0];
 		for (int i = 0; i < Layout.SCALES.length; i++) {
@@ -585,7 +592,7 @@ public final class DisplaySettings {
 				p.setProperty("hudmove." + g + ".y", "" + hudOffsets[g * 2 + 1]);
 			}
 			out = new FileOutputStream(f);
-			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|125|150|200");
+			p.store(out, "Death Plateau window: mode=fixed|classic|modern (F9 in game switches it), panelscale=100|200|300");
 		} catch (Exception ignored) {
 		} finally {
 			try {

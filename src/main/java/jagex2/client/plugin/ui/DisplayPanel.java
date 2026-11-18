@@ -149,6 +149,7 @@ final class DisplayPanel extends JPanel {
 		});
 
 		this.rows.add(this.row("HUD size", "The chatbox, minimap and side tabs, drawn bigger. "
+			+ "Whole multiples only, so every pixel stays square and the text keeps its shape. "
 			+ "The world keeps the whole window and all of its sharpness.", this.sizeBox));
 
 		this.note.setFont(Theme.FONT_SMALL);

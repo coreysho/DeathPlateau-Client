@@ -286,9 +286,19 @@ public class LayoutTest {
 		// FIT. The point of it is that a setting can be carried between machines, so what matters is
 		// that it never returns something that does not fit and never refuses something that does.
 		check(Layout.fit(200, 765, 503) == 100, "the smallest window takes no scale above 100%");
-		check(Layout.fit(200, 3840, 2160) == 200, "a 4K window takes the largest step");
+		check(Layout.fit(300, 3840, 2160) == 300, "a 4K window takes the largest step");
 		check(Layout.fit(100, 3840, 2160) == 100, "and still gives 100% to somebody who asked for it");
-		check(Layout.fit(137, 3840, 2160) == 125, "a number that is not a step comes back as the step below it");
+		check(Layout.fit(137, 3840, 2160) == 100, "a number that is not a step comes back as the step below it");
+		// The step that only a 4K desktop can hold, refused by the screen below it: 300% wants
+		// 1473 rows for the minimap and the side column, and 1440p has not got them.
+		check(Layout.fit(300, 2560, 1440) == 200, "and a 1440p window asking for 300% is given 200%");
+		boolean whole = true;
+		for (int i = 0; i < Layout.SCALES.length; i++) {
+			if (Layout.SCALES[i] % 100 != 0) {
+				whole = false;
+			}
+		}
+		check(whole, "every step is a whole multiple, which is the only kind the blit draws evenly");
 		check(Layout.fit(-5, 1920, 1080) == 100 && Layout.fit(0, 1920, 1080) == 100, "nonsense comes back as 100%");
 		boolean monotonic = true;
 		int prev = 0;

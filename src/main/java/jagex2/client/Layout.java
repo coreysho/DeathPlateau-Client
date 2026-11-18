@@ -48,11 +48,21 @@ public final class Layout {
 
 	/**
 	 * The HUD scale steps, as percentages of 377's own pixel size. 100 is the client as it always
-	 * was. Nearest-neighbour doubling is what draws them (Client.scaleRect), so these are chunky
+	 * was. Nearest-neighbour duplication is what draws them (Client.scaleRect), so these are chunky
 	 * rather than redrawn: the art in the cache has no higher-resolution version, and sharpening it
 	 * would mean new sprites, not a bigger blit.
+	 *
+	 * WHOLE MULTIPLES ONLY, which is forced by that. The blit's column table is cols[i] =
+	 * i*100/scale, so 200% reads 0,0,1,1,2,2 and every source pixel becomes exactly 2x2 - while
+	 * 150% reads 0,0,1,2,2,3,4,4 and 125% reads 0,0,1,2,3,4,4,5, duplicating every third or fifth
+	 * output pixel and leaving the rest alone. Every one-pixel feature in 377's art (the font's
+	 * strokes, every sprite outline, the parchment's border) then comes out one pixel wide in some
+	 * places and two in others, which is what the uneven steps looked like and why they are gone.
+	 *
+	 * 300 costs nothing to offer: fit() drops any step the window cannot hold, and 300% needs
+	 * 2280x1473, so it appears on a 4K desktop and nowhere else.
 	 */
-	public static final int[] SCALES = { 100, 125, 150, 200 };
+	public static final int[] SCALES = { 100, 200, 300 };
 	public static final int SCALE_FIXED = 100;
 
 	/** The three display modes, in the order the F9 row steps through them. */
@@ -422,11 +432,13 @@ public final class Layout {
 	 *
 	 * Up and not down because the panel's last row and column have to be drawn. The blit reads
 	 * source offset i*100/scale for each destination offset i, so a destination that is a pixel
-	 * short stops one source pixel short as well: at 125% a rounded-down chatbox is 648 wide and
-	 * its 519th column - the parchment's own right-hand edge - is never reached, and the same
-	 * arithmetic run backwards in unscaled() leaves the last column of the side tabs unclickable.
-	 * Rounding up costs at most one pixel of window and makes the two ends line up exactly, which
-	 * the layout test checks for every panel at every scale.
+	 * short stops one source pixel short as well: at 125% a rounded-down chatbox was 648 wide and
+	 * its 519th column - the parchment's own right-hand edge - was never reached, and the same
+	 * arithmetic run backwards in unscaled() left the last column of the side tabs unclickable.
+	 *
+	 * Belt and braces now that SCALES is whole multiples: a whole multiple divides exactly, so
+	 * there is nothing to round. It stays because it is the arithmetic that is right rather than
+	 * the step list, and the layout test checks both ends line up for every panel at every scale.
 	 */
 	private static int scaled(int v, int scale) {
 		return scale == SCALE_FIXED ? v : (v * scale + 99) / 100;
