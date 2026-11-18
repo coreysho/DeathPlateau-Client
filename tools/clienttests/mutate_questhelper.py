@@ -371,6 +371,18 @@ MUTS = [
     (PLUGIN, 'the quest table never read, so the page is empty and says nothing is loaded',
      '\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));',
      '\t\t\t\t\tif (this.quests.size() < 0) {\n\t\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));\n\t\t\t\t\t}'),
+
+    # ---- THE VALUES BETWEEN THE LEGS, which is section 15b's whole reason to exist. This throws
+    # only where the varp holds a value no leg begins at AND the quest is not finished - the state
+    # the 850-leg sweep cannot reach, because that sweep iterates the legs themselves. Of the 174
+    # checks in the suite, 15b is the ONLY one that catches it: everything else either picks its
+    # leg values by hand or sits at `done`. Weaken 15b back into a walk of the table's own rows
+    # and this mutation goes green with every other check still passing.
+    (PLUGIN, 'an overlay that throws only at a value no leg begins at, which 15 cannot reach',
+     '\t\treturn best;\n\t}\n\n\t/**\n\t * The leg to show',
+     '\t\tif (best != null && best.from != value && value < q.done) {\n'
+     '\t\t\tthrow new IllegalStateException("legless value " + value);\n\t\t}\n'
+     '\t\treturn best;\n\t}\n\n\t/**\n\t * The leg to show'),
 ]
 
 
