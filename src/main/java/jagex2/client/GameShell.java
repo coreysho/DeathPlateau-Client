@@ -324,12 +324,14 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 				this.mapInput();
 
+				long updateAt = System.nanoTime();
 				try {
 					this.update();
 				} catch (Throwable error) {
 					clean = false;
 					this.fault("update", error);
 				}
+				this.stallUpdateNanos += System.nanoTime() - updateAt;
 
 				// Anything update() left in the latch is still unclaimed - hold it for draw(). The
 				// readers that consume a click in update() zero the button as they take it, so a
@@ -368,12 +370,14 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 			this.mapInput();
 
+			long drawAt = System.nanoTime();
 			try {
 				this.draw();
 			} catch (Throwable error) {
 				clean = false;
 				this.fault("draw", error);
 			}
+			this.reportStall(System.nanoTime() - drawAt);
 
 			// A frame that got all the way through puts the count back: what is being counted is a
 			// fault that keeps happening, not a fault that happened once.
@@ -398,6 +402,36 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		if (this.state == -1) {
 			this.shutdown();
 		}
+	}
+
+	/** update()'s share of this pass of the loop, in nanoseconds. See reportStall. */
+	private long stallUpdateNanos;
+
+	/**
+	 * A pass of the loop that took more than a second says so, and says which half.
+	 *
+	 * WHY THIS IS IN THE LOOP AND NOT WHEREVER THE BUG IS. A client that stops drawing writes
+	 * nothing, so the log of a freeze ends at whatever happened just BEFORE it - which is how a
+	 * twenty-second logout came to be reported as a logout bug three times over without anything
+	 * confirming where the twenty seconds went. Anything that blocks this thread lands here with
+	 * its duration: a socket waiting on a host that is not answering, a full collection, a sound
+	 * device, a soundbank being read off disk. The cause does not have to be guessed first.
+	 *
+	 * A second is a very long frame - the budget is twenty milliseconds - so no ordinary frame
+	 * comes near it. Some legitimate ones do: a scene load blocks this thread on purpose, and
+	 * those lines are worth having too, since a load that takes four seconds is four seconds
+	 * of a window that cannot be closed either.
+	 */
+	private void reportStall(long drawNanos) {
+		long updateNanos = this.stallUpdateNanos;
+		this.stallUpdateNanos = 0L;
+		long total = updateNanos + drawNanos;
+		if (total < 1000000000L) {
+			return;
+		}
+		DevLog.log("SESSION", "STALL: the game loop took " + (total / 1000000L) + "ms (update "
+			+ (updateNanos / 1000000L) + "ms, draw " + (drawNanos / 1000000L)
+			+ "ms) - the window drew nothing and answered nothing for that long");
 	}
 
 	@ObfuscatedName("JWWAIQPI.a(Z)V")
