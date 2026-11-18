@@ -8117,6 +8117,7 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 		long titleAt = System.currentTimeMillis();
+		titlePhases = new StringBuilder();
 		super.drawArea = null;
 		this.areaChatback = null;
 		this.areaMapback = null;
@@ -8143,22 +8144,49 @@ public class Client extends GameShell implements PixMap.Target {
 		Pix2D.cls();
 		this.imageTitle8 = new PixMap(94, this.getBaseComponent(), 75);
 		Pix2D.cls();
+		phase("nine buffers", titleAt);
 		if (this.jagTitle != null) {
 			this.loadTitleBackground();
 			this.loadTitleImages();
 		}
 		this.redrawFrame = true;
 		// The other half of what a player sees as "the login screen took ages to come back": the
-		// nine pieces above are rebuilt from scratch every time the game is left, and this says
-		// how long that took rather than leaving it inside the same twenty seconds as everything
-		// else. loadTitleBackground ends in a System.gc() of its own.
-		DevLog.log("SESSION", "title screen rebuilt in " + (System.currentTimeMillis() - titleAt) + "ms");
+		// nine pieces above are rebuilt from scratch every time the game is left. BROKEN DOWN BY
+		// PHASE, because the total on its own does not say which part of it is slow - and the same
+		// method takes 3ms at startup and has been measured at 12871ms after a logout, so the
+		// amount of work is not what changes.
+		DevLog.log("SESSION", "title screen rebuilt in " + (System.currentTimeMillis() - titleAt)
+			+ "ms" + (this.jagTitle == null ? " (no archive yet, so nothing was drawn)" : "")
+			+ titlePhases);
+	}
+
+	/** Phase timings for the title screen's rebuild, collected by phase() and logged by loadTitle. */
+	private static StringBuilder titlePhases;
+
+	/**
+	 * Note how long the phase that ended now took, and return now - so phases chain.
+	 *
+	 * Only what is slow is written: a phase of a few milliseconds is the normal case and nine of
+	 * those on a line would bury the one that is not.
+	 */
+	private static long phase(String what, long since) {
+		long now = System.currentTimeMillis();
+		if (titlePhases != null && now - since >= 100L) {
+			titlePhases.append(" | ").append(what).append(' ').append(now - since).append("ms");
+		}
+		return now;
 	}
 
 	@ObfuscatedName("client.r(Z)V")
 	public void loadTitleBackground() {
+		long at = System.currentTimeMillis();
 		byte[] var2 = this.jagTitle.read("title.dat", null);
+		at = phase("title.dat out of the archive", at);
+		// THE ONE TO WATCH. Pix32(byte[], Component) is Toolkit.createImage, MediaTracker.waitForAll
+		// and PixelGrabber.grabPixels - three blocking waits on AWT's image-fetcher threads, none of
+		// them with a timeout, on the thread that draws the client.
 		Pix32 var3 = new Pix32(var2, this);
+		at = phase("the jpeg decoded by AWT", at);
 		this.imageTitle0.bind();
 		var3.quickPlotSprite(0, 0);
 		this.imageTitle1.bind();
@@ -8186,6 +8214,7 @@ public class Client extends GameShell implements PixMap.Target {
 				var3.pixels[var3.wi * var5 + var12] = var4[var12];
 			}
 		}
+		at = phase("nine blits and the mirror", at);
 		this.imageTitle0.bind();
 		var3.quickPlotSprite(0, 382);
 		this.imageTitle1.bind();
@@ -8227,6 +8256,7 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.imageTitle0 == null) {
 			return;
 		}
+		long backdropAt = System.currentTimeMillis();
 		PixMap backdrop = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
 		PixMap[] pieces = { this.imageTitle0, this.imageTitle1, this.imageTitle2, this.imageTitle7, this.imageTitle4,
 			this.imageTitle8, this.imageTitle3, this.imageTitle5, this.imageTitle6 };
@@ -8240,6 +8270,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		backdrop.setPixels();
 		this.titleBlur = this.blurredBackdrop(backdrop);
+		phase("the blurred backdrop", backdropAt);
 		this.imageTitle2.bind();
 		// the loading screen has already filled the window - with black, because this did not exist
 		// yet when it did - so ask for it to be filled again now that it does
