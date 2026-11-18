@@ -124,6 +124,8 @@ public class QuestHelperTest {
 	 * The leg is "Rantz takes his shot and misses": a wait and a lucky roll, neither of which is
 	 * anything a player clicks, so the exporter has nothing to write for it.
 	 */
+	static final String HERO = "HEROES' QUEST (solo part)";
+	static final int HERO_VARP = 188;
 	static final String CHOMPY = "BIG CHOMPY BIRD HUNTING";
 	static final int CHOMPY_VARP = 293;
 	static final int IVAN = 1574;
@@ -464,6 +466,20 @@ public class QuestHelperTest {
 		check(unreachable == 0, "and every leg in the table could be set to begin with ("
 			+ unreachable + " unreachable)");
 		VarbitType.field1760 = wasTable;
+	}
+
+	/** Whether a leg has a step that names something to DO, which is what the panel can show. */
+	static boolean actionable(java.util.Map<?, ?> stage) {
+		List<?> steps = jagex2.client.plugin.hub.Json.array(stage, "steps");
+		if (steps == null) {
+			return false;
+		}
+		for (Object s : steps) {
+			if (!"note".equals(jagex2.client.plugin.hub.Json.string((java.util.Map<?, ?>) s, "kind", ""))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** The shipped table, as the plugin's own loader reads it. */
@@ -2252,6 +2268,60 @@ public class QuestHelperTest {
 		settle();
 		check(!said(screen(), "No step recorded"), "a leg with no steps in it does not leave the panel empty");
 		check(said(screen(), "Rantz"), "...it gives what is next instead (Rantz, two steps later)");
+
+		// AND THE ONE LEG THE PANEL STILL CANNOT NAME, which is worth pinning rather than hiding.
+		// Everything above rescues a leg whose steps run out by walking the panel on to the next
+		// leg, and that only works while there IS a next leg. quest_hero_run.ts stops at stage 11
+		// on purpose - the candlestick needs a Phoenix player to kill Grip, so one player's route
+		// ends there - which leaves leg 11 bare, 0 steps and 0 headings, with nothing after it.
+		// A player at 11, 12 or 13 therefore reads "No step recorded for this stage."
+		//
+		// That is the LAST state in the whole table that does it, and it is the only shape left
+		// that could have a player saying the helper shows them nothing - the four reports on
+		// DeathPlateau-Bugs#4, #10, #15 and #17. It is not a throw: section 15b draws every
+		// legless value on all four overlays without one.
+		wipeQuests();
+		track(HERO);
+		client.varps[HERO_VARP] = 11;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "No step recorded"),
+			"Heroes' Quest 11 is bare, and the panel says so rather than going blank");
+		client.varps[HERO_VARP] = 13;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "No step recorded"), "...and 13 falls back to it and reads the same");
+
+		// THE RATCHET ON IT. Counted from the table rather than driven, because the point is that
+		// there is exactly ONE of these: a leg with nothing to do and no later leg to walk on to.
+		// If somebody fixes Heroes' 11 this fails and the expectation comes down to zero; if
+		// somebody adds a second, it fails and names it. Either way it cannot arrive quietly.
+		List<String> bare = new ArrayList<String>();
+		for (Object element : questTable()) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			List<?> stages = jagex2.client.plugin.hub.Json.array(quest, "stages");
+			if (stages == null) {
+				continue;
+			}
+			for (int i = 0; i < stages.size(); i++) {
+				if (actionable((java.util.Map<?, ?>) stages.get(i))) {
+					continue;
+				}
+				boolean laterHasOne = false;
+				for (int j = i + 1; j < stages.size(); j++) {
+					laterHasOne = laterHasOne || actionable((java.util.Map<?, ?>) stages.get(j));
+				}
+				if (!laterHasOne) {
+					bare.add(jagex2.client.plugin.hub.Json.string(quest, "name", "?") + " "
+						+ jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stages.get(i), "from", 0));
+				}
+			}
+		}
+		for (String b : bare) {
+			System.out.println("       panel cannot name: " + b);
+		}
+		check(bare.size() == 1 && bare.get(0).equals("HEROES' QUEST (solo part) 11"),
+			"and it is the only leg in the table the panel cannot name (" + bare.size() + ")");
 
 		clearNpcs();
 		wipeQuests();
