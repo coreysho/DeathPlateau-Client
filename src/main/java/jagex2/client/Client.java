@@ -8118,6 +8118,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		long titleAt = System.currentTimeMillis();
 		titlePhases = new StringBuilder();
+		titlePhaseSum = 0L;
 		super.drawArea = null;
 		this.areaChatback = null;
 		this.areaMapback = null;
@@ -8147,7 +8148,9 @@ public class Client extends GameShell implements PixMap.Target {
 		phase("nine buffers", titleAt);
 		if (this.jagTitle != null) {
 			this.loadTitleBackground();
+			long imagesAt = System.currentTimeMillis();
 			this.loadTitleImages();
+			phase("the sprites and flame buffers", imagesAt);
 		}
 		this.redrawFrame = true;
 		// The other half of what a player sees as "the login screen took ages to come back": the
@@ -8155,13 +8158,21 @@ public class Client extends GameShell implements PixMap.Target {
 		// PHASE, because the total on its own does not say which part of it is slow - and the same
 		// method takes 3ms at startup and has been measured at 12871ms after a logout, so the
 		// amount of work is not what changes.
-		DevLog.log("SESSION", "title screen rebuilt in " + (System.currentTimeMillis() - titleAt)
+		long rebuilt = System.currentTimeMillis() - titleAt;
+		// EVERYTHING ELSE, which is the total minus every phase. The first breakdown printed no
+		// phases at all against a twelve-second total, which said only that the time was somewhere
+		// unmeasured - so the remainder is now a number of its own and there is nowhere left to
+		// hide.
+		long rest = rebuilt - titlePhaseSum;
+		DevLog.log("SESSION", "title screen rebuilt in " + rebuilt
 			+ "ms" + (this.jagTitle == null ? " (no archive yet, so nothing was drawn)" : "")
-			+ titlePhases);
+			+ titlePhases + (rest >= 100L ? " | everything else " + rest + "ms" : ""));
 	}
 
 	/** Phase timings for the title screen's rebuild, collected by phase() and logged by loadTitle. */
 	private static StringBuilder titlePhases;
+	/** Every phase's time added up, whether or not it was big enough to be worth printing. */
+	private static long titlePhaseSum;
 
 	/**
 	 * Note how long the phase that ended now took, and return now - so phases chain.
@@ -8171,6 +8182,7 @@ public class Client extends GameShell implements PixMap.Target {
 	 */
 	private static long phase(String what, long since) {
 		long now = System.currentTimeMillis();
+		titlePhaseSum += now - since;
 		if (titlePhases != null && now - since >= 100L) {
 			titlePhases.append(" | ").append(what).append(' ').append(now - since).append("ms");
 		}
@@ -8233,14 +8245,22 @@ public class Client extends GameShell implements PixMap.Target {
 		var3.quickPlotSprite(-171, 254);
 		this.imageTitle8.bind();
 		var3.quickPlotSprite(-171, -180);
+		at = phase("nine more blits", at);
 		this.buildTitleBackdrop();
+		// Reset rather than measured: buildTitleBackdrop times itself, and counting it twice would
+		// make the phases add up to more than the whole.
+		at = System.currentTimeMillis();
 		Pix32 var7 = new Pix32(this.jagTitle, "logo", 0);
 		this.imageTitle2.bind();
 		var7.plotSprite(18, 382 - var7.wi / 2 - 128);
-		Object var8 = null;
-		Object var9 = null;
-		Object var10 = null;
-		System.gc();
+		phase("the logo", at);
+		// THE EXPLICIT FULL COLLECTION THAT USED TO BE HERE IS GONE. It ran on the thread that
+		// draws, at the moment the heap is holding everything a whole session touched, and that is
+		// what a player saw as a login screen taking twelve seconds to come back. It was written
+		// for a 64MB browser applet where dropping the scene before building the login screen was
+		// worth a pause; a modern JVM collects when it needs to, and logout() has already asked for
+		// one a tenth of a second earlier. Nothing between there and here allocates enough to want
+		// a second.
 	}
 
 	/**
