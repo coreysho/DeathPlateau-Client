@@ -61,6 +61,17 @@ public class QuestHelperTest {
 	 */
 	static final String MYREQUE = "IN SEARCH OF THE MYREQUE";
 	static final int MYREQUE_VARP = 387;
+	/**
+	 * Hazeel Cult, the one quest in the table with TWO entries on ONE progress varp: one per side.
+	 *
+	 * That is what DeathPlateau-Bugs#84 was about - "hazeel cult (hazeel side) not working. each
+	 * step opens the other guide" - because a move in hazeelcultquest moves both of them and the
+	 * follow rule kept the last one it saw, which is the Carnillean side.
+	 */
+	static final String HAZEEL_GOOD = "HAZEEL CULT";
+	static final String HAZEEL_EVIL = "HAZEEL CULT (Hazeel side)";
+	static final int HAZEEL_VARP = 223;
+
 	/** A varp no quest in the table reads, used only to choose a multinpc's child. */
 	static final int MULTI_SELECTOR = 1900;
 
@@ -1987,6 +1998,59 @@ public class QuestHelperTest {
 		client.varps[MYREQUE_VARP] = 3;
 		gameTicks(1);
 		check(MYREQUE.equals(followed()), "a move in another quest takes the page with it");
+
+		// ---------------------------------------------------------------- two entries, one varp
+		//
+		// A MOVE THAT NAMES TWO QUESTS NAMES NEITHER. Hazeel Cult is in the table twice, once per
+		// side, and both entries read hazeelcultquest - so every step of either side moves both of
+		// them. The rule used to keep the LAST one it saw, which is table order, which is the
+		// Carnillean side: a player on Hazeel's side was dragged to the other guide on every step
+		// of the quest. DeathPlateau-Bugs#84.
+		wipeQuests();
+		setPin("");
+		logOut();
+		logIn();
+		gameTicks(8);
+		track(HAZEEL_EVIL);
+		check(HAZEEL_EVIL.equals(followed()), "a player can pick the Hazeel side");
+		client.varps[HAZEEL_VARP] = 3;
+		gameTicks(1);
+		check(HAZEEL_EVIL.equals(followed()),
+			"...and a step of it does not throw them at the other side's guide");
+		client.varps[HAZEEL_VARP] = 4;
+		gameTicks(1);
+		check(HAZEEL_EVIL.equals(followed()), "...nor does the next step");
+		client.varps[HAZEEL_VARP] = 5;
+		gameTicks(1);
+		check(HAZEEL_EVIL.equals(followed()), "...nor the one after that");
+
+		// AND THE OTHER SIDE IS NOT PRIVILEGED EITHER, which is what a fix that simply reversed
+		// the loop would look like: it would read as fixed from Hazeel's side and break the
+		// Carnillean one instead.
+		change();
+		track(HAZEEL_GOOD);
+		check(HAZEEL_GOOD.equals(followed()), "a player can pick the Carnillean side");
+		client.varps[HAZEEL_VARP] = 6;
+		gameTicks(1);
+		check(HAZEEL_GOOD.equals(followed()), "...and a step of it leaves them on it");
+
+		// AND ABSTAINING IS NOT GIVING UP. An ambiguous move must not stop the page following an
+		// ordinary quest afterwards - the was[] values are written down either way, so the same
+		// ambiguity is not re-examined for ever.
+		client.varps[MYREQUE_VARP] = 4;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "an unambiguous move still takes the page, after one that was not");
+
+		// AND WITH NOTHING PICKED, the page says so rather than choosing a side for somebody.
+		// Before, it chose - and chose wrong for half of all players.
+		wipeQuests();
+		setPin("");
+		logOut();
+		logIn();
+		gameTicks(8);
+		client.varps[HAZEEL_VARP] = 3;
+		gameTicks(2);
+		check(followed() == null, "a step of Hazeel Cult with no side picked waits on the list");
 
 		wipeQuests();
 		setPin("");

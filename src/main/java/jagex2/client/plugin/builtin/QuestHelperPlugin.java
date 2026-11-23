@@ -659,6 +659,18 @@ public final class QuestHelperPlugin extends Plugin {
 			this.settling = SETTLING;
 		}
 		Quest moved = null;
+		// HOW MANY MOVED, not just which. Two entries in the table can share a progress varp -
+		// Hazeel Cult has one entry per side and both read hazeelcultquest - and then every step
+		// of either side moves BOTH of them. This loop kept the last one it saw, which is
+		// whichever the table happens to list later, so a player on Hazeel's side was dragged to
+		// the Carnillean guide on every single step of the quest. Reported as "hazeel cult (hazeel
+		// side) not working. each step opens the other guide" (DeathPlateau-Bugs#84).
+		//
+		// A move that names two quests names neither. That is the same rule this method already
+		// applies to its other signal below - "two or more and the page waits on the list" - and
+		// it is applied here for the same reason: an ambiguous signal that overrides what the
+		// player chose is worse than no signal at all.
+		int movedCount = 0;
 		for (int i = 0; i < n; i++) {
 			Quest q = this.quests.get(i);
 			int now = this.questValue(q);
@@ -691,15 +703,23 @@ public final class QuestHelperPlugin extends Plugin {
 			}
 			if (this.settling <= 0 && now > 0 && !this.finished(q)) {
 				moved = q;
+				movedCount++;
 			}
 		}
 		if (this.settling > 0) {
 			this.settling--;
 		}
-		if (moved != null) {
+		// THE was[] VALUES ARE WRITTEN DOWN EITHER WAY, in the loop above, so an ambiguous move is
+		// not seen again on the next tick: abstaining here does not turn into asking the same
+		// question for ever.
+		if (moved != null && movedCount == 1) {
 			// Doing something in a quest is asking for that quest, so this one closes the list.
 			this.follow(moved.id);
 			this.browsing = false;
+			return;
+		}
+		if (movedCount > 1) {
+			// Something moved and we cannot say what. Whatever the player picked stands.
 			return;
 		}
 		if (this.tracked() != null) {
