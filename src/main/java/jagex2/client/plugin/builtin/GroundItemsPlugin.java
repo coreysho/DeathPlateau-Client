@@ -1277,6 +1277,12 @@ public final class GroundItemsPlugin extends Plugin {
 	 * "[-] [+] Name" with the two controls clickable, laid out from the left edge of where the
 	 * centred label would have started, so the row stays centred on the tile as it grows.
 	 * Returns the right edge of the name.
+	 *
+	 * BOTH CONTROLS TOGGLE, which is Old School's arrangement by way of RuneLite: the minus hides
+	 * and un-hides, the plus highlights and un-highlights, and clicking a box that is already lit
+	 * is how an item goes back to no rule at all. There is no separate reset, and nothing needs
+	 * one - the plus used to be that reset, and a green plus beside a minus that hides is a
+	 * reasonable thing to have built and an unreasonable thing to guess.
 	 */
 	private int drawControls(OverlayGraphics g, final GroundItem item, String label, int originX, int rowY,
 		int colour) {
@@ -1291,7 +1297,7 @@ public final class GroundItemsPlugin extends Plugin {
 		int top = rowY + 1 - ROW_H;
 
 		this.drawControl(g, left, top, rowY, "-", MINUS_COLOUR, GroundItemPrefs.isHidden(name));
-		this.drawControl(g, plusX, top, rowY, "+", PLUS_COLOUR, false);
+		this.drawControl(g, plusX, top, rowY, "+", PLUS_COLOUR, GroundItemPrefs.isHighlighted(name));
 		g.text(nameX, rowY, label, colour);
 
 		g.clickable(left, top, CONTROL_W, ROW_H, new Runnable() {
@@ -1303,8 +1309,7 @@ public final class GroundItemsPlugin extends Plugin {
 		g.clickable(plusX, top, CONTROL_W, ROW_H, new Runnable() {
 
 			public void run() {
-				GroundItemsPlugin.this.ctx.addChatMessage(GroundItemPrefs.removeName(name)
-					? name + " is back to normal." : name + " was already normal.");
+				GroundItemsPlugin.this.toggleHighlight(name);
 			}
 		});
 		g.clickable(nameX, top, nameW, ROW_H, new Runnable() {

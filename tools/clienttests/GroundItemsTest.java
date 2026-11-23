@@ -1413,9 +1413,16 @@ public class GroundItemsTest {
 			"...and hides the item by its NAME, not the label with the count on it");
 
 		frame();
-		check(manager.onViewportClick(plusMid, y), "the plus takes a click too");
-		check(!GroundItemPrefs.isHidden("Thing 0") && GroundItemPrefs.find("Thing 0") < 0,
-			"...and puts the item back to no rule at all");
+		check(manager.onViewportClick(minusMid, y), "the same box again is how it comes off");
+		check(GroundItemPrefs.find("Thing 0") < 0, "...leaving no rule at all, rather than a reset button");
+
+		frame();
+		check(manager.onViewportClick(plusMid, y), "the plus highlights, as RuneLite's second box does");
+		check(GroundItemPrefs.isHighlighted("Thing 0"), "...by NAME, not by the label with the count on it");
+
+		frame();
+		check(manager.onViewportClick(plusMid, y), "...and again takes the highlight off");
+		check(GroundItemPrefs.find("Thing 0") < 0, "...so both controls toggle, and neither needs a reset");
 
 		// THE GAP, which is the whole of why these were easy to misclick. Laid end to end, a pixel
 		// the wrong side of a boundary did the OPPOSITE thing - and since the name is the highlight
@@ -1428,7 +1435,7 @@ public class GroundItemsTest {
 
 		frame();
 		check(manager.onViewportClick(rows.get(2).x + 2, y), "and the name itself is clickable");
-		check(GroundItemPrefs.isHighlighted("Thing 0"), "...which highlights it");
+		check(GroundItemPrefs.isHighlighted("Thing 0"), "...which highlights it, the same as the plus");
 
 		frame();
 		manager.onViewportClick(rows.get(2).x + 2, y);
