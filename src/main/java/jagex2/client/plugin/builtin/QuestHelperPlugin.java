@@ -15,6 +15,8 @@ import jagex2.client.plugin.hub.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -273,23 +275,48 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private boolean browsing = false;
 
-	/** The quest list as the picker shows it: in progress first, then unstarted, then done. */
+	/**
+	 * The name the list sorts on: lowercased, with a leading "The " dropped, punctuation left
+	 * exactly as it is.
+	 *
+	 * THAT IS THE QUEST TAB'S OWN RULE AND NOT A GUESS AT IT. questlist.if is generated in the
+	 * order 474 draws the list, and both of its sections come back out of this key with nothing
+	 * out of place: "The Knight's Sword" sits under K between Imp Catcher and Pirate's Treasure,
+	 * and "Monk's Friend" sits ABOVE "Monkey Madness" because the apostrophe sorts below 'e'.
+	 * Strip the punctuation "to normalise" and that second pair swaps, which is how you can tell
+	 * the rule was taken from the interface rather than invented to look like it.
+	 */
+	private static String sortName(Quest q) {
+		String s = q.name == null ? "" : q.name.toLowerCase();
+		return s.startsWith("the ") ? s.substring(4) : s;
+	}
+
+	/**
+	 * The quest list as the picker shows it: the quest tab's own order, finished ones at the
+	 * bottom.
+	 *
+	 * IT USED TO SORT BY NOTHING A PLAYER CAN SEE. The three buckets were in table order, which is
+	 * alphabetical by the internal id - so the list read Fight Arena, Ernest the Chicken and The
+	 * Restless Ghost as "arena", "haunted" and "priest", scattered through a list that looked
+	 * unsorted because by name it was.
+	 *
+	 * FREE AND MEMBERS' QUESTS INTERLEAVE, which is the one way this still differs from the tab.
+	 * The tab draws them as two sections; quests.json does not record which a quest belongs to, so
+	 * there is nothing here to split on. One alphabetical run through 108 quests is easier to find
+	 * a name in than two anyway.
+	 */
 	private List<Quest> listed() {
-		List<Quest> running = new ArrayList<>();
-		List<Quest> fresh = new ArrayList<>();
-		List<Quest> over = new ArrayList<>();
-		for (Quest q : this.quests) {
-			if (this.finished(q)) {
-				over.add(q);
-			} else if (this.started(q)) {
-				running.add(q);
-			} else {
-				fresh.add(q);
+		List<Quest> all = new ArrayList<>(this.quests);
+		Collections.sort(all, new Comparator<Quest>() {
+			public int compare(Quest a, Quest b) {
+				boolean fa = finished(a);
+				boolean fb = finished(b);
+				if (fa != fb) {
+					return fa ? 1 : -1;
+				}
+				return sortName(a).compareTo(sortName(b));
 			}
-		}
-		List<Quest> all = new ArrayList<>(running);
-		all.addAll(fresh);
-		all.addAll(over);
+		});
 		return all;
 	}
 
@@ -519,6 +546,21 @@ public final class QuestHelperPlugin extends Plugin {
 		}
 		for (Quest q : this.quests) {
 			if (q.id.equals(this.pinned)) {
+				// A FINISHED QUEST IS NOT TRACKED. Nothing cleared the pin but shutDown, so
+				// completing the quest you were following left the panel on its last leg for good
+				// - the steps you had just done, struck off, with nothing to say the quest was
+				// over. The player had to know to press Change.
+				//
+				// Dropping the pin falls back to the list, which is where the page opens anyway
+				// and is a state every caller here already handles, because `pinned` is null until
+				// the player picks. So there is no new state and nothing new to draw.
+				//
+				// IT DOES NOT GUESS THE NEXT QUEST, for the reason in the note above: a guess that
+				// is wrong five times out of six is worse than the list.
+				if (this.finished(q)) {
+					this.pinned = null;
+					return null;
+				}
 				return q;
 			}
 		}
