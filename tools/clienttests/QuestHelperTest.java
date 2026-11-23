@@ -2370,9 +2370,21 @@ public class QuestHelperTest {
 		check(said(screen(), "No step recorded"), "...and 13 falls back to it and reads the same");
 
 		// THE RATCHET ON IT. Counted from the table rather than driven, because the point is that
-		// there is exactly ONE of these: a leg with nothing to do and no later leg to walk on to.
-		// If somebody fixes Heroes' 11 this fails and the expectation comes down to zero; if
-		// somebody adds a second, it fails and names it. Either way it cannot arrive quietly.
+		// these are rare and deliberate: a leg with nothing to do and no later leg to walk on to.
+		// If somebody fixes one this fails and the expectation comes down; if somebody adds one,
+		// it fails and names it. Either way it cannot arrive quietly.
+		//
+		// IT CAUGHT THE SECOND ONE, which is the entry below. Both are the same shape and the
+		// shape is not a bug: Heroes' Quest is a TWO-PLAYER quest, and each row of it is one
+		// player's route, so each row ends where that player runs out. The solo part stops at the
+		// deputy's post (11) and the Phoenix side at Charlie's secret door (4) - stage 5 is Grip
+		// dead and needs the other gang. A tail leg with nothing clickable is the honest panel for
+		// "you cannot go further alone", and "No step recorded" is what it says.
+		//
+		// Phoenix 4 arrived with DeathPlateau-Engine#128 and was given a wiki heading and
+		// deliberately no step, so legNow walks the panel on rather than parking it - the same
+		// treatment as Fight Arena 8. The engine's CI cannot see this check, so the pin here is
+		// the only thing that connects the two repositories on it.
 		List<String> bare = new ArrayList<String>();
 		for (Object element : questTable()) {
 			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
@@ -2397,8 +2409,12 @@ public class QuestHelperTest {
 		for (String b : bare) {
 			System.out.println("       panel cannot name: " + b);
 		}
-		check(bare.size() == 1 && bare.get(0).equals("HEROES' QUEST (solo part) 11"),
-			"and it is the only leg in the table the panel cannot name (" + bare.size() + ")");
+		java.util.Collections.sort(bare);
+		List<String> wantBare = new ArrayList<String>();
+		wantBare.add("HEROES' QUEST (Phoenix side) 4");
+		wantBare.add("HEROES' QUEST (solo part) 11");
+		check(bare.equals(wantBare),
+			"and they are the only two legs in the table the panel cannot name (" + bare.size() + ")");
 
 		clearNpcs();
 		wipeQuests();
