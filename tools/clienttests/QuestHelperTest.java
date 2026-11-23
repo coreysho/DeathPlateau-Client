@@ -1768,6 +1768,42 @@ public class QuestHelperTest {
 			"a loc the cache has no name for is labelled from the step instead");
 		check(!said(scene(), "null"), "...and never with the placeholder the cache carries");
 
+		// SEVERAL OF THE SAME THING IN THE SCENE, which is Melzar's Maze. It has three red doors,
+		// four orange and four yellow, and only one of each opens the way on - so marking "the
+		// first loc of that id on this floor" marked a red door that was not the player's
+		// (DeathPlateau-Bugs#87). Three bookcases stand in for them. The one at MID is the tile
+		// the table recorded; the decoys sit two tiles either side, so the scene walks one of them
+		// FIRST, which is the whole of what went wrong.
+		//
+		// TWO TILES AND NOT SIX. At six the decoy projects to x=-128, off the left of the buffer,
+		// and "no box there" passed because there was nowhere for a box to be - a check green over
+		// nothing. A tile is 64px across here, a box is 28, so two tiles apart is clear of overlap
+		// and well inside the frame. The guard below is what keeps it honest.
+		primeLocs("Dusty bookcase");
+		client.scene = new World3D(client.levelHeightmap, 104, 4, 104);
+		putLoc(MID_X - 2, MID_Z, BOOKCASE);
+		putLoc(MID_X, MID_Z, BOOKCASE);
+		putLoc(MID_X + 2, MID_Z, BOOKCASE);
+		settle();
+		scene();
+		check(boxCouldShow(MID_X - 2, MID_Z) && boxCouldShow(MID_X + 2, MID_Z),
+			"both decoy tiles are on screen, so an empty box on one means something");
+		check(boxOn(MID_X, MID_Z),
+			"of three identical locs, the box is on the one the table recorded");
+		check(!boxOn(MID_X - 2, MID_Z),
+			"...and not on the one the scene walks first");
+		check(!boxOn(MID_X + 2, MID_Z), "...nor on the one after it");
+
+		// AND THE FALLBACK STILL WORKS. A step whose recorded tile holds no loc of that id - a
+		// multiloc a varbit moved, or a tile the sim stood on rather than the one it clicked - has
+		// to keep getting a marker on something of the right kind rather than none at all.
+		client.scene = new World3D(client.levelHeightmap, 104, 4, 104);
+		putLoc(MID_X - 2, MID_Z, BOOKCASE);
+		settle();
+		scene();
+		check(boxOn(MID_X - 2, MID_Z),
+			"a loc that is not on the recorded tile is still marked where it is");
+
 		client.scene = null;
 		client.sceneBaseTileX = 0;
 		client.sceneBaseTileZ = 0;
@@ -2914,6 +2950,37 @@ public class QuestHelperTest {
 	}
 
 	/** The pixels the marker left behind, which is the box rather than its label. */
+	/**
+	 * Whether the marker's box landed on this scene tile.
+	 *
+	 * The box is 28 by 28 around the tile's projected centre, which is what
+	 * QuestHelperPlugin.mark draws - so this asks the context for the same projection and looks
+	 * for ink there. Render the layer first: this reads the pixels a frame left behind.
+	 */
+	/**
+	 * Whether a box on this tile COULD be seen: projected, and its 28 by 28 inside the frame.
+	 *
+	 * Without this, "no box on the decoy" passes whenever the decoy is off the edge of the buffer,
+	 * which is how the first draft of section 12's maze checks was green over nothing.
+	 */
+	static boolean boxCouldShow(int tileX, int tileZ) {
+		PluginContext ctx = context();
+		if (!ctx.projectTile(tileX, tileZ, 0)) {
+			return false;
+		}
+		int x = ctx.getProjectedX();
+		int y = ctx.getProjectedY();
+		return x - 14 >= 0 && y - 14 >= 0 && x + 14 < W && y + 14 < H;
+	}
+
+	static boolean boxOn(int tileX, int tileZ) {
+		PluginContext ctx = context();
+		if (!ctx.projectTile(tileX, tileZ, 0)) {
+			return false;
+		}
+		return paintedIn(ctx.getProjectedX() - 14, ctx.getProjectedY() - 14, 28, 28) > 0;
+	}
+
 	static int painted() {
 		scene();
 		int n = 0;
