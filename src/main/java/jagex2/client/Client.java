@@ -574,7 +574,7 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.Eg")
 	// 0-1 the moderator and administrator crowns; 2-4 the Realism, 5x and 10x badges; 5 the developer
-	// crown; 6 the owner's; 7 the second owner's; 8 the veteran's bronze emblem. See ChatIcons.
+	// crown; 6 the owner's; 7 the second owner's; 8 the veteran's grey emblem. See ChatIcons.
 	public Pix8[] imageModIcons = new Pix8[10];
 
 	// the clan list's rank icons: friend, Recruit .. General, owner, staff (content sprites/clanrank)
@@ -1031,6 +1031,13 @@ public class Client extends GameShell implements PixMap.Target {
 
 			public void run() {
 				try {
+					if (DisplaySettings.smallScreen()) {
+						// Beside the game, so on a phone it is taken straight out of the only
+						// width there is - and its rail is a column of icons no finger can hit.
+						// The in-canvas panel is the fallback, exactly as when one fails to build.
+						DevLog.log("PLUGIN", "sidebar not attached: the screen is smaller than the game");
+						return;
+					}
 					jagex2.client.plugin.ui.Sidebar sidebar = new jagex2.client.plugin.ui.Sidebar(manager);
 					window.setSidebar(sidebar);
 					Client.this.pluginSidebar = sidebar;
@@ -1118,6 +1125,24 @@ public class Client extends GameShell implements PixMap.Target {
 
 			public void run() {
 				window.setSidebarVisible(!window.isSidebarVisible());
+			}
+		});
+	}
+
+	/** Shows the sidebar if it is hidden and puts it on DP settings. Game thread safe. */
+	private void openSidebarSettings() {
+		final ViewBox window = super.frame;
+		final jagex2.client.plugin.ui.Sidebar sidebar = this.pluginSidebar;
+		if (sidebar == null) {
+			return;
+		}
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+
+			public void run() {
+				if (window != null && !window.isSidebarVisible()) {
+					window.setSidebarVisible(true);
+				}
+				sidebar.openSettings();
 			}
 		});
 	}
@@ -1500,6 +1525,28 @@ public class Client extends GameShell implements PixMap.Target {
 		String value = System.getProperty(property);
 		return value != null ? value : System.getenv(env);
 	}
+
+	/**
+	 * WHERE A SETTING CAME FROM, for the session log. The log has said which address the client is
+	 * dialling since the first tunnel went wrong; what it has never said is WHY that address, and
+	 * twice now that has cost an evening.
+	 *
+	 * On 2026-11-14 a staff client could not reach the dev world and the log showed two playit.gg
+	 * tunnels that had not existed since 3 November. Three explanations fit it exactly - a stale
+	 * environment variable, a -D left in a shortcut, or a jar built before the relay replaced those
+	 * defaults - and the three have three different fixes. It was the last, found by comparing file
+	 * dates. With this, the same log reads "host from built in" beside an address that is not the
+	 * built-in default any more, which names the jar on the first line instead of the third hour.
+	 */
+	private static String origin(String property, String env) {
+		if (System.getProperty(property) != null) {
+			return "-D" + property;
+		}
+		if (System.getenv(env) != null) {
+			return "$" + env;
+		}
+		return "built in";
+	}
 	private static final String RELAY_HOST = "216.128.157.152";
 	private static final boolean HOST_GIVEN = setting("lostcity.host", "LOSTCITY_HOST") != null;
 	public static String SERVER_HOST = HOST_GIVEN ? setting("lostcity.host", "LOSTCITY_HOST") : RELAY_HOST;
@@ -1689,6 +1736,24 @@ public class Client extends GameShell implements PixMap.Target {
 	// client fetching World 1's is the stale-config trap signlink's storeid comment describes - is
 	// settled by WEB_HOST and WEB_PORT above, which read lostcity.webhost and .webport themselves.
 	public static final String WEB_URL = setting("lostcity.weburl", "LOSTCITY_WEBURL");
+
+	/**
+	 * THE WEBSITE, which is not the cache host above and is the mistake waiting to be made here.
+	 * WEB_HOST and WEB_URL are where the client fetches cache files from - the relay, on 8888. This
+	 * is deathplateau.com, where a person reads things. ::vote opens a page on it.
+	 *
+	 * DEFAULTED RATHER THAN LEFT NULL, because unlike the cache there is only ever one of these and
+	 * a client that cannot find the website simply has nothing to offer: a null here would mean
+	 * ::vote building "null/vote" and sending somebody to it. Overridable all the same, so a dev
+	 * world pointed at a local site works - and so this is never a reason to edit the source.
+	 */
+	public static final String SITE_URL = stripSlash(setting("lostcity.site", "LOSTCITY_SITE"), "https://deathplateau.com");
+
+	/** The configured value with any trailing slash off, or the fallback. One place, so no caller doubles a slash. */
+	private static String stripSlash(String value, String fallback) {
+		String url = value != null && value.length() > 0 ? value : fallback;
+		return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+	}
 
 	// THE CACHE'S ADDRESS AS ONE STRING, read by getCodeBase() and by the startup log in main().
 	// A diagnostic that names a different host than the one the client actually dials is worse
@@ -2537,6 +2602,12 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.wh")
 	public Pix8 imageMapback;
+	/**
+	 * What not to draw of each panel, for the layout in hand: the minimap's ring and the rounded
+	 * corners of each group, combined. Rebuilt when the layout changes, because the panels move
+	 * and the HUD scale changes how big a corner is.
+	 */
+	private boolean[][] hudMasks;
 
 	@ObfuscatedName("client.xh")
 	public Pix8 imageChatback;
@@ -2693,6 +2764,18 @@ public class Client extends GameShell implements PixMap.Target {
 			// opposite fixes. Every log now answers it before the first frame.
 			DevLog.log("SESSION", "game " + gameAddress() + "  cache " + webAddress() + "  jaggrab "
 				+ (jaggrabUsable(JAGGRAB_PORT, WS_URL) ? WEB_HOST + ":" + JAGGRAB_PORT : "off"));
+			// ...and where each of those came from, which is the half that was missing. Naming the
+			// built-in default beside them is what makes a stale jar obvious: an address that does
+			// not match it, from no property and no variable, can only have been compiled in.
+			DevLog.log("SESSION", "host from " + origin("lostcity.host", "LOSTCITY_HOST")
+				+ ", port from " + origin("lostcity.port", "LOSTCITY_PORT")
+				+ ", cache host from " + origin("lostcity.webhost", "LOSTCITY_WEBHOST")
+				+ ", cache port from " + origin("lostcity.webport", "LOSTCITY_WEBPORT")
+				+ " (built in: " + RELAY_HOST + ", game 43594, cache 8888)");
+			// The WEBSITE, separately, because it is the setting most easily confused with the cache
+			// host above and the only way to see what ::vote will open. Printed as the resolved url
+			// rather than only its source: a trailing slash or a wrong scheme is invisible otherwise.
+			DevLog.log("SESSION", "site from " + origin("lostcity.site", "LOSTCITY_SITE") + " = " + SITE_URL);
 
 			if (args.length == 5) {
 				nodeId = Integer.parseInt(args[0]);
@@ -2720,7 +2803,7 @@ public class Client extends GameShell implements PixMap.Target {
 				signlink.startpriv(InetAddress.getLocalHost());
 
 				Client app = new Client();
-				app.initApplication(503, 765);
+				app.initApplication(DisplaySettings.startHeight(), DisplaySettings.startWidth());
 			} else if (args.length == 0) {
 				// default args: 10 0 highmem members 32
 				nodeId = 10;
@@ -2732,7 +2815,7 @@ public class Client extends GameShell implements PixMap.Target {
 				signlink.startpriv(InetAddress.getLocalHost());
 
 				Client app = new Client();
-				app.initApplication(503, 765);
+				app.initApplication(DisplaySettings.startHeight(), DisplaySettings.startWidth());
 			} else {
 				System.out.println("Usage: node-id, port-offset, [lowmem/highmem], [free/members], storeid");
 			}
@@ -2862,8 +2945,20 @@ public class Client extends GameShell implements PixMap.Target {
 		if (WS_URL != null) {
 			return new jagex2.io.WsSocket(WS_URL);
 		}
-		return new Socket(InetAddress.getByName(SERVER_HOST), port);
+		// WITH A TIMEOUT, because the default is the operating system's. A host that refuses the
+		// connection says so at once; a host that is simply unreachable - a tunnel that is down, a
+		// laptop that has changed network, a firewall that drops rather than rejects - says nothing
+		// at all, and Windows waits about twenty-one seconds before giving up. This is called on
+		// the game thread (tryReconnect does it when a write fails), so those seconds are a client
+		// drawing nothing and answering no clicks. Five is longer than any server that is actually
+		// there needs, and short enough to be a pause rather than a hang.
+		Socket socket = new Socket();
+		socket.connect(new java.net.InetSocketAddress(InetAddress.getByName(SERVER_HOST), port), CONNECT_TIMEOUT);
+		return socket;
 	}
+
+	/** How long to wait for a connection before giving up, in milliseconds. See openSocket. */
+	private static final int CONNECT_TIMEOUT = 5000;
 
 	@ObfuscatedName("client.a(Ljava/lang/Runnable;I)V")
 	public void startThread(Runnable thread, int priority) {
@@ -3190,16 +3285,24 @@ public class Client extends GameShell implements PixMap.Target {
 
 			this.drawProgress(80, "Unpacking media");
 
-			this.imageInvback = new Pix8(jagMedia, "invback", 0);
-			this.imageChatback = new Pix8(jagMedia, "chatback", 0);
-			this.imageMapback = new Pix8(jagMedia, "mapback", 0);
-			this.imageBackbase1 = new Pix8(jagMedia, "backbase1", 0);
-			this.imageBackbase2 = new Pix8(jagMedia, "backbase2", 0);
-			this.imageBackhmid1 = new Pix8(jagMedia, "backhmid1", 0);
+			// ONE READ OF index.dat FOR THE WHOLE ARCHIVE, and one of each group's own entry below.
+			// Jagfile.read decompresses what it is asked for every single time (BZip2, per entry)
+			// and the per-sprite constructors ask twice each, so the groups here used to cost some
+			// eight hundred decompressions to produce four hundred pictures. The same mistake cost
+			// twelve seconds on the login screen; see Pix8(byte[], byte[], int).
+			byte[] mediaIndex = jagMedia.read("index.dat", null);
 
+			this.imageInvback = new Pix8(jagMedia.read("invback.dat", null), mediaIndex, 0);
+			this.imageChatback = new Pix8(jagMedia.read("chatback.dat", null), mediaIndex, 0);
+			this.imageMapback = new Pix8(jagMedia.read("mapback.dat", null), mediaIndex, 0);
+			this.imageBackbase1 = new Pix8(jagMedia.read("backbase1.dat", null), mediaIndex, 0);
+			this.imageBackbase2 = new Pix8(jagMedia.read("backbase2.dat", null), mediaIndex, 0);
+			this.imageBackhmid1 = new Pix8(jagMedia.read("backhmid1.dat", null), mediaIndex, 0);
+
+			byte[] sideiconsDat = jagMedia.read("sideicons.dat", null);
 			for (int i = 0; i < this.imageSideicons.length; i++) {
 				try {
-					this.imageSideicons[i] = new Pix8(jagMedia, "sideicons", i);
+					this.imageSideicons[i] = new Pix8(sideiconsDat, mediaIndex, i);
 				} catch (Exception e) {
 					// 15 and 16, the Ancient and Lunar magic icons, are newer than some servers' media
 					if (i < 15) {
@@ -3208,13 +3311,14 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
-			this.imageCompass = new Pix32(jagMedia, "compass", 0);
+			this.imageCompass = new Pix32(jagMedia.read("compass.dat", null), mediaIndex, 0);
 
-			this.imageMapedge = new Pix32(jagMedia, "mapedge", 0);
+			this.imageMapedge = new Pix32(jagMedia.read("mapedge.dat", null), mediaIndex, 0);
 			this.imageMapedge.trim();
 
+			byte[] mapsceneDat = jagMedia.read("mapscene.dat", null);
 			for (int i = 0; i < 72; i++) {
-				this.imageMapscene[i] = new Pix8(jagMedia, "mapscene", i);
+				this.imageMapscene[i] = new Pix8(mapsceneDat, mediaIndex, i);
 			}
 
 			// A SECOND, UNTINTED COPY FOR THE WORLD MAP. The ones above are about to be shifted
@@ -3223,17 +3327,18 @@ public class Client extends GameShell implements PixMap.Target {
 			// that moved with the login would undo that.
 			Pix8[] mapScenesForMap = new Pix8[72];
 			for (int i = 0; i < mapScenesForMap.length; i++) {
-				mapScenesForMap[i] = new Pix8(jagMedia, "mapscene", i);
+				mapScenesForMap[i] = new Pix8(mapsceneDat, mediaIndex, i);
 			}
 			jagex2.client.worldmap.MapSquare.useScenes(mapScenesForMap);
 
 			// And the icons the key names, for the same reason: these are tinted a moment
 			// later too, and a map whose bank icon is a different yellow every login looks
 			// broken rather than varied.
+			byte[] mapfunctionDat = jagMedia.read("mapfunction.dat", null);
 			Pix32[] mapIconsForMap = new Pix32[72];
 			for (int i = 0; i < mapIconsForMap.length; i++) {
 				try {
-					mapIconsForMap[i] = new Pix32(jagMedia, "mapfunction", i);
+					mapIconsForMap[i] = new Pix32(mapfunctionDat, mediaIndex, i);
 				} catch (Exception e) {
 					// 70 and 71 are newer than some servers' media, as below.
 					if (i < 70) {
@@ -3247,7 +3352,7 @@ public class Client extends GameShell implements PixMap.Target {
 			// Emporium (Old School's kebbit), both newer than some servers' media
 			for (int i = 0; i < 72; i++) {
 				try {
-					this.imageMapfunction[i] = new Pix32(jagMedia, "mapfunction", i);
+					this.imageMapfunction[i] = new Pix32(mapfunctionDat, mediaIndex, i);
 				} catch (Exception e) {
 					if (i < 70) {
 						throw e;
@@ -3258,9 +3363,10 @@ public class Client extends GameShell implements PixMap.Target {
 			// 0-4 are 377's own (block, damage, poison, and the two disease splats); 5-7 are Old School's
 			// venom, heal and max hit, at the numbers Old School gives the first two. A server whose media
 			// stops at 4 leaves the rest null, and the draw falls back to the plain damage splat.
+			byte[] hitmarksDat = jagMedia.read("hitmarks.dat", null);
 			for (int i = 0; i < 8; i++) {
 				try {
-					this.imageHitmarks[i] = new Pix32(jagMedia, "hitmarks", i);
+					this.imageHitmarks[i] = new Pix32(hitmarksDat, mediaIndex, i);
 				} catch (Exception e) {
 					if (i < 5) {
 						throw e;
@@ -3268,53 +3374,65 @@ public class Client extends GameShell implements PixMap.Target {
 				}
 			}
 
+			byte[] pkDat = jagMedia.read("headicons_pk.dat", null);
 			for (int i = 0; i < 6; i++) {
-				this.imageHeadiconsPk[i] = new Pix32(jagMedia, "headicons_pk", i);
+				this.imageHeadiconsPk[i] = new Pix32(pkDat, mediaIndex, i);
 			}
 
+			byte[] prayerDat = jagMedia.read("headicons_prayer.dat", null);
 			for (int i = 0; i < 9; i++) {
-				this.imageHeadiconsPrayer[i] = new Pix32(jagMedia, "headicons_prayer", i);
+				this.imageHeadiconsPrayer[i] = new Pix32(prayerDat, mediaIndex, i);
 			}
 
+			byte[] hintDat = jagMedia.read("headicons_hint.dat", null);
 			for (int i = 0; i < 6; i++) {
-				this.imageHeadiconsHint[i] = new Pix32(jagMedia, "headicons_hint", i);
+				this.imageHeadiconsHint[i] = new Pix32(hintDat, mediaIndex, i);
 			}
 
-			this.imageOverlayMultiway = new Pix32(jagMedia, "overlay_multiway", 0);
+			this.imageOverlayMultiway = new Pix32(jagMedia.read("overlay_multiway.dat", null), mediaIndex, 0);
 
-			this.imageMapmarker0 = new Pix32(jagMedia, "mapmarker", 0);
-			this.imageMapmarker1 = new Pix32(jagMedia, "mapmarker", 1);
+			byte[] markerDat = jagMedia.read("mapmarker.dat", null);
+			this.imageMapmarker0 = new Pix32(markerDat, mediaIndex, 0);
+			this.imageMapmarker1 = new Pix32(markerDat, mediaIndex, 1);
 
+			byte[] crossDat = jagMedia.read("cross.dat", null);
 			for (int i = 0; i < 8; i++) {
-				this.imageCross[i] = new Pix32(jagMedia, "cross", i);
+				this.imageCross[i] = new Pix32(crossDat, mediaIndex, i);
 			}
 
-			this.imageMapdot0 = new Pix32(jagMedia, "mapdots", 0);
-			this.imageMapdot1 = new Pix32(jagMedia, "mapdots", 1);
-			this.imageMapdot2 = new Pix32(jagMedia, "mapdots", 2);
-			this.imageMapdot3 = new Pix32(jagMedia, "mapdots", 3);
-			this.imageMapdot4 = new Pix32(jagMedia, "mapdots", 4);
+			byte[] mapdotsDat = jagMedia.read("mapdots.dat", null);
+			this.imageMapdot0 = new Pix32(mapdotsDat, mediaIndex, 0);
+			this.imageMapdot1 = new Pix32(mapdotsDat, mediaIndex, 1);
+			this.imageMapdot2 = new Pix32(mapdotsDat, mediaIndex, 2);
+			this.imageMapdot3 = new Pix32(mapdotsDat, mediaIndex, 3);
+			this.imageMapdot4 = new Pix32(mapdotsDat, mediaIndex, 4);
 
-			this.imageScrollbar0 = new Pix8(jagMedia, "scrollbar", 0);
-			this.imageScrollbar1 = new Pix8(jagMedia, "scrollbar", 1);
+			byte[] scrollbarDat = jagMedia.read("scrollbar.dat", null);
+			this.imageScrollbar0 = new Pix8(scrollbarDat, mediaIndex, 0);
+			this.imageScrollbar1 = new Pix8(scrollbarDat, mediaIndex, 1);
 
+			byte[] tabstonesDat = jagMedia.read("tabstones.dat", null);
 			for (int i = 0; i < this.imageTabstones.length; i++) {
-				this.imageTabstones[i] = new Pix8(jagMedia, "tabstones", i);
+				this.imageTabstones[i] = new Pix8(tabstonesDat, mediaIndex, i);
 			}
+			byte[] chatbuttonsDat = jagMedia.read("chatbuttons.dat", null);
 			for (int i = 0; i < this.imageChatbuttons.length; i++) {
-				this.imageChatbuttons[i] = new Pix8(jagMedia, "chatbuttons", i);
+				this.imageChatbuttons[i] = new Pix8(chatbuttonsDat, mediaIndex, i);
 			}
+			byte[] reportbuttonDat = jagMedia.read("reportbutton.dat", null);
 			for (int i = 0; i < this.imageReportbutton.length; i++) {
-				this.imageReportbutton[i] = new Pix8(jagMedia, "reportbutton", i);
+				this.imageReportbutton[i] = new Pix8(reportbuttonDat, mediaIndex, i);
 			}
 
+			byte[] modIconsDat = jagMedia.read("mod_icons.dat", null);
 			for (int i = 0; i < 2; i++) {
-				this.imageModIcons[i] = new Pix8(jagMedia, "mod_icons", i);
+				this.imageModIcons[i] = new Pix8(modIconsDat, mediaIndex, i);
 			}
 			// Clan rank icons - optional like the badges: a cache without them draws the list without icons.
+			byte[] clanrankDat = jagMedia.read("clanrank.dat", null);
 			for (int i = 0; i < this.imageClanRanks.length; i++) {
 				try {
-					this.imageClanRanks[i] = new Pix32(jagMedia, "clanrank", i);
+					this.imageClanRanks[i] = new Pix32(clanrankDat, mediaIndex, i);
 				} catch (Exception ignored) {
 					this.imageClanRanks[i] = null;
 				}
@@ -3323,41 +3441,41 @@ public class Client extends GameShell implements PixMap.Target {
 			// ChatIcons draws a missing sprite as nothing rather than failing the whole load.
 			for (int i = 2; i < this.imageModIcons.length; i++) {
 				try {
-					this.imageModIcons[i] = new Pix8(jagMedia, "mod_icons", i);
+					this.imageModIcons[i] = new Pix8(modIconsDat, mediaIndex, i);
 				} catch (Exception ignored) {
 					this.imageModIcons[i] = null;
 				}
 			}
 
-			Pix32 backleft1 = new Pix32(jagMedia, "backleft1", 0);
+			Pix32 backleft1 = new Pix32(jagMedia.read("backleft1.dat", null), mediaIndex, 0);
 			this.areaBackleft1 = new PixMap(backleft1.hi, this.getBaseComponent(), backleft1.wi);
 			backleft1.quickPlotSprite(0, 0);
 
-			Pix32 chatframe = new Pix32(jagMedia, "chatback", 0);
+			Pix32 chatframe = new Pix32(jagMedia.read("chatback.dat", null), mediaIndex, 0);
 			this.areaChatframe = new PixMap(chatframe.hi, this.getBaseComponent(), chatframe.wi);
 			chatframe.quickPlotSprite(0, 0);
 
-			Pix32 backright1 = new Pix32(jagMedia, "backright1", 0);
+			Pix32 backright1 = new Pix32(jagMedia.read("backright1.dat", null), mediaIndex, 0);
 			this.areaBackright1 = new PixMap(backright1.hi, this.getBaseComponent(), backright1.wi);
 			backright1.quickPlotSprite(0, 0);
 
-			Pix32 backright2 = new Pix32(jagMedia, "backright2", 0);
+			Pix32 backright2 = new Pix32(jagMedia.read("backright2.dat", null), mediaIndex, 0);
 			this.areaBackright2 = new PixMap(backright2.hi, this.getBaseComponent(), backright2.wi);
 			backright2.quickPlotSprite(0, 0);
 
-			Pix32 backtop1 = new Pix32(jagMedia, "backtop1", 0);
+			Pix32 backtop1 = new Pix32(jagMedia.read("backtop1.dat", null), mediaIndex, 0);
 			this.areaBacktop1 = new PixMap(backtop1.hi, this.getBaseComponent(), backtop1.wi);
 			backtop1.quickPlotSprite(0, 0);
 
-			Pix32 backvmid1 = new Pix32(jagMedia, "backvmid1", 0);
+			Pix32 backvmid1 = new Pix32(jagMedia.read("backvmid1.dat", null), mediaIndex, 0);
 			this.areaBackvmid1 = new PixMap(backvmid1.hi, this.getBaseComponent(), backvmid1.wi);
 			backvmid1.quickPlotSprite(0, 0);
 
-			Pix32 backvmid2 = new Pix32(jagMedia, "backvmid2", 0);
+			Pix32 backvmid2 = new Pix32(jagMedia.read("backvmid2.dat", null), mediaIndex, 0);
 			this.areaBackvmid2 = new PixMap(backvmid2.hi, this.getBaseComponent(), backvmid2.wi);
 			backvmid2.quickPlotSprite(0, 0);
 
-			Pix32 backvmid3 = new Pix32(jagMedia, "backvmid3", 0);
+			Pix32 backvmid3 = new Pix32(jagMedia.read("backvmid3.dat", null), mediaIndex, 0);
 			this.areaBackvmid3 = new PixMap(backvmid3.hi, this.getBaseComponent(), backvmid3.wi);
 			backvmid3.quickPlotSprite(0, 0);
 
@@ -3498,6 +3616,16 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 
+		// EVERY CYCLE, WHATEVER IS ON SCREEN (2026-11-16). These were next to the camera drag in
+		// updateOrbitCamera, which was the wrong company to keep: the drag is in-game by nature -
+		// nothing is dragged before there is a world - and updateOrbitCamera runs only once the
+		// player is in it. The keyboard is the opposite case. It exists to type a name on the LOGIN
+		// screen, which is before any of that, so the one place it was needed was the one place it
+		// was never called. Verified against a running client: with the poll in updateOrbitCamera
+		// the page was asked for a key exactly zero times.
+		super.pollBrowserKeys();
+		super.pollBrowserTap();
+
 		loopCycle++;
 
 		if (this.ingame) {
@@ -3575,6 +3703,10 @@ public class Client extends GameShell implements PixMap.Target {
 			this.writeScreenshot();
 		}
 
+		if (this.scaled) {
+			this.presentScaled();
+		}
+
 		this.dragCycles = 0;
 	}
 
@@ -3635,6 +3767,67 @@ public class Client extends GameShell implements PixMap.Target {
 			DevLog.log("SHOT", "screenshot failed: " + error);
 			this.addMessage("", "The screenshot could not be saved: " + error, 0);
 		}
+	}
+
+	/**
+	 * ::vote - open the website's voting page in a browser, with this player's name in it.
+	 *
+	 * WHY THE NAME MATTERS. The page cannot show anybody their own cooldowns, or build links that
+	 * actually pay a ticket, without knowing who is asking - and the one person who should never
+	 * have to type their name in is the player sitting in game. The page takes ?name= already.
+	 *
+	 * SPACES BECOME UNDERSCORES AND NOTHING ELSE IS ESCAPED, deliberately rather than reaching for
+	 * URLEncoder. A username is at most twelve characters of letters, digits, spaces and
+	 * underscores, so once the spaces are converted there is nothing left that a url minds - and
+	 * underscores are what the server stores anyway, since every lookup there goes through a base37
+	 * round trip. "Lord Fooby" and "lord_fooby" are the same account to the site.
+	 *
+	 * ON ANOTHER THREAD, because Desktop.browse hands off to whatever the desktop has registered
+	 * and that is not reliably quick - on a machine with no browser set up it can sit there. The
+	 * game loop must not wait for somebody else's software to start.
+	 *
+	 * AND IT PRINTS THE URL WHEN IT CANNOT OPEN ONE. Headless, a locked-down desktop, an exception
+	 * from the window manager: the player still gets the address. They have to type it, which is
+	 * why it is kept short.
+	 */
+	private void openVotePage() {
+		String name = this.username == null ? "" : this.username.trim().replace(' ', '_');
+		final String url = name.length() > 0 ? SITE_URL + "/vote?name=" + name : SITE_URL + "/vote";
+
+		boolean canBrowse = false;
+		try {
+			canBrowse = java.awt.Desktop.isDesktopSupported()
+				&& java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE);
+		} catch (Throwable ignored) {
+			// Some headless and sandboxed setups throw rather than answering false.
+			canBrowse = false;
+		}
+
+		if (!canBrowse) {
+			DevLog.log("VOTE", "no browser available, printed " + url);
+			this.addMessage("", "Vote at " + url, 0);
+			return;
+		}
+
+		// BOTH LINES, ALWAYS, and the second one is the point. The browse happens on another thread,
+		// so if it throws there is no safe way to correct the chatbox afterwards - addMessage is the
+		// game loop's, not this thread's. Telling the player the address now means the failure case
+		// needs no apology: they already have what they need, and "if nothing opens" costs a line.
+		this.addMessage("", "Opening the voting page in your browser.", 0);
+		this.addMessage("", "If nothing opens: " + url, 0);
+
+		final String target = url;
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					java.awt.Desktop.getDesktop().browse(new java.net.URI(target));
+					DevLog.log("VOTE", "opened " + target);
+				} catch (Throwable error) {
+					DevLog.log("VOTE", "could not open " + target + ": " + error);
+				}
+			}
+		}, "open-vote-page").start();
 	}
 
 	@ObfuscatedName("client.b(I)V")
@@ -4079,7 +4272,9 @@ public class Client extends GameShell implements PixMap.Target {
 			return;
 		}
 
-		java.util.List<LoginProfiles.Profile> saved = LoginProfiles.all();
+		// cards(), not all(): the launcher's Discord sign-in adds the characters linked to it,
+		// and the click handling below has to be looking at the same row the drawing is.
+		java.util.List<LoginProfiles.Profile> saved = LoginProfiles.cards();
 		int count = saved.size();
 
 		// The highlight. Only a change is worth a repaint: the accounts sit outside the piece
@@ -4096,8 +4291,11 @@ public class Client extends GameShell implements PixMap.Target {
 
 			// THE x IS TESTED BEFORE THE CARD IT SITS IN. The other way round, every attempt to
 			// remove an account would sign into it instead.
+			// ...and a launcher card has no x drawn on it, so a click where one would be is a
+			// click on the card. Falling through rather than returning is what makes that true:
+			// forgetting one would do nothing visible and the card would be back next frame.
 			int forget = TitleScreen.forgetAt(x, y, count);
-			if (forget >= 0) {
+			if (forget >= 0 && !saved.get(forget).fromLauncher) {
 				LoginProfiles.forget(saved.get(forget).username);
 				// ...and the face with it. The heads are cached by account name, so an account
 				// removed and later saved again would otherwise come back wearing the kit it had
@@ -4214,6 +4412,14 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.a(Ljava/lang/String;Ljava/lang/String;Z)V")
 	public void login(String arg0, String arg1, boolean arg2) {
 		signlink.errorname = arg0;
+		// WHERE THE SECOND AT EVERY LOGIN GOES. Three of the steps below are round trips to a
+		// machine across the internet and one is a modular exponentiation, and all of them happen
+		// on the thread that draws - so the window neither repaints nor answers for as long as the
+		// slowest of them takes. Which one it is decides whether there is anything to fix.
+		long loginAt = System.currentTimeMillis();
+		long at = loginAt;
+		phases = new StringBuilder();
+		phaseSum = 0L;
 		try {
 			if (!arg2) {
 				this.loginMessage0 = "";
@@ -4221,6 +4427,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.drawTitle();
 			}
 			this.stream = new ClientStream(this.openSocket(portOffset + GAME_PORT), this);
+			at = phase("the socket opened", at);
 			long var4 = JString.toBase37(arg0);
 			int var6 = (int) (var4 >> 16 & 0x1FL);
 			this.out.pos = 0;
@@ -4231,11 +4438,13 @@ public class Client extends GameShell implements PixMap.Target {
 				this.stream.method234();
 			}
 			int var8 = this.stream.method234();
+			at = phase("the server's first answer", at);
 			int var9 = var8;
 			if (var8 == 0) {
 				this.stream.read(this.in.data, 0, 8);
 				this.in.pos = 0;
 				this.serverSeed = this.in.g8();
+				at = phase("the seed", at);
 				int[] var10 = new int[] { (int) (Math.random() * 9.9999999E7D), (int) (Math.random() * 9.9999999E7D), (int) (this.serverSeed >> 32), (int) this.serverSeed };
 				this.out.pos = 0;
 				this.out.p1(10);
@@ -4257,14 +4466,29 @@ public class Client extends GameShell implements PixMap.Target {
 				// Only a typed password can ask for one: a token login already has a token, and
 				// the server pushes its month out from today every time one is used.
 				boolean wantsToken = this.rememberLogin && this.loginToken.length() == 0;
+				// THE LAUNCHER'S DISCORD SIGN-IN, if this client was started from one. It is not a
+				// credential and cannot stand in for the password - the server reads it from its
+				// own field and uses it for one thing, recording the Discord link so that a
+				// launcher player never has to type ::discord. It rides inside the RSA envelope
+				// with the others because everything in the login block does, and the envelope
+				// has the room: a 1024-bit key carries 127 bytes and this makes it 98.
+				String launcher = LauncherAccounts.token();
 				// To client.log, because when a saved login does not save, the first question is
 				// whether this client ever asked - and the answer was not written down anywhere.
 				DevLog.log("SESSION", this.loginToken.length() > 0 ? "signing in with a saved login"
 					: wantsToken ? "asking for a saved login to keep"
 					: "not asking for a saved login (Remember me is off)");
-				this.out.p1(wantsToken ? 1 : 0);
+				// A FLAG BYTE, not a boolean, which is what lets this ship without a revision
+				// bump. Bit 0 is what it always was - "mint me a saved login" - and bit 1 says a
+				// launcher sign-in follows, so a server reads the extra field only when the client
+				// says it wrote one and an older client's 0 or 1 still means exactly what it did.
+				this.out.p1((wantsToken ? 1 : 0) | (launcher.length() > 0 ? 2 : 0));
 				this.out.pjstr(this.loginToken);
+				if (launcher.length() > 0) {
+					this.out.pjstr(launcher);
+				}
 				this.out.rsaenc(LOGIN_RSAN, LOGIN_RSAE);
+				at = phase("the login block encrypted", at);
 				this.login.pos = 0;
 				if (arg2) {
 					this.login.p1(18);
@@ -4295,6 +4519,7 @@ public class Client extends GameShell implements PixMap.Target {
 				this.randomIn = new Isaac(var10);
 				this.stream.write(this.login.pos, 0, this.login.data);
 				var8 = this.stream.method234();
+				at = phase("the server's answer to it", at);
 			}
 			if (var8 == 1) {
 				try {
@@ -4425,6 +4650,11 @@ public class Client extends GameShell implements PixMap.Target {
 				oplogic9 = 0;
 				oplogic10 = 0;
 				this.prepareGame();
+				phase("setting the game up", at);
+				// ONE LINE PER LOGIN, naming the five things the second is made of. A login that is
+				// mostly network is a login that is mostly network - but it should say so with
+				// numbers rather than be assumed to, which is what cost five rounds on the logout.
+				DevLog.log("SESSION", "login took " + (System.currentTimeMillis() - loginAt) + "ms" + phases);
 			} else if (var8 == 3) {
 				// BOTH CAUSES, because the login server cannot tell them apart and nor can this.
 				// An unknown name and a wrong password are one reply once accounts are made on
@@ -4576,6 +4806,7 @@ public class Client extends GameShell implements PixMap.Target {
 	@ObfuscatedName("client.n(Z)V")
 	public void logout() {
 		DevLog.log("SESSION", "logged out, was \"" + this.username + "\"");
+		long logoutAt = System.currentTimeMillis();
 		try {
 			if (this.stream != null) {
 				this.stream.method233();
@@ -4588,6 +4819,18 @@ public class Client extends GameShell implements PixMap.Target {
 		this.titleScreenState = 0;
 		this.username = "";
 		this.password = "";
+		// THE LOGIN FORM BACK TO A FRESH ONE. Without this the title screen comes up still saying
+		// "Connecting to server..." from the login that started the session now ending, which reads
+		// as a login in progress and is the only line on the page a player might wait on. The
+		// token goes with it: it belongs to the session that just ended, the card hands it back
+		// when it is clicked, and Enter clears it in any case.
+		this.loginMessage0 = "";
+		this.loginMessage1 = "";
+		this.loginToken = "";
+		this.titleLoginField = 0;
+		// The surround is refilled by prepareResizableFrame on the next frame; this is the title
+		// screen itself, which would otherwise wait for something else to ask for it.
+		this.redrawFrame = true;
 		this.clearCache();
 		this.scene.method274();
 		for (int var2 = 0; var2 < 4; var2++) {
@@ -4598,6 +4841,9 @@ public class Client extends GameShell implements PixMap.Target {
 		this.nextMidiSong = -1;
 		this.midiSong = -1;
 		this.nextMusicDelay = 0;
+		// System.gc() above is a full collection, which stops every thread including the one
+		// drawing the window - so if a logout ever feels slow, this is the first number to read.
+		DevLog.log("SESSION", "logout() took " + (System.currentTimeMillis() - logoutAt) + "ms");
 	}
 
 	@ObfuscatedName("client.k(I)V")
@@ -5118,8 +5364,20 @@ public class Client extends GameShell implements PixMap.Target {
 		this.flagSceneTileX = 0;
 		ClientStream var2 = this.stream;
 		this.ingame = false;
-		this.loginRetryCount = 0;
+		// ONE ATTEMPT, NOT THREE. login() retries itself twice more when the server says nothing,
+		// sleeping two seconds between - which is fair on the title screen, where the player is
+		// watching a message that changes, and is not fair here: this runs on the game thread, so
+		// those sleeps are a frozen window with nothing drawn in it. A reconnect that does not
+		// work first time drops to the title screen, where trying again is a click and the player
+		// can SEE it happening.
+		this.loginRetryCount = 2;
+		long reconnectAt = System.currentTimeMillis();
 		this.login(this.username, this.password, true);
+		// THE LINE THAT NAMES A TWENTY-SECOND LOGOUT, if this is where it comes from. A reconnect
+		// is invisible from the outside: the window stops drawing and the player reports the thing
+		// that happened before it, which is why this was guessed at twice before it was measured.
+		DevLog.log("SESSION", "reconnect attempt took " + (System.currentTimeMillis() - reconnectAt)
+			+ "ms, back in game: " + this.ingame);
 		if (!this.ingame) {
 			this.logout();
 		}
@@ -6366,6 +6624,16 @@ public class Client extends GameShell implements PixMap.Target {
 					tab = col + 7;
 				}
 				if (tab != -1 && this.tabInterfaceId[tab] != -1) {
+					// THE LIT ONE FOLDS THE PANEL AWAY, as it does in Old School. Clicking a tab
+					// that is already selected does nothing today, so this takes no behaviour from
+					// anyone; clicking any other brings the panel back with it. Modern only -
+					// classic's column could fold now that it is three pieces, but Old School's
+					// classic layout does not, and matching it is the point.
+					if (tab == this.selectedTab && this.layout.mode == Layout.MODERN) {
+						DisplaySettings.setHideSidebar(!DisplaySettings.hideSidebar());
+					} else {
+						DisplaySettings.setHideSidebar(false);
+					}
 					this.redrawSidebar = true;
 					this.selectedTab = tab;
 					this.redrawSideicons = true;
@@ -6382,6 +6650,16 @@ public class Client extends GameShell implements PixMap.Target {
 		int button = this.chatBarButtonAt(super.mouseClickX, super.mouseClickY);
 		if (button == 0 || button == 1) {
 			// All / Game: what the chatbox lists. Nothing to tell the server - it is a view.
+			//
+			// AND THE LIT ONE FOLDS IT AWAY, as the lit side tab folds the inventory. Only these
+			// two, because only these two are the chatbox's own tabs; the rest cycle a privacy
+			// mode and have the server to answer to. The row of buttons is its own panel and is
+			// never folded, so there is always something here to click to bring it back.
+			if (this.chatFilter == button && this.layout.resizable) {
+				DisplaySettings.setHideChat(!DisplaySettings.hideChat());
+			} else {
+				DisplaySettings.setHideChat(false);
+			}
 			if (this.chatFilter != button) {
 				this.chatFilter = button;
 				this.chatScrollOffset = 0;
@@ -6565,59 +6843,106 @@ public class Client extends GameShell implements PixMap.Target {
 	private static final int[] BANKPIN_DIGIT_TEXT_IDS = {14883, 14884, 14885, 14886, 14887, 14888, 14889, 14890, 14891, 14892}; // a_text..j_text
 	private static final int[] BANKPIN_DIGIT_BUTTON_IDS = {14873, 14874, 14875, 14876, 14877, 14878, 14879, 14880, 14881, 14882}; // a_button..j_button
 
-	// DEV: best-effort description of a useMenuOption() target, based on the menuParamA/B/C
-	// conventions this client already uses per action family - see addNpcOptions() (npc index in
-	// paramA), addPlayerOptions() (player index in paramA), and the loc menu-building block in
-	// handleViewportOptions() (loc id packed into paramA, local tile x/z in paramB/paramC). These
-	// action ids are read directly from where each family actually assigns them, not guessed.
-	// Falls back to the raw params for anything else (interface-only clicks like bank/trade/
-	// spellbook, "Walk here", etc.) so nothing is silently dropped.
+	// DEV: best-effort description of a useMenuOption() target, built from resolveMenuTarget
+	// below so that the dev log and the plugins' click event can never disagree about what was
+	// clicked. Falls back to the raw params for anything else (interface-only clicks like bank/
+	// trade/spellbook, "Walk here", etc.) so nothing is silently dropped.
 	private String describeMenuTarget(int action, int paramA, int paramB, int paramC) {
-		switch (action) {
-			case 318:
-			case 921:
-			case 118:
-			case 553:
-			case 432:
-			case 1668:
-			case 67: {
-				// NPC actions (addNpcOptions): paramA = index into this.npcs[]
-				ClientNpc npc = paramA >= 0 && paramA < this.npcs.length ? this.npcs[paramA] : null;
-				if (npc != null) {
-					String name = npc.field1370 != null ? npc.field1370.field1455 : "?";
-					return "target=npc name=\"" + name + "\" coords=(" + (npc.routeTileX[0] + this.sceneBaseTileX) + "," + (npc.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-				}
-				break;
+		jagex2.client.plugin.event.MenuOptionClicked.Target target = this.resolveMenuTarget(action, paramA, paramB, paramC);
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.NPC)) {
+			// The npc itself, for its name - and when it has gone from the scene between the
+			// click and this line, the raw parameters at the bottom say more than "npc id=-1".
+			ClientNpc npc = paramA >= 0 && paramA < this.npcs.length ? this.npcs[paramA] : null;
+			if (npc != null && npc.field1370 != null) {
+				return "target=npc id=" + target.id + " name=\"" + npc.field1370.field1455 + "\" coords=("
+					+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
 			}
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.LOC)) {
+			LocType loc = LocType.method561(target.id);
+			return "target=loc id=" + target.id + " name=\"" + (loc != null ? loc.field1630 : "?") + "\" coords=("
+				+ (target.sceneTileX + this.sceneBaseTileX) + "," + (target.sceneTileZ + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.PLAYER)) {
+			ClientPlayer p = paramA >= 0 && paramA < this.players.length ? this.players[paramA] : null;
+			if (p != null) {
+				return "target=player name=\"" + p.name + "\" coords=(" + (p.routeTileX[0] + this.sceneBaseTileX) + "," + (p.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
+			}
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.WORN)) {
+			return "target=item id=" + target.id + " slot=" + paramB + " (worn, option " + (action - WEAROP_ACTION + 1) + ")";
+		}
+		if (target.is(jagex2.client.plugin.event.MenuOptionClicked.Target.OBJ)) {
+			return "target=item id=" + target.id + " slot=" + paramB + " (inventory, no world coords)";
+		}
+		return "target=? action=" + action + " paramA=" + paramA + " paramB=" + paramB + " paramC=" + paramC;
+	}
+
+	/**
+	 * WHAT A MENU ROW ACTS ON: what kind of thing, which one, which op slot, and where.
+	 *
+	 * ONE LIST OF ACTION IDS, NOT TWO. Which parameter holds what depends on the action - paramA
+	 * is an index into npcs[] for an npc row and a packed loc id for a loc row - and that list
+	 * used to be written out for the dev log and nowhere else, so a plugin asking the same
+	 * question had to keep its own copy of it and go quietly stale when the menu changed. The ids
+	 * are read from where each family assigns them: addNpcOptions for the npc rows, the loc block
+	 * in handleViewportOptions for the loc rows, addPlayerOptions for the players.
+	 *
+	 * The op slot is which of the five the word came from. A row with no op word of its own -
+	 * "Use <item> with", a spell, Examine, Attack - is op 0.
+	 */
+	public jagex2.client.plugin.event.MenuOptionClicked.Target resolveMenuTarget(int action, int paramA, int paramB, int paramC) {
+		switch (action) {
+			// NPC rows: paramA = index into this.npcs[]. 318/921/118/553/432 are ops 1-5 (and the
+			// same ids plus 2000 when the npc outlevels you, taken off before this is called);
+			// 347 is "Use <item> with", 1668 Examine, 67 a spell.
+			case 318:
+				return this.npcTarget(paramA, 1);
+			case 921:
+				return this.npcTarget(paramA, 2);
+			case 118:
+				return this.npcTarget(paramA, 3);
+			case 553:
+				return this.npcTarget(paramA, 4);
+			case 432:
+				return this.npcTarget(paramA, 5);
+			case 347:
+			case 1668:
+			case 67:
+				return this.npcTarget(paramA, 0);
+			// Loc rows: the loc id is packed into paramA at bits 14-28 and paramB/paramC are the
+			// local scene tile. 35/389/888/892/1280 are ops 1-5; 467 is "Use <item> with", 1412
+			// Examine, 376 a spell.
+			case 35:
+				return locTarget(paramA, 1, paramB, paramC);
+			case 389:
+				return locTarget(paramA, 2, paramB, paramC);
+			case 888:
+				return locTarget(paramA, 3, paramB, paramC);
+			case 892:
+				return locTarget(paramA, 4, paramB, paramC);
+			case 1280:
+				return locTarget(paramA, 5, paramB, paramC);
+			case 467:
+			case 1412:
+			case 376:
+				return locTarget(paramA, 0, paramB, paramC);
+			// Player rows: paramA = index into this.players[].
 			case 200:
 			case 493:
 			case 408:
 			case 677:
 			case 876:
 			case 918:
-			case 596: {
-				// Player actions (addPlayerOptions): paramA = index into this.players[]
-				ClientPlayer p = paramA >= 0 && paramA < this.players.length ? this.players[paramA] : null;
-				if (p != null) {
-					return "target=player name=\"" + p.name + "\" coords=(" + (p.routeTileX[0] + this.sceneBaseTileX) + "," + (p.routeTileZ[0] + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-				}
-				break;
-			}
-			case 35:
-			case 389:
-			case 888:
-			case 892:
-			case 1280:
-			case 1412:
-			case 467:
-			case 376: {
-				// Loc actions (handleViewportOptions): paramA packs the loc id at bits 14-28,
-				// paramB/paramC are the local scene tile x/z (add sceneBaseTileX/Z for world coords).
-				int locId = paramA >> 14 & 0x7FFF;
-				LocType loc = LocType.method561(locId);
-				String name = loc != null ? loc.field1630 : "?";
-				return "target=loc id=" + locId + " name=\"" + name + "\" coords=(" + (paramB + this.sceneBaseTileX) + "," + (paramC + this.sceneBaseTileZ) + "," + this.currentLevel + ")";
-			}
+			case 596:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.PLAYER, paramA, 0, -1, -1);
+			// An obj in the bag or on the body: paramA IS the obj id and paramB the slot, and
+			// neither is anywhere in the world.
+			case 891:
+			case 894:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.OBJ, paramA, 0, -1, -1);
 			case WEAROP_ACTION:
 			case WEAROP_ACTION + 1:
 			case WEAROP_ACTION + 2:
@@ -6625,20 +6950,36 @@ public class Client extends GameShell implements PixMap.Target {
 			case WEAROP_ACTION + 4:
 			case WEAROP_ACTION + 5:
 			case WEAROP_ACTION + 6:
-			case WEAROP_ACTION + 7: {
-				// Worn options: paramA = obj id, paramB = worn slot
-				return "target=item id=" + paramA + " slot=" + paramB + " (worn, option " + (action - WEAROP_ACTION + 1) + ")";
-			}
-			case 891:
-			case 894: {
-				// Inventory item actions (OPHELD5/INV_BUTTON5, incl. shift-click drop): paramA = obj
-				// id, paramB = inventory slot. No world coords - it's not placed anywhere.
-				return "target=item id=" + paramA + " slot=" + paramB + " (inventory, no world coords)";
-			}
+			case WEAROP_ACTION + 7:
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.WORN, paramA, 0, -1, -1);
 			default:
-				break;
+				return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+					jagex2.client.plugin.event.MenuOptionClicked.Target.NONE, -1, 0, -1, -1);
 		}
-		return "target=? action=" + action + " paramA=" + paramA + " paramB=" + paramB + " paramC=" + paramC;
+	}
+
+	/**
+	 * An npc row's target: the CONFIG id a plugin matches on, and the tile it is standing on.
+	 *
+	 * The id is the one the server sent, which for a multinpc is the shell rather than the child
+	 * whose name is on screen - the same number PluginContext.getNpcs reports, so a plugin can
+	 * compare the two.
+	 */
+	private jagex2.client.plugin.event.MenuOptionClicked.Target npcTarget(int index, int op) {
+		ClientNpc npc = index >= 0 && index < this.npcs.length ? this.npcs[index] : null;
+		if (npc == null || npc.field1370 == null) {
+			return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+				jagex2.client.plugin.event.MenuOptionClicked.Target.NPC, -1, op, -1, -1);
+		}
+		return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+			jagex2.client.plugin.event.MenuOptionClicked.Target.NPC, (int) npc.field1370.field1431, op,
+			npc.routeTileX[0], npc.routeTileZ[0]);
+	}
+
+	private static jagex2.client.plugin.event.MenuOptionClicked.Target locTarget(int paramA, int op, int tileX, int tileZ) {
+		return new jagex2.client.plugin.event.MenuOptionClicked.Target(
+			jagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA >> 14 & 0x7FFF, op, tileX, tileZ);
 	}
 
 	@ObfuscatedName("client.u(I)V")
@@ -6957,6 +7298,16 @@ public class Client extends GameShell implements PixMap.Target {
 					// QoL settings panel. Handled at the very top of the key loop so it works from
 					// any interface state, and so its keys are swallowed rather than reaching chat.
 					if (key == QOL_PANEL_KEY && this.ingame) {
+						// One key, two interfaces, exactly as F8 above: the sidebar where there is
+						// a window to put one in, the in-canvas panel where there is not. Every
+						// row this panel has is on the sidebar's two settings pages now, so on the
+						// desktop the panel is retired - and the key lands on DP settings rather
+						// than on whichever page the rail was left showing, because that is what
+						// it has always meant.
+						if (this.pluginSidebar != null) {
+							this.openSidebarSettings();
+							continue;
+						}
 						this.qolPanelOpen = !this.qolPanelOpen;
 						if (this.qolPanelOpen) {
 							// Opening closes whatever interface is up. The panel draws inside
@@ -7276,6 +7627,23 @@ public class Client extends GameShell implements PixMap.Target {
 								displayFps = true;
 							} else if (this.chatTyped.equals("::fpsoff")) {
 								displayFps = false;
+							} else if (this.chatTyped.equals("::vote")) {
+								// ::vote OPENS THE VOTING PAGE, with this player's name already in it
+								// (2026-11-16). Asked for because the page needs the name typed in to
+								// show anybody their own cooldowns, and the player sitting in game is
+								// the one person who should never have to type it.
+								//
+								// CLIENT-SIDE, like ::fpson above, so this needs no packet and no
+								// engine change: the client already knows which account it logged in
+								// as. It still goes to the server as a CLIENT_CHEAT, which is why the
+								// administrator command that used to own this name was renamed to
+								// ::voteledger - otherwise bare ::vote would have opened a browser AND
+								// printed a ledger for the three people holding rank 3.
+								//
+								// EXACT MATCH ONLY. ::vote with anything after it is left alone and
+								// goes to the server, so there is room for that to mean something again
+								// later without this swallowing it.
+								this.openVotePage();
 							}
 
 							// >= 2, not == 2: the login rank is 4 for a developer since the purple crown, and
@@ -7789,6 +8157,9 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.imageTitle2 != null) {
 			return;
 		}
+		long titleAt = System.currentTimeMillis();
+		phases = new StringBuilder();
+		phaseSum = 0L;
 		super.drawArea = null;
 		this.areaChatback = null;
 		this.areaMapback = null;
@@ -7815,17 +8186,64 @@ public class Client extends GameShell implements PixMap.Target {
 		Pix2D.cls();
 		this.imageTitle8 = new PixMap(94, this.getBaseComponent(), 75);
 		Pix2D.cls();
+		phase("nine buffers", titleAt);
 		if (this.jagTitle != null) {
 			this.loadTitleBackground();
+			long imagesAt = System.currentTimeMillis();
 			this.loadTitleImages();
+			phase("the sprites and flame buffers", imagesAt);
 		}
 		this.redrawFrame = true;
+		// The other half of what a player sees as "the login screen took ages to come back": the
+		// nine pieces above are rebuilt from scratch every time the game is left. BROKEN DOWN BY
+		// PHASE, because the total on its own does not say which part of it is slow - and the same
+		// method takes 3ms at startup and has been measured at 12871ms after a logout, so the
+		// amount of work is not what changes.
+		long rebuilt = System.currentTimeMillis() - titleAt;
+		// EVERYTHING ELSE, which is the total minus every phase. The first breakdown printed no
+		// phases at all against a twelve-second total, which said only that the time was somewhere
+		// unmeasured - so the remainder is now a number of its own and there is nowhere left to
+		// hide.
+		long rest = rebuilt - phaseSum;
+		DevLog.log("SESSION", "title screen rebuilt in " + rebuilt
+			+ "ms" + (this.jagTitle == null ? " (no archive yet, so nothing was drawn)" : "")
+			+ phases + (rest >= 100L ? " | everything else " + rest + "ms" : ""));
+	}
+
+	/**
+	 * Phase timings for whatever is being measured, collected by phase() and logged by whoever
+	 * started it. Used by the title screen's rebuild and by login(), which are the two things that
+	 * have been caught holding the thread that draws for seconds at a time.
+	 */
+	private static StringBuilder phases;
+	/** Every phase's time added up, whether or not it was big enough to be worth printing. */
+	private static long phaseSum;
+
+	/**
+	 * Note how long the phase that ended now took, and return now - so phases chain.
+	 *
+	 * Only what is slow is written: a phase of a few milliseconds is the normal case and nine of
+	 * those on a line would bury the one that is not.
+	 */
+	private static long phase(String what, long since) {
+		long now = System.currentTimeMillis();
+		phaseSum += now - since;
+		if (phases != null && now - since >= 100L) {
+			phases.append(" | ").append(what).append(' ').append(now - since).append("ms");
+		}
+		return now;
 	}
 
 	@ObfuscatedName("client.r(Z)V")
 	public void loadTitleBackground() {
+		long at = System.currentTimeMillis();
 		byte[] var2 = this.jagTitle.read("title.dat", null);
+		at = phase("title.dat out of the archive", at);
+		// THE ONE TO WATCH. Pix32(byte[], Component) is Toolkit.createImage, MediaTracker.waitForAll
+		// and PixelGrabber.grabPixels - three blocking waits on AWT's image-fetcher threads, none of
+		// them with a timeout, on the thread that draws the client.
 		Pix32 var3 = new Pix32(var2, this);
+		at = phase("the jpeg decoded by AWT", at);
 		this.imageTitle0.bind();
 		var3.quickPlotSprite(0, 0);
 		this.imageTitle1.bind();
@@ -7853,6 +8271,7 @@ public class Client extends GameShell implements PixMap.Target {
 				var3.pixels[var3.wi * var5 + var12] = var4[var12];
 			}
 		}
+		at = phase("nine blits and the mirror", at);
 		this.imageTitle0.bind();
 		var3.quickPlotSprite(0, 382);
 		this.imageTitle1.bind();
@@ -7871,14 +8290,22 @@ public class Client extends GameShell implements PixMap.Target {
 		var3.quickPlotSprite(-171, 254);
 		this.imageTitle8.bind();
 		var3.quickPlotSprite(-171, -180);
+		at = phase("nine more blits", at);
 		this.buildTitleBackdrop();
+		// Reset rather than measured: buildTitleBackdrop times itself, and counting it twice would
+		// make the phases add up to more than the whole.
+		at = System.currentTimeMillis();
 		Pix32 var7 = new Pix32(this.jagTitle, "logo", 0);
 		this.imageTitle2.bind();
 		var7.plotSprite(18, 382 - var7.wi / 2 - 128);
-		Object var8 = null;
-		Object var9 = null;
-		Object var10 = null;
-		System.gc();
+		phase("the logo", at);
+		// THE EXPLICIT FULL COLLECTION THAT USED TO BE HERE IS GONE. It ran on the thread that
+		// draws, at the moment the heap is holding everything a whole session touched, and that is
+		// what a player saw as a login screen taking twelve seconds to come back. It was written
+		// for a 64MB browser applet where dropping the scene before building the login screen was
+		// worth a pause; a modern JVM collects when it needs to, and logout() has already asked for
+		// one a tenth of a second earlier. Nothing between there and here allocates enough to want
+		// a second.
 	}
 
 	/**
@@ -7894,6 +8321,7 @@ public class Client extends GameShell implements PixMap.Target {
 		if (this.imageTitle0 == null) {
 			return;
 		}
+		long backdropAt = System.currentTimeMillis();
 		PixMap backdrop = new PixMap(Layout.FIXED_H, this.getBaseComponent(), Layout.FIXED_W);
 		PixMap[] pieces = { this.imageTitle0, this.imageTitle1, this.imageTitle2, this.imageTitle7, this.imageTitle4,
 			this.imageTitle8, this.imageTitle3, this.imageTitle5, this.imageTitle6 };
@@ -7907,6 +8335,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		backdrop.setPixels();
 		this.titleBlur = this.blurredBackdrop(backdrop);
+		phase("the blurred backdrop", backdropAt);
 		this.imageTitle2.bind();
 		// the loading screen has already filled the window - with black, because this did not exist
 		// yet when it did - so ask for it to be filled again now that it does
@@ -7915,12 +8344,19 @@ public class Client extends GameShell implements PixMap.Target {
 
 	@ObfuscatedName("client.i(Z)V")
 	public void loadTitleImages() {
+		long at = System.currentTimeMillis();
 		this.imageTitlebox = new Pix8(this.jagTitle, "titlebox", 0);
 		this.imageTitlebutton = new Pix8(this.jagTitle, "titlebutton", 0);
+		// THE TWELVE RUNES OUT OF ONE READ OF EACH ENTRY. Read them per sprite, as this did, and
+		// the archive decompresses runes.dat twelve times and index.dat twelve more to produce
+		// twelve pictures - which is where a logout's twelve seconds went.
+		byte[] runeData = this.jagTitle.read("runes.dat", null);
+		byte[] runeIndex = this.jagTitle.read("index.dat", null);
 		this.imageRunes = new Pix8[12];
 		for (int var2 = 0; var2 < 12; var2++) {
-			this.imageRunes[var2] = new Pix8(this.jagTitle, "runes", var2);
+			this.imageRunes[var2] = new Pix8(runeData, runeIndex, var2);
 		}
+		at = phase("the title sprites", at);
 		this.imageFlamesLeft = new Pix32(128, 265);
 		this.imageFlamesRight = new Pix32(128, 265);
 		for (int var3 = 0; var3 < 33920; var3++) {
@@ -7974,7 +8410,9 @@ public class Client extends GameShell implements PixMap.Target {
 		this.updateFlameBuffer(null);
 		this.flameBuffer2 = new int[32768];
 		this.flameBuffer3 = new int[32768];
+		at = phase("the flame buffers", at);
 		this.drawProgress(10, "Connecting to fileserver");
+		phase("the loading screen repainted", at);
 		// THE FLAME COLUMNS ARE NOT STARTED. They animated the two top corners of the stone
 		// title screen; on this one those corners are black ground with the sigil's glow
 		// reaching into them, and two columns of fire there would be nonsense. Left unstarted
@@ -7995,7 +8433,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		TitleScreen.paint(this.titleCanvas, this.fontBold12, this.fontPlain12, this.username,
 			this.password, this.titleLoginField, this.rememberLogin, this.loginMessage0, this.loginMessage1,
-			LoginProfiles.all(), this.titleHover, -1, loopCycle);
+			LoginProfiles.cards(), this.titleHover, -1, loopCycle);
 
 		// The middle piece every frame, because the cursor blinks there and nowhere else. The
 		// other eight only when something outside it moved, which is what redrawFrame has always
@@ -12691,7 +13129,8 @@ public class Client extends GameShell implements PixMap.Target {
 		// Plugins see the click before anything is sent, and may stop it - how a plugin guards an
 		// action ("really drop that?"). Read from the raw action, before the 2000 offset below is
 		// taken off, so a plugin matching on an action id sees the same number the menu carried.
-		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4)) {
+		if (this.plugins != null && this.plugins.onMenuOptionClicked(this.menuOption[arg0], var5, var6, var3, var4,
+			this.resolveMenuTarget(var5 >= 2000 ? var5 - 2000 : var5, var6, var3, var4))) {
 			return;
 		}
 		if (var5 >= 2000) {
@@ -17006,6 +17445,12 @@ public class Client extends GameShell implements PixMap.Target {
 	private int wantMode = Layout.FIXED;
 	/** The fixed frame the panels are cut from, in resizable mode. */
 	private int[] frameBuffer;
+	/**
+	 * The same pixels as a PixMap, for the one thing an int[] cannot do: be handed to drawImage
+	 * and enlarged with an interpolation hint. frameBuffer IS framePix.data - one allocation, and
+	 * nothing has to be copied between them.
+	 */
+	private PixMap framePix;
 	/** The window's Graphics, and the same translated to where a 765x503 screen is centred. */
 	private java.awt.Graphics screenGraphics;
 	private java.awt.Graphics letterGraphics;
@@ -17013,6 +17458,84 @@ public class Client extends GameShell implements PixMap.Target {
 	private boolean letterCleared;
 	/** The title art shrunk, blurred and dimmed, for filling the window around the centred screen. */
 	private PixMap titleBlur;
+
+	// ---------------------------------------------------------------- A WINDOW SMALLER THAN THE GAME
+	//
+	// A PHONE CANNOT BE FITTED BY MOVING THE PANELS (2026-11-16). Resizable mode lays the three
+	// panels out at their own pixel size, so the smallest window it can fill is about 760x491 - the
+	// chatbox (519 wide) beside the right-hand column (241), and the minimap (156 tall) above the
+	// tab column (335). A phone held sideways is around 844x390. The height is not close, and no
+	// rearranging of panels that are each a fixed lump of 377's art will make it close.
+	//
+	// NOR BY SCALING THE PAGE. CheerpJ maps a CSS pixel to an AWT pixel one for one and takes the
+	// mouse off the canvas's own rectangle, so a CSS transform on the display moves the picture and
+	// not the clicks. Measured: at scale 0.5 a tap on a widget's visible position misses it, and the
+	// far half of the window cannot be reached at all, because the events never land on the canvas.
+	//
+	// So the game keeps its 765x503 frame and this draws that frame smaller. Every area is composed
+	// into frameBuffer - the same buffer and the same PixMap.Target route resizable mode already
+	// uses - and the whole frame is then put on the window scaled to fit and centred, with the
+	// mouse scaled back the other way in mapInput(). Nothing above this layer knows: every hit
+	// test, panel position and interface coordinate is the fixed frame's, exactly as it always was.
+	//
+	// IT IS ONLY EVER ON WHERE THE WINDOW IS TOO SMALL FOR THE GAME, which on a desktop is never -
+	// ViewBox.applyMinimumSize keeps the window at Layout.MIN_W/MIN_H and the browser's own display
+	// is made larger than that. A desktop client takes none of this code.
+	private boolean scaled;
+	/** The HUD scale's dest->source table, and the scale it was built for (hudCols). */
+	private int[] hudCols;
+	private int hudColsFor;
+
+	// ---------------------------------------------------------------- THE GAME DRAWN SMALLER AND STRETCHED
+	//
+	// DisplaySettings.gameScale: the whole resizable frame at a fraction of the window, enlarged to
+	// fill it. The layout is built for the smaller size, so the world, the panels and the text grow
+	// together and the panels cannot run into each other the way HUD size can - what is lost is
+	// sharpness rather than room.
+	//
+	// stretchW/H is where the frame lands and is the window exactly, except on a window so small
+	// that the logical size hit Layout.MIN_W/MIN_H; then the shape is kept and the remainder is a
+	// border, because a stretched-out-of-shape game is worse than a bordered one.
+	/**
+	 * The mouse in the layout's own space - the window point with the stretch taken back out, but
+	 * before any panel has been subtracted from it. Dragging a panel needs this: super.mouseX is
+	 * measured FROM the panel, so it stands still while the panel moves under it.
+	 */
+	private int layoutMouseX;
+	private int layoutMouseY;
+	/** The HUD group being dragged with Alt, or -1, and where inside it the cursor took hold. */
+	private int hudDragGroup = -1;
+	private int hudGrabX;
+	private int hudGrabY;
+
+	private boolean stretching;
+	/** The border wants painting: the rectangle moved, and nothing else writes outside it. */
+	private boolean stretchBorder;
+	/** The window the frame is stretched onto, for what is drawn on the window and not in the frame. */
+	private int stretchWinW;
+	private int stretchWinH;
+	private int stretchX;
+	private int stretchY;
+	private int stretchW;
+	private int stretchH;
+	/** The frame's size on the window, and where it sits in it. */
+	private int scaleW;
+	private int scaleH;
+	private int scalePadX;
+	private int scalePadY;
+	/** The window size this scale was worked out for, so the work is not redone every frame. */
+	private int scaleForW;
+	private int scaleForH;
+	/** And the options it was worked out under, so changing one takes effect (scaleOptions). */
+	private int scaleForOptions = -1;
+	/** The bars around the frame want painting: the rectangle moved. */
+	private boolean scaleBorder;
+	/** Source column for each destination column: one multiply and divide per frame, not per pixel. */
+	private int[] scaleCols;
+	/** The window, at the window's size: what is actually handed to the Graphics. */
+	private PixMap scaledArea;
+	/** When the frame was last put on the window, for the throttle in the loading path below. */
+	private long scaledAt;
 	/**
 	 * How small the blurred copy is kept. 128x84 holds the 765x503 art's shape to within a pixel of
 	 * its aspect, and shrinking that far is itself most of the blur: one pixel of it is the average
@@ -17055,6 +17578,17 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 	}
 
+	/**
+	 * What the HUD is actually drawn at, as a percentage: what was asked for (DisplaySettings), or
+	 * less where the window cannot hold it (Layout.fit). The sidebar's Display page says which.
+	 *
+	 * The fixed layout is always 100. That screen is 377's, 765x503 of art laid out around panels
+	 * that are part of it, and scaling a piece of it would tear a hole in the middle of the stone.
+	 */
+	public int panelScaleInUse() {
+		return this.layout.scale;
+	}
+
 	/** Fixed or the classic layout; kept for what only wants to know whether the window is free. */
 	public void setResizable(boolean on) {
 		this.setDisplayMode(on ? Layout.CLASSIC : Layout.FIXED);
@@ -17070,8 +17604,30 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** Bring the layout into line with the request and the window's size. Game thread only. */
 	public void syncLayout() {
+		java.awt.Component sized = this.getBaseComponent();
+		int cw = sized.getWidth();
+		int ch = sized.getHeight();
+		if (cw > 0 && ch > 0) {
+			// Every frame, off the component's own size, so turning a phone sideways is picked up
+			// with nothing else to tell us about it.
+			this.applyScale(cw, ch);
+		}
+		if (this.scaled) {
+			// The frame is the fixed one whatever the player asked for: the window is too small to
+			// lay the panels out in, which is the whole reason the scale is on. That path does its
+			// own scaling, so this one stands down rather than having the two divide the mouse by
+			// a rectangle each.
+			this.stretching = false;
+			if (this.layout.resizable) {
+				this.applyLayout(Layout.fixed());
+			}
+			return;
+		}
 		Layout next;
 		if (this.wantMode == Layout.FIXED) {
+			// The fixed screen is never stretched by this: it is 765x503 of art and the phone path
+			// above owns the one case where that frame is drawn at another size.
+			this.stretching = false;
 			if (!this.layout.resizable) {
 				return;
 			}
@@ -17083,7 +17639,29 @@ public class Client extends GameShell implements PixMap.Target {
 			if (w <= 0 || h <= 0) {
 				return;
 			}
-			next = Layout.resizable(this.wantMode, w, h);
+			// THE LAYOUT IS BUILT FOR THE FRAME, NOT THE WINDOW. At 150% the frame is two thirds
+			// of the window in each direction and is stretched back over it at the end, so every
+			// size below here - the viewport buffer, the scene's visibility tables, where the
+			// panels sit - is the frame's.
+			int gs = DisplaySettings.gameScale();
+			// WHOLE SIZES, when asked for: the frame at window/k for a whole k, shown at exactly
+			// k times that. Floor and not ceil, so k * lw never overruns the window; what is left
+			// over is fewer than k pixels of border. 125% and 150% have no whole factor above 1,
+			// so they come out as off - which is the honest answer and what the page reports.
+			int k = DisplaySettings.stretchInteger() ? gs / 100 : 0;
+			int lw;
+			int lh;
+			if (k > 1) {
+				lw = Math.max(Layout.MIN_W, w / k);
+				lh = Math.max(Layout.MIN_H, h / k);
+				this.setStretch(w, h, lw, lh, k);
+			} else {
+				lw = gs == 100 || k == 1 ? w : Math.max(Layout.MIN_W, w * 100 / gs);
+				lh = gs == 100 || k == 1 ? h : Math.max(Layout.MIN_H, h * 100 / gs);
+				this.setStretch(w, h, lw, lh, 0);
+			}
+			next = Layout.resizable(this.wantMode, lw, lh, DisplaySettings.panelScale(),
+				DisplaySettings.hideSidebar(), DisplaySettings.hideChat(), DisplaySettings.hudOffsets());
 		}
 		if (next.sameAs(this.layout)) {
 			if (!this.layoutSettled && this.sceneDistances != null && System.currentTimeMillis() - this.layoutChangedAt > 250L) {
@@ -17102,8 +17680,10 @@ public class Client extends GameShell implements PixMap.Target {
 		Layout was = this.layout;
 		boolean first = was.resizable != next.resizable;
 		this.layout = next;
-		super.remapMouse = next.resizable;
-		PixMap.target = next.resizable ? this : null;
+		// Scaled mode is the fixed layout composed into frameBuffer, so it wants the target and the
+		// remapped mouse that resizable wants, while its layout says fixed.
+		super.remapMouse = next.resizable || this.scaled;
+		PixMap.target = next.resizable || this.scaled ? this : null;
 
 		java.awt.Graphics g = this.acquireGraphics();
 		if (g != null) {
@@ -17112,7 +17692,24 @@ public class Client extends GameShell implements PixMap.Target {
 			this.screenGraphics = g;
 			if (next.resizable) {
 				this.letterGraphics = g.create();
-				this.letterGraphics.translate(next.letterX, next.letterY);
+				if (this.stretching) {
+					// A scale transform, so the title screen's own 765x503 drawing lands enlarged
+					// without a line of it knowing. The hint goes on the same Graphics: it is a
+					// copy, and nothing else draws through it.
+					int lw = (int) ((long) Layout.FIXED_W * this.stretchW / next.width);
+					int lh = (int) ((long) Layout.FIXED_H * this.stretchH / next.height);
+					this.letterGraphics.translate((this.stretchWinW - lw) / 2, (this.stretchWinH - lh) / 2);
+					if (this.letterGraphics instanceof java.awt.Graphics2D) {
+						java.awt.Graphics2D lg = (java.awt.Graphics2D) this.letterGraphics;
+						lg.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+							DisplaySettings.smoothScale()
+								? java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+								: java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+						lg.scale(lw / (double) Layout.FIXED_W, lh / (double) Layout.FIXED_H);
+					}
+				} else {
+					this.letterGraphics.translate(next.letterX, next.letterY);
+				}
 			} else {
 				this.letterGraphics = g;
 			}
@@ -17124,10 +17721,8 @@ public class Client extends GameShell implements PixMap.Target {
 				g.fillRect(0, 0, was.width, was.height);
 			}
 		}
-		if (next.resizable) {
-			if (this.frameBuffer == null) {
-				this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
-			}
+		if (next.resizable || this.scaled) {
+			this.ensureFrameBuffer();
 		} else {
 			this.frameBuffer = null;
 		}
@@ -17138,6 +17733,7 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		// Switching mode rebuilds the scene's visibility now; a window being dragged to a new size
 		// waits until it stops (syncLayout), drawing with the last size's tables meanwhile.
+		this.buildHudMasks(next);
 		this.layoutChangedAt = System.currentTimeMillis();
 		this.layoutSettled = false;
 		if (first || this.sceneVisW == 0) {
@@ -17148,7 +17744,7 @@ public class Client extends GameShell implements PixMap.Target {
 			this.menuVisible = false;
 			this.menuSwapMode = false;
 		}
-		if (!next.resizable) {
+		if (!next.resizable && !this.scaled) {
 			super.mouseX = super.rawMouseX;
 			super.mouseY = super.rawMouseY;
 		}
@@ -17214,6 +17810,18 @@ public class Client extends GameShell implements PixMap.Target {
 	 */
 	public void mapInput() {
 		this.syncLayout();
+		if (this.scaled) {
+			// The window's point, back into the frame the game thinks it is drawing. The -1 pair is
+			// GameShell's "the mouse is not over the canvas" and has to stay that exact pair.
+			int rx = super.rawMouseX;
+			int ry = super.rawMouseY;
+			boolean off = rx == -1 && ry == -1;
+			super.mouseX = off ? -1 : scaleBack(rx, this.scalePadX, this.scaleW, Layout.FIXED_W);
+			super.mouseY = off ? -1 : scaleBack(ry, this.scalePadY, this.scaleH, Layout.FIXED_H);
+			super.mouseClickX = scaleBack(super.rawClickX, this.scalePadX, this.scaleW, Layout.FIXED_W);
+			super.mouseClickY = scaleBack(super.rawClickY, this.scalePadY, this.scaleH, Layout.FIXED_H);
+			return;
+		}
 		if (!this.layout.resizable) {
 			return;
 		}
@@ -17222,20 +17830,198 @@ public class Client extends GameShell implements PixMap.Target {
 		int cx = super.rawClickX;
 		int cy = super.rawClickY;
 		if (!this.ingame || this.fullscreenInterfaceId0 != -1) {
-			int lx = this.layout.letterX;
-			int ly = this.layout.letterY;
-			super.mouseX = rx == -1 && ry == -1 ? -1 : rx - lx;
-			super.mouseY = rx == -1 && ry == -1 ? -1 : ry - ly;
-			super.mouseClickX = cx - lx;
-			super.mouseClickY = cy - ly;
+			int lx = this.letterX();
+			int ly = this.letterY();
+			int lw = this.letterW();
+			int lh = this.letterH();
+			boolean off = rx == -1 && ry == -1;
+			super.mouseX = off ? -1 : this.letterBack(rx, lx, lw, Layout.FIXED_W);
+			super.mouseY = off ? -1 : this.letterBack(ry, ly, lh, Layout.FIXED_H);
+			super.mouseClickX = this.letterBack(cx, lx, lw, Layout.FIXED_W);
+			super.mouseClickY = this.letterBack(cy, ly, lh, Layout.FIXED_H);
 			return;
 		}
+		if (this.stretching) {
+			// Back through the blit before Layout sees it, so every hit test below is still
+			// reading the frame's own coordinates. Clamped, as presentScaled's own mapping is: a
+			// click on the border lands on the frame's edge rather than on a number no hit test
+			// was written for.
+			boolean off = rx == -1 && ry == -1;
+			if (!off) {
+				rx = this.stretchBack(rx, this.stretchX, this.stretchW, this.layout.width);
+				ry = this.stretchBack(ry, this.stretchY, this.stretchH, this.layout.height);
+			}
+			cx = this.stretchBack(cx, this.stretchX, this.stretchW, this.layout.width);
+			cy = this.stretchBack(cy, this.stretchY, this.stretchH, this.layout.height);
+		}
+		this.layoutMouseX = rx;
+		this.layoutMouseY = ry;
+		// BEFORE THE GAME READS THE CLICK, which is why this is here and not in draw(). A drag
+		// handled after the update acts a frame late, and the click it was meant to take has
+		// already walked the player or used an item.
+		this.dragHud(super.mouseButton, super.actionKey[GameShell.KEY_ALT] == 1);
 		int area = this.mouseArea();
 		super.mouseX = this.layout.mapX(rx, ry, area);
 		super.mouseY = this.layout.mapY(rx, ry, area);
 		super.mouseClickX = this.layout.mapX(cx, cy, area);
 		super.mouseClickY = this.layout.mapY(cx, cy, area);
 	}
+
+	/**
+	 * Alt and drag to move a piece of the HUD: the chatbox with its buttons, the minimap, or the
+	 * side column with its tabs.
+	 *
+	 * Offsets, not positions, so a moved panel still finds its corner when the window changes
+	 * size - and the clamping is Layout's, which runs on every resize as well as on every drag.
+	 * A panel can be put back by dropping it within a few pixels of where it started.
+	 */
+	private void dragHud(int button, boolean alt) {
+		if (!this.layout.resizable || !this.ingame) {
+			this.hudDragGroup = -1;
+			return;
+		}
+		// THE CLICK BELONGS TO THE DRAG, not to whatever is under it. Without this, picking the
+		// minimap up walks the player to where the grab landed, and picking the inventory up uses
+		// an item or changes tab. The overlays have the same rule in dragWantsClick; panels need
+		// it swallowed centrally, because half a dozen handlers read these clicks - the tabs, the
+		// items, the minimap walk, the chat bar - and each would otherwise take its own.
+		if (alt && (this.hudDragGroup != -1
+				|| this.layout.areaAt(this.layoutMouseX, this.layoutMouseY) != Layout.VIEWPORT)) {
+			super.mouseClickButton = 0;
+		}
+		if (!alt || button != 1) {
+			// Letting go, or letting go of Alt: it stays where it is rather than springing back,
+			// which is what somebody who changed their mind expects.
+			if (this.hudDragGroup != -1) {
+				int[] at = DisplaySettings.hudOffsets();
+				int g = this.hudDragGroup;
+				DisplaySettings.setHudOffset(g, snapHud(at[g * 2]), snapHud(at[g * 2 + 1]));
+				DevLog.log("QOL", "HUD group " + g + " moved to " + at[g * 2] + "," + at[g * 2 + 1]);
+				this.hudDragGroup = -1;
+			}
+			return;
+		}
+		if (this.hudDragGroup == -1) {
+			if (this.plugins != null && this.plugins.draggingOverlay()) {
+				return;
+			}
+			int panel = this.layout.areaAt(this.layoutMouseX, this.layoutMouseY);
+			if (panel == Layout.VIEWPORT) {
+				return;
+			}
+			this.hudDragGroup = Layout.groupOf(panel);
+			int[] at = DisplaySettings.hudOffsets();
+			// The grab point, so the panel does not jump its own corner to the cursor.
+			this.hudGrabX = this.layoutMouseX - at[this.hudDragGroup * 2];
+			this.hudGrabY = this.layoutMouseY - at[this.hudDragGroup * 2 + 1];
+			return;
+		}
+		// Written to the settings as it moves so the next frame's layout picks it up; saved only
+		// on release, which is what setHudOffset's own write does when the value settles.
+		DisplaySettings.setHudOffset(this.hudDragGroup,
+			this.layoutMouseX - this.hudGrabX, this.layoutMouseY - this.hudGrabY);
+	}
+
+	/**
+	 * A drop near home goes exactly home.
+	 *
+	 * Without it a panel nudged back towards its corner sits two pixels out for ever, because
+	 * that is what a mouse gives you. OverlayPositions.SNAP is the same eight pixels.
+	 */
+	private static int snapHud(int offset) {
+		return offset > -8 && offset < 8 ? 0 : offset;
+	}
+
+	/**
+	 * How far the HUD's outer corners are rounded, in the fixed frame's pixels.
+	 *
+	 * Small on purpose. The panels are 2006 art with hard edges and a corner any deeper starts
+	 * eating the frame rather than softening it; six is enough to read as a shape and not as a
+	 * bite. It is measured in the frame's pixels, so at a HUD scale it grows with everything else.
+	 */
+	private static final int HUD_CORNER = 6;
+
+	/**
+	 * The mask for every panel of this layout: the minimap's ring, and the rounded corners of the
+	 * group each panel belongs to.
+	 *
+	 * BY GROUP, NOT BY PANEL. The chatbox is three rectangles stacked and the side column three
+	 * more, so rounding each panel would notch every join between them. The corners that exist
+	 * are the four of the assembled group.
+	 */
+	private void buildHudMasks(Layout layout) {
+		this.hudMasks = new boolean[Layout.PANELS][];
+		if (!layout.resizable) {
+			return;
+		}
+		for (int g = 0; g < Layout.GROUPS; g++) {
+			int left = Integer.MAX_VALUE;
+			int top = Integer.MAX_VALUE;
+			int right = Integer.MIN_VALUE;
+			int bottom = Integer.MIN_VALUE;
+			for (int p = 0; p < layout.panels; p++) {
+				if (Layout.groupOf(p) != g || layout.hiddenPanel(p)) {
+					continue;
+				}
+				left = Math.min(left, layout.panelFixedX(p));
+				top = Math.min(top, layout.panelFixedY(p));
+				right = Math.max(right, layout.panelFixedX(p) + layout.panelWidth(p));
+				bottom = Math.max(bottom, layout.panelFixedY(p) + layout.panelHeight(p));
+			}
+			if (left == Integer.MAX_VALUE) {
+				continue;
+			}
+			int gw = right - left;
+			int gh = bottom - top;
+			for (int p = 0; p < layout.panels; p++) {
+				if (Layout.groupOf(p) != g || layout.hiddenPanel(p)) {
+					continue;
+				}
+				int w = layout.panelWidth(p);
+				int h = layout.panelHeight(p);
+				boolean[] mask = new boolean[w * h];
+				int offX = layout.panelFixedX(p) - left;
+				int offY = layout.panelFixedY(p) - top;
+				for (int y = 0; y < h; y++) {
+					int gy = offY + y;
+					if (gy >= HUD_CORNER && gy < gh - HUD_CORNER) {
+						// Nowhere near a corner: the whole row is square, so skip it entirely.
+						continue;
+					}
+					for (int x = 0; x < w; x++) {
+						if (outsideCorner(offX + x, gy, gw, gh)) {
+							mask[y * w + x] = true;
+						}
+					}
+				}
+				this.hudMasks[p] = mask;
+			}
+		}
+	}
+
+	/** Is (x, y) in a w x h rectangle outside the rounded corner it is nearest to? */
+	private static boolean outsideCorner(int x, int y, int w, int h) {
+		int cx;
+		int cy;
+		if (x < HUD_CORNER) {
+			cx = HUD_CORNER;
+		} else if (x >= w - HUD_CORNER) {
+			cx = w - HUD_CORNER - 1;
+		} else {
+			return false;
+		}
+		if (y < HUD_CORNER) {
+			cy = HUD_CORNER;
+		} else if (y >= h - HUD_CORNER) {
+			cy = h - HUD_CORNER - 1;
+		} else {
+			return false;
+		}
+		int dx = x - cx;
+		int dy = y - cy;
+		return dx * dx + dy * dy > HUD_CORNER * HUD_CORNER;
+	}
+
 
 	private int mouseArea() {
 		if (this.menuVisible) {
@@ -17263,7 +18049,12 @@ public class Client extends GameShell implements PixMap.Target {
 		}
 		boolean letter = !this.ingame || super.drawArea != null;
 		if (letter && !this.letterCleared) {
-			this.fillTitleSurround(this.screenGraphics, this.layout.width, this.layout.height);
+			// ACROSS THE WINDOW, not across the frame. With a game scale on the frame is a
+			// fraction of the window, and filling only that much would leave the rest of the
+			// screen showing whatever was there before.
+			this.fillTitleSurround(this.screenGraphics,
+				this.stretching ? this.stretchWinW : this.layout.width,
+				this.stretching ? this.stretchWinH : this.layout.height);
 			this.letterCleared = true;
 			this.redrawFrame = true;
 		} else if (!letter) {
@@ -17299,37 +18090,73 @@ public class Client extends GameShell implements PixMap.Target {
 	private void fillTitleSurround(java.awt.Graphics g, int w, int h) {
 		PixMap blur = this.titleBlur;
 		if (blur == null || this.ingame) {
+			// and the picture goes with it: a session should not hold a window-sized image of a
+			// screen it cannot see.
+			this.surround = null;
 			g.setColor(java.awt.Color.black);
 			g.fillRect(0, 0, w, h);
 			return;
 		}
-		blur.setPixels();
-		// Bilinear for this blit and this blit only. The hint lives on the Graphics, and the centred
-		// title screen is drawn through the same one - it must stay nearest-neighbour or every pixel
-		// of the login box goes soft.
-		java.awt.Graphics2D g2 = g instanceof java.awt.Graphics2D ? (java.awt.Graphics2D) g : null;
-		Object previous = null;
-		if (g2 != null) {
-			previous = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
-			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-		}
-		g.drawImage(blur.image, 0, 0, w, h, blur);
-		if (g2 != null) {
-			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-				previous == null ? java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR : previous);
+		int lx = this.letterX();
+		int ly = this.letterY();
+		int lw = this.letterW();
+		int lh = this.letterH();
+		if (this.surround == null || this.surroundW != w || this.surroundH != h
+				|| this.surroundFrom != blur || this.surroundX != lx || this.surroundY != ly
+				|| this.surroundBoxW != lw || this.surroundBoxH != lh) {
+			blur.setPixels();
+			this.surround = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			java.awt.Graphics2D og = this.surround.createGraphics();
+			// Bilinear for this blit and this blit only, which is now structural: the hint is set on
+			// an image of our own and the centred title screen is drawn through the window's own
+			// Graphics, which this never touches. It must stay nearest-neighbour there or every
+			// pixel of the login box goes soft.
+			og.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+				java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			og.drawImage(blur.image, 0, 0, w, h, blur);
 			// A shadow hugging the centred screen, so its edge reads as the edge of something laid on
 			// the window rather than as the art stopping. Rings of black a pixel thick, fading outwards,
 			// drawn OUTSIDE the 765x503 - the title screen is blitted over that rectangle every frame
 			// and would wipe anything drawn inside it.
-			int lx = this.layout.letterX;
-			int ly = this.layout.letterY;
 			for (int i = 0; i < SHADOW; i++) {
 				int alpha = SHADOW_ALPHA * (SHADOW - i) / SHADOW;
-				g2.setColor(new java.awt.Color(0, 0, 0, alpha));
-				g2.drawRect(lx - i - 1, ly - i - 1, Layout.FIXED_W + 2 * i + 1, Layout.FIXED_H + 2 * i + 1);
+				og.setColor(new java.awt.Color(0, 0, 0, alpha));
+				og.drawRect(lx - i - 1, ly - i - 1, lw + 2 * i + 1, lh + 2 * i + 1);
 			}
+			og.dispose();
+			this.surroundW = w;
+			this.surroundH = h;
+			this.surroundFrom = blur;
+			this.surroundX = lx;
+			this.surroundY = ly;
+			this.surroundBoxW = lw;
+			this.surroundBoxH = lh;
 		}
+		g.drawImage(this.surround, 0, 0, null);
 	}
+
+	/**
+	 * The finished surround - the blurred backdrop with the shadow already on it - and what it was
+	 * built for.
+	 *
+	 * BUILT OFF SCREEN AND BLITTED ONCE, because the pieces cost ten seconds drawn straight onto a
+	 * window. Measured on a real 2560x1440 window: the bilinear upscale 120ms, the twenty-six
+	 * translucent rings 9819ms, the two of them composed here and blitted in one go 66ms. Each
+	 * translucent primitive drawn onto the window makes Java2D read a 3.7-megapixel surface back
+	 * out of video memory, blend it and write it again; done into an image of our own there is no
+	 * surface to read back. This is what a logout spent twelve seconds on.
+	 *
+	 * Kept until the window, the backdrop or the centred screen's rectangle changes - returning to
+	 * the title screen then costs one blit - and dropped the moment the game starts.
+	 */
+	private java.awt.image.BufferedImage surround;
+	private int surroundW;
+	private int surroundH;
+	private int surroundX;
+	private int surroundY;
+	private int surroundBoxW;
+	private int surroundBoxH;
+	private PixMap surroundFrom;
 
 	/**
 	 * The art shrunk, blurred and dimmed, for fillTitleSurround. Shrinking by averaging whole blocks
@@ -17411,6 +18238,37 @@ public class Client extends GameShell implements PixMap.Target {
 
 	/** PixMap.target: see the top of this section. */
 	public boolean draw(PixMap area, int x, int y, java.awt.Graphics g) {
+		if (this.scaled) {
+			// EVERY area, the viewport and the whole-screen one included: the frame is assembled
+			// in one piece and put on the window once, at the end of draw(). Anything that went
+			// straight to the Graphics here would land at its unscaled position, over the top.
+			if (this.frameBuffer != null) {
+				copyRect(area.data, area.width, 0, 0, area.width, area.height, this.frameBuffer, Layout.FIXED_W, Layout.FIXED_H, x, y);
+				// AND PUT IT UP NOW IF NOTHING ELSE IS GOING TO. The frame is normally assembled
+				// from many areas and blitted once, at the end of draw() - but draw() only runs
+				// once the client is in its main loop, and load() spends its whole life drawing
+				// the progress screen before that. Diverting those draws into the buffer without
+				// flushing them leaves the screen black for the whole of loading, which is what a
+				// phone showed. Resizable mode has the same escape hatch, for the same reason.
+				if (!this.ingame || area == super.drawArea) {
+					// THROTTLED, BECAUSE EVERY ONE OF THESE IS A WHOLE WINDOW. PixMap.drawDirect
+					// calls setPixels(), which hands the consumer the entire buffer however little
+					// of it changed - so the cost of putting the frame up does not depend on the
+					// size of the area that was drawn into it. The progress screen draws several
+					// small areas per update, and flushing each one separately meant several full
+					// windows per tick: measured as the loading screen crawling on a phone, where
+					// the canvas is also three times the size in each direction. Twenty-five a
+					// second is more than a progress bar needs, and the frame after this one puts
+					// up anything a skipped flush would have shown.
+					long now = System.currentTimeMillis();
+					if (now - this.scaledAt >= 40L) {
+						this.scaledAt = now;
+						this.presentScaled();
+					}
+				}
+			}
+			return true;
+		}
 		if (!this.layout.resizable || this.letterGraphics == null) {
 			return false;
 		}
@@ -17448,15 +18306,30 @@ public class Client extends GameShell implements PixMap.Target {
 		int[] dst = this.areaViewport.data;
 		int dw = this.areaViewport.width;
 		int dh = this.areaViewport.height;
+		int[] cols = this.layout.scale == Layout.SCALE_FIXED ? null : this.hudCols(this.layout.scale);
 		for (int p = 0; p < this.layout.panels; p++) {
+			if (this.layout.hiddenPanel(p)) {
+				continue;
+			}
 			int alpha = this.layout.panelAlpha(p);
 			int dx = this.layout.panelScreenX(p) - this.layout.vpScreenX;
 			int dy = this.layout.panelScreenY(p) - this.layout.vpScreenY;
-			if (alpha >= Layout.OPAQUE) {
-				copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
-			} else {
-				blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+			// The minimap is the one panel that is not a rectangle: past its frame the sprite is
+			// the fixed screen's stone, which over a window is a grey box around a round picture.
+			boolean[] mask = this.hudMasks == null ? null : this.hudMasks[p];
+			if (cols == null) {
+				if (mask != null) {
+					copyRectMasked(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, mask);
+				} else if (alpha >= Layout.OPAQUE) {
+					copyRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy);
+				} else {
+					blendRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p), this.layout.panelWidth(p), this.layout.panelHeight(p), dst, dw, dh, dx, dy, alpha);
+				}
+				continue;
 			}
+			scaleRect(this.frameBuffer, Layout.FIXED_W, this.layout.panelFixedX(p), this.layout.panelFixedY(p),
+				dst, dw, dh, dx, dy, this.layout.panelScreenWidth(p), this.layout.panelScreenHeight(p), cols, alpha,
+				mask, this.layout.panelWidth(p));
 		}
 		if (menu && this.menuVisible && this.menuArea == 0) {
 			this.areaViewport.bind();
@@ -17464,8 +18337,378 @@ public class Client extends GameShell implements PixMap.Target {
 			this.drawMenu();
 		}
 		if (this.screenGraphics != null) {
-			this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+			if (this.stretching) {
+				this.drawStretched(this.areaViewport, this.screenGraphics);
+			} else {
+				this.areaViewport.drawDirect(this.layout.vpScreenY, this.layout.vpScreenX, this.screenGraphics);
+			}
 		}
+	}
+
+	/**
+	 * Where the frame lands on the window, worked out once per layout rather than per frame.
+	 *
+	 * The logical size is the window divided by the scale, so the two have the same shape and the
+	 * frame fills the window exactly - until the division hits Layout.MIN_W/MIN_H on a small
+	 * window, where the shapes part company. Then the larger of the two factors would stretch the
+	 * game out of shape, so the smaller is used and what is left over is a border.
+	 */
+	private void setStretch(int winW, int winH, int frameW, int frameH) {
+		this.setStretch(winW, winH, frameW, frameH, 0);
+	}
+
+	/**
+	 * @param exact a whole-number factor to show the frame at, or 0 to fill the window.
+	 */
+	private void setStretch(int winW, int winH, int frameW, int frameH, int exact) {
+		this.stretchWinW = winW;
+		this.stretchWinH = winH;
+		if (winW == frameW && winH == frameH) {
+			if (this.stretching) {
+				// Back to 1:1: the border this was drawing into is no longer written by anything.
+				this.letterCleared = false;
+			}
+			this.stretching = false;
+			return;
+		}
+		int sw;
+		int sh;
+		if (exact > 1) {
+			// Exactly k source pixels to k on screen. The frame was divided down by the same k, so
+			// this lands inside the window with fewer than k pixels to spare on each axis.
+			sw = frameW * exact;
+			sh = frameH * exact;
+			if (sw > winW || sh > winH) {
+				// The frame hit Layout.MIN_W/MIN_H on the way down and is no longer winW/k, so the
+				// whole number no longer fits. Fall back to filling rather than overrunning.
+				sw = winW;
+				sh = (int) ((long) sw * frameH / frameW);
+				if (sh > winH) {
+					sh = winH;
+					sw = (int) ((long) sh * frameW / frameH);
+				}
+			}
+		} else {
+			sw = winW;
+			sh = (int) ((long) sw * frameH / frameW);
+			if (sh > winH) {
+				sh = winH;
+				sw = (int) ((long) sh * frameW / frameH);
+			}
+		}
+		if (sw != this.stretchW || sh != this.stretchH || !this.stretching) {
+			// The strip the blit will not write into, painted once. Only ever there when the
+			// logical size was clamped, so this is the small-window case and not the usual one.
+			this.stretchBorder = true;
+		}
+		this.stretching = sw > 0 && sh > 0;
+		this.stretchW = sw;
+		this.stretchH = sh;
+		this.stretchX = (winW - sw) / 2;
+		this.stretchY = (winH - sh) / 2;
+	}
+
+	/**
+	 * One area onto the window, enlarged, by the platform's own scaling.
+	 *
+	 * drawImage with an interpolation hint rather than a table of our own: the JDK's loops are
+	 * faster than anything written here and the hint is the whole of the smoothing option -
+	 * bilinear invents a blend between the pixels, nearest neighbour repeats them. At 200% the two
+	 * are the same picture, because one pixel becomes exactly four and there is nothing in between
+	 * to invent; the difference is all at the fractions.
+	 *
+	 * The hint is put back afterwards: this Graphics belongs to the window, not to this call.
+	 */
+	private void drawStretched(PixMap area, java.awt.Graphics g) {
+		if (this.stretchBorder) {
+			this.stretchBorder = false;
+			if (this.stretchX > 0 || this.stretchY > 0) {
+				g.setColor(java.awt.Color.black);
+				g.fillRect(0, 0, this.layout.width + this.stretchX * 2, this.stretchY);
+				g.fillRect(0, this.stretchY + this.stretchH, this.stretchW + this.stretchX * 2, this.stretchY + 1);
+				g.fillRect(0, 0, this.stretchX, this.stretchY + this.stretchH);
+				g.fillRect(this.stretchX + this.stretchW, 0, this.stretchX + 1, this.stretchY + this.stretchH);
+			}
+		}
+		area.setPixels();
+		if (!(g instanceof java.awt.Graphics2D)) {
+			g.drawImage(area.image, this.stretchX, this.stretchY, this.stretchW, this.stretchH, null);
+			return;
+		}
+		java.awt.Graphics2D g2 = (java.awt.Graphics2D) g;
+		Object was = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+		g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+			DisplaySettings.smoothScale()
+				? java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+				: java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		g2.drawImage(area.image, this.stretchX, this.stretchY, this.stretchW, this.stretchH, null);
+		if (was != null) {
+			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, was);
+		}
+	}
+
+	/**
+	 * Where a 765x503 screen goes - the title screen, a fullscreen interface.
+	 *
+	 * Layout.letterX centres it in the FRAME, which is what the game wants because the frame is
+	 * stretched over the window afterwards. These are drawn on the window instead, at their own
+	 * size, so with a game scale on they have to be centred on the window or they land wherever
+	 * half of it is.
+	 */
+	private int letterX() {
+		return this.stretching ? (this.stretchWinW - this.letterW()) / 2 : this.layout.letterX;
+	}
+
+	private int letterY() {
+		return this.stretching ? (this.stretchWinH - this.letterH()) / 2 : this.layout.letterY;
+	}
+
+	/**
+	 * How big a 765x503 screen is drawn, with a game scale on: the frame's own factor, so that
+	 * logging in does not change the size of anything.
+	 *
+	 * Rounded once, here, and every other place asks this rather than multiplying for itself -
+	 * two roundings of the same number disagree by a pixel, and a pixel is the difference between
+	 * a shadow that hugs the screen and one that cuts a line across it.
+	 */
+	private int letterW() {
+		return this.stretching ? (int) ((long) Layout.FIXED_W * this.stretchW / this.layout.width) : Layout.FIXED_W;
+	}
+
+	private int letterH() {
+		return this.stretching ? (int) ((long) Layout.FIXED_H * this.stretchH / this.layout.height) : Layout.FIXED_H;
+	}
+
+	/** A window point back into the 765x503 screen it was drawn from. */
+	private int letterBack(int v, int pad, int size, int fixed) {
+		if (!this.stretching || size <= 0) {
+			return v - pad;
+		}
+		return (int) ((long) (v - pad) * fixed / size);
+	}
+
+	/** A window length back into the frame it was drawn from, for the mouse. */
+	private int stretchBack(int v, int pad, int size, int frame) {
+		if (size <= 0) {
+			return v;
+		}
+		int out = (int) ((long) (v - pad) * frame / size);
+		return out < 0 ? 0 : out > frame - 1 ? frame - 1 : out;
+	}
+
+	/**
+	 * Decide whether the frame has to be drawn smaller than it is, and how much smaller.
+	 *
+	 * Called every frame with the window's live size, and does nothing at all unless that size has
+	 * changed - which on a desktop means it does nothing for the whole session.
+	 */
+	/**
+	 * The frame buffer, and the PixMap that shares its pixels. Idempotent: called from both places
+	 * that used to allocate the array, so neither can end up with one and not the other.
+	 */
+	private void ensureFrameBuffer() {
+		if (this.frameBuffer != null && this.framePix != null) {
+			return;
+		}
+		java.awt.Component c = this.getBaseComponent();
+		if (c != null) {
+			PixMap pix = new PixMap(Layout.FIXED_H, c, Layout.FIXED_W);
+			if (this.frameBuffer != null) {
+				// There was a bare array first, from a call made before the component existed.
+				// Its pixels are the frame on screen right now, so they come across rather than
+				// the player watching one frame of black.
+				System.arraycopy(this.frameBuffer, 0, pix.data, 0, this.frameBuffer.length);
+			}
+			this.framePix = pix;
+			this.frameBuffer = pix.data;
+			return;
+		}
+		if (this.frameBuffer != null) {
+			return;
+		}
+		// No component yet - the array alone, and the PixMap when one turns up. Only the smooth
+		// path needs it, and that cannot run before there is a window to draw on anyway.
+		this.frameBuffer = new int[Layout.FIXED_W * Layout.FIXED_H];
+	}
+
+	/** The options that change how the frame is sized, as one number to compare against. */
+	private int scaleOptions() {
+		return (DisplaySettings.stretched() ? 1 : 0)
+			| (DisplaySettings.stretchAspect() ? 2 : 0)
+			| (DisplaySettings.stretchInteger() ? 4 : 0)
+			| (this.wantMode == Layout.FIXED ? 8 : 0);
+	}
+
+	private void applyScale(int w, int h) {
+		// TOO SMALL FOR THE GAME, OR ASKED TO FILL THE WINDOW. The first is the phone and is not a
+		// choice; the second is stretched mode, and only for the fixed layout - the resizable ones
+		// already use the whole window, and what they want instead is the game scale.
+		boolean phone = w < Layout.FIXED_W || h < Layout.FIXED_H;
+		boolean stretch = DisplaySettings.stretched() && this.wantMode == Layout.FIXED;
+		boolean want = phone || stretch;
+		int options = this.scaleOptions();
+		if (want == this.scaled && w == this.scaleForW && h == this.scaleForH && options == this.scaleForOptions) {
+			return;
+		}
+		this.scaleForW = w;
+		this.scaleForH = h;
+		this.scaleForOptions = options;
+		this.scaled = want;
+		if (!want) {
+			// Back to a window the game fits in: everything goes where it went before.
+			this.scaledArea = null;
+			this.scaleCols = null;
+			super.remapMouse = this.layout.resizable;
+			PixMap.target = this.layout.resizable ? this : null;
+			this.redrawFrame = true;
+			return;
+		}
+		// How big, and what shape. See the note on this method for why the order is this one.
+		int sw;
+		int sh;
+		if (!phone && DisplaySettings.stretchInteger()) {
+			// Whole multiples only. Never below 1: a window that cannot hold the frame once has no
+			// whole multiple to offer, and that window is the phone, which is handled above.
+			int k = Math.min(w / Layout.FIXED_W, h / Layout.FIXED_H);
+			if (k < 1) {
+				k = 1;
+			}
+			sw = Layout.FIXED_W * k;
+			sh = Layout.FIXED_H * k;
+		} else if (phone || DisplaySettings.stretchAspect()) {
+			// The largest the frame can be drawn in this window with its shape kept, centred, with
+			// whatever is left over as black bars the frame never writes into. A window smaller
+			// than the game always keeps its shape: squashing a screen nobody can read any other
+			// way is not an option worth offering.
+			sw = w;
+			sh = sw * Layout.FIXED_H / Layout.FIXED_W;
+			if (sh > h) {
+				sh = h;
+				sw = sh * Layout.FIXED_W / Layout.FIXED_H;
+			}
+		} else {
+			// Both sides filled, and the picture out of shape. What "stretched" means to the
+			// people who ask for it by that name.
+			sw = w;
+			sh = h;
+		}
+		if (sw < 1 || sh < 1) {
+			this.scaled = false;
+			return;
+		}
+		this.scaleW = sw;
+		this.scaleH = sh;
+		this.scalePadX = (w - sw) / 2;
+		this.scalePadY = (h - sh) / 2;
+		this.scaleCols = new int[sw];
+		for (int x = 0; x < sw; x++) {
+			this.scaleCols[x] = x * Layout.FIXED_W / sw;
+		}
+		// The bars are only black because nothing has written there yet; a frame that used to be
+		// bigger leaves its own edges behind when the rectangle shrinks.
+		this.scaleBorder = true;
+		this.ensureFrameBuffer();
+		this.scaledArea = new PixMap(h, this.getBaseComponent(), w);
+		if (this.screenGraphics == null) {
+			this.screenGraphics = this.acquireGraphics();
+		}
+		super.remapMouse = true;
+		PixMap.target = this;
+		this.redrawFrame = true;
+		// AND PUT THE VIEWPORT BACK. Every PixMap constructor ends with bind(), so the two built
+		// above have left Pix2D pointing at the window-sized area while Pix3D.lineOffset is still
+		// the viewport's. Drawing the scene into that pair indexes a 334-row table with a y the
+		// 537-row buffer allowed - prepareGame ends with these same two statements for the same
+		// reason, and this was the one place building an area outside a draw that did not.
+		this.rebindViewport();
+	}
+
+	/** The scene's buffer and its line offsets, as a pair. Neither is any use without the other. */
+	private void rebindViewport() {
+		if (this.areaViewport != null && this.areaViewportOffset != null) {
+			this.areaViewport.bind();
+			Pix3D.lineOffset = this.areaViewportOffset;
+		}
+	}
+
+	/**
+	 * A point on the window, back into the 765x503 frame. Clamped rather than allowed out of the
+	 * frame: a tap on a black bar then lands on the frame's own stone edge, which does nothing,
+	 * where a coordinate outside the frame would be a number no hit test was written to expect.
+	 */
+	private static int scaleBack(int v, int pad, int size, int fixed) {
+		if (size <= 0) {
+			return v;
+		}
+		int out = (v - pad) * fixed / size;
+		if (out < 0) {
+			return 0;
+		}
+		return out > fixed - 1 ? fixed - 1 : out;
+	}
+
+	/**
+	 * The assembled frame onto the window, scaled and centred.
+	 *
+	 * Nearest neighbour, by a column table worked out once per size: the 377 frame is sharp-edged
+	 * art and small text, and averaging it at these ratios turns the font to mud. The black bars
+	 * need no clearing - a new int[] is already black and nothing below ever writes outside the
+	 * centred rectangle.
+	 */
+	private void presentScaled() {
+		this.scaledAt = System.currentTimeMillis();
+		if (this.screenGraphics == null) {
+			// applyScale asks for one too, but the component may not have been ready to give it
+			// yet - and in fixed mode it is asked for nowhere else, so without this it would stay
+			// null for the rest of the session and nothing would ever reach the window.
+			this.screenGraphics = this.acquireGraphics();
+		}
+		if (this.scaledArea == null || this.frameBuffer == null || this.screenGraphics == null || this.scaleCols == null) {
+			return;
+		}
+		if (this.scaleBorder) {
+			this.scaleBorder = false;
+			if (this.scalePadX > 0 || this.scalePadY > 0) {
+				this.screenGraphics.setColor(java.awt.Color.black);
+				this.screenGraphics.fillRect(0, 0, this.scaleForW, this.scalePadY);
+				this.screenGraphics.fillRect(0, this.scalePadY + this.scaleH, this.scaleForW, this.scaleForH);
+				this.screenGraphics.fillRect(0, 0, this.scalePadX, this.scaleForH);
+				this.screenGraphics.fillRect(this.scalePadX + this.scaleW, 0, this.scaleForW, this.scaleForH);
+			}
+		}
+		// SMOOTH IS THE PLATFORM'S, blocky is ours. The column table below is the cheaper of the
+		// two and is what a phone wants; bilinear wants drawImage, which wants an Image, which is
+		// what framePix is for.
+		if (DisplaySettings.smoothScale() && this.framePix != null && this.scaleW > Layout.FIXED_W) {
+			this.framePix.setPixels();
+			java.awt.Graphics g = this.screenGraphics;
+			if (g instanceof java.awt.Graphics2D) {
+				java.awt.Graphics2D g2 = (java.awt.Graphics2D) g;
+				Object was = g2.getRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION);
+				g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+					java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+				g2.drawImage(this.framePix.image, this.scalePadX, this.scalePadY, this.scaleW, this.scaleH, null);
+				if (was != null) {
+					g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, was);
+				}
+			} else {
+				g.drawImage(this.framePix.image, this.scalePadX, this.scalePadY, this.scaleW, this.scaleH, null);
+			}
+			return;
+		}
+		int[] dst = this.scaledArea.data;
+		int[] src = this.frameBuffer;
+		int[] cols = this.scaleCols;
+		int dw = this.scaledArea.width;
+		int w = this.scaleW;
+		for (int y = 0; y < this.scaleH; y++) {
+			int srow = y * Layout.FIXED_H / this.scaleH * Layout.FIXED_W;
+			int drow = (y + this.scalePadY) * dw + this.scalePadX;
+			for (int x = 0; x < w; x++) {
+				dst[drow + x] = src[srow + cols[x]];
+			}
+		}
+		this.scaledArea.drawDirect(0, 0, this.screenGraphics);
 	}
 
 	/**
@@ -17510,6 +18753,132 @@ public class Client extends GameShell implements PixMap.Target {
 	}
 
 	/** A w x h block of src (stride sw) at (sx, sy) to dst (dw x dh) at (dx, dy), clipped to dst. */
+	/**
+	 * dest offset -> source offset for the HUD scale, built once per scale.
+	 *
+	 * One table for both axes: the scale is the same in each direction, and no panel is taller than
+	 * the frame is wide. Integer division, which is the nearest-neighbour rule - at 150% the source
+	 * columns come out 0,0,1,2,2,3,4,4..., so every third one is doubled and the panel grows by
+	 * half without a single pixel being averaged with its neighbour.
+	 */
+	private int[] hudCols(int scale) {
+		int n = Math.max(Layout.FIXED_W, Layout.FIXED_H) * scale / 100 + 1;
+		if (this.hudCols == null || this.hudColsFor != scale || this.hudCols.length < n) {
+			int[] cols = new int[n];
+			for (int i = 0; i < n; i++) {
+				cols[i] = i * 100 / scale;
+			}
+			this.hudCols = cols;
+			this.hudColsFor = scale;
+		}
+		return this.hudCols;
+	}
+
+	/**
+	 * One panel onto the window, stretched to w x h by the table - and mixed with what is there if
+	 * alpha says so, which is the modern layout's see-through panels.
+	 *
+	 * w and h are the DESTINATION size; the source rectangle is whatever those map back to. The
+	 * clipping is copyRect's, with one addition: a destination column that falls off the left edge
+	 * takes its table entry with it, so the part that survives still reads the source columns it
+	 * would have read. Getting that wrong does not clip, it shears.
+	 */
+	/**
+	 * One panel onto the window at 1:1, leaving out whatever the mask says is not part of it.
+	 *
+	 * A separate method rather than a flag on copyRect: that one is arraycopy a row at a time,
+	 * which is most of why the unscaled path is cheap, and a mask has to be asked about every
+	 * pixel. Only the minimap uses this.
+	 */
+	private static void copyRectMasked(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy, boolean[] mask) {
+		// The mask has a row per row of the PANEL, so its stride is the panel's width - not what
+		// is left of it after the clipping below. A dragged minimap half off the edge read the
+		// mask in short rows and masked a diagonal band across itself.
+		final int maskW = w;
+		int col0 = 0;
+		int row0 = 0;
+		if (dx < 0) {
+			col0 = -dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			row0 = -dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		for (int row = 0; row < h; row++) {
+			int from = (sy + row0 + row) * sw + sx + col0;
+			int to = (dy + row) * dw + dx;
+			int maskRow = (row0 + row) * maskW;
+			for (int col = 0; col < w; col++) {
+				if (!mask[maskRow + col0 + col]) {
+					dst[to + col] = src[from + col];
+				}
+			}
+		}
+	}
+
+	private static void scaleRect(int[] src, int sw, int sx, int sy, int[] dst, int dw, int dh, int dx, int dy, int w, int h, int[] cols, int alpha, boolean[] mask, int maskW) {
+		int col0 = 0;
+		int row0 = 0;
+		if (dx < 0) {
+			col0 = -dx;
+			w += dx;
+			dx = 0;
+		}
+		if (dy < 0) {
+			row0 = -dy;
+			h += dy;
+			dy = 0;
+		}
+		if (dx + w > dw) {
+			w = dw - dx;
+		}
+		if (dy + h > dh) {
+			h = dh - dy;
+		}
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+		boolean solid = alpha >= Layout.OPAQUE;
+		int rest = 256 - alpha;
+		for (int row = 0; row < h; row++) {
+			int from = (sy + cols[row0 + row]) * sw + sx;
+			int to = (dy + row) * dw + dx;
+			int maskRow = mask == null ? 0 : cols[row0 + row] * maskW;
+			if (solid) {
+				for (int col = 0; col < w; col++) {
+					if (mask != null && mask[maskRow + cols[col0 + col]]) {
+						continue;
+					}
+					dst[to + col] = src[from + cols[col0 + col]];
+				}
+				continue;
+			}
+			for (int col = 0; col < w; col++) {
+				if (mask != null && mask[maskRow + cols[col0 + col]]) {
+					continue;
+				}
+				int a = src[from + cols[col0 + col]];
+				int b = dst[to + col];
+				// red and blue in one multiply, green in another - blendRect's arithmetic exactly.
+				int rb = ((a & 0xFF00FF) * alpha + (b & 0xFF00FF) * rest) >>> 8 & 0xFF00FF;
+				int g = ((a & 0xFF00) * alpha + (b & 0xFF00) * rest) >>> 8 & 0xFF00;
+				dst[to + col] = rb | g;
+			}
+		}
+	}
+
 	private static void copyRect(int[] src, int sw, int sx, int sy, int w, int h, int[] dst, int dw, int dh, int dx, int dy) {
 		if (dx < 0) {
 			sx -= dx;

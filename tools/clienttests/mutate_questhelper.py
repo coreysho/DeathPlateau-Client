@@ -27,6 +27,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 PLUGIN = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/builtin/QuestHelperPlugin.java')
 CONTEXT = os.path.join(ROOT, 'src/main/java/jagex2/client/plugin/PluginContext.java')
+# The menu's own resolver: which npc, loc or obj a clicked row acts on. The quest helper reads
+# the player's clicks through it, so a wrong answer here is a step that never moves.
+CLIENT = os.path.join(ROOT, 'src/main/java/jagex2/client/Client.java')
 RUNNER = os.path.join(HERE, 'run_questhelpertest.py')
 
 MUTS = [
@@ -49,7 +52,7 @@ MUTS = [
 
     # ---- WHICH LEG. Stage granularity is all there is, so being off by one leg is the whole panel.
     (PLUGIN, 'the leg taken as the first one past the varp rather than the last one before it',
-     '\t\t\tif (st.from <= value && (best == null || st.from >= best.from)) {',
+     '\t\t\tif (st.from <= value && (best == null || st.from > best.from)) {',
      '\t\t\tif (st.from <= value && (best == null || st.from <= best.from)) {'),
     (PLUGIN, 'the varp read off by one, so every quest shows the leg after the one you are on',
      '\t\treturn q.stageIsVarbit ? ctx.getVarbit(q.stageVarId) : ctx.getVarp(q.stageVarId);',
@@ -60,11 +63,90 @@ MUTS = [
 
     # ---- WHOSE CHOICE. The plugin used to pick a quest for the player and got it wrong five
     # ---- times in six, which is worse than an empty page with a list on it.
-    (PLUGIN, 'a quest picked for the player again, the first started one in table order',
-     '\t\tif (this.pinned == null) {\n\t\t\treturn null;\n\t\t}',
-     '\t\tif (this.pinned == null) {\n\t\t\tfor (Quest q : this.quests) {\n'
+    (PLUGIN, 'a quest guessed for the player again, the first started one in table order',
+     '\t\tif (this.trackedQuest == null || this.trackedQuest.isEmpty()) {\n\t\t\treturn null;\n\t\t}',
+     '\t\tif (this.trackedQuest == null || this.trackedQuest.isEmpty()) {\n\t\t\tfor (Quest q : this.quests) {\n'
      '\t\t\t\tif (this.started(q) && !this.finished(q)) {\n\t\t\t\t\treturn q;\n\t\t\t\t}\n\t\t\t}\n'
      '\t\t\treturn null;\n\t\t}'),
+    (PLUGIN, 'any one of several quests under way followed, which is the guess one layer down',
+     '\t\tif (count == 1) {',
+     '\t\tif (count >= 1) {'),
+    (PLUGIN, 'the quest under way never picked up, so the player says so twice',
+     '\t\tif (count == 1) {',
+     '\t\tif (false) {'),
+    (PLUGIN, 'the login settle skipped, so the values arriving at login read as progress',
+     '\t\t\tthis.settling = SETTLING;',
+     '\t\t\tthis.settling = 0;'),
+    (PLUGIN, 'a quest reaching its end followed, so finishing one takes the page back to it',
+     '\t\t\tif (this.settling <= 0 && now > 0 && !this.finished(q)) {',
+     '\t\t\tif (this.settling <= 0 && now > 0) {'),
+    (PLUGIN, 'a move never followed, so only the Track button chooses',
+     '\t\t\tif (this.settling <= 0 && now > 0 && !this.finished(q)) {',
+     '\t\t\tif (false) {'),
+    (PLUGIN, 'the pin never written down, so the choice is lost when the client closes',
+     '\t\t\t\t\tthis.config.set(items.get(i), want);',
+     '\t\t\t\t\tthis.trackedQuest = want;'),
+
+    # ---- THE STEP YOU HAVE JUST TAKEN. A talk leaves no trace at all, so the click and the
+    # ---- conversation it opens are the only record there is - and a click that led nowhere is
+    # ---- not a step.
+    (PLUGIN, 'a click counted as the step at once, before the conversation it started',
+     '\t\tif ("talk".equals(w.kind)) {\n\t\t\tdone = w.sawDialogue;',
+     '\t\tif ("talk".equals(w.kind)) {\n\t\t\tdone = true;'),
+    (PLUGIN, 'the conversation never watched, so a talk is never seen to finish',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}',
+     '\t\tif (false) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}'),
+    (PLUGIN, 'the step dropped while the conversation is still open, and the option mark with it',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t\treturn;\n\t\t}',
+     '\t\tif (ctx.isDialogueOpen()) {\n\t\t\tw.sawDialogue = true;\n\t\t}'),
+    (PLUGIN, 'a click never written off, so a conversation long afterwards finishes it',
+     '\t\tif (this.tick - w.tick > GIVE_UP) {',
+     '\t\tif (false) {'),
+    (PLUGIN, 'a loc counted on the click rather than on walking to it',
+     '\t\t\tdone = this.near(w.worldX, w.worldZ);',
+     '\t\t\tdone = true;'),
+    (PLUGIN, 'a conversation counted as a loc reached, so a level-up finishes the step for you',
+     '\t\t\tdone = this.near(w.worldX, w.worldZ);',
+     '\t\t\tdone = w.sawDialogue || this.near(w.worldX, w.worldZ);'),
+    (PLUGIN, 'any click taken as the step, whatever the panel was naming',
+     '\t\tif (leg == null || on == null || !clicked(on, event.target)) {',
+     '\t\tif (leg == null || on == null) {'),
+    (PLUGIN, 'arriving not counted, so a walk you have already made is still the step',
+     '\t\t\tif (on != null && "walk".equals(on.kind) && on.at != null && this.onThisFloor(on)',
+     '\t\t\tif (false && on != null && "walk".equals(on.kind) && on.at != null && this.onThisFloor(on)'),
+    (PLUGIN, 'anywhere at all counted as arrived',
+     '\tprivate static final int CLOSE = 3;',
+     '\tprivate static final int CLOSE = 300;'),
+    (PLUGIN, 'the page striking nothing off, so the leg never reads as a position in it',
+     '\t\t\t\t\t\tif (live > 0 && i < live && !"note".equals(st.steps.get(i).kind)) {',
+     '\t\t\t\t\t\tif (false) {'),
+    # An "i <= live" mutation would go here, striking off the step you are standing on as well as
+    # the ones behind it, and is NOT here: the row being named returns "now" two lines above and
+    # never reaches that test, so the mutation changes nothing a player or a check can see.
+    (PLUGIN, 'the step marked done one short, so the panel names it over again',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo + 1;\n\t\t}',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo;\n\t\t}'),
+    (PLUGIN, 'the clicks taken as the whole answer, so what the bag said is thrown away',
+     '\t\tif (st.doneTo >= start) {\n\t\t\tstart = st.doneTo + 1;\n\t\t}',
+     '\t\tstart = st.doneTo + 1;'),
+    (PLUGIN, 'the clicks kept across a logout, so the next player starts half-way through',
+     '\t\tfor (Quest q : this.quests) {\n\t\t\tforget(q);\n\t\t}',
+     '\t\tfor (Quest q : this.quests) {\n\t\t\tif (false) {\n\t\t\t\tforget(q);\n\t\t\t}\n\t\t}'),
+
+    # ---- WHAT WAS CLICKED, which the client resolves and two places used to have to know.
+    (CLIENT, 'an npc\'s index reported as its id, which matches no step in any table',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.NPC, (int) npc.field1370.field1431, op,',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.NPC, index, op,'),
+    (CLIENT, 'a loc id read off the bottom of the word rather than out of its own bits',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA >> 14 & 0x7FFF, op, tileX, tileZ);',
+     '\t\t\tjagex2.client.plugin.event.MenuOptionClicked.Target.LOC, paramA & 0x7FFF, op, tileX, tileZ);'),
+    (CLIENT, 'the op slots shifted by one, so Talk-to reads as the second word on the menu',
+     '\t\t\tcase 318:\n\t\t\t\treturn this.npcTarget(paramA, 1);',
+     '\t\t\tcase 318:\n\t\t\t\treturn this.npcTarget(paramA, 2);'),
+    (CLIENT, 'a loc row resolved as nothing at all, so no loc click is ever a step',
+     '\t\t\tcase 35:\n\t\t\t\treturn locTarget(paramA, 1, paramB, paramC);',
+     '\t\t\tcase 35:\n\t\t\t\treturn new jagex2.client.plugin.event.MenuOptionClicked.Target('
+     'jagex2.client.plugin.event.MenuOptionClicked.Target.NONE, -1, 0, -1, -1);'),
 
     # ---- WHERE. A world tile out of the table is not a scene tile, and the difference is the
     # ---- width of whatever chunk of the map happens to be loaded.
@@ -152,11 +234,28 @@ MUTS = [
      '\t\t\tif (now >= mark.is) {\n\t\t\t\tstart = mark.at;\n\t\t\t}',
      '\t\t\tif (true) {\n\t\t\t\tstart = mark.at;\n\t\t\t}'),
     (PLUGIN, 'a leg the flags say is finished shown anyway, which is the beers all over again',
-     '\t\t\tif (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {\n\t\t\t\treturn st;\n\t\t\t}',
+     '\t\t\tif (this.reached(q, st) <= lastAction(st)) {\n\t\t\t\treturn st;\n\t\t\t}',
      '\t\t\tif (true) {\n\t\t\t\treturn st;\n\t\t\t}'),
     (PLUGIN, 'the walk forward taking any later leg rather than the next one',
      '\t\t\t\tif (other.from > st.from && (next == null || other.from < next.from)) {',
      '\t\t\t\tif (other.from > st.from && (next == null || other.from > next.from)) {'),
+
+    # ---- THE SHAPES IN THE TABLE: a tile with no floor, two legs at one value, an empty leg.
+    (PLUGIN, 'a tile with no floor taken as the ground floor, which loses 2677 of them upstairs',
+     '\tprivate static final int ANY_PLANE = -1;',
+     '\tprivate static final int ANY_PLANE = 0;'),
+    (PLUGIN, 'the floor insisted on even where the table never named one',
+     '\t\treturn step.at != null && (step.at[2] == ANY_PLANE || step.at[2] == ctx.getPlane());',
+     '\t\treturn step.at != null && step.at[2] == ctx.getPlane();'),
+    (PLUGIN, 'the later of two legs at one stage value taken, hiding the first one\'s steps',
+     '\t\t\tif (st.from <= value && (best == null || st.from > best.from)) {',
+     '\t\t\tif (st.from <= value && (best == null || st.from >= best.from)) {'),
+    (PLUGIN, 'an empty leg taken as the answer, so the panel says it has nothing to say',
+     '\t\t\tif (this.reached(q, st) <= lastAction(st)) {',
+     '\t\t\tif (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {'),
+    (PLUGIN, 'a note counted as a step to do, so a leg that ends in one never ends',
+     '\t\t\tif (!"note".equals(st.steps.get(i).kind)) {\n\t\t\t\treturn i;\n\t\t\t}',
+     '\t\t\tif (true) {\n\t\t\t\treturn i;\n\t\t\t}'),
 
     # ---- HOW FAR INTO A LEG. The bag is the only record inside one.
     (PLUGIN, 'the leg always started from its first step, which is how it stuck on the bookcase',
@@ -250,8 +349,8 @@ MUTS = [
      '\t\t\tint at = Integer.parseInt(pick) - 1;',
      '\t\t\tint at = Integer.parseInt(pick);'),
     (PLUGIN, 'a numbered pick read as words, so it marks whatever line happens to say it',
-     '\t\tif (numeric) {\n\t\t\tint at = Integer.parseInt(pick) - 1;',
-     '\t\tif (false) {\n\t\t\tint at = Integer.parseInt(pick) - 1;'),
+     '\t\tif (numeric) {\n\t\t\ttry {',
+     '\t\tif (false) {\n\t\t\ttry {'),
     (PLUGIN, 'the picks never read off the table, so no step has one',
      '\t\t\t\tstep.picks = picks(Json.array(m, "picks"));',
      '\t\t\t\tstep.picks = NO_PICKS;'),
@@ -272,6 +371,18 @@ MUTS = [
     (PLUGIN, 'the quest table never read, so the page is empty and says nothing is loaded',
      '\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));',
      '\t\t\t\t\tif (this.quests.size() < 0) {\n\t\t\t\t\t\tthis.quests.add(quest((Map<?, ?>) entry));\n\t\t\t\t\t}'),
+
+    # ---- THE VALUES BETWEEN THE LEGS, which is section 15b's whole reason to exist. This throws
+    # only where the varp holds a value no leg begins at AND the quest is not finished - the state
+    # the 850-leg sweep cannot reach, because that sweep iterates the legs themselves. Of the 174
+    # checks in the suite, 15b is the ONLY one that catches it: everything else either picks its
+    # leg values by hand or sits at `done`. Weaken 15b back into a walk of the table's own rows
+    # and this mutation goes green with every other check still passing.
+    (PLUGIN, 'an overlay that throws only at a value no leg begins at, which 15 cannot reach',
+     '\t\treturn best;\n\t}\n\n\t/**\n\t * The leg to show',
+     '\t\tif (best != null && best.from != value && value < q.done) {\n'
+     '\t\t\tthrow new IllegalStateException("legless value " + value);\n\t\t}\n'
+     '\t\treturn best;\n\t}\n\n\t/**\n\t * The leg to show'),
 ]
 
 

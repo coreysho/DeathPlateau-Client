@@ -62,8 +62,21 @@ public class Pix32 extends Pix2D {
 	}
 
 	public Pix32(Jagfile jag, String name, int sprite) {
-		Packet data = new Packet(jag.read(name + ".dat", null));
-		Packet index = new Packet(jag.read("index.dat", null));
+		this(jag.read(name + ".dat", null), jag.read("index.dat", null), sprite);
+	}
+
+	/**
+	 * One sprite of a group, from archive entries that have ALREADY BEEN READ.
+	 *
+	 * Jagfile.read decompresses the entry it is asked for every time it is called - BZip2, per
+	 * entry - and the constructor above calls it twice. A group of seventy-two sprites loaded the
+	 * obvious way therefore costs a hundred and forty-four decompressions to produce seventy-two
+	 * pictures. Read the group's entry and index.dat once and come here instead; index.dat is the
+	 * same entry for every group in an archive, so one read of it serves the whole load.
+	 */
+	public Pix32(byte[] dat, byte[] idx, int sprite) {
+		Packet data = new Packet(dat);
+		Packet index = new Packet(idx);
 		index.pos = data.g2();
 
 		this.owi = index.g2();

@@ -6,9 +6,12 @@ import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.Overlay;
 import jagex2.client.plugin.OverlayGraphics;
 import jagex2.client.plugin.Plugin;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginDescriptor;
 import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.GameStateChanged;
 import jagex2.client.plugin.event.GameTick;
+import jagex2.client.plugin.event.MenuOptionClicked;
 import jagex2.client.plugin.SceneLoc;
 import jagex2.client.plugin.hub.Json;
 
@@ -33,15 +36,20 @@ import java.util.Map;
  * So the step list here is not a second, hand-written account of the quests that will drift from
  * the game. It is generated from the one the nightly proves: move a door and a sim fails.
  *
- * WHAT IT CANNOT DO, said plainly because the gap is visible in use. Progress is known to STAGE
- * granularity, not step granularity - the quest varp says "you have talked to Father Urhney", not
- * "you have taken three of the five steps since". So the sidebar lists the whole of the leg you
- * are on rather than striking steps out one at a time, and which of those steps leads is worked
- * out from the world rather than read off the varp: what is standing in front of you ({@link
- * #spot}) and what the quest has put in your bag ({@link #reached}). Both are inferences. A step
- * that leaves no trace - reading a book you keep, pulling a lever - cannot be seen to have
- * happened, so the panel can sit on one until the next thing it CAN see arrives. Finer tracking
- * would need the content to record sub-steps, which no part of the game does today.
+ * HOW FAR INTO A LEG, which the server does not say. The quest varp moves once a leg - "you have
+ * talked to Father Urhney", not "you have taken three of the five steps since" - so the sidebar
+ * lists the whole of the leg you are on, and which of its steps leads is worked out here from
+ * four things: what the quest has put in your bag, what its own flags read ({@link #reached}),
+ * what is standing in front of you ({@link #spot}), and WHAT YOU HAVE JUST CLICKED ({@link
+ * #watchTheStep}).
+ *
+ * The click is the one that moves inside a leg. A talk leaves no trace at all - nothing arrives,
+ * no flag moves - so before the client watched for it, the panel went on naming the person you
+ * had just finished talking to for as long as they stood in front of you, and only moved on when
+ * the quest's own progress caught up a leg later. Clicking the step the panel names is the player
+ * saying they have done it, and a conversation that opens and then closes is that same step
+ * finishing. Neither is read off the varp, so neither can be proof - they are the same kind of
+ * inference as the bag - but between them the panel moves at the speed the player does.
  *
  * AND THE ITEM LIST IS TWO LISTS. What a leg says you must hold is partly a bank trip and partly
  * what the quest hands you while you are in it; only the first is something to go and fetch, and
@@ -172,6 +180,16 @@ public final class QuestHelperPlugin extends Plugin {
 
 	/** No items at all: a walk, a note, a talk. Shared so a frame does not allocate for each. */
 	private static final int[] NONE = new int[0];
+
+	/**
+	 * The plane of a tile the table recorded without one: match whatever floor you are on.
+	 *
+	 * Two thirds of the tiles in the table are a bare pair of coordinates, and a pair says
+	 * nothing about the floor either way - so the only honest reading is "wherever you are".
+	 * The ones that DO name a level are still held to it: a tile on the top floor of the Temple
+	 * of Light is not where to stand while you are at the bottom of it.
+	 */
+	private static final int ANY_PLANE = -1;
 	private static final String[] NO_PICKS = new String[0];
 
 	/** A step's dialogue picks, as written. */
@@ -236,6 +254,17 @@ public final class QuestHelperPlugin extends Plugin {
 
 	private static final class Stage {
 		int from;
+
+		/**
+		 * The last step of this leg the player was SEEN to take, or -1.
+		 *
+		 * Set by {@link #watchTheStep} from the player's own clicks and forgotten on logout,
+		 * because it is this character's progress and nothing in the cache. It is a floor under
+		 * {@link #reached} rather than the whole answer: the bag and the quest's flags can say
+		 * more than the clicks this session has seen, never less.
+		 */
+		int doneTo = -1;
+
 		final List<Mark> marks = new ArrayList<>();
 		final List<Head> headings = new ArrayList<>();
 		final List<Step> steps = new ArrayList<>();
@@ -262,16 +291,27 @@ public final class QuestHelperPlugin extends Plugin {
 
 	private final List<Quest> quests = new ArrayList<>();
 
-	/** Null means "follow whichever quest is in progress"; set by the sidebar to pin one. */
-	private String pinned = null;
+	/**
+	 * The quest the page follows, by id, or empty for none.
+	 *
+	 * A SETTING SO THAT IT SURVIVES, which is the whole point of it being here rather than a
+	 * plain field: a field is dropped when the plugin stops, and the plugin stops on every
+	 * client restart, so the player had to find their quest again every time they opened the
+	 * game. Written by the Track button, by {@link #follow}, and by nothing else.
+	 */
+	@ConfigItem(keyName = "tracked", name = "Tracked quest",
+		description = "The quest the page follows - set by the Track button on the page")
+	public String trackedQuest = "";
 
 	/**
 	 * True while the page is showing the quest list instead of the tracked quest's steps.
 	 *
-	 * NOTHING IS TRACKED UNTIL THE PLAYER PICKS. Guessing took the first started-and-unfinished
-	 * quest in table order, which is alphabetical by id, so somebody part-way through six quests
-	 * was shown Fight Arena because "arena" sorts early. A guess that is wrong five times out of
-	 * six is worse than an empty page with a list on it, and the page opens on the list.
+	 * THE PAGE OPENS ON THE LIST when there is nothing to follow, and it is the player's pick
+	 * that closes it. What it does NOT do is guess: taking the first started-and-unfinished
+	 * quest in table order, which is alphabetical by id, showed somebody part-way through six
+	 * quests Fight Arena because "arena" sorts early. {@link #followTheQuestYouAreDoing} picks
+	 * one up only when it is not a guess - the quest whose progress just moved, or the single
+	 * quest underway.
 	 */
 	private boolean browsing = false;
 
@@ -442,7 +482,12 @@ public final class QuestHelperPlugin extends Plugin {
 				step.why = m.containsKey("why") ? Json.string(m, "why", null) : null;
 				List<?> at = Json.array(m, "at");
 				if (at != null && at.size() >= 2) {
-					step.at = new int[] { num(at.get(0)), num(at.get(1)), at.size() > 2 ? num(at.get(2)) : 0 };
+					// A MISSING PLANE IS UNKNOWN AND NOT ZERO, which is what this read as before:
+					// 2677 of the table's tiles are a pair, because the sim stood there with a
+					// `go [x,z]` that never named a level, and taking that as the ground floor
+					// threw every one of them away the moment the player climbed a staircase -
+					// no marker on an upper floor, and a walk that could never be arrived at.
+					step.at = new int[] { num(at.get(0)), num(at.get(1)), at.size() > 2 ? num(at.get(2)) : ANY_PLANE };
 				}
 				st.steps.add(step);
 			}
@@ -533,46 +578,175 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	/**
-	 * The quest being followed, which is the one the player pressed Track on and nothing else.
+	 * The quest being followed: the one the player pressed Track on, or the one the plugin
+	 * picked up because the player is plainly doing it.
 	 *
-	 * IT USED TO GUESS, taking the first started-and-unfinished quest in the table, whose order is
-	 * alphabetical by id and so arbitrary: somebody part-way through six quests was shown Fight
-	 * Arena because "arena" sorts early. A guess that is wrong five times in six is worse than an
-	 * empty page with a list on it, so the page opens on the list and the player picks.
+	 * IT STILL DOES NOT GUESS. The two ways in are both evidence rather than a sort order - a
+	 * quest whose progress moved while the plugin was watching, and a single quest underway with
+	 * no second one to confuse it. See {@link #followTheQuestYouAreDoing}.
 	 */
 	private Quest tracked() {
-		if (this.pinned == null) {
+		if (this.trackedQuest == null || this.trackedQuest.isEmpty()) {
 			return null;
 		}
 		for (Quest q : this.quests) {
-			if (q.id.equals(this.pinned)) {
-				// A FINISHED QUEST IS NOT TRACKED. Nothing cleared the pin but shutDown, so
-				// completing the quest you were following left the panel on its last leg for good
-				// - the steps you had just done, struck off, with nothing to say the quest was
-				// over. The player had to know to press Change.
-				//
-				// Dropping the pin falls back to the list, which is where the page opens anyway
-				// and is a state every caller here already handles, because `pinned` is null until
-				// the player picks. So there is no new state and nothing new to draw.
-				//
-				// IT DOES NOT GUESS THE NEXT QUEST, for the reason in the note above: a guess that
-				// is wrong five times out of six is worse than the list.
-				if (this.finished(q)) {
-					this.pinned = null;
-					return null;
-				}
+			if (q.id.equals(this.trackedQuest)) {
 				return q;
 			}
 		}
 		return null;
 	}
 
-	/** The leg of the quest the varp says you are on: the last stage whose `from` you have passed. */
+	/**
+	 * Follow this quest from now on, and remember it.
+	 *
+	 * SAVED EVERY TIME, including when the plugin picked the quest itself: the player who logs
+	 * back in tomorrow is still in the middle of the same quest, and the point of noticing it
+	 * was to stop making them say so twice.
+	 */
+	private void follow(String id) {
+		String want = id == null ? "" : id;
+		if (want.equals(this.trackedQuest)) {
+			// ALREADY FOLLOWING IT, and this is reached once a tick by the rule below - so it
+			// must not touch the page. Closing the list here made Change unusable: press it, and
+			// the next tick put the steps straight back.
+			return;
+		}
+		this.trackedQuest = want;
+		// The pending click belonged to the quest we have just left.
+		this.waiting = null;
+		try {
+			List<PluginConfig.Item> items = this.config == null ? null : this.config.getItems();
+			for (int i = 0; items != null && i < items.size(); i++) {
+				if ("tracked".equals(items.get(i).key)) {
+					this.config.set(items.get(i), want);
+					return;
+				}
+			}
+		} catch (Throwable ignored) {
+			// A page that cannot save the pin still follows the quest for this session.
+		}
+	}
+
+	/**
+	 * FOLLOW THE QUEST THE PLAYER IS ACTUALLY DOING, once a tick.
+	 *
+	 * The page used to follow nothing at all until Track was pressed, which left a player
+	 * half-way through a quest looking at a list of 108 of them - the one thing the plugin knows
+	 * for certain about them, that they are in the middle of this one, ignored.
+	 *
+	 * TWO SIGNALS, BOTH EVIDENCE.
+	 *
+	 * A MOVE is the strongest thing there is: the quest whose progress var changed while the
+	 * plugin was watching is the quest being played, whatever else is half-finished. It is also
+	 * what makes starting a quest show its first step at once - the var going from nothing to
+	 * its first stage is a move like any other.
+	 *
+	 * ONE QUEST UNDERWAY is the other, and it is not a guess either: with exactly one quest
+	 * started and unfinished there is nothing to choose between. Two or more and the page waits
+	 * on the list, which is where the old alphabetical guess went wrong.
+	 *
+	 * NOT DURING LOGIN. Every varp arrives in the first few ticks after logging in, so every
+	 * started quest would look like it had just moved. Those ticks only record the values.
+	 */
+	private void followTheQuestYouAreDoing() {
+		int n = this.quests.size();
+		if (this.was == null || this.was.length != n) {
+			this.was = new int[n];
+			for (int i = 0; i < n; i++) {
+				this.was[i] = this.questValue(this.quests.get(i));
+			}
+			this.settling = SETTLING;
+		}
+		Quest moved = null;
+		for (int i = 0; i < n; i++) {
+			Quest q = this.quests.get(i);
+			int now = this.questValue(q);
+			if (now == this.was[i]) {
+				continue;
+			}
+			// BACKWARDS IS A NEW RUN AT IT, not progress: a quest reset by a cheat or by the
+			// content itself, and the steps this session watched the player take are no longer
+			// behind them.
+			if (now < this.was[i]) {
+				forget(q);
+			}
+			this.was[i] = now;
+			// THE QUEST YOU WERE FOLLOWING HAS JUST ENDED, so let go of it. Nothing used to:
+			// the page sat on the finished quest's last leg - the steps you had just taken,
+			// struck off, with nothing to say it was over - until the player thought to press
+			// Change. Letting go here puts the page back to the list, and the one-quest rule
+			// below may then pick up whatever is still going.
+			//
+			// ON THE MOVE AND NOT ON EVERY READ, which is the whole distinction: "it ended while
+			// I was following it" is not "the player picked a quest that was already done". The
+			// second is a pick like any other and is kept, and saved, as pickTests asks.
+			//
+			// AND NOT WHILE SETTLING, for the same reason `moved` is not: the values that arrive
+			// just after login are not things that happened. A pin saved last session pointing at
+			// a quest finished since is still the player's pin, and dropping it here would make
+			// Track on a finished quest stick for one session and not the next.
+			if (this.settling <= 0 && this.finished(q) && q.id.equals(this.trackedQuest)) {
+				this.follow(null);
+			}
+			if (this.settling <= 0 && now > 0 && !this.finished(q)) {
+				moved = q;
+			}
+		}
+		if (this.settling > 0) {
+			this.settling--;
+		}
+		if (moved != null) {
+			// Doing something in a quest is asking for that quest, so this one closes the list.
+			this.follow(moved.id);
+			this.browsing = false;
+			return;
+		}
+		if (this.tracked() != null) {
+			return;
+		}
+		Quest only = null;
+		int count = 0;
+		for (Quest q : this.quests) {
+			if (this.started(q) && !this.finished(q)) {
+				only = q;
+				count++;
+			}
+		}
+		if (count == 1) {
+			this.follow(only.id);
+		}
+	}
+
+	/** Each quest's progress as of the last tick, so that a move can be seen at all. */
+	private int[] was;
+
+	/** Ticks left of the login settle, during which a move is recorded but followed by nothing. */
+	private int settling;
+
+	/** How long the varps take to arrive after logging in, in game ticks. */
+	private static final int SETTLING = 5;
+
+	/** Everything this session watched the player do in a quest, forgotten. */
+	private static void forget(Quest q) {
+		for (Stage st : q.stages) {
+			st.doneTo = -1;
+		}
+	}
+
+	/**
+	 * The leg of the quest the varp says you are on: the last stage whose `from` you have passed.
+	 *
+	 * AND THE FIRST OF TWO THAT SHARE A VALUE. Monkey Madness records two legs at stage 12 -
+	 * the varp does not move between the Grand Tree and Lumdo - and taking the later of them
+	 * put nine steps where no player could ever see them. The earlier one is where somebody at
+	 * stage 12 is, and {@link #legNow} walks on to the other when its steps are behind them.
+	 */
 	private Stage stageNow(Quest q) {
 		int value = this.questValue(q);
 		Stage best = null;
 		for (Stage st : q.stages) {
-			if (st.from <= value && (best == null || st.from >= best.from)) {
+			if (st.from <= value && (best == null || st.from > best.from)) {
 				best = st;
 			}
 		}
@@ -593,7 +767,14 @@ public final class QuestHelperPlugin extends Plugin {
 	private Stage legNow(Quest q) {
 		Stage st = this.stageNow(q);
 		for (int guard = 0; st != null && guard < 8; guard++) {
-			if (st.steps.isEmpty() || this.reached(q, st) < st.steps.size()) {
+			// A LEG IS OVER WHEN NOTHING IN IT IS LEFT TO DO, which is not the same as having run
+			// off the end of its list. Four legs in the table END with an explanation rather than
+			// an instruction - Death Plateau's two talks with Harold are followed by "Roll the
+			// dice" - and once the talks were behind you the only thing left was a note, which
+			// the panel cannot name: it said "No step recorded for this stage" and the marker
+			// went out. A leg with NO instructions at all is the same case with the count at
+			// zero, which is Big Chompy's stage 35, a wait while Rantz misses.
+			if (this.reached(q, st) <= lastAction(st)) {
 				return st;
 			}
 			Stage next = null;
@@ -608,6 +789,19 @@ public final class QuestHelperPlugin extends Plugin {
 			st = next;
 		}
 		return st;
+	}
+
+	/** The last step of a leg that names something to do, or -1 when the leg names nothing. */
+	private static int lastAction(Stage st) {
+		if (st == null) {
+			return -1;
+		}
+		for (int i = st.steps.size() - 1; i >= 0; i--) {
+			if (!"note".equals(st.steps.get(i).kind)) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/** The first step of the current leg that names something to go and do. */
@@ -740,6 +934,14 @@ public final class QuestHelperPlugin extends Plugin {
 				}
 			}
 		}
+
+		// AND WHAT THE PLAYER WAS SEEN TO DO, which is the only thing that moves for a step
+		// leaving no trace at all. A FLOOR and not the answer: the bag and the flags above can
+		// know more than this session watched - somebody who logged in half-way through a leg -
+		// and must not be pulled back by it.
+		if (st.doneTo >= start) {
+			start = st.doneTo + 1;
+		}
 		return start;
 	}
 
@@ -748,6 +950,13 @@ public final class QuestHelperPlugin extends Plugin {
 			return null;
 		}
 		int start = this.reached(this.tracked(), st);
+		// THE LAST STEP STANDS ON THE LAST LEG. Everything done and the quest's varp not yet
+		// caught up happens for a tick or two at the end of any leg, and legNow moves to the next
+		// one - except on the last, where there is nowhere to move to and an empty panel would be
+		// the reward for finishing the quest.
+		if (start >= st.steps.size() && !st.steps.isEmpty()) {
+			start = st.steps.size() - 1;
+		}
 
 		// EVERY LOC OF THE LEG IN ONE SWEEP. findLocs costs a full scene walk per call, so asking
 		// it once per loc step would multiply that by the length of the leg, every frame.
@@ -816,7 +1025,7 @@ public final class QuestHelperPlugin extends Plugin {
 		// a guess at a direction.
 		for (int i = start; i < st.steps.size(); i++) {
 			Step s = st.steps.get(i);
-			if (s.at == null || s.at[2] != ctx.getPlane()) {
+			if (s.at == null || !this.onThisFloor(s)) {
 				continue;
 			}
 			int x = ctx.worldToSceneX(s.at[0]);
@@ -929,15 +1138,6 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	/**
-	 * What this leg wants that you have not got - and only what you were meant to BRING.
-	 *
-	 * A leg's item list is everything you must be holding by the end of it, which includes what
-	 * the quest hands over while you are in it: the battered key is sewn into a book you have not
-	 * found, so "need Battered key" was an instruction nobody could follow. Those rows are still
-	 * in the table and still on the page, where they read as what is coming; they are just not
-	 * counted as missing.
-	 */
-	/**
 	 * The items of a leg worth showing anybody: the ones to BRING.
 	 *
 	 * The rest are what the quest hands over while you are in it, and a row for those is a row
@@ -958,6 +1158,15 @@ public final class QuestHelperPlugin extends Plugin {
 		return out;
 	}
 
+	/**
+	 * What this leg wants that you have not got - and only what you were meant to BRING.
+	 *
+	 * A leg's item list is everything you must be holding by the end of it, which includes what
+	 * the quest hands over while you are in it: the battered key is sewn into a book you have not
+	 * found, so "need Battered key" was an instruction nobody could follow. Those rows are still
+	 * in the table and still on the page, where they read as what is coming; they are just not
+	 * counted as missing.
+	 */
 	private List<Need> missing(Stage st) {
 		List<Need> out = new ArrayList<>();
 		if (st == null) {
@@ -1124,7 +1333,17 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	@Subscribe
 	public void onGameTick(GameTick tick) {
-		if (!this.highlight || !ctx.isLoggedIn()) {
+		if (!ctx.isLoggedIn()) {
+			return;
+		}
+		this.tick = tick.count;
+		// BEFORE THE HIGHLIGHT CHECK, both of them: which quest the player is in the middle of
+		// and how far into it they are have nothing to do with whether they want a box drawn
+		// round the target, and a player with the highlight off was left with a page that never
+		// moved.
+		this.followTheQuestYouAreDoing();
+		this.watchTheStep();
+		if (!this.highlight) {
 			return;
 		}
 		int want = this.wantedItems().length;
@@ -1146,6 +1365,216 @@ public final class QuestHelperPlugin extends Plugin {
 
 	/** Whether an option was marked last tick, so the tick it stops is the one that rubs it out. */
 	private boolean marking = false;
+
+	/** The game tick, for timing out a click whose step never happened. */
+	private int tick;
+
+	/**
+	 * A click whose step has not finished yet.
+	 *
+	 * A CLICK IS NOT THE STEP. Clicking "Talk-to Ali Morrisane" from across the bazaar starts a
+	 * walk, a conversation and then an end to it, and the step is done at the end - so taking the
+	 * click itself as the answer would have moved the panel on while the player was still
+	 * standing there reading, and taken the mark off the option the step says to pick with it.
+	 * This is the click, held until the thing it started finishes.
+	 */
+	private static final class Waiting {
+		Stage leg;
+		int step;
+		String kind = "";
+		int tick;
+		boolean sawDialogue;
+		/** Where the thing clicked was standing, or -1 for one used out of the bag. */
+		int worldX = -1;
+		int worldZ = -1;
+	}
+
+	private Waiting waiting;
+
+	/** How close counts as having walked to the thing you clicked, or to the tile of a walk. */
+	private static final int CLOSE = 3;
+
+	/** How long a click is held before it is written off, in game ticks. */
+	private static final int GIVE_UP = 20;
+
+	/**
+	 * WHAT THE PLAYER HAS JUST DONE, watched to its end, once a tick.
+	 *
+	 * Three endings, because three kinds of step end differently:
+	 *
+	 * A CONVERSATION THAT CLOSES is a talk taken. Nothing else can see one happen - no item
+	 * arrives, no flag moves - which is why the panel used to sit on "Talk to Ali Morrisane"
+	 * for as long as Ali stood in front of you. While it is open the step is held, on purpose:
+	 * the panel goes on naming it, so the mark stays on the option the step would pick.
+	 *
+	 * WALKING TO THE THING is a loc taken. A door, a ladder, a chest: the click sends the player
+	 * to it, and arriving there with the click outstanding is the step. A conversation beats it
+	 * when one opens, because a chest that talks is finished when the talking is.
+	 *
+	 * ARRIVING is a walk taken, and it needs no click at all - "Go to the bazaar" is done when
+	 * you are in the bazaar, whether or not anything of the next step has loaded yet.
+	 *
+	 * AND A CLICK THAT LED NOWHERE IS WRITTEN OFF. Clicked the wrong thing, walked away,
+	 * interrupted by a fight: {@link #GIVE_UP} ticks later the panel is where it was, which is
+	 * the honest answer and not a step skipped.
+	 */
+	private void watchTheStep() {
+		Quest q = this.tracked();
+		Stage leg = q == null ? null : this.legNow(q);
+		if (leg != null) {
+			Spot sp = this.spot(leg);
+			Step on = sp == null ? null : sp.step;
+			if (on != null && "walk".equals(on.kind) && on.at != null && this.onThisFloor(on)
+				&& this.near(on.at[0], on.at[1])) {
+				this.took(leg, indexOf(leg, on));
+			}
+		}
+		Waiting w = this.waiting;
+		if (w == null) {
+			return;
+		}
+		if (ctx.isDialogueOpen()) {
+			w.sawDialogue = true;
+			return;
+		}
+		boolean done;
+		if ("talk".equals(w.kind)) {
+			done = w.sawDialogue;
+		} else if (w.worldX < 0) {
+			// Nothing standing anywhere to walk to - an obj used out of the bag happens where the
+			// player already is - so the tick after the click is the end of it.
+			done = w.sawDialogue || this.tick != w.tick;
+		} else {
+			// WALKING TO IT IS THE WHOLE OF IT, and a conversation is NOT enough on its own:
+			// nobody talks to a door from across the room, so a chatbox that opens on the way
+			// there - a level-up, most often - is somebody else's news and not this step
+			// finishing. A chest that does talk has been walked to by the time it does.
+			done = this.near(w.worldX, w.worldZ);
+		}
+		if (done) {
+			this.took(w.leg, w.step);
+			this.waiting = null;
+			return;
+		}
+		if (this.tick - w.tick > GIVE_UP) {
+			this.waiting = null;
+		}
+	}
+
+	/**
+	 * Remember a step as taken, and throw away the cached answer it has just made stale.
+	 *
+	 * The cache is a fifth of a second of "the step in front of you", which is cheap for a
+	 * question asked every frame and wrong the moment the step is behind you - and this plugin
+	 * exists to say what to do NEXT, so it says it now rather than on the next frame after that.
+	 */
+	private void took(Stage leg, int at) {
+		if (leg == null || at < 0 || at <= leg.doneTo) {
+			return;
+		}
+		leg.doneTo = at;
+		this.heldFor = null;
+	}
+
+	/** Whether this step's tile is on the floor the player is on, or names no floor at all. */
+	private boolean onThisFloor(Step step) {
+		return step.at != null && (step.at[2] == ANY_PLANE || step.at[2] == ctx.getPlane());
+	}
+
+	/** Whether the player is standing at a world tile, give or take {@link #CLOSE}. */
+	private boolean near(int worldX, int worldZ) {
+		int dx = ctx.getWorldX() - worldX;
+		int dz = ctx.getWorldZ() - worldZ;
+		return (dx < 0 ? -dx : dx) <= CLOSE && (dz < 0 ? -dz : dz) <= CLOSE;
+	}
+
+	/**
+	 * THE PLAYER CLICKED SOMETHING. If it is the step the panel is naming, that step is under
+	 * way, and {@link #watchTheStep} waits for the end of it.
+	 *
+	 * ONLY THE STEP IN FRONT OF THEM, never one further down the leg. A player clicking three
+	 * steps ahead - the furnace while the panel says to search the bookcase - has not done the
+	 * two in between, and a panel that jumped there would have skipped them silently. The step
+	 * the panel names is the one the plugin claimed was next, so doing it is the one click it
+	 * can read without guessing.
+	 */
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event) {
+		if (!ctx.isLoggedIn() || event == null) {
+			return;
+		}
+		Quest q = this.tracked();
+		if (q == null) {
+			return;
+		}
+		Stage leg = this.legNow(q);
+		Spot sp = this.spot(leg);
+		Step on = sp == null ? null : sp.step;
+		if (leg == null || on == null || !clicked(on, event.target)) {
+			return;
+		}
+		int at = indexOf(leg, on);
+		if (at < 0) {
+			return;
+		}
+		Waiting w = new Waiting();
+		w.leg = leg;
+		w.step = at;
+		w.kind = on.kind;
+		w.tick = this.tick;
+		if (event.target.sceneTileX >= 0) {
+			w.worldX = ctx.sceneToWorldX(event.target.sceneTileX);
+			w.worldZ = ctx.sceneToWorldZ(event.target.sceneTileZ);
+		}
+		this.waiting = w;
+	}
+
+	/** Whether a click landed on what this step is about. */
+	private static boolean clicked(Step step, MenuOptionClicked.Target target) {
+		if (target == null || target.id < 0) {
+			return false;
+		}
+		if ("talk".equals(step.kind)) {
+			// The npc's family, as everywhere else here: one of Pollnivneach's three villagers
+			// is the step as much as the one the sim met.
+			return target.is(MenuOptionClicked.Target.NPC) && step.takes(target.id);
+		}
+		if ("loc".equals(step.kind)) {
+			return target.is(MenuOptionClicked.Target.LOC) && target.id == step.id;
+		}
+		if ("obj".equals(step.kind)) {
+			if (!target.is(MenuOptionClicked.Target.OBJ) && !target.is(MenuOptionClicked.Target.WORN)) {
+				return false;
+			}
+			int[] objs = step.objs();
+			for (int i = 0; i < objs.length; i++) {
+				if (objs[i] == target.id) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Logging out is the end of this character's progress.
+	 *
+	 * WHAT THE CLICKS SAID GOES WITH THEM. The next player at this client may be somebody else
+	 * entirely, and "you have already talked to him" is the last thing they need to be told
+	 * about a quest they have not started. The quest to follow is kept, because it is a saved
+	 * setting and the same player usually comes back.
+	 */
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event) {
+		if (event == null || event.isLoggedIn()) {
+			return;
+		}
+		for (Quest q : this.quests) {
+			forget(q);
+		}
+		this.was = null;
+		this.waiting = null;
+	}
 
 	/**
 	 * The box round the slot the step's item is in.
@@ -1217,9 +1646,16 @@ public final class QuestHelperPlugin extends Plugin {
 				break;
 			}
 		}
+		// PARSED INSIDE THE GUARD, because this runs while the chatbox is being drawn: the digits
+		// are the table's and a long enough run of them overflows an int, and five throws out of
+		// an overlay is what PluginManager disables a plugin at.
 		if (numeric) {
-			int at = Integer.parseInt(pick) - 1;
-			return at >= 0 && at < options.size() ? at : -1;
+			try {
+				int at = Integer.parseInt(pick) - 1;
+				return at >= 0 && at < options.size() ? at : -1;
+			} catch (NumberFormatException overflow) {
+				return -1;
+			}
 		}
 		String[] wants = pick.split("\\|\\|");
 		for (int i = 0; i < options.size(); i++) {
@@ -1383,7 +1819,18 @@ public final class QuestHelperPlugin extends Plugin {
 						// The one the marker is pointing at, so the list reads as a position in the
 						// leg and not just as its contents.
 						Spot sp = spot(st);
-						return sp != null && sp.step == st.steps.get(i) ? "now" : null;
+						if (sp != null && sp.step == st.steps.get(i)) {
+							return "now";
+						}
+						// AND THE ONES BEHIND YOU. Everything above the step being named is what
+						// the bag, the quest's flags and the player's own clicks say is already
+						// taken - the same answer the panel is drawn from, said on the page where
+						// a player reads the leg. A note is nobody's step and gets nothing.
+						int live = sp == null || sp.step == null ? -1 : indexOf(st, sp.step);
+						if (live > 0 && i < live && !"note".equals(st.steps.get(i).kind)) {
+							return "done";
+						}
+						return null;
 					}
 					List<Need> items = bringing(st);
 					int at = i - st.steps.size();
@@ -1406,7 +1853,7 @@ public final class QuestHelperPlugin extends Plugin {
 							return null;
 						}
 						Quest q = all.get(index);
-						return q.id.equals(pinned) ? "Tracking" : "Track";
+						return q.id.equals(trackedQuest) ? "Tracking" : "Track";
 					}
 					return index == 0 ? "Change" : null;
 				}
@@ -1415,8 +1862,8 @@ public final class QuestHelperPlugin extends Plugin {
 					if (picking()) {
 						List<Quest> all = listed();
 						if (index >= 0 && index < all.size()) {
-							pinned = all.get(index).id;
 							browsing = false;
+							follow(all.get(index).id);
 						}
 						return;
 					}
@@ -1448,8 +1895,9 @@ public final class QuestHelperPlugin extends Plugin {
 
 	protected void shutDown() {
 		this.quests.clear();
-		this.pinned = null;
 		this.browsing = false;
+		this.was = null;
+		this.waiting = null;
 		// One more repaint, so the box goes with the plugin rather than sitting on the cached
 		// sidebar until something else happens to repaint it.
 		if (this.marked > 0) {

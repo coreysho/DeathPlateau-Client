@@ -203,6 +203,10 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 	}
 
 	public void run() {
+		// Before anything is drawn: the page needs the library handle to reach BrowserInput at all,
+		// and the keyboard it carries is wanted on the login screen - long before the first socket
+		// the handle used to arrive with. See BrowserInput.announce().
+		BrowserInput.announce();
 		this.getBaseComponent().addMouseListener(this);
 		this.getBaseComponent().addMouseMotionListener(this);
 		this.getBaseComponent().addMouseWheelListener(this);
@@ -320,12 +324,14 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 				this.mapInput();
 
+				long updateAt = System.nanoTime();
 				try {
 					this.update();
 				} catch (Throwable error) {
 					clean = false;
 					this.fault("update", error);
 				}
+				this.stallUpdateNanos += System.nanoTime() - updateAt;
 
 				// Anything update() left in the latch is still unclaimed - hold it for draw(). The
 				// readers that consume a click in update() zero the button as they take it, so a
@@ -364,12 +370,14 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 
 			this.mapInput();
 
+			long drawAt = System.nanoTime();
 			try {
 				this.draw();
 			} catch (Throwable error) {
 				clean = false;
 				this.fault("draw", error);
 			}
+			this.reportStall(System.nanoTime() - drawAt);
 
 			// A frame that got all the way through puts the count back: what is being counted is a
 			// fault that keeps happening, not a fault that happened once.
@@ -396,8 +404,44 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		}
 	}
 
+	/** update()'s share of this pass of the loop, in nanoseconds. See reportStall. */
+	private long stallUpdateNanos;
+
+	/**
+	 * A pass of the loop that took more than a second says so, and says which half.
+	 *
+	 * WHY THIS IS IN THE LOOP AND NOT WHEREVER THE BUG IS. A client that stops drawing writes
+	 * nothing, so the log of a freeze ends at whatever happened just BEFORE it - which is how a
+	 * twenty-second logout came to be reported as a logout bug three times over without anything
+	 * confirming where the twenty seconds went. Anything that blocks this thread lands here with
+	 * its duration: a socket waiting on a host that is not answering, a full collection, a sound
+	 * device, a soundbank being read off disk. The cause does not have to be guessed first.
+	 *
+	 * A second is a very long frame - the budget is twenty milliseconds - so no ordinary frame
+	 * comes near it. Some legitimate ones do: a scene load blocks this thread on purpose, and
+	 * those lines are worth having too, since a load that takes four seconds is four seconds
+	 * of a window that cannot be closed either.
+	 */
+	private void reportStall(long drawNanos) {
+		long updateNanos = this.stallUpdateNanos;
+		this.stallUpdateNanos = 0L;
+		long total = updateNanos + drawNanos;
+		if (total < 1000000000L) {
+			return;
+		}
+		DevLog.log("SESSION", "STALL: the game loop took " + (total / 1000000L) + "ms (update "
+			+ (updateNanos / 1000000L) + "ms, draw " + (drawNanos / 1000000L)
+			+ "ms) - the window drew nothing and answered nothing for that long");
+	}
+
 	@ObfuscatedName("JWWAIQPI.a(Z)V")
 	public void shutdown() {
+		// ONCE. The game loop calls this when it notices state == -1 and destroy()'s timer calls
+		// it when the loop does not, which is the point of the timer - but both reaching it would
+		// unload the client twice, and the window closing is exactly when that race is live.
+		if (this.state == -2) {
+			return;
+		}
 		this.state = -2;
 		this.unload();
 
@@ -433,17 +477,33 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 		}
 	}
 
+	/**
+	 * The window has been asked to close.
+	 *
+	 * NOT ON THE EVENT THREAD. This is called from windowClosing, and it used to sleep ten seconds
+	 * here before doing anything - ten seconds of a window that has been told to go away and will
+	 * not repaint, answer a click or close, which is what a player reports as "it would not let me
+	 * close it". The wait itself is worth keeping: the game loop shuts itself down cleanly when it
+	 * notices state == -1, and letting it do that is the tidy exit. But it belongs on a thread of
+	 * its own, and shorter - a loop that is running needs nothing like three seconds to notice,
+	 * and a loop that is NOT running is exactly the case this exists to rescue.
+	 */
 	public void destroy() {
 		this.state = -1;
+		Thread closer = new Thread(new Runnable() {
 
-		try {
-			Thread.sleep(10000L);
-		} catch (Exception ignore) {
-		}
-
-		if (this.state == -1) {
-			this.shutdown();
-		}
+			public void run() {
+				try {
+					Thread.sleep(3000L);
+				} catch (Exception ignore) {
+				}
+				if (GameShell.this.state == -1) {
+					GameShell.this.shutdown();
+				}
+			}
+		}, "shutdown");
+		closer.setDaemon(true);
+		closer.start();
 	}
 
 	public void update(Graphics g) {
@@ -481,6 +541,74 @@ public class GameShell extends Applet implements Runnable, MouseListener, MouseM
 			this.cameraDragDeltaY += y - this.browserCameraLastY;
 			this.browserCameraLastX = x;
 			this.browserCameraLastY = y;
+		}
+	}
+
+	/**
+	 * One keystroke from the page's hidden input, if it is offering one - see
+	 * {@link BrowserInput#typedKey}, which explains why a phone's keyboard cannot reach AWT on its
+	 * own and why this is a handshake rather than a running total.
+	 *
+	 * The key arrives in the client's OWN key space, the one {@link #keyPressed} produces rather
+	 * than AWT's: a printable character as itself, 8 for backspace, 9 for tab and 10 for enter. So
+	 * all that is left to do here is what keyPressed does with its answer - put it in the queue
+	 * that pollKey() reads.
+	 *
+	 * NOTHING IS TAKEN ON TRUST. The page is the only thing that writes these, but it is still the
+	 * page, and a bad value here would be a character the game never expects: anything outside
+	 * what a phone's keyboard can actually produce is dropped rather than queued. The held-key
+	 * table (actionKey) is deliberately left alone - a soft key is pressed and released in the same
+	 * instant, and there is no release to come, so marking it held would leave it held for ever.
+	 */
+	public void pollBrowserKeys() {
+		// Up to a few per frame so a paste arrives quickly without ever looping on a page that
+		// keeps handing keys back.
+		for (int i = 0; i < 16; i++) {
+			int ch = BrowserInput.takeKey();
+			if (ch <= 0) {
+				return;
+			}
+			if (ch != 8 && ch != 9 && ch != 10 && (ch < 32 || ch > 126)) {
+				continue;
+			}
+			this.idleCycles = 0;
+			this.keyQueue[this.keyQueueWritePos] = ch;
+			this.keyQueueWritePos = this.keyQueueWritePos + 1 & 0x7F;
+		}
+	}
+
+	/**
+	 * A long press from the page, as the right-button press it stands in for - see
+	 * {@link BrowserInput#tapX}, which explains why CheerpJ's own long-press cannot do this.
+	 *
+	 * This is deliberately the latch and nothing else. mouseButton - the "a button is down right
+	 * now" flag that drives dragging - is left at 0, because by the time the page has decided a
+	 * press was long the finger is still down but the gesture is over, and a button the game
+	 * believes is held with no release coming would leave it dragging for ever.
+	 *
+	 * The point arrives in the canvas's own pixels, so it goes into the raw fields beside the
+	 * ordinary ones exactly as mousePressed puts it there, and a scaled frame maps it back in
+	 * mapInput with everything else.
+	 */
+	public void pollBrowserTap() {
+		int packed = BrowserInput.takeTap();
+		if (packed < 0) {
+			return;
+		}
+		int x = packed >>> 16;
+		int y = packed & 0xFFFF;
+		this.idleCycles = 0;
+		this.rawMouseX = x;
+		this.rawMouseY = y;
+		// The button goes in last, as everywhere else: it is what tells the game thread there is a
+		// press to take.
+		synchronized (this.clickLock) {
+			this.nextRawClickX = x;
+			this.nextRawClickY = y;
+			this.nextMouseClickX = x;
+			this.nextMouseClickY = y;
+			this.nextMouseClickTime = System.currentTimeMillis();
+			this.nextMouseClickButton = 2;
 		}
 	}
 

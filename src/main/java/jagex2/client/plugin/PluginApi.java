@@ -127,6 +127,20 @@ package jagex2.client.plugin;
  *     <p>
  *     READS AND A RECTANGLE. Nothing here clicks an option or answers a conversation; what a
  *     plugin can do with it is draw.</dd>
+ * <dt>13</dt><dd>What the player just clicked, and whether a conversation is open.
+ *     {@code MenuOptionClicked.target} says which npc, loc, obj or player a row acts on, which
+ *     op slot the word came from, and the tile it stands on; {@code ctx.isDialogueOpen} says
+ *     whether the chatbox is given over to a conversation.
+ *     <p>
+ *     THE CLIENT RESOLVES IT, ONCE. paramA is an index into npcs[] for one action id and a
+ *     packed loc id for another, and which it is depends on a list of action numbers that
+ *     belongs to the menu. A plugin reading the parameters itself had to carry a copy of that
+ *     list and would go quietly stale the day the menu changed, so Client.resolveMenuTarget
+ *     answers it for the dev log and for this event out of the same switch.
+ *     <p>
+ *     WHAT IT IS FOR. A click is the only record of a step that leaves no trace - a talk, a
+ *     door - which is how the quest helper can move on to the next step the moment you take
+ *     one, rather than when the quest's own progress catches up a leg later.</dd>
  * </dl>
  */
 public final class PluginApi {
@@ -135,7 +149,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 12;
+	public static final int LEVEL = 13;
 
 	private PluginApi() {
 	}

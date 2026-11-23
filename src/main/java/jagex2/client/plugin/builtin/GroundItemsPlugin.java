@@ -401,9 +401,24 @@ public final class GroundItemsPlugin extends Plugin {
 	static final int BEAM_PULSE_PERCENT = 35;
 
 	/** The [-] and [+] under Alt, and the scroll bar beside a pile too tall to show. */
-	private static final int CONTROL_W = 10;
+	/**
+	 * The hide and highlight controls: a box this wide and exactly one row tall, with a gap of
+	 * dead space either side of the pair.
+	 *
+	 * THE GAP IS THE POINT, not the width. Laid end to end, as these were, a pixel either side of
+	 * a boundary does the opposite thing - and the name beside them is the highlight toggle, so
+	 * aiming at the start of the name and landing on the plus put the item back to normal. Three
+	 * pixels that do nothing are worth more than three more that do the wrong thing.
+	 *
+	 * One row tall, rather than the font's line height plus two, because the row pitch is ROW_H:
+	 * anything taller belongs to the next row as well, and the later row wins the overlap.
+	 */
+	private static final int CONTROL_W = 12;
+	private static final int CONTROL_GAP = 3;
 	private static final int MINUS_COLOUR = 0xFF6060;
 	private static final int PLUS_COLOUR = 0x60FF60;
+	/** The glyph inside a control whose rule is already on, over the filled box. */
+	private static final int CONTROL_ON = 0xFFFFFF;
 	private static final int BAR_W = 2;
 	private static final int BAR_GAP = 3;
 	private static final int BAR_TRACK = 0x282828;
@@ -668,8 +683,7 @@ public final class GroundItemsPlugin extends Plugin {
 
 			if (alt) {
 				int right = this.drawControls(g, item, label, originX, rowY, row.colour);
-				int left = originX - (CONTROL_W * 2 + g.textWidth(label)) / 2;
-				minLeft = Math.min(minLeft, left);
+				minLeft = Math.min(minLeft, controlsLeft(g, label, originX));
 				maxRight = Math.max(maxRight, right);
 			} else {
 				if (this.textOutline) {
@@ -1263,41 +1277,74 @@ public final class GroundItemsPlugin extends Plugin {
 	 * "[-] [+] Name" with the two controls clickable, laid out from the left edge of where the
 	 * centred label would have started, so the row stays centred on the tile as it grows.
 	 * Returns the right edge of the name.
+	 *
+	 * BOTH CONTROLS TOGGLE, which is Old School's arrangement by way of RuneLite: the minus hides
+	 * and un-hides, the plus highlights and un-highlights, and clicking a box that is already lit
+	 * is how an item goes back to no rule at all. There is no separate reset, and nothing needs
+	 * one - the plus used to be that reset, and a green plus beside a minus that hides is a
+	 * reasonable thing to have built and an unreasonable thing to guess.
 	 */
 	private int drawControls(OverlayGraphics g, final GroundItem item, String label, int originX, int rowY,
 		int colour) {
 		final String name = item.name;
 		int nameW = g.textWidth(label);
-		int left = originX - (CONTROL_W * 2 + nameW) / 2;
-		int plusX = left + CONTROL_W;
-		int nameX = plusX + CONTROL_W;
-		int top = rowY - g.lineHeight();
-		int height = rowY + 2 - top;
+		int left = controlsLeft(g, label, originX);
+		int plusX = left + CONTROL_W + CONTROL_GAP;
+		int nameX = plusX + CONTROL_W + CONTROL_GAP;
+		// EXACTLY ONE ROW TALL, ending a pixel below the baseline. Rows are ROW_H apart, so the
+		// boxes of two rows meet and never overlap - which they did when this was the font's line
+		// height plus two, and the row below quietly took the top two pixels of the row above.
+		int top = rowY + 1 - ROW_H;
 
-		g.text(left, rowY, "-", MINUS_COLOUR);
-		g.text(plusX, rowY, "+", PLUS_COLOUR);
+		this.drawControl(g, left, top, rowY, "-", MINUS_COLOUR, GroundItemPrefs.isHidden(name));
+		this.drawControl(g, plusX, top, rowY, "+", PLUS_COLOUR, GroundItemPrefs.isHighlighted(name));
 		g.text(nameX, rowY, label, colour);
 
-		g.clickable(left, top, CONTROL_W, height, new Runnable() {
+		g.clickable(left, top, CONTROL_W, ROW_H, new Runnable() {
 
 			public void run() {
 				GroundItemsPlugin.this.hide(name);
 			}
 		});
-		g.clickable(plusX, top, CONTROL_W, height, new Runnable() {
+		g.clickable(plusX, top, CONTROL_W, ROW_H, new Runnable() {
 
 			public void run() {
-				GroundItemsPlugin.this.ctx.addChatMessage(GroundItemPrefs.removeName(name)
-					? name + " is back to normal." : name + " was already normal.");
+				GroundItemsPlugin.this.toggleHighlight(name);
 			}
 		});
-		g.clickable(nameX, top, nameW, height, new Runnable() {
+		g.clickable(nameX, top, nameW, ROW_H, new Runnable() {
 
 			public void run() {
 				GroundItemsPlugin.this.toggleHighlight(name);
 			}
 		});
 		return nameX + nameW;
+	}
+
+	/**
+	 * Where the row starts once the controls are on it. One formula, used by the drawing and by
+	 * the caller working out how wide the pile is - they were two copies of it, which is the kind
+	 * of pair that stays in step until the day it does not.
+	 */
+	private static int controlsLeft(OverlayGraphics g, String label, int originX) {
+		return originX - (CONTROL_W * 2 + CONTROL_GAP * 2 + g.textWidth(label)) / 2;
+	}
+
+	/**
+	 * One control: a box you can see, filled when its rule is already on, with its glyph centred.
+	 *
+	 * DRAWN AND CLICKABLE ARE THE SAME RECTANGLE, which is the whole of why this is easier to
+	 * hit than a bare glyph in an invisible cell. The fill is RuneLite's idea and worth having on
+	 * its own: a minus that is already filled says the item is hidden without anything being
+	 * hovered or read.
+	 */
+	private void drawControl(OverlayGraphics g, int x, int top, int rowY, String mark, int colour,
+		boolean on) {
+		if (on) {
+			g.fill(x, top, CONTROL_W, ROW_H, colour);
+		}
+		g.box(x, top, CONTROL_W, ROW_H, colour);
+		g.text(x + (CONTROL_W - g.textWidth(mark)) / 2, rowY, mark, on ? CONTROL_ON : colour);
 	}
 
 	/** The bar beside a pile with more rows than it shows. Returns the new left edge. */

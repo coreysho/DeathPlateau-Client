@@ -102,11 +102,11 @@ MUTS = [
     (MANAGER, PLUGIN_RUNNER, 'a plugin left enabled after its startUp hit a missing method',
      '''		} catch (LinkageError error) {
 			// Half-started is worse than off: unwind whatever it managed before it threw.
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = false;''',
      '''		} catch (LinkageError error) {
 			// Half-started is worse than off: unwind whatever it managed before it threw.
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = true;'''),
 
     # --- what the player is shown -----------------------------------------------------------

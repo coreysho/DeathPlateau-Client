@@ -13,7 +13,8 @@ import jagex2.graphics.PixFont;
  *   @cr6@ purple crown (developer)    @cr5@ 10x badge
  *   @cr7@ red crown (owner)
  *   @cr8@ blue and gold crown (a second owner)
- *   @cr9@ bronze emblem (veteran - tested before launch; the only one that is not a crown)
+ *   @cr9@ grey emblem (veteran - gunmetal since 2026-11-11, matching the Veteran cape; the
+ *         only one that is not a crown)
  *   @cra@ blue roundel (helper - a player who answers questions, and carries no powers at all)
  * The tenth could not be "@cr10@": the marker is five characters BECAUSE that is the shape of a
  * colour tag, which is the whole reason an older client skips one it does not know rather than

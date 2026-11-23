@@ -7,7 +7,7 @@ back. LoginProfilesTest proves what the client writes to disk; the engine's own 
 does with a token; neither can prove the two read the same envelope, and a disagreement there is
 not a subtle bug - it is nobody being able to log in.
 
-Five phases, each a fresh JVM, the first four sharing one scratch user.home because "it still works
+Six phases, each a fresh JVM, the first four sharing one scratch user.home because "it still works
 after you close the client" is the whole feature:
 
     password     type a password with Remember me ticked, and be handed a token
@@ -15,6 +15,9 @@ after you close the client" is the whole feature:
     stale        hold a token the server never issued, and be refused in words a player can act on
     legacy       send the login block of a client from before saved logins, and still be let in
     noremember   log in with Remember me OFF, in a home of its own, and be given nothing to keep
+    launcher     log in from a launcher signed in to Discord, which puts a sixth field in the RSA
+                 envelope, and still get in - a disagreement about that envelope is every login on
+                 the world failing at once
 
 AND ALL FIVE TWICE, against the two kinds of world there are. A world either checks passwords
 itself or delegates to a login server (LOGIN_SERVER), and the default is false - so every run of
@@ -305,7 +308,7 @@ def main():
         # that: the engine is somebody else's and its authority is not ours to claim.
         first_label = ('the engine already on %d' % port) if args.port else (
             'a login server' if args.authority == 'server' else 'local accounts')
-        failed = run_phases(java, classes, rsan, work, port, webport, first_label, USER)
+        failed = run_phases(java, classes, rsan, work, port, webport, first_label, USER, args.engine)
 
         # AND AGAIN, AGAINST A LOGIN SERVER. Only when this run started the engine: with --port
         # there is one engine, somebody else's, and its authority is whatever they configured.
@@ -318,7 +321,7 @@ def main():
             print('starting a second engine, this one delegating to a login server (log: %s)' % log)
             engine = start_engine(args.engine, log, port, webport, mgmtport, server_env(port))
             print('engine ready')
-            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server', SERVER_USER)
+            failed += run_phases(java, classes, rsan, work, port, webport, 'a login server', SERVER_USER, args.engine)
 
         print()
         if failed == 0:
@@ -336,7 +339,40 @@ def main():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def run_phases(java, classes, rsan, work, port, webport, label, user):
+def free_account(engine, user):
+    """Mark this suite's own account as logged out before the pass starts.
+
+    WHY IT HAS TO BE DONE. Every phase ends by killing the client's JVM - which is the point, the
+    next phase has to work after the client was closed - so the world never sees a logout and the
+    row keeps `logged_in` set. A new engine clears that at world_startup, but only for its OWN node
+    id and profile, and the leftover is from a different one.
+
+    The local pass tolerates it. The LOGIN SERVER pass, which is the shape the live world runs,
+    does not: it answers reply 5 and adds a sixty-second hop timer, so the first phase fails and
+    every phase after it fails the same way. That made the suite pass once on a clean database and
+    fail on every run after it, with a symptom - "Your account is already logged in" - that reads
+    as a bug in whatever was being tested. Found on 2026-11-16 with `tokentest` still marked logged
+    in from 2 November.
+
+    Only this suite's own two accounts, only this file, and a failure is ignored: a database that
+    cannot be written is the state the suite was already in.
+    """
+    db = os.path.join(engine, 'db.sqlite')
+    if not os.path.exists(db):
+        return
+    try:
+        import sqlite3
+        con = sqlite3.connect(db, timeout=5)
+        con.execute('pragma busy_timeout = 5000')
+        con.execute('update account_login set logged_in = 0, login_time = null where account_id in '
+                    '(select id from account where username = ?)', (user,))
+        con.commit()
+        con.close()
+    except Exception as leave_it:
+        print('could not clear %s\'s login state: %s' % (user, leave_it))
+
+
+def run_phases(java, classes, rsan, work, port, webport, label, user, engine=ENGINE):
     """The five phases against whatever engine is on these ports. Returns how many failed.
 
     `user` is this pass's own account. The two passes share a data directory, and the first
@@ -346,6 +382,7 @@ def run_phases(java, classes, rsan, work, port, webport, label, user):
     """
     print()
     print('==== %s ====' % label)
+    free_account(engine, user)
     # Homes of this pass's own, so the second pass starts where the first did: with a machine that
     # has never saved a login. They are named for the pass because --keep is for looking at them.
     tag = label.replace(' ', '-')
@@ -358,9 +395,15 @@ def run_phases(java, classes, rsan, work, port, webport, label, user):
     # arranged.
     alone = os.path.join(work, 'home-' + tag + '-noremember')
     os.makedirs(alone)
+    # AND ONE MORE for the launcher phase, which writes a launcher.properties and then asserts
+    # that nothing of it reached profiles.properties. Sharing a home with the phases that save on
+    # purpose would make that assertion read the wrong file's contents.
+    launcher = os.path.join(work, 'home-' + tag + '-launcher')
+    os.makedirs(launcher)
 
     failed = 0
-    phases = (('password', home), ('token', home), ('stale', home), ('legacy', home), ('noremember', alone))
+    phases = (('password', home), ('token', home), ('stale', home), ('legacy', home),
+              ('noremember', alone), ('launcher', launcher))
     for i, (phase, where) in enumerate(phases):
             if i:
                 # THE WORLD IS STILL LOGGING THE LAST PHASE OUT. Its socket went when that JVM

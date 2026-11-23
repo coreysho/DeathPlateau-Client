@@ -63,6 +63,9 @@ public class PluginSystemTest {
 		System.out.println("11. client API levels: what a jar may ask for");
 		apiLevelTests(new File(args[2]), new File(args[3]));
 		System.out.println();
+		System.out.println("12. a swallowed failure says where it happened");
+		whereItThrewTests();
+		System.out.println();
 		System.out.println(fails == 0 ? (skipped ? "ALL PASS (a section was skipped)" : "ALL PASS")
 			: fails + " FAILED");
 		System.exit(fails == 0 ? 0 : 1);
@@ -1354,5 +1357,138 @@ public class PluginSystemTest {
 
 		List<PluginLoader.Found> missing = PluginLoader.scan(new File(jars, "no-such-folder"));
 		check(missing.isEmpty(), "no plugins folder is not an error");
+	}
+
+	// ---------------------------------------------------------------- 12
+
+	/**
+	 * A FAILURE THAT IS SWALLOWED STILL HAS TO SAY WHERE IT CAME FROM.
+	 *
+	 * The plugin system catches everything on purpose - a bad plugin must not take the client
+	 * down with it - and every one of those catches used to log `"... : " + error`, which is the
+	 * exception's class and message and not one frame.
+	 *
+	 * That is what stalled tracker 4, 10, 15 and 17. Four players watched the Quest helper switch
+	 * itself off; PluginManager wrote one line into their dev-client.log; and the line named a
+	 * 1,864-line plugin with four overlays in it. The 845-leg sweep in QuestHelperTest draws
+	 * every leg without a throw, so the cause is in what the player had around them - and the one
+	 * record of it could not say which overlay, which method or which line.
+	 *
+	 * So these hold the log to three things: the top frame rides on the SAME line as the
+	 * exception (that is the line a player is asked to search for and copy), the frames below it
+	 * are written once, and a wrapped exception reports the cause underneath rather than a JDK
+	 * frame that says nothing.
+	 *
+	 * TO SEE IT FAIL, put `+ ": " + error` back on any of the DevLog.log call sites in
+	 * PluginManager, EventBus, InteractiveRegions, ConfigPanel or PanelPage: the line still
+	 * appears and still names the exception, and "at PluginSystemTest.boom" goes out of it.
+	 */
+	static void whereItThrewTests() {
+		// THE THROW HAS A HOME. Thrown from a method of its own so the assertions can name it,
+		// which is the whole point: a frame is only worth logging if it identifies the code.
+		java.io.PrintStream was = System.out;
+		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+		String first;
+		String second;
+		String wrapped;
+		String plain;
+		try {
+			System.setOut(new java.io.PrintStream(buf, true));
+			jagex2.client.DevLog.log("PLUGIN", "a test overlay threw while drawing", caught());
+			first = buf.toString();
+
+			buf.reset();
+			jagex2.client.DevLog.log("PLUGIN", "a test overlay threw while drawing", caught());
+			second = buf.toString();
+
+			buf.reset();
+			jagex2.client.DevLog.log("PLUGIN", "a wrapped handler threw",
+				new java.lang.reflect.InvocationTargetException(caught()));
+			wrapped = buf.toString();
+
+			buf.reset();
+			jagex2.client.DevLog.log("PLUGIN", "nothing was thrown at all", null);
+			plain = buf.toString();
+		} finally {
+			System.setOut(was);
+		}
+
+		String top = firstLine(first);
+		check(top.indexOf("a test overlay threw while drawing") >= 0,
+			"the line still says what failed, as it always did");
+		check(top.indexOf("java.lang.IllegalStateException") >= 0,
+			"...and still names the exception");
+		check(top.indexOf("PluginSystemTest.boom(PluginSystemTest.java:") >= 0,
+			"...and now names the method and line it came from, on that same line");
+
+		check(count(first, "    at ") > 1, "the frames under it are written out too ("
+			+ count(first, "    at ") + " of them)");
+		check(count(first, "    at ") <= 9,
+			"...but not the whole stack, which would bury the log");
+
+		check(firstLine(second).indexOf("PluginSystemTest.boom(PluginSystemTest.java:") >= 0,
+			"the same failure a second time still says where, on its one line");
+		check(count(second, "    at ") == 0,
+			"...and does NOT repeat the frames - an overlay throws five times, a panel button "
+			+ "throws every frame, and a trace each would fill the log");
+
+		check(wrapped.indexOf("caused by") >= 0,
+			"a wrapped failure reports the cause, which is the half that names the plugin");
+
+		check(plain.indexOf("nothing was thrown at all") >= 0,
+			"a null throwable still logs its line rather than throwing inside the logger");
+		check(plain.indexOf("  at ") < 0, "...with nowhere claimed for it");
+
+		// AND A REAL CATCH, not just the logger. Everything above would still pass with every
+		// call site back on string concatenation, because it calls DevLog itself - and the call
+		// sites are the bug. InteractiveRegions.click is one of them and needs no client, so it
+		// is the one that can be driven from here.
+		InteractiveRegions regions = new InteractiveRegions();
+		regions.add(0, 0, 50, 50, new Runnable() {
+
+			public void run() {
+				boom();
+			}
+		}, null, null);
+		String clicked;
+		try {
+			System.setOut(new java.io.PrintStream(buf, true));
+			buf.reset();
+			regions.click(10, 10);
+			clicked = buf.toString();
+		} finally {
+			System.setOut(was);
+		}
+		check(clicked.indexOf("an overlay's click handler threw") >= 0,
+			"a click handler that throws is still caught and logged");
+		check(clicked.indexOf("PluginSystemTest.boom(PluginSystemTest.java:") >= 0,
+			"...and the catch hands the throwable over, so the line names where it threw");
+	}
+
+	/** An exception with a stack trace that runs through a method of a known name. */
+	static Throwable caught() {
+		try {
+			boom();
+			return null;
+		} catch (IllegalStateException error) {
+			return error;
+		}
+	}
+
+	static void boom() {
+		throw new IllegalStateException("for the test");
+	}
+
+	static String firstLine(String text) {
+		int at = text.indexOf('\n');
+		return at < 0 ? text : text.substring(0, at);
+	}
+
+	static int count(String text, String what) {
+		int n = 0;
+		for (int at = text.indexOf(what); at >= 0; at = text.indexOf(what, at + 1)) {
+			n++;
+		}
+		return n;
 	}
 }

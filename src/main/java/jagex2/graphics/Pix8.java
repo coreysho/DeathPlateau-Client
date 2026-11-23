@@ -31,8 +31,25 @@ public class Pix8 extends Pix2D {
 	public byte[] pixels;
 
 	public Pix8(Jagfile jag, String name, int sprite) {
-		Packet data = new Packet(jag.read(name + ".dat", null));
-		Packet index = new Packet(jag.read("index.dat", null));
+		this(jag.read(name + ".dat", null), jag.read("index.dat", null), sprite);
+	}
+
+	/**
+	 * One sprite of a group, from archive entries that have ALREADY BEEN READ.
+	 *
+	 * Jagfile.read decompresses the entry it is asked for every single time it is called - BZip2,
+	 * per entry - and the constructor above calls it twice, so a group of twelve sprites costs
+	 * twenty-four decompressions to produce twelve pictures, twenty-two of them repeating work
+	 * already done. On the live title archive that measured twelve seconds, on the thread that
+	 * draws. Anything loading more than one sprite of a group reads the two entries once and comes
+	 * here instead.
+	 *
+	 * The two arrays are only read from, so one pair serves every sprite in the group: each call
+	 * gets its own Packet over them and so its own position.
+	 */
+	public Pix8(byte[] dat, byte[] idx, int sprite) {
+		Packet data = new Packet(dat);
+		Packet index = new Packet(idx);
 		index.pos = data.g2();
 
 		this.owi = index.g2();

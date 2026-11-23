@@ -355,7 +355,7 @@ public final class PluginManager {
 		try {
 			listener.run();
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", "the plugin sidebar threw while refreshing: " + error);
+			DevLog.log("PLUGIN", "the plugin sidebar threw while refreshing", error);
 		}
 	}
 
@@ -633,7 +633,7 @@ public final class PluginManager {
 			DevLog.log("PLUGIN", entry.name + " started");
 		} catch (LinkageError error) {
 			// Half-started is worse than off: unwind whatever it managed before it threw.
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = false;
 			this.stopQuietly(entry);
 			// Said in chat, not just the log. This is the case that sent us looking for API
@@ -652,7 +652,7 @@ public final class PluginManager {
 				}
 			});
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", entry.name + " failed to start: " + error);
+			DevLog.log("PLUGIN", entry.name + " failed to start", error);
 			entry.enabled = false;
 			this.stopQuietly(entry);
 		}
@@ -673,7 +673,7 @@ public final class PluginManager {
 			entry.plugin.setRunning(false);
 			entry.plugin.shutDown();
 		} catch (Throwable error) {
-			DevLog.log("PLUGIN", entry.name + " threw on shutdown: " + error);
+			DevLog.log("PLUGIN", entry.name + " threw on shutdown", error);
 		}
 		entry.plugin.clearOverlays();
 		this.rebuildOverlays();
@@ -757,6 +757,44 @@ public final class PluginManager {
 		});
 	}
 
+	/**
+	 * What the HUD is being drawn at, as a percentage - which is what was asked for, or less when
+	 * the window is too small for it (Layout.fit). For the sidebar's Display page, which can read
+	 * and write the REQUEST through DisplaySettings on its own but cannot see the layout.
+	 *
+	 * Safe off the game thread: Layout is immutable and this reads one of its final fields, so the
+	 * worst that can happen is an answer one frame old.
+	 */
+	public int hudScaleInUse() {
+		return this.client.panelScaleInUse();
+	}
+
+	/**
+	 * The window mode and the draw distance, for the sidebar's Display page.
+	 *
+	 * BOTH WRITES GO TO THE CLIENT THREAD. setDisplayMode resizes the window and rebuilds the
+	 * layout; setDrawDistance rebuilds World3D's per-angle visibility tables, and its own comment
+	 * says game thread only - the tables and the radius that indexes them are two statics, and a
+	 * frame reading them half way through a change reads off the end of one.
+	 */
+	public void setDisplayMode(final int mode) {
+		this.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				PluginManager.this.client.setDisplayMode(mode);
+			}
+		});
+	}
+
+	public void setDrawDistance(final int tiles) {
+		this.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				PluginManager.this.client.setDrawDistance(tiles);
+			}
+		});
+	}
+
 	// ------------------------------------------------------------------ hooks Client.java calls
 
 	/** True when nothing is running, which lets every hook below cost one field read. */
@@ -792,7 +830,7 @@ public final class PluginManager {
 			try {
 				task.run();
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", "a queued plugin task threw: " + error);
+				DevLog.log("PLUGIN", "a queued plugin task threw", error);
 			}
 		}
 	}
@@ -850,10 +888,19 @@ public final class PluginManager {
 
 	/** Returns true when a plugin consumed the click and the client should not act on it. */
 	public boolean onMenuOptionClicked(String option, int action, int paramA, int paramB, int paramC) {
+		return this.onMenuOptionClicked(option, action, paramA, paramB, paramC, null);
+	}
+
+	/**
+	 * The same, with the target the client has already resolved - which npc, loc or obj the row
+	 * acts on. Returns true when a plugin consumed the click.
+	 */
+	public boolean onMenuOptionClicked(String option, int action, int paramA, int paramB, int paramC,
+		MenuOptionClicked.Target target) {
 		if (this.idle()) {
 			return false;
 		}
-		MenuOptionClicked event = new MenuOptionClicked(option == null ? "" : option, action, paramA, paramB, paramC);
+		MenuOptionClicked event = new MenuOptionClicked(option == null ? "" : option, action, paramA, paramB, paramC, target);
 		this.bus.post(event);
 		return event.isConsumed();
 	}
@@ -921,7 +968,7 @@ public final class PluginManager {
 				}
 			} catch (Throwable error) {
 				Entry entry = this.entryOf(overlay.owner);
-				DevLog.log("PLUGIN", (entry == null ? "an overlay" : entry.name) + " threw while drawing: " + error);
+				DevLog.log("PLUGIN", (entry == null ? "an overlay" : entry.name) + " threw while drawing", error);
 				if (entry != null && ++entry.renderErrors >= MAX_RENDER_ERRORS) {
 					this.disableFaulty(entry.plugin, "it kept throwing while drawing");
 					return;                            // disabling edits the list being walked
@@ -970,6 +1017,15 @@ public final class PluginManager {
 	 * is a key held with no button, and its own controls are on the right button, while this
 	 * needs a LEFT press on something a screen overlay drew.
 	 */
+	/**
+	 * True while an overlay is being dragged, so the HUD does not grab a panel out from under it.
+	 * The overlays float over the viewport and are the smaller target, so a cursor on one of them
+	 * means that one.
+	 */
+	public boolean draggingOverlay() {
+		return this.dragging != null;
+	}
+
 	public void onOverlayDrag(int x, int y, int button, boolean alt, int width, int height) {
 		if (this.idle()) {
 			return;
@@ -1263,7 +1319,7 @@ public final class PluginManager {
 			try {
 				out.add(new ListSnapshot(named.title, named.list));
 			} catch (Throwable error) {
-				DevLog.log("PLUGIN", entry.name + "'s \"" + named.title + "\" list threw: " + error);
+				DevLog.log("PLUGIN", entry.name + "'s \"" + named.title + "\" list threw", error);
 			}
 		}
 		return out;

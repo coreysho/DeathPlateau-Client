@@ -393,9 +393,15 @@ public final class TitleScreen {
 
 			int textX = x + FACE_INSET + FACE + 10;
 			text(font, p.username, lit ? STONE : STONE_DIM, textX, PROFILE_Y + 26);
-			text(font, p.canSignIn() ? "saved" : "name only", STONE_FAINT, textX, PROFILE_Y + 42);
-			// The x. Drawn dim because removing an account is not what the card is for.
-			text(font, "x", STONE_FAINT, x + PROFILE_W - FORGET_W, PROFILE_Y + 17);
+			// "linked" says where the card came from, which is the one thing a player cannot
+			// otherwise tell: it was offered by their Discord sign-in rather than saved here, so
+			// it asks for a password and has nothing on this computer to forget.
+			text(font, p.canSignIn() ? "saved" : p.fromLauncher ? "linked" : "name only", STONE_FAINT, textX, PROFILE_Y + 42);
+			// The x. Drawn dim because removing an account is not what the card is for - and not
+			// drawn at all on a launcher card, which this machine has nothing to remove for.
+			if (!p.fromLauncher) {
+				text(font, "x", STONE_FAINT, x + PROFILE_W - FORGET_W, PROFILE_Y + 17);
+			}
 			x += PROFILE_W + PROFILE_GAP;
 		}
 

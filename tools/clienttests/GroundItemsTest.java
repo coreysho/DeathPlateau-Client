@@ -64,7 +64,8 @@ public class GroundItemsTest {
 	static final int ROW_H = 12;
 	static final int ROWS_SHOWN = 8;
 	static final int MAX_LABELS = 48;
-	static final int CONTROL_W = 10;
+	static final int CONTROL_W = 12;
+	static final int CONTROL_GAP = 3;
 	static final int BAR_TRACK = 0x282828;
 	static final int BAR_THUMB = 0xC8C8C8;
 	static final int HIGHLIGHT_COLOUR = 0xFF40FF;
@@ -1396,24 +1397,45 @@ public class GroundItemsTest {
 		}
 		check(rows.get(0).text.equals("-") && rows.get(1).text.equals("+")
 			&& rows.get(2).text.equals("Thing 0 x 4"), "a minus, a plus, then the label");
-		check(rows.get(1).x - rows.get(0).x == CONTROL_W && rows.get(2).x - rows.get(1).x == CONTROL_W,
-			"...laid out a control's width apart");
+		// The glyphs are centred in their boxes now, so what is a control apart is their CENTRES.
+		int minusMid = rows.get(0).x + font.widthOf("-") / 2;
+		int plusMid = rows.get(1).x + font.widthOf("+") / 2;
+		check(plusMid - minusMid == CONTROL_W + CONTROL_GAP,
+			"...a control's width plus a gap apart (" + (plusMid - minusMid) + ")");
+		check(rows.get(2).x - (plusMid - CONTROL_W / 2) == CONTROL_W + CONTROL_GAP,
+			"...and the label starts a gap after the plus rather than flush against it");
 		check(rows.get(0).x < originX() && rows.get(2).x + font.widthOf(rows.get(2).text) > originX(),
 			"...and still straddling the tile, so the row stays centred as it grows");
 
 		int y = rows.get(0).y - 4;
-		check(manager.onViewportClick(rows.get(0).x + CONTROL_W / 2, y), "the minus takes the click");
+		check(manager.onViewportClick(minusMid, y), "the minus takes the click");
 		check(GroundItemPrefs.isHidden("Thing 0"),
 			"...and hides the item by its NAME, not the label with the count on it");
 
 		frame();
-		check(manager.onViewportClick(rows.get(1).x + CONTROL_W / 2, y), "the plus takes a click too");
-		check(!GroundItemPrefs.isHidden("Thing 0") && GroundItemPrefs.find("Thing 0") < 0,
-			"...and puts the item back to no rule at all");
+		check(manager.onViewportClick(minusMid, y), "the same box again is how it comes off");
+		check(GroundItemPrefs.find("Thing 0") < 0, "...leaving no rule at all, rather than a reset button");
+
+		frame();
+		check(manager.onViewportClick(plusMid, y), "the plus highlights, as RuneLite's second box does");
+		check(GroundItemPrefs.isHighlighted("Thing 0"), "...by NAME, not by the label with the count on it");
+
+		frame();
+		check(manager.onViewportClick(plusMid, y), "...and again takes the highlight off");
+		check(GroundItemPrefs.find("Thing 0") < 0, "...so both controls toggle, and neither needs a reset");
+
+		// THE GAP, which is the whole of why these were easy to misclick. Laid end to end, a pixel
+		// the wrong side of a boundary did the OPPOSITE thing - and since the name is the highlight
+		// toggle, aiming at the start of the name and landing on the plus put the item back to
+		// normal. A miss has somewhere to land now.
+		frame();
+		check(!manager.onViewportClick((minusMid + plusMid) / 2, y),
+			"a click in the gap between them does nothing, rather than the other one");
+		check(GroundItemPrefs.find("Thing 0") < 0, "...and leaves the item's rule alone");
 
 		frame();
 		check(manager.onViewportClick(rows.get(2).x + 2, y), "and the name itself is clickable");
-		check(GroundItemPrefs.isHighlighted("Thing 0"), "...which highlights it");
+		check(GroundItemPrefs.isHighlighted("Thing 0"), "...which highlights it, the same as the plus");
 
 		frame();
 		manager.onViewportClick(rows.get(2).x + 2, y);

@@ -23,6 +23,7 @@ import jagex2.config.LocType;
 import jagex2.config.VarbitType;
 import jagex2.config.NpcType;
 import jagex2.dash3d.ClientNpc;
+import jagex2.dash3d.Model;
 import jagex2.dash3d.ClientPlayer;
 import jagex2.dash3d.Sprite;
 import jagex2.dash3d.Square;
@@ -83,6 +84,50 @@ public class QuestHelperTest {
 	static final int BOOKCASE_Z = 3481;
 	static final int RADIGAD = 1572;
 	static final String RADIGAD_NAME = "Radigad Ponfit";
+	/** The first of Myreque's five people, so that the second is a step with a first in front of it. */
+	static final int HAROLD = 1571;
+	static final String HAROLD_NAME = "Harold Evans";
+	/** Longer than the plugin waits for a click's conversation, whatever that is. */
+	static final int PATIENCE = 24;
+
+	/**
+	 * Monkey Madness, whose table has TWO legs recorded at stage 12.
+	 *
+	 * The varp does not move between the Grand Tree and Lumdo, so the sim's two runs of steps
+	 * both carry that value - and only one of them can be the leg a player at 12 is shown.
+	 */
+	static final String MONKEY = "MONKEY MADNESS";
+	static final int MONKEY_VARP = 365;
+
+	/**
+	 * Death Plateau's stage 50: two talks with Harold, and then a note.
+	 *
+	 * Four legs in the table end with an explanation rather than an instruction, and this is the
+	 * one whose progress is a plain varp. Once both talks are behind the player the only thing
+	 * left in the leg is "Roll the dice", which is nobody's step.
+	 */
+	/** Fight Arena's first walk, which names the floor it is on: [2569, 3198, 0]. */
+	static final String ARENA = "FIGHT ARENA";
+	static final int ARENA_VARP = 17;
+	static final int SERVIL_X = 2569;
+	static final int SERVIL_Z = 3198;
+
+	static final String PLATEAU = "DEATH PLATEAU";
+	static final int PLATEAU_VARP = 314;
+	/** Not Myreque's Harold Evans above: Death Plateau's Harold, who runs the dice game. */
+	static final int DICE_HAROLD = 1078;
+	static final String DICE_HAROLD_NAME = "Harold";
+
+	/**
+	 * Big Chompy Bird Hunting, whose stage 35 has no steps at all.
+	 *
+	 * The leg is "Rantz takes his shot and misses": a wait and a lucky roll, neither of which is
+	 * anything a player clicks, so the exporter has nothing to write for it.
+	 */
+	static final String HERO = "HEROES' QUEST (solo part)";
+	static final int HERO_VARP = 188;
+	static final String CHOMPY = "BIG CHOMPY BIRD HUNTING";
+	static final int CHOMPY_VARP = 293;
 	static final int IVAN = 1574;
 	static final String IVAN_NAME = "Ivan Strom";
 
@@ -282,6 +327,14 @@ public class QuestHelperTest {
 		dialogueTests();
 		System.out.println("15. every quest, at every leg, drawn");
 		sweepTests();
+		System.out.println("15b. and every value between the legs, where a player actually sits");
+		gapSweepTests();
+		System.out.println("16. the quest you are already in the middle of");
+		followTests();
+		System.out.println("17. the step you have just taken");
+		stepTests();
+		System.out.println("18. the shapes in the table that left the panel with nothing to say");
+		shapeTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -327,47 +380,15 @@ public class QuestHelperTest {
 	 * one that is lying.
 	 */
 	static void sweepTests() throws Exception {
-		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
-		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-		byte[] chunk = new byte[8192];
-		for (int n = in.read(chunk); n > 0; n = in.read(chunk)) {
-			buf.write(chunk, 0, n);
-		}
-		in.close();
-		Object root = jagex2.client.plugin.hub.Json.parse(new String(buf.toByteArray(), "UTF-8"));
-		List<?> all = jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) root, "quests");
+		List<?> all = questTable();
 
 		java.lang.reflect.Field errorsField = PluginManager.Entry.class.getDeclaredField("renderErrors");
 		errorsField.setAccessible(true);
 		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
 		enabledField.setAccessible(true);
 
-		// THE VARBIT TABLE THE CACHE WOULD HAVE GIVEN US, built from what the quests declare. Sized
-		// to the highest id in use; every other slot stays null, which is exactly what a cache that
-		// does not define an id looks like to varbitType(), so no OTHER varbit starts answering.
-		int widest = -1;
-		for (Object element : all) {
-			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
-			if (quest.get("stageBits") != null) {
-				widest = Math.max(widest, jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1));
-			}
-		}
-		VarbitType[] table = new VarbitType[widest + 1];
-		for (Object element : all) {
-			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
-			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
-			int id = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
-			if (bits == null || id < 0 || id >= table.length) {
-				continue;
-			}
-			VarbitType type = new VarbitType();
-			type.field1762 = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
-			type.field1763 = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
-			type.field1764 = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
-			table[id] = type;
-		}
 		VarbitType[] wasTable = VarbitType.field1760;
-		VarbitType.field1760 = table;
+		VarbitType.field1760 = varbitTable(all);
 
 		PluginContext ctx = context();
 		int legs = 0;
@@ -410,6 +431,19 @@ public class QuestHelperTest {
 				screen();
 				scene();
 				sidebar();
+				// AND THE CHATBOX, which nothing drew until now. The sweep ran three of the
+				// plugin's four overlays: panel, marker and bag. The fourth draws a box round the
+				// dialogue option a step would pick, and it is the only one that reads the
+				// table's `picks` - 884 of them across the table, parsed by optionFor while the
+				// chatbox is being painted. A pick has already been a fault once (a run of digits
+				// long enough to overflow an int, guarded there now), and with no dialogue on
+				// screen optionNow returns before optionFor is ever reached, so drawing the layer
+				// alone proves nothing. The leg's own picks go up as the options so that the
+				// matching path is the one taken.
+				String[] lines = optionsFor((java.util.Map<?, ?>) stage);
+				openDialogue(lines);
+				chat();
+				closeDialogue();
 				legs++;
 				if (errorsField.getInt(entry) > 0) {
 					threw.add(name + " at leg " + from);
@@ -427,13 +461,200 @@ public class QuestHelperTest {
 		for (String bad : notWritten) {
 			System.out.println("       could not set: " + bad);
 		}
-		check(threw.isEmpty(), "every quest at every leg draws without throwing (" + legs + " legs drawn)");
+		check(threw.isEmpty(), "every quest at every leg draws without throwing, on all four layers ("
+			+ legs + " legs drawn)");
 		// THE SHORTFALL IS ITS OWN CHECK NOW, not a number in another check's name. While it was
 		// only ever printed, 225 legs went unswept for as long as nobody read the line.
 		check(unreachable == 0, "and every leg in the table could be set to begin with ("
 			+ unreachable + " unreachable)");
 		VarbitType.field1760 = wasTable;
 	}
+
+	/** Whether a leg has a step that names something to DO, which is what the panel can show. */
+	static boolean actionable(java.util.Map<?, ?> stage) {
+		List<?> steps = jagex2.client.plugin.hub.Json.array(stage, "steps");
+		if (steps == null) {
+			return false;
+		}
+		for (Object s : steps) {
+			if (!"note".equals(jagex2.client.plugin.hub.Json.string((java.util.Map<?, ?>) s, "kind", ""))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The shipped table, as the plugin's own loader reads it. */
+	static List<?> questTable() throws Exception {
+		java.io.InputStream in = QuestHelperPlugin.class.getResourceAsStream("/deathplateau/quests.json");
+		java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+		byte[] chunk = new byte[8192];
+		for (int n = in.read(chunk); n > 0; n = in.read(chunk)) {
+			buf.write(chunk, 0, n);
+		}
+		in.close();
+		Object root = jagex2.client.plugin.hub.Json.parse(new String(buf.toByteArray(), "UTF-8"));
+		return jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) root, "quests");
+	}
+
+	/**
+	 * THE VARBIT TABLE THE CACHE WOULD HAVE GIVEN US, built from what the quests declare. Sized
+	 * to the highest id in use; every other slot stays null, which is exactly what a cache that
+	 * does not define an id looks like to varbitType(), so no OTHER varbit starts answering.
+	 */
+	static VarbitType[] varbitTable(List<?> all) {
+		int widest = -1;
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			if (quest.get("stageBits") != null) {
+				widest = Math.max(widest, jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1));
+			}
+		}
+		VarbitType[] table = new VarbitType[widest + 1];
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
+			int id = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			if (bits == null || id < 0 || id >= table.length) {
+				continue;
+			}
+			VarbitType type = new VarbitType();
+			type.field1762 = jagex2.client.plugin.hub.Json.integer(bits, "varp", -1);
+			type.field1763 = jagex2.client.plugin.hub.Json.integer(bits, "lsb", -1);
+			type.field1764 = jagex2.client.plugin.hub.Json.integer(bits, "msb", -1);
+			table[id] = type;
+		}
+		return table;
+	}
+
+	// --------------------------------------------------------------- 15b
+
+	/**
+	 * AND EVERY VALUE BETWEEN THE LEGS, WHICH IS WHERE A PLAYER ACTUALLY SITS.
+	 *
+	 * WHY THE SWEEP ABOVE IS NOT ENOUGH. It walks the table's own legs - the 850 rows that exist -
+	 * and a leg exists only where a sim's playthrough passed through that progress value. A
+	 * `{ stage: N }` in a manifest ASSERTS the var equals N; it does not set it. So any value the
+	 * content can write that no sim route crosses has no row at all, and the sweep above cannot
+	 * reach it by construction: it iterates the rows. DeathPlateau-Bugs#16 counts 45 such (quest,
+	 * value) pairs across 20 quests, 44 of them somewhere a player can genuinely be sitting.
+	 *
+	 * What the plugin does there is fall back: {@link QuestHelperPlugin#stageNow} takes the last
+	 * leg whose `from` is at or below the value, so a player at a legless value is shown the
+	 * PREVIOUS leg - already done, and wrong. That is a wording bug, and #16 owns it.
+	 *
+	 * This check is for the other half: whether being there makes an overlay THROW. Four open
+	 * reports (#4, #10, #15, #17) are the helper turning itself off, which is PluginManager
+	 * counting five throws out of an overlay and disabling the plugin, and a legless value is the
+	 * one state no test had ever drawn. So every value from 0 to the quest's own `done` that is
+	 * not already a leg gets written into the progress var and drawn on all four layers.
+	 *
+	 * A value the var is too narrow to hold reads back as something else and is counted, not
+	 * drawn: a draw at a value the plugin never saw would be a draw of some other state.
+	 */
+	static void gapSweepTests() throws Exception {
+		List<?> all = questTable();
+
+		java.lang.reflect.Field errorsField = PluginManager.Entry.class.getDeclaredField("renderErrors");
+		errorsField.setAccessible(true);
+		java.lang.reflect.Field enabledField = PluginManager.Entry.class.getDeclaredField("enabled");
+		enabledField.setAccessible(true);
+
+		VarbitType[] wasTable = VarbitType.field1760;
+		VarbitType.field1760 = varbitTable(all);
+
+		PluginContext ctx = context();
+		int drawn = 0;
+		int tooNarrow = 0;
+		List<String> threw = new ArrayList<String>();
+
+		for (Object element : all) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			String name = jagex2.client.plugin.hub.Json.string(quest, "name", "");
+			int varp = jagex2.client.plugin.hub.Json.integer(quest, "stageVarId", -1);
+			boolean varbit = Boolean.TRUE.equals(quest.get("stageIsVarbit"));
+			int done = jagex2.client.plugin.hub.Json.integer(quest, "done", 0);
+			java.util.Map<?, ?> bits = (java.util.Map<?, ?>) quest.get("stageBits");
+			List<?> stages = jagex2.client.plugin.hub.Json.array(quest, "stages");
+			if (stages == null) {
+				continue;
+			}
+			java.util.Set<Integer> legs = new java.util.HashSet<Integer>();
+			for (Object stage : stages) {
+				legs.add(jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stage, "from", 0));
+			}
+			try {
+				change();
+				track(name);
+			} catch (RuntimeException notListed) {
+				continue;
+			}
+			for (int value = 0; value <= done; value++) {
+				if (legs.contains(value)) {
+					continue;
+				}
+				if (varbit) {
+					writeBits(bits, value);
+				} else if (varp >= 0 && varp < client.varps.length) {
+					client.varps[varp] = value;
+				}
+				int saw = varp < 0 ? 0 : (varbit ? ctx.getVarbit(varp) : ctx.getVarp(varp));
+				if (saw != value) {
+					tooNarrow++;
+					continue;
+				}
+				manager.onClientTick(ticks++);
+				errorsField.setInt(entry, 0);
+				enabledField.setBoolean(entry, true);
+				screen();
+				scene();
+				sidebar();
+				// THE CHATBOX GETS THE FALLBACK LEG'S OWN PICKS, because that is the leg the
+				// plugin is about to show: optionFor is reached only through the leg stageNow
+				// settles on, so putting any other quest's options up would test nothing.
+				java.util.Map<?, ?> fallback = legBelow(stages, value);
+				if (fallback != null) {
+					openDialogue(optionsFor(fallback));
+					chat();
+					closeDialogue();
+				} else {
+					chat();
+				}
+				drawn++;
+				if (errorsField.getInt(entry) > 0) {
+					threw.add(name + " at value " + value + " (no leg; nearest below "
+						+ (fallback == null ? "none"
+							: String.valueOf(jagex2.client.plugin.hub.Json.integer(fallback, "from", 0)))
+						+ ")");
+				}
+			}
+		}
+
+		for (String bad : threw) {
+			System.out.println("       threw while drawing: " + bad);
+		}
+		check(threw.isEmpty(), "every value between the legs draws without throwing, on all four layers ("
+			+ drawn + " legless values drawn)");
+		check(tooNarrow == 0, "and every value up to done fits the var that carries it ("
+			+ tooNarrow + " too narrow)");
+		VarbitType.field1760 = wasTable;
+	}
+
+	/** The leg the plugin will fall back to at this value: the last whose `from` is at or below it. */
+	static java.util.Map<?, ?> legBelow(List<?> stages, int value) {
+		java.util.Map<?, ?> best = null;
+		int bestFrom = -1;
+		for (Object stage : stages) {
+			java.util.Map<?, ?> st = (java.util.Map<?, ?>) stage;
+			int from = jagex2.client.plugin.hub.Json.integer(st, "from", 0);
+			if (from <= value && from > bestFrom) {
+				best = st;
+				bestFrom = from;
+			}
+		}
+		return best;
+	}
+
 
 	/**
 	 * One varbit's value, written into the parent varp's bits. The inverse of
@@ -469,16 +690,24 @@ public class QuestHelperTest {
 
 	static void pickTests() throws Exception {
 		spawn(ALI_NAME, ALI, MID_X, MID_Z);
-		// A QUEST ALREADY IN PROGRESS, which is the state the guess used to fire in: with every
-		// varp at zero there is nothing to guess and the check below would pass either way.
+		// TWO QUESTS ALREADY IN PROGRESS, which is the state the guess used to fire in: with
+		// every varp at zero there is nothing to guess and the check below would pass either
+		// way - and with ONE there is a quest to follow and no guess in following it, which is
+		// section 16's business.
 		client.varps[GHOST_VARP] = 2;
+		client.varps[MYREQUE_VARP] = 4;
+		logOut();
+		logIn();
+		gameTicks(8);
 		settle();
 
 		// NOTHING IS GUESSED. Picking the first started-and-unfinished quest in table order meant
 		// a player part-way through six quests was handed whichever sorted earliest.
 		check(scene().isEmpty() && screen().isEmpty(),
-			"with a quest in progress but none picked, nothing is drawn - no marker and no panel");
+			"with two quests in progress and none picked, nothing is drawn - no marker and no panel");
 		client.varps[GHOST_VARP] = 0;
+		client.varps[MYREQUE_VARP] = 0;
+		gameTicks(1);
 
 		track(FEUD);
 		check(!screen().isEmpty(), "picking The Feud puts the panel on screen");
@@ -513,11 +742,20 @@ public class QuestHelperTest {
 			"...and the sidebar marks that same step as the one to do now");
 
 		// With Ali out of the scene the leg's own first instruction stands, on the tile it names.
+		//
+		// FROM SOMEWHERE ELSE IN THE BAZAAR, deliberately: the walk is "go to the tile Ali is
+		// standing on", and the player standing on it has already made it - which is a step the
+		// plugin now takes as done, and is section 17's business. Eight tiles off, it is a walk
+		// with somewhere to go.
 		clearNpcs();
+		stand(MID_X + 8, MID_Z + 8);
+		gameTick();
 		settle();
 		check(!said(scene(), ALI_NAME), "with Ali gone from the scene, he is no longer named");
 		check(painted() > 0, "...but the walk's own tile is marked, because the scene has it");
 		check(said(screen(), "Go to the bazaar"), "...and the panel gives the walk instead");
+		stand(MID_X, MID_Z);
+		settle();
 	}
 
 	// ---------------------------------------------------------------- 4
@@ -631,7 +869,7 @@ public class QuestHelperTest {
 		// struck off, with nothing to say the quest was over, until the player thought to press
 		// Change. That is what this section was renamed for.
 		client.varps[GHOST_VARP] = 5;
-		settle();
+		gameTicks(1);
 		List<ConfigList.Row> rows = page();
 		ConfigList.Row ghost = row(rows, GHOST);
 		check(ghost != null, "completing the tracked quest puts the page back to the quest list");
@@ -1351,6 +1589,36 @@ public class QuestHelperTest {
 		client.chatInterfaceId = -1;
 	}
 
+	/**
+	 * A "Select an Option" box for one leg, built out of that leg's own picks.
+	 *
+	 * Between two and five lines, because those are the boxes the client has. The leg's picks
+	 * come first so a step that picks is matched rather than missed; the rest is filler, which
+	 * is what an unrelated option looks like and is also what makes the no-match path run.
+	 */
+	static String[] optionsFor(java.util.Map<?, ?> stage) {
+		List<String> lines = new ArrayList<String>();
+		for (Object step : jagex2.client.plugin.hub.Json.array(stage, "steps")) {
+			for (Object pick : jagex2.client.plugin.hub.Json.array((java.util.Map<?, ?>) step, "picks")) {
+				String text = String.valueOf(pick);
+				// A worded pick may offer alternatives for a question asked at random; the box a
+				// player sees carries one of them, so the first is what goes up.
+				int bar = text.indexOf("||");
+				if (bar >= 0) {
+					text = text.substring(0, bar);
+				}
+				if (!text.trim().isEmpty() && lines.size() < 4) {
+					lines.add(text);
+				}
+			}
+		}
+		lines.add("Nothing, I'm fine thanks.");
+		if (lines.size() < 2) {
+			lines.add("I'll come back later.");
+		}
+		return lines.toArray(new String[lines.size()]);
+	}
+
 	/** One chatbox-layer frame: what the option mark drew. */
 	static List<Drawn> chat() {
 		return frame(Overlay.LAYER_CHAT);
@@ -1522,6 +1790,11 @@ public class QuestHelperTest {
 	 *
 	 * The id is the top of a bitfield and 2 << 29 is the layer; World3D reads these fields and
 	 * nothing else, so there is no model and nothing to load.
+	 *
+	 * THE TILE IS IN THE WORD TOO, where the graphics picker puts it: handleViewportOptions reads
+	 * the tile out of the word it was handed and asks the scene what is standing there, so a word
+	 * without it builds a menu for a loc at 0,0 and finds nothing. {@link #pickedWord} hands this
+	 * same word back to the menu, which is how a click here is the click the game makes.
 	 */
 	static void putLoc(int tileX, int tileZ, int id) {
 		Square square = client.scene.field1018[0][tileX][tileZ];
@@ -1530,7 +1803,7 @@ public class QuestHelperTest {
 			client.scene.field1018[0][tileX][tileZ] = square;
 		}
 		Sprite sprite = new Sprite();
-		sprite.field88 = (id << 14) | 2 << 29;
+		sprite.field88 = (id << 14) | (tileZ << 7) | tileX | 2 << 29;
 		sprite.field82 = tileX;
 		sprite.field84 = tileZ;
 		square.field1391[square.field1390] = sprite;
@@ -1591,6 +1864,642 @@ public class QuestHelperTest {
 		change();
 		track(FEUD);
 		settle();
+	}
+
+	// ---------------------------------------------------------------- 16
+
+	/**
+	 * THE QUEST YOU ARE ALREADY IN THE MIDDLE OF.
+	 *
+	 * WHAT A PLAYER REPORTED: "quest helper doesnt track if you already started the quest". The
+	 * page followed the quest the player pressed Track on and nothing else, and the pick was a
+	 * plain field - so it was lost every time the client closed. Somebody half-way through a
+	 * quest opened the helper and got a list of 108 of them, the one thing it knew for certain
+	 * about them ignored.
+	 *
+	 * IT STILL MUST NOT GUESS, which is the other half. The guess this replaced took the first
+	 * started-and-unfinished quest in table order - alphabetical by id - and showed a player
+	 * part-way through six quests Fight Arena because "arena" sorts early. So the two ways in
+	 * are evidence instead: a quest whose progress MOVED while the plugin was watching, and a
+	 * single quest underway with nothing to choose it against. Two underway and no movement is
+	 * the list, as before.
+	 *
+	 * The quests here are the ones whose progress is a plain varp. The Feud's is a varbit, which
+	 * needs a cache to decode and reads zero outside the sweep above.
+	 */
+	static void followTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		wipeQuests();
+		setPin("");
+		gameTicks(8);
+		check(followed() == null, "with no quest begun, the page is the list and follows nothing");
+		check(screen().isEmpty(), "...and there is no panel on screen to follow it with");
+
+		// ONE QUEST UNDERWAY. Nothing pressed, and nothing moving: logged out and in again with
+		// the value already written, which is the state a player is in every time they log in
+		// part-way through something. A varp written under a RUNNING plugin is a move, and would
+		// be answered by the rule below this one rather than by this one.
+		client.varps[GHOST_VARP] = 1;
+		logOut();
+		logIn();
+		gameTicks(2);
+		check(GHOST.equals(followed()),
+			"a quest already under way is picked up without the player saying so again");
+		check(!screen().isEmpty(), "...and its step is on screen (" + followed() + ")");
+
+		// TWO UNDERWAY AND NOTHING TO CHOOSE BETWEEN THEM, which is where the old guess went
+		// wrong. The page waits on the list rather than picking the one that sorts first.
+		//
+		// LOGGED OUT AND IN AGAIN, because that is what "nothing has moved" means: the plugin
+		// keeps each quest's value from the tick before, and a harness that writes two varps
+		// under a running plugin has moved them both.
+		wipeQuests();
+		setPin("");
+		client.varps[GHOST_VARP] = 1;
+		client.varps[MYREQUE_VARP] = 4;
+		logOut();
+		logIn();
+		gameTicks(8);
+		check(followed() == null, "two quests under way and nothing moving: the list, not a guess");
+
+		// AND THE VALUES ARRIVE AFTER THE WORLD DOES. The server sends them over the ticks after
+		// login, so every started quest looks like it has just moved; those first ticks only
+		// write them down. Without that, logging in part-way through two quests follows whichever
+		// varp happened to arrive last.
+		wipeQuests();
+		setPin("");
+		logOut();
+		logIn();
+		gameTicks(1);
+		client.varps[GHOST_VARP] = 1;
+		client.varps[MYREQUE_VARP] = 4;
+		gameTicks(2);
+		check(followed() == null, "the values arriving just after login are not mistaken for progress");
+
+		// A MOVE IS THE ANSWER. Doing anything at all in one of them says which one is being
+		// played, whatever else is half-finished.
+		gameTicks(8);
+		client.varps[MYREQUE_VARP] = 5;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "the quest whose progress moves is the one followed");
+		client.varps[GHOST_VARP] = 2;
+		gameTicks(1);
+		check(GHOST.equals(followed()), "...and moving the other one moves the page with it");
+
+		// STARTING A QUEST is a move like any other: nothing to something, and the first step is
+		// there to read without opening the list at all.
+		wipeQuests();
+		setPin("");
+		logOut();
+		logIn();
+		gameTicks(8);
+		check(followed() == null, "nothing under way again");
+		client.varps[MYREQUE_VARP] = 1;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "starting a quest follows it from its first step");
+		List<ConfigList.Row> rows = page();
+		check(rows.size() > 1 && "Change".equals(rows.get(0).action),
+			"...with the leg's steps under it (" + rows.size() + " rows)");
+
+		// A QUEST ENDING IS NOT A QUEST BEING PLAYED. Its var moves like any other - to the
+		// value that means complete - and the page has nothing left to say about it.
+		client.varps[GHOST_VARP] = 1;
+		gameTicks(1);
+		client.varps[MYREQUE_VARP] = 2;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "following the quest in progress");
+		client.varps[GHOST_VARP] = 5;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "a quest reaching its end does not take the page to it");
+
+		// AND THE PLAYER'S OWN PICK IS SAVED. A pin in a field was dropped when the plugin
+		// stopped, and the plugin stops every time the client closes.
+		change();
+		track(GHOST);
+		check(GHOST.equals(followed()), "pressing Track follows that quest");
+		check(store().indexOf("questhelper.tracked=restlessghost") >= 0,
+			"...and writes the choice where the next client start will read it");
+
+		// A MOVE IN ANOTHER QUEST STILL WINS, and it is the rule the page is easiest to explain
+		// with: it follows what you are doing. Picking from the list is for the quests you are
+		// NOT in the middle of.
+		client.varps[MYREQUE_VARP] = 3;
+		gameTicks(1);
+		check(MYREQUE.equals(followed()), "a move in another quest takes the page with it");
+
+		wipeQuests();
+		setPin("");
+		gameTicks(8);
+	}
+
+	// ---------------------------------------------------------------- 17
+
+	/**
+	 * THE STEP YOU HAVE JUST TAKEN, which nothing in the game writes down.
+	 *
+	 * WHAT A PLAYER REPORTED: it "still needs to be showing your next step, immediately after
+	 * finishing one". The quest varp moves once a LEG, and inside one the only traces were what
+	 * the quest put in the bag and what its own flags read - so a talk, which leaves neither,
+	 * could not be seen to have happened at all. Talk to the first of Myreque's five people and
+	 * the panel went on naming him, because he was still standing in front of you, until the
+	 * varp caught up a leg later.
+	 *
+	 * SO THE CLICK IS THE RECORD. Clicking the step the panel names is the player saying they are
+	 * doing it; a conversation that opens and then closes is that talk finishing; arriving at the
+	 * thing you clicked is a loc finishing; and a click that led nowhere is written off rather
+	 * than counted.
+	 *
+	 * THE CLICKS HERE ARE THE GAME'S OWN. The menu row is built by the client's menu builder and
+	 * read back by the client's resolver, which are the two places the list of action ids lives;
+	 * a test that wrote the number itself would agree with both of them and notice neither going
+	 * wrong.
+	 */
+	static void stepTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		wipeQuests();
+		stand(MID_X, MID_Z);
+		track(MYREQUE);
+		client.varps[MYREQUE_VARP] = 4;
+
+		// FIVE PEOPLE TO TALK TO, in order, and the first two of them standing here. Harold is
+		// the step; Radigad is the one after it.
+		spawn(HAROLD_NAME, HAROLD, MID_X, MID_Z);
+		spawn(RADIGAD_NAME, RADIGAD, MID_X + 2, MID_Z);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME), "the leg opens on the first of its five people");
+
+		// SOMETHING THAT IS NOT THE STEP, first: the second of the five, talked to out of turn.
+		// Three steps of this leg are still ahead of the player and a page that counted any click
+		// at all would have skipped the two in between in silence.
+		clickNpc(RADIGAD);
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME),
+			"a conversation with somebody further down the leg is not this step");
+
+		int op = clickNpc(HAROLD);
+		check(op == 1, "the menu's own Talk-to row reads back as op 1 on an npc (" + op + ")");
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME),
+			"clicking him is not the talk yet: the panel waits for the conversation");
+
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME),
+			"...and holds his step while the conversation is open, which is what keeps the option marked");
+		check(liveRow().indexOf(HAROLD_NAME) >= 0,
+			"...the page agreeing that his is still the step to do now (" + liveRow() + ")");
+
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + RADIGAD_NAME),
+			"the conversation closing moves the panel to the next person, with the first still standing there");
+		check(said(scene(), RADIGAD_NAME), "...and the marker moves to him too");
+		ConfigList.Row harold = row(page(), "Talk to " + HAROLD_NAME + ".");
+		check(harold != null && "done".equals(harold.value),
+			"...and the page strikes his off as done (" + (harold == null ? "no row" : harold.value) + ")");
+
+		// A CLICK THAT LED NOWHERE. No conversation ever opened - clicked the wrong thing, walked
+		// away, interrupted - so the panel is where it was rather than a step further on.
+		clickNpc(RADIGAD);
+		gameTicks(PATIENCE);
+		settle();
+		check(said(screen(), "Talk to " + RADIGAD_NAME),
+			"a click with no conversation after it is written off, not counted");
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + RADIGAD_NAME),
+			"...and a conversation long afterwards does not finish it for him");
+
+		// AND IT IS THIS CHARACTER'S PROGRESS. Logging out forgets what was watched; the quest
+		// to follow is a saved setting and stays.
+		clickNpc(RADIGAD);
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "Talk to " + RADIGAD_NAME), "talking to the second moves the panel on again");
+		logOut();
+		logIn();
+		gameTicks(8);
+		settle();
+		check(MYREQUE.equals(followed()), "logging out keeps the quest being followed");
+		check(said(screen(), "Talk to " + HAROLD_NAME),
+			"...and forgets the steps it watched, because the next player may be somebody else");
+
+		// ARRIVING IS TAKING A WALK STEP, and it needs no click at all: The Feud's first leg is
+		// "go to the tile Ali is standing on, talk to Ali", and a player standing on it has made
+		// the walk whether or not Ali has loaded yet.
+		clearNpcs();
+		track(FEUD);
+		client.sceneBaseTileX = BAZAAR_X - MID_X;
+		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
+		stand(MID_X + 8, MID_Z + 8);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Go to the bazaar"), "away from the tile, the walk is still the step");
+		stand(MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "Go to the bazaar"), "standing on it, the walk is behind you");
+		check(said(screen(), "Talk to " + ALI_NAME), "...and the panel has moved to what is next");
+
+		// A LOC: clicked, walked to, done - and a conversation is not involved at all.
+		clearNpcs();
+		track(ELEMENTAL);
+		client.sceneBaseTileX = BOOKCASE_X - MID_X;
+		client.sceneBaseTileZ = BOOKCASE_Z - MID_Z;
+		stand(MID_X, MID_Z);
+		primeLocs("Dusty bookcase");
+		client.scene = new World3D(client.levelHeightmap, 104, 4, 104);
+		putLoc(MID_X, MID_Z, BOOKCASE);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Search " + BOOKCASE_NAME), "the bookcase is the step, standing at it");
+
+		// CLICKED FROM ACROSS THE ROOM, which is a walk and then a search. A loc opens no
+		// conversation to wait for, so arriving at it is the only end there is - and until then
+		// the step is still the step.
+		stand(MID_X + 8, MID_Z + 8);
+		int locOp = clickLoc(MID_X, MID_Z);
+		check(locOp == 1, "the menu's own Search row reads back as op 1 on a loc (" + locOp + ")");
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Search " + BOOKCASE_NAME),
+			"clicking it from across the room is not the search yet");
+
+		// AND A CONVERSATION DOES NOT STAND IN FOR WALKING THERE. Nobody talks to a bookcase
+		// from eight tiles away, so a chatbox that opens on the way - a level-up, most often -
+		// is somebody else's news.
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Search " + BOOKCASE_NAME),
+			"...and a conversation on the way there is not the search either");
+
+		stand(MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "Search " + BOOKCASE_NAME), "searching it is the step done");
+		check(said(screen(), "Go out while the door is still open"),
+			"...and the panel gives the step after it");
+
+		client.scene = null;
+		client.sceneBaseTileX = BAZAAR_X - MID_X;
+		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
+		clearNpcs();
+		wipeQuests();
+		setPin("");
+		gameTicks(8);
+	}
+
+	// ---------------------------------------------------------------- 18
+
+	/**
+	 * THE SHAPES IN THE TABLE THE PANEL USED TO FALL OVER, each read off the table itself rather
+	 * than invented here: a tile with no floor, two legs at one value, and a leg with no steps.
+	 *
+	 * NONE OF THESE WERE VISIBLE FROM A QUEST PICKED BY HAND. Every section above chooses a
+	 * quest, a leg and a scene, and all three of these are quests nobody had chosen - which is
+	 * the same gap the sweep in section 15 exists for, one level further in: the sweep proves
+	 * nothing throws, and a panel that says "No step recorded for this stage" throws nothing.
+	 */
+	static void shapeTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		wipeQuests();
+
+		// LOGGED OUT FIRST, because section 17 walked The Feud's first step and the plugin
+		// remembers that for as long as the character is logged in - which is the point of it.
+		// This section is about a player who has done none of it.
+		logOut();
+		logIn();
+
+		// A TILE WITH NO FLOOR ON IT. 2677 of the table's tiles are a bare pair of coordinates,
+		// because the sim stood there with a `go [x,z]` that never named a level - and the plugin
+		// read the missing third number as the ground floor, so every one of them was thrown away
+		// the moment the player went upstairs. The Feud's first walk is one of them.
+		track(FEUD);
+		client.sceneBaseTileX = BAZAAR_X - MID_X;
+		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
+		client.currentLevel = 1;
+		stand(MID_X + 8, MID_Z + 8);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Go to the bazaar"), "a step whose tile names no floor is still the step upstairs");
+		check(painted() > 0, "...and its tile is still marked, rather than dropped for not being plane 0");
+		stand(MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "Go to the bazaar"), "...and standing on it upstairs is still arriving");
+		client.currentLevel = 0;
+
+		// AND A TILE THAT DOES NAME A FLOOR IS STILL HELD TO IT, which is the other half of the
+		// same fix: 849 of the table's tiles say "plane 0" out loud, and a marker on the ground
+		// floor is no use to somebody standing on the first. Fight Arena's walk to Lady Servil
+		// names it.
+		clearNpcs();
+		wipeQuests();
+		logOut();
+		logIn();
+		track(ARENA);
+		client.sceneBaseTileX = SERVIL_X - MID_X;
+		client.sceneBaseTileZ = SERVIL_Z - MID_Z;
+		stand(MID_X + 8, MID_Z + 8);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Go to Lady Servil"), "the leg opens on the walk to Lady Servil");
+		check(painted() > 0, "...and on her own floor the tile is marked");
+		client.currentLevel = 1;
+		settle();
+		check(painted() == 0, "...but a floor up it is not, because that tile said which floor it is on");
+		check(said(screen(), "Go to Lady Servil"), "...while the panel still says where to go");
+		client.currentLevel = 0;
+
+		// TWO LEGS AT ONE STAGE VALUE. Monkey Madness records nine steps and then five, both at
+		// stage 12, and the later of them used to win - so the nine were somewhere no player
+		// could reach.
+		clearNpcs();
+		wipeQuests();
+		track(MONKEY);
+		client.varps[MONKEY_VARP] = 12;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Grand Tree"), "of two legs at one stage value, the first is the one shown");
+		check(!said(screen(), "Go to Lumdo"), "...and not the later one that used to hide it");
+		List<ConfigList.Row> rows = page();
+		check(rows.size() > 9, "...with its own steps under it on the page (" + rows.size() + " rows)");
+
+		// A LEG THAT ENDS IN AN EXPLANATION. Death Plateau's stage 50 is "talk to Harold, talk to
+		// Harold again, roll the dice" - and with both talks behind you the only thing left is
+		// the note, which the panel cannot name. It used to say "No step recorded for this
+		// stage" at the exact moment the player had done everything right.
+		clearNpcs();
+		wipeQuests();
+		logOut();
+		logIn();
+		track(PLATEAU);
+		client.varps[PLATEAU_VARP] = 50;
+		spawn(DICE_HAROLD_NAME, DICE_HAROLD, MID_X, MID_Z);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + DICE_HAROLD_NAME), "the leg opens on the first talk with Harold");
+		for (int i = 0; i < 2; i++) {
+			clickNpc(DICE_HAROLD);
+			openDialogue(new String[] { "Yes.", "No." });
+			gameTicks(1);
+			closeDialogue();
+			gameTicks(1);
+			settle();
+		}
+		check(!said(screen(), "No step recorded"),
+			"with both talks done, the note left behind is not a step and does not empty the panel");
+		check(said(screen(), "Read Iou"), "...the next leg is what is next (" + firstLine() + ")");
+
+		// A LEG WITH NO STEPS IN IT. Big Chompy's stage 35 is a wait while Rantz misses, so there
+		// is nothing to click and nothing for the table to say - and an empty leg used to be the
+		// answer, which read as "No step recorded for this stage".
+		wipeQuests();
+		track(CHOMPY);
+		client.varps[CHOMPY_VARP] = 35;
+		gameTicks(1);
+		settle();
+		check(!said(screen(), "No step recorded"), "a leg with no steps in it does not leave the panel empty");
+		check(said(screen(), "Rantz"), "...it gives what is next instead (Rantz, two steps later)");
+
+		// AND THE ONE LEG THE PANEL STILL CANNOT NAME, which is worth pinning rather than hiding.
+		// Everything above rescues a leg whose steps run out by walking the panel on to the next
+		// leg, and that only works while there IS a next leg. quest_hero_run.ts stops at stage 11
+		// on purpose - the candlestick needs a Phoenix player to kill Grip, so one player's route
+		// ends there - which leaves leg 11 bare, 0 steps and 0 headings, with nothing after it.
+		// A player at 11, 12 or 13 therefore reads "No step recorded for this stage."
+		//
+		// That is the LAST state in the whole table that does it, and it is the only shape left
+		// that could have a player saying the helper shows them nothing - the four reports on
+		// DeathPlateau-Bugs#4, #10, #15 and #17. It is not a throw: section 15b draws every
+		// legless value on all four overlays without one.
+		wipeQuests();
+		track(HERO);
+		client.varps[HERO_VARP] = 11;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "No step recorded"),
+			"Heroes' Quest 11 is bare, and the panel says so rather than going blank");
+		client.varps[HERO_VARP] = 13;
+		gameTicks(1);
+		settle();
+		check(said(screen(), "No step recorded"), "...and 13 falls back to it and reads the same");
+
+		// THE RATCHET ON IT. Counted from the table rather than driven, because the point is that
+		// there is exactly ONE of these: a leg with nothing to do and no later leg to walk on to.
+		// If somebody fixes Heroes' 11 this fails and the expectation comes down to zero; if
+		// somebody adds a second, it fails and names it. Either way it cannot arrive quietly.
+		List<String> bare = new ArrayList<String>();
+		for (Object element : questTable()) {
+			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
+			List<?> stages = jagex2.client.plugin.hub.Json.array(quest, "stages");
+			if (stages == null) {
+				continue;
+			}
+			for (int i = 0; i < stages.size(); i++) {
+				if (actionable((java.util.Map<?, ?>) stages.get(i))) {
+					continue;
+				}
+				boolean laterHasOne = false;
+				for (int j = i + 1; j < stages.size(); j++) {
+					laterHasOne = laterHasOne || actionable((java.util.Map<?, ?>) stages.get(j));
+				}
+				if (!laterHasOne) {
+					bare.add(jagex2.client.plugin.hub.Json.string(quest, "name", "?") + " "
+						+ jagex2.client.plugin.hub.Json.integer((java.util.Map<?, ?>) stages.get(i), "from", 0));
+				}
+			}
+		}
+		for (String b : bare) {
+			System.out.println("       panel cannot name: " + b);
+		}
+		check(bare.size() == 1 && bare.get(0).equals("HEROES' QUEST (solo part) 11"),
+			"and it is the only leg in the table the panel cannot name (" + bare.size() + ")");
+
+		clearNpcs();
+		wipeQuests();
+		setPin("");
+		gameTicks(8);
+	}
+
+	// ---------------------------------------------------------------- the harness for 16 and 17
+
+	/** Where the player is standing, which is what "you have walked there" is measured against. */
+	static void stand(int sceneTileX, int sceneTileZ) {
+		Client.localPlayer.field1157 = sceneTileX * 128;
+		Client.localPlayer.field1158 = sceneTileZ * 128;
+	}
+
+	/**
+	 * Every quest back to not started.
+	 *
+	 * A varbit is a window on a varp, so zeroing the varps zeroes every quest in the table -
+	 * which is what makes "two quests under way" a fact about these two rather than about
+	 * whatever the section before this one left behind.
+	 */
+	static void wipeQuests() {
+		java.util.Arrays.fill(client.varps, 0);
+	}
+
+	static void gameTick() {
+		manager.onGameTick();
+	}
+
+	static void gameTicks(int n) throws Exception {
+		for (int i = 0; i < n; i++) {
+			manager.onGameTick();
+		}
+		manager.onClientTick(ticks++);
+	}
+
+	/** Logs out and back in the way the manager notices it: the client's own two fields. */
+	static void logOut() {
+		client.ingame = false;
+		manager.onClientTick(ticks++);
+	}
+
+	static void logIn() {
+		client.ingame = true;
+		manager.onClientTick(ticks++);
+	}
+
+	/** The first line the on-screen panel drew, for a check that wants to say what it saw. */
+	static String firstLine() {
+		List<Drawn> drawn = screen();
+		return drawn.isEmpty() ? "nothing drawn" : strip(drawn.get(0).text);
+	}
+
+	/** The label of the row the page marks as the step to do now, or "". */
+	static String liveRow() {
+		for (ConfigList.Row row : page()) {
+			if ("now".equals(row.value)) {
+				return row.label;
+			}
+		}
+		return "";
+	}
+
+	/** The quest the page is following, read off the page, or null while it shows the list. */
+	static String followed() {
+		List<ConfigList.Row> rows = page();
+		if (rows.isEmpty() || !"Change".equals(rows.get(0).action)) {
+			return null;
+		}
+		return rows.get(0).label;
+	}
+
+	/** Writes the plugin's saved pin, which is the only way to put the page back to none. */
+	static void setPin(String questId) {
+		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
+			if ("tracked".equals(item.key)) {
+				entry.getConfig().set(item, questId);
+			}
+		}
+	}
+
+	/** What the plugin store on disk says, which is what the next client start will read. */
+	static String store() {
+		// The directory is the client's own answer, not this file's guess at it; the file's name
+		// is PluginManager's and private, so it is the one thing written down here.
+		java.io.File file = new java.io.File(sign.signlink.findcachedir() + "plugins.dat");
+		if (!file.exists()) {
+			return "";
+		}
+		try {
+			byte[] all = new byte[(int) file.length()];
+			java.io.DataInputStream in = new java.io.DataInputStream(new java.io.FileInputStream(file));
+			in.readFully(all);
+			in.close();
+			return new String(all, "UTF-8");
+		} catch (Exception error) {
+			return "";
+		}
+	}
+
+	/**
+	 * Clicks an npc, through the client's own menu builder and resolver. Returns the op slot the
+	 * resolver read back, so the test can say the two agree.
+	 *
+	 * The ops are put on the type here rather than in {@link #spawn}: an npc needs a Talk-to word
+	 * and the interactable flag before the menu will offer anything at all, and the sections
+	 * above are about what is DRAWN over an npc, which needs neither.
+	 */
+	static int clickNpc(int npcId) {
+		int index = -1;
+		for (int i = 0; i < client.npcCount; i++) {
+			ClientNpc npc = client.npcs[client.npcIds[i]];
+			if (npc != null && npc.field1370 != null && (int) npc.field1370.field1431 == npcId) {
+				index = client.npcIds[i];
+			}
+		}
+		if (index < 0) {
+			throw new IllegalStateException("no npc " + npcId + " in the scene to click");
+		}
+		NpcType type = client.npcs[index].field1370;
+		type.field1434 = true;
+		type.field1449 = new String[] { "Talk-to", null, null, null, null };
+		client.menuSize = 0;
+		client.addNpcOptions(type, 0, 0, index);
+		return click("Talk-to");
+	}
+
+	/** The same for the loc standing on a tile, through handleViewportOptions. */
+	static int clickLoc(int tileX, int tileZ) {
+		LocType.field1636[0].field1644 = new String[] { "Search", null, null, null, null };
+		Model.pickedCount = 0;
+		Model.field1256[Model.pickedCount++] = pickedWord(tileX, tileZ);
+		client.menuSize = 0;
+		client.handleViewportOptions();
+		return click("Search");
+	}
+
+	/** The word the graphics picker hands the menu for the loc on a tile: the scene's own. */
+	static int pickedWord(int tileX, int tileZ) {
+		Square square = client.scene.field1018[0][tileX][tileZ];
+		return square.field1391[0].field88;
+	}
+
+	/**
+	 * Presses the menu row whose word is this one, and hands the plugins what the client would.
+	 *
+	 * The row is found by the WORD a player reads, so which action id the builder gave it is
+	 * never written down here; the resolver's answer for that row is what comes back.
+	 */
+	static int click(String word) {
+		for (int i = 0; i < client.menuSize; i++) {
+			if (client.menuOption[i] == null || client.menuOption[i].indexOf(word) != 0) {
+				continue;
+			}
+			int action = client.menuAction[i];
+			int a = client.menuParamA[i];
+			int b = client.menuParamB[i];
+			int c = client.menuParamC[i];
+			jagex2.client.plugin.event.MenuOptionClicked.Target target =
+				client.resolveMenuTarget(action >= 2000 ? action - 2000 : action, a, b, c);
+			manager.onMenuOptionClicked(client.menuOption[i], action, a, b, c, target);
+			return target.op;
+		}
+		throw new IllegalStateException("the menu has no \"" + word + "\" row (" + client.menuSize + " rows)");
 	}
 
 	/** The plugin's sidebar page as the sidebar reads it. */
@@ -1724,8 +2633,17 @@ public class QuestHelperTest {
 		throw new IllegalStateException("no page to change from");
 	}
 
-	/** Presses Track on a quest's row, which is the only way a quest becomes the tracked one. */
+	/**
+	 * Presses Track on a quest's row.
+	 *
+	 * Puts the page back to the list first when it is following something, because row 0 of a
+	 * followed quest is the Change button and row 0 of the list is a Track - pressing one when
+	 * you meant the other quietly tracks whatever sorted first.
+	 */
 	static void track(String quest) {
+		if (followed() != null) {
+			change();
+		}
 		for (PluginManager.PanelSnapshot panel : manager.snapshotPanels()) {
 			if (!"questhelper".equals(panel.entry.key)) {
 				continue;

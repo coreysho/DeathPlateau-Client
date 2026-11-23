@@ -105,6 +105,7 @@ def main():
     ap.add_argument('--base')
     ap.add_argument('--jar', help='client jar to drive (default build/libs/rs2client-dev.jar)')
     ap.add_argument('--clicks', action='store_true', help='only the click-rate check')
+    ap.add_argument('--logout', action='store_true', help='only the logout timing')
     ap.add_argument('--port', type=int, default=43694)
     ap.add_argument('--webport', type=int, default=8694)
     a = ap.parse_args()
@@ -134,6 +135,20 @@ def main():
     # How many clicks land, at each frame rate. Fixed 765x503, where the rate is set by padding the
     # frame rather than by the window size, so it is the same on any machine (and can be held at a
     # 1920x1080 frame rate without a 1920x1080 window). --clicks stops here.
+    if a.logout:
+        # BOTH WAYS ROUND, because the difference between them IS the measurement: the windowless
+        # run logs out in a sixth of a second, so anything the reported twenty seconds are made of
+        # has to be something only a real window does.
+        print('logout timing, 1920x1080 resizable, no window')
+        ok = java(['logout', '1920', '1080', 'lo' + tag, 'logout'], JAR, classes, out, rsan, a.port,
+                  a.webport, ['shots.noflames=true', 'shots.pitch=200'])
+        # shots.window=true opens a REAL ViewBox instead of drawing to a BufferedImage, which is
+        # how every `super.frame != null` branch gets taken. NOT RUN HERE: the harness cannot get a
+        # login through it yet - the keys go to the frame rather than to the canvas it types into -
+        # so it is left as a switch to drive by hand rather than a check that fails every night.
+        print()
+        print('ALL PASS' if ok else 'FAILURES above')
+        return 0 if ok else 1
     print('clicks at a held frame rate')
     ok &= java(['clicks', '765', '503', 'ck' + tag, 'clicks'], JAR, classes, out, rsan, a.port, a.webport,
                ['shots.noflames=true', 'shots.tele=0,51,45,36,20'])

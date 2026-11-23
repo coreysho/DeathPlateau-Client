@@ -62,15 +62,40 @@ public class ResizableShots extends Client {
 
 	public void update() {
 		updates++;
+		// ON THE GAME THREAD, which is the whole point: the real logout is called from the client's
+		// own update (the logout tab, or the server closing the socket), so calling it from the
+		// test thread would time a different thing and race the frame being drawn.
+		if (wantLogout) {
+			wantLogout = false;
+			long t = System.nanoTime();
+			this.logout();
+			logoutNanos = System.nanoTime() - t;
+		}
 		super.update();
 	}
+
+	/** Set by the logout mode; acted on by the game thread at the top of its next update. */
+	static volatile boolean wantLogout;
+	/** How long logout() itself took, which is where System.gc() would show up. */
+	static volatile long logoutNanos;
+	/** While set, every frame is timed and the slow ones are printed. */
+	static volatile boolean trace;
+	static volatile long traceFrom;
+	static volatile int traceFrames;
+	static volatile long traceSlowest;
 
 	public void useMenuOption(int option) {
 		menuOptions++;
 		super.useMenuOption(option);
 	}
 
+	/** A real ViewBox window rather than a BufferedImage: every `super.frame != null` branch taken. */
+	static final boolean realWindow = Boolean.getBoolean("shots.window");
+
 	public Graphics acquireGraphics() {
+		if (realWindow) {
+			return super.acquireGraphics();
+		}
 		int w = this.getWidth();
 		int h = this.getHeight();
 		if (w <= 0 || h <= 0) {
@@ -139,11 +164,26 @@ public class ResizableShots extends Client {
 					showSelf(true);
 				}
 			}
+			long took = System.nanoTime() - t;
 			if (this.ingame) {
-				drawNanos += System.nanoTime() - t;
+				drawNanos += took;
 				drawCount++;
 			}
 			frames++;
+			if (trace) {
+				traceFrames++;
+				if (took > traceSlowest) {
+					traceSlowest = took;
+				}
+				// A frame that took longer than three of them is worth a line of its own; at 50fps
+				// the loop is meant to come round every 20ms.
+				if (took > 60000000L) {
+					say(String.format("    frame %d at +%.2fs took %.2fs  (ingame=%s titleState=%d titleArt=%s)",
+						Integer.valueOf(traceFrames), Double.valueOf((System.nanoTime() - traceFrom) / 1e9),
+						Double.valueOf(took / 1e9), get("ingame"), Integer.valueOf(geti("titleScreenState")),
+						Boolean.valueOf(get("imageTitle4") != null)));
+				}
+			}
 		}
 		// Outside the lock: the padding is meant to slow the game thread's frame, not to keep the
 		// test thread out of the canvas for that long.
@@ -365,6 +405,10 @@ public class ResizableShots extends Client {
 	}
 
 	static void shot(String name) throws Exception {
+		if (realWindow && canvas == null) {
+			say("  (no shot: " + name + " - the frame went to a real window)");
+			return;
+		}
 		waitFrames(3);
 		BufferedImage copy;
 		synchronized (LOCK) {
@@ -429,6 +473,9 @@ public class ResizableShots extends Client {
 		// "swapsclassic" and "swapsmodern" are the swaps mode in the two resizable layouts, so the
 		// F10 panel is seen in the fixed frame that cannot grow and in the windows that can.
 		boolean resizable = modern || mode.equals("resizable") || mode.equals("drawdist") || mode.equals("title")
+			// the logout mode in a window, because that is where it was reported and the fixed
+			// screen has no surround to be left looking at
+			|| mode.equals("logout")
 			// wear mode too: a player is sixty pixels tall in the fixed 512x334 viewport and the
 			// thing being judged is a seam between two garments. A bigger window is a bigger him.
 			|| mode.equals("cape")
@@ -469,7 +516,12 @@ public class ResizableShots extends Client {
 
 		app = new ResizableShots();
 		app.setSize(w, h);
-		app.initApplet(765, 503);
+		if (realWindow) {
+			// The player's own path: a frame, its rail, and a Graphics that belongs to the screen.
+			app.initApplication(h, w);
+		} else {
+			app.initApplet(765, 503);
+		}
 		if (app.graphics == null) {
 			synchronized (LOCK) {
 				app.graphics = app.acquireGraphics();
@@ -526,6 +578,10 @@ public class ResizableShots extends Client {
 			toggle(prefix);
 			return;
 		}
+		if (mode.equals("logout")) {
+			logoutTiming(prefix);
+			return;
+		}
 		if (mode.equals("drawdist")) {
 			drawDistances(prefix, w, h);
 			return;
@@ -536,6 +592,14 @@ public class ResizableShots extends Client {
 		}
 		if (mode.equals("doll")) {
 			doll(prefix);
+			return;
+		}
+		if (mode.equals("milestones")) {
+			milestones(prefix);
+			return;
+		}
+		if (mode.equals("broadcastlook")) {
+			broadcastlook(prefix);
 			return;
 		}
 		/*
@@ -1899,6 +1963,66 @@ public class ResizableShots extends Client {
 		waitFrames(60);
 	}
 
+	/**
+	 * WHERE THE TIME AFTER A LOGOUT GOES.
+	 *
+	 * Printed as three separate numbers because they have three different fixes: logout() itself
+	 * (System.gc and the scene being thrown away), the frames after it (the title screen being
+	 * rebuilt), and any stretch of wall clock that belongs to neither - which would mean the loop
+	 * is not running, and is what a window that will not close looks like.
+	 */
+	static void logoutTiming(String prefix) throws Exception {
+		// THE HUD BEFORE IT GOES, which is most of the media archive on one screen: the tab
+		// stones and their icons, the chat buttons, the minimap with its dots and compass, the
+		// map scenes. A sprite group loaded wrongly shows up here and nowhere else in this mode.
+		shot(prefix + "_ingame");
+		say("settled in game; logging out");
+		long t0 = System.nanoTime();
+		traceFrom = t0;
+		traceFrames = 0;
+		traceSlowest = 0L;
+		logoutNanos = 0L;
+		trace = true;
+		wantLogout = true;
+		// Up to a minute: the report is twenty seconds, so a run that reaches this limit is a
+		// different bug and should say so rather than pass.
+		long deadline = t0 + 60000000000L;
+		boolean back = false;
+		long leftGame = 0L;
+		while (System.nanoTime() < deadline) {
+			if (leftGame == 0L && Boolean.FALSE.equals(get("ingame"))) {
+				leftGame = System.nanoTime();
+			}
+			if (leftGame != 0L && get("imageTitle4") != null) {
+				back = true;
+				break;
+			}
+			Thread.sleep(10L);
+		}
+		long t1 = System.nanoTime();
+		trace = false;
+		say("");
+		say(String.format("  logout() itself          %.2fs", Double.valueOf(logoutNanos / 1e9)));
+		say(String.format("  until ingame went false  %.2fs", Double.valueOf((leftGame - t0) / 1e9)));
+		say(String.format("  until the title art back %.2fs", Double.valueOf((t1 - t0) / 1e9)));
+		say(String.format("  frames drawn meanwhile   %d, slowest %.2fs", Integer.valueOf(traceFrames),
+			Double.valueOf(traceSlowest / 1e9)));
+		// THE NUMBER THAT MATTERS. A frame rate anywhere near normal with seconds on the clock means
+		// the frames are not where the time is going; a handful of frames means the loop is stalled.
+		double seconds = (t1 - t0) / 1e9;
+		say(String.format("  which is %.1f frames a second", Double.valueOf(traceFrames / Math.max(0.001D, seconds))));
+		waitFrames(20);
+		shot(prefix + "_aftertitle");
+		say((back ? "  ok   " : "  FAIL ") + "the title screen comes back after a logout");
+		say((seconds < 3.0D ? "  ok   " : "  FAIL ")
+			+ String.format("and does so promptly (%.2fs)", Double.valueOf(seconds)));
+		// THE CLIENT'S OWN THREADS ARE NOT DAEMONS, so returning from here leaves the JVM up and
+		// the runner waiting on a process that will never exit. Every other mode that ends the run
+		// itself says so the same way.
+		log.close();
+		System.exit(0);
+	}
+
 	static void logIn(String user, boolean resizable, int w, int h) throws Exception {
 		int lx = resizable ? (Math.max(w, 765) - 765) / 2 : 0;
 		int ly = resizable ? (Math.max(h, 503) - 503) / 2 : 0;
@@ -1959,6 +2083,174 @@ public class ResizableShots extends Client {
 	 * Weapons are wielded from Equipment Stats' own side panel (equipment_side.if), which is where
 	 * the bug was reported: that leaves the window open, so the doll is asked to change pose in place.
 	 */
+	/**
+	 * MILESTONE ANNOUNCEMENTS, photographed in the chatbox that draws them.
+	 *
+	 * The engine-side sim (engine tools/sim/milestones.ts) proves which lines are sent and to whom.
+	 * It cannot show what they look like: the colours are tags the CLIENT turns into pixels, the
+	 * rank and XP-mode icons are sprites it substitutes for "@cr3@", and the chatbox is parchment,
+	 * which is the whole reason the labels are shadowed. So this triggers the real thing on a real
+	 * world and photographs the result.
+	 *
+	 * ::advancestat is the trigger on purpose: it zeroes the skill and calls addXp, which is the
+	 * only path that fires [advancestat] and so [label,levelup]. ::setstat writes the number
+	 * straight into the save and announces nothing.
+	 *
+	 * Run it twice on the same skill and the second time is the ordinary line - the server first has
+	 * been claimed by the first - which is how both forms get into one run.
+	 *
+	 * THIS MODE NO LONGER WORKS, and is kept for the shots it already took and for whatever
+	 * replaces it. Since 2026-11-16 a stat written by a staff command marks the account
+	 * (%milestone_cheated) and nothing it does is announced afterwards - which is the point of the
+	 * change, and it takes ::advancestat with it, because the mark is set before the experience is.
+	 * ::setvar milestone_cheated 0 straight afterwards does not get it back either: the suppression
+	 * is read by [label,levelup] off the ENGINE queue a tick or more later, so clearing it races
+	 * the thing it is clearing it for.
+	 *
+	 * Anything that photographs these lines again has to trigger them the way a player does -
+	 * earned experience - or be handed a command that grants it without marking the account. The
+	 * engine-side sim (engine tools/sim/milestones.ts) covers which lines are sent, to whom, and
+	 * that none of them is wide enough to wrap; what it cannot cover is how they look.
+	 */
+	/**
+	 * WHAT A BROADCAST LOOKS LIKE, drawn by the client, from text the SERVER wrote.
+	 *
+	 * -Dshots.lines=<file> is the output of the engine's tools/sim/milestonelines.ts: "## " starts
+	 * a group and every other line is one broadcast, exactly as World.broadcastMilestone would
+	 * send it. Each group is photographed on its own.
+	 *
+	 * WHY NOT END TO END, like milestones() above tried to be. Every way to reach these lines from
+	 * inside the game is a staff command, and since 2026-11-16 a staff command marks the account
+	 * and mutes its milestones - on purpose. Nothing that can be typed into a client can make an
+	 * account earn 200m experience or fill a collection log page legitimately, so a sim produces
+	 * the text and this draws it.
+	 *
+	 * The division is the honest one. What a line SAYS is the server's, and comes from the real
+	 * procs through the real broadcast path - retyping it here would photograph something nobody
+	 * will ever see. What it LOOKS like is the client's: the colours are tags it turns into
+	 * pixels, "@cr3@" is a sprite it substitutes, and the 456-pixel wrap is its own. addMessage is
+	 * the single choke point every server game message arrives at (Client.java:10659 passes
+	 * exactly these three arguments), so this enters the client where a real broadcast does.
+	 */
+	static void broadcastlook(String prefix) throws Exception {
+		String file = System.getProperty("shots.lines", "");
+		if (file.isEmpty()) {
+			say("FAIL -Dshots.lines=<file> is required");
+			log.close();
+			System.exit(1);
+		}
+		// OUT OF THE TUTORIAL, AND THEN A RELOG. The varp is the server's side of it; the client
+		// has its own - stickyChatInterfaceId, the lesson's chatbox - and while that is set it
+		// turns every game message into a "Click to continue" modal drawn over the top. The first
+		// run of this came back with exactly that: one line of the two, under a modal. Only a
+		// fresh login clears it, because that is when login.rs2 takes the non-tutorial branch.
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		relogin();
+		waitFrames(30);
+
+		List<String> titles = new ArrayList<String>();
+		List<List<String>> groups = new ArrayList<List<String>>();
+		for (String raw : java.nio.file.Files.readAllLines(java.nio.file.Paths.get(file))) {
+			String line = raw.trim();
+			if (line.isEmpty()) {
+				continue;
+			}
+			if (line.startsWith("## ")) {
+				titles.add(line.substring(3));
+				groups.add(new ArrayList<String>());
+			} else if (!groups.isEmpty()) {
+				groups.get(groups.size() - 1).add(line);
+			}
+		}
+		say("read " + groups.size() + " group(s) from " + file);
+
+		for (int i = 0; i < groups.size(); i++) {
+			clearChatbox();
+			for (String line : groups.get(i)) {
+				// "" sender and type 0: a server game message, the same three arguments the
+				// MESSAGE_GAME packet hands addMessage.
+				call("addMessage", "", line, Integer.valueOf(0));
+			}
+			set("redrawChatback", Boolean.TRUE);
+			waitFrames(10);
+			say("group " + (i + 1) + ": " + titles.get(i));
+			for (String line : groups.get(i)) {
+				say("   " + line);
+			}
+			shot(prefix + "_broadcast" + (i + 1));
+		}
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
+	/** Empty the chatbox so one group of lines is photographed on its own. */
+	static void clearChatbox() throws Exception {
+		synchronized (LOCK) {
+			String[] text = (String[]) get("messageText");
+			String[] sender = (String[]) get("messageSender");
+			int[] type = (int[]) get("messageType");
+			for (int i = 0; i < text.length; i++) {
+				text[i] = null;
+				sender[i] = null;
+				type[i] = 0;
+			}
+		}
+		set("redrawChatback", Boolean.TRUE);
+		waitFrames(4);
+	}
+
+	static void milestones(String prefix) throws Exception {
+		say("NOTE: ::advancestat no longer announces anything - a stat set by a command marks the");
+		say("account and mutes its milestones. This mode will photograph an empty chatbox. See the");
+		say("comment above milestones() in ResizableShots.java.");
+		// Out of the tutorial, or every broadcast is swallowed: World.broadcastMilestone skips a
+		// player with a lesson open, because the client turns a game message into a modal there.
+		command("::setvar tutorial 1000");
+		waitFrames(20);
+		// AND THE LEVEL-UP POPUP OFF, or there is nothing to photograph: the popup is a modal drawn
+		// OVER the chatbox, so the first run of this came back with pictures of "Click here to
+		// continue" and the broadcast hidden behind it. It is also what every player who levels more
+		// than occasionally turns off.
+		command("::setvar option_levelup 1");
+		waitFrames(20);
+
+		// THE NEW-PLAYER LINE IS SENT BY [login,_] AND NOWHERE ELSE, so it takes a relog to see.
+		command("::setvar milestone_welcomed 0");
+		waitFrames(10);
+		relogin();
+		waitFrames(30);
+		shot(prefix + "_newplayer");
+
+		command("::advancestat fishing 99");
+		waitFrames(50);
+		shot(prefix + "_99_first");
+
+		command("::advancestat fishing 99");
+		waitFrames(50);
+		shot(prefix + "_99_again");
+
+		String[] combat = { "attack", "strength", "defence", "hitpoints", "ranged", "magic", "prayer" };
+		for (String stat : combat) {
+			command("::advancestat " + stat + " 99");
+			waitFrames(30);
+		}
+		shot(prefix + "_combat126");
+
+		String[] rest = { "cooking", "woodcutting", "fletching", "firemaking", "crafting", "smithing",
+			"mining", "herblore", "agility", "thieving", "slayer", "farming", "runecraft", "construction", "hunter" };
+		for (String stat : rest) {
+			command("::advancestat " + stat + " 99");
+			waitFrames(30);
+		}
+		shot(prefix + "_maxcape");
+
+		say("done");
+		log.close();
+		System.exit(0);
+	}
+
 	static void doll(String prefix) throws Exception {
 		String[] weapons = System.getProperty("shots.weapons", "staff_of_air,bronze_sword").split(",");
 		// A throwaway account's first login lands it on Tutorial Island, where login.rs2 jumps to

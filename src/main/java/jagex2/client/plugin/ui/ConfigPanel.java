@@ -271,7 +271,7 @@ final class ConfigPanel extends JPanel {
 						snapshot.remove(index);
 					}
 				} catch (Throwable error) {
-					jagex2.client.DevLog.log("PLUGIN", "a config list threw: " + error);
+					jagex2.client.DevLog.log("PLUGIN", "a config list threw", error);
 				}
 			}
 		});

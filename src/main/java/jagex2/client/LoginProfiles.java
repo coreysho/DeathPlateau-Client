@@ -106,6 +106,22 @@ public final class LoginProfiles {
 		public final String username;
 
 		/**
+		 * True for a card that came from the launcher's Discord sign-in rather than from this
+		 * file: a character linked to the player's Discord account, offered on a computer that has
+		 * never seen it.
+		 *
+		 * IT IS NOT SAVED HERE AND MUST NOT BE. This file is "the accounts on this machine", and
+		 * one of these is "an account your Discord says is yours" - written down it would outlive
+		 * the sign-in, and the next person to use the computer would be shown somebody else's
+		 * character names. So these cards are merged in at draw time by cards() and go when the
+		 * launcher signs out.
+		 *
+		 * It is also why they have no x. There is nothing on this machine to remove; the way to
+		 * stop being offered them is to sign out of Discord in the launcher.
+		 */
+		public final boolean fromLauncher;
+
+		/**
 		 * The saved login, or "" for a card that can only fill the name in. Never a password:
 		 * nothing in this client has written one here since saved logins became tokens.
 		 */
@@ -117,6 +133,11 @@ public final class LoginProfiles {
 		public final int[] look;
 
 		Profile(String username, String token, long lastUsed, int[] look) {
+			this(username, token, lastUsed, look, false);
+		}
+
+		Profile(String username, String token, long lastUsed, int[] look, boolean fromLauncher) {
+			this.fromLauncher = fromLauncher;
 			this.username = username;
 			this.token = token == null ? "" : token;
 			this.lastUsed = lastUsed;
@@ -146,6 +167,53 @@ public final class LoginProfiles {
 			load();
 		}
 		return new ArrayList<Profile>(profiles);
+	}
+
+	/**
+	 * WHAT THE LOGIN SCREEN DRAWS: the accounts saved on this machine, then the characters the
+	 * launcher's Discord sign-in says are this player's and that are not saved here already.
+	 *
+	 * SAVED ONES FIRST, ALWAYS. One of them may be able to sign in on a single click and none of
+	 * the launcher's can, so a row that mixed them by any other rule would push a one-click card
+	 * off the end in favour of one that asks for a password.
+	 *
+	 * STILL CAPPED AT MAX. The row is sized for four and an add button; a fifth would have to
+	 * scroll. A Discord account with more characters than that has the rest left off, which is
+	 * worth knowing about and is not worth a scrolling row on a login screen - the launcher says
+	 * how many are linked, and the + button still types any name at all.
+	 *
+	 * MATCHED THROUGH BASE 37, and not with equalsIgnoreCase like everything else in this file.
+	 * The names from the server are safe names ("lord_fooby") and the ones in here are as the
+	 * player typed them ("Lord Fooby"); ignoring case is not enough, because a space and an
+	 * underscore are the same character to the game and different characters to a string compare.
+	 * JString.toBase37 is the round trip the server itself uses, and it is the only comparison
+	 * that agrees with it. Without it a player with a saved login would be shown their character
+	 * twice - once able to sign in on one click, once asking for a password - which is how this
+	 * was first written and what the test caught.
+	 */
+	public static synchronized List<Profile> cards() {
+		List<Profile> cards = all();
+		if (cards.size() >= MAX) {
+			return cards;
+		}
+		List<String> linked = LauncherAccounts.accounts();
+		for (int i = 0; i < linked.size() && cards.size() < MAX; i++) {
+			String name = linked.get(i);
+			long id = jagex2.jstring.JString.toBase37(name);
+			boolean have = false;
+			for (int j = 0; j < cards.size(); j++) {
+				if (jagex2.jstring.JString.toBase37(cards.get(j).username) == id) {
+					have = true;
+					break;
+				}
+			}
+			if (!have) {
+				// No face: a face is only ever learnt by being in the world on this computer, and
+				// the whole point of these cards is a computer that has never seen the character.
+				cards.add(new Profile(name, "", 0L, null, true));
+			}
+		}
+		return cards;
 	}
 
 	/**
