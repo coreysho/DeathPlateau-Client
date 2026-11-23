@@ -5453,7 +5453,30 @@ public class Client extends GameShell implements PixMap.Target {
 			this.sceneState = 2;
 			this.sceneStuckShown = null;
 			World.field125 = this.currentLevel;
+			long builtAt = System.currentTimeMillis();
 			this.buildScene();
+			// HOW LONG THAT TOOK, AND WHERE THE TIME WENT, written down every time.
+			//
+			// Reported as "when rendering/running around i stalls multiple seconds loading"
+			// (DeathPlateau-Bugs#61) and as "newly rendered areas when moving around or teleing
+			// takes time to [load]" (#6), and NOTHING in the client recorded a scene load - so
+			// there was no way to tell a slow download from a slow build, which fail in different
+			// places and are fixed in different repos.
+			//
+			// The player is told even less: sceneStuckNote only speaks after SCENE_STUCK_MS, which
+			// is twenty seconds. A stall of two or five seconds - which is what was reported -
+			// produces no message, no code and no file count, ever.
+			//
+			// TWO NUMBERS, BECAUSE THEY SEPARATE THE TWO CAUSES. `waited` is from the start of this
+			// load to the moment every map and scenery file was in hand and every loc resolved,
+			// which is download and nothing else; `built` is buildScene itself, which is this
+			// machine's own CPU. A stall that is all `waited` is the file server or the cache; one
+			// that is all `built` is the scene builder.
+			long now = System.currentTimeMillis();
+			DevLog.log(
+				"SCENE",
+				"load at " + this.sceneCenterZoneX + "," + this.sceneCenterZoneZ + " level " + this.currentLevel + ": waited " + (builtAt - this.sceneLoadBegan) + "ms, built " + (now - builtAt) + "ms, " + this.sceneMapLandData.length + " squares, " + (this.onDemand == null ? -1 : this.onDemand.remaining()) + " files still outstanding"
+			);
 			// MAP_BUILD_COMPLETE
 			this.out.p1isaac(6);
 			return 0;
