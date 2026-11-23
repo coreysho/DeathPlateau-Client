@@ -291,6 +291,8 @@ public class QuestHelperTest {
 		tableTests();
 		System.out.println("2. nothing is tracked until the player picks");
 		pickTests();
+		System.out.println("2b. the quest list is in the quest tab's order");
+		listOrderTests();
 		System.out.println("3. the step in front of you is the one that is marked");
 		markTests();
 		System.out.println("4. a tile the scene has not loaded");
@@ -858,12 +860,23 @@ public class QuestHelperTest {
 		settle();
 		check(said(screen(), "Talk to Father Aereck"), "and back to the first leg when it is put back");
 
-		// A finished quest is not a quest with a step list showing.
+		// A FINISHED QUEST IS NOT TRACKED AT ALL, which is a stronger statement than the step list
+		// being gone. The pin is dropped, so the page goes back to the list - the state it opens
+		// in and the state the plugin is designed to sit in with nothing picked - and the quest's
+		// own row there reads complete and offers Track again.
+		//
+		// It used to stay on the finished quest's last leg for good: the steps you had just done,
+		// struck off, with nothing to say the quest was over, until the player thought to press
+		// Change. That is what this section was renamed for.
 		client.varps[GHOST_VARP] = 5;
-		settle();
+		gameTicks(1);
 		List<ConfigList.Row> rows = page();
-		check(rows.size() > 0 && "complete".equals(rows.get(0).detail.split(" - ")[0]),
-			"a quest whose varp has reached its end reads as complete");
+		ConfigList.Row ghost = row(rows, GHOST);
+		check(ghost != null, "completing the tracked quest puts the page back to the quest list");
+		check(ghost != null && "complete".equals(ghost.detail),
+			"...with the quest reading as complete there");
+		check(ghost != null && "Track".equals(ghost.action),
+			"...and offered to Track again, rather than still shown as Tracking");
 		client.varps[GHOST_VARP] = 0;
 		settle();
 	}
@@ -2508,11 +2521,112 @@ public class QuestHelperTest {
 		return null;
 	}
 
-	/** Presses Change on the tracked quest's row, which puts the page back to the list. */
+	/**
+	 * The quest tab's own sort key: lowercased, a leading "The " dropped, punctuation left alone.
+	 * Written out here rather than reached into the plugin for, so a change to the plugin's copy
+	 * has to disagree with a written-down rule instead of moving the goalposts along with itself.
+	 */
+	static String sortKey(String name) {
+		String s = name.toLowerCase();
+		return s.startsWith("the ") ? s.substring(4) : s;
+	}
+
+	static int indexOfQuest(List<ConfigList.Row> rows, String name) {
+		ConfigList.Row r = row(rows, name);
+		return r == null ? -1 : r.index;
+	}
+
+	/**
+	 * The picker's list reads like the quest tab, with the finished quests at the bottom.
+	 *
+	 * IT USED TO BE SORTED BY THE INTERNAL ID, which is nothing a player can see: Fight Arena,
+	 * Ernest the Chicken and The Restless Ghost are "arena", "haunted" and "priest", so the list
+	 * looked unsorted because by name it was.
+	 *
+	 * THE TWO PAIRS BELOW ARE THE RULE, not decoration. questlist.if is generated in the order 474
+	 * draws the list, and both of its sections come out of this key exactly - but only this key:
+	 *
+	 *   The Restless Ghost sits under R, so a leading "The" is dropped. Keep it and the quest
+	 *   falls to the bottom of the list under T.
+	 *
+	 *   Monk's Friend sits ABOVE Monkey Madness, because the apostrophe sorts below 'e' and is
+	 *   left in. Strip the punctuation "to normalise" and that pair swaps - which is the one
+	 *   observation that says the rule was read off the interface rather than invented to look
+	 *   like it.
+	 */
+	static void listOrderTests() throws Exception {
+		// IT PUTS BACK WHAT IT BORROWS. Reading the list means leaving the tracked quest's page,
+		// and markTests() runs on the quest pickTests() left tracked - so the pin and the varp are
+		// both restored before this returns. Finishing a quest here is what gives "at the bottom"
+		// something to be true about: with every varp at zero that check passes vacuously.
+		int wasGhost = client.varps[GHOST_VARP];
+		client.varps[GHOST_VARP] = 5;
+		change();
+		settle();
+		List<ConfigList.Row> rows = page();
+		check(rows.size() > 100, "the page is the quest list (" + rows.size() + " rows)");
+		check(row(rows, GHOST) != null && "complete".equals(row(rows, GHOST).detail),
+			"...with one quest finished, to sort");
+
+		int lastUnfinished = -1;
+		int firstComplete = -1;
+		for (ConfigList.Row r : rows) {
+			if ("complete".equals(r.detail)) {
+				if (firstComplete < 0) {
+					firstComplete = r.index;
+				}
+			} else {
+				lastUnfinished = r.index;
+			}
+		}
+		check(firstComplete < 0 || firstComplete > lastUnfinished,
+			"every finished quest sits below every unfinished one");
+
+		String prev = null;
+		boolean prevDone = false;
+		String broke = null;
+		for (ConfigList.Row r : rows) {
+			boolean done = "complete".equals(r.detail);
+			String key = sortKey(r.label);
+			if (prev != null && done == prevDone && key.compareTo(prev) < 0) {
+				broke = prev + " came before " + key;
+				break;
+			}
+			prev = key;
+			prevDone = done;
+		}
+		check(broke == null, "the list is in the quest tab's order" + (broke == null ? "" : " - " + broke));
+
+		int ghost = indexOfQuest(rows, GHOST);
+		int ali = indexOfQuest(rows, "PRINCE ALI RESCUE");
+		check(ghost > 0 && ali > 0 && ghost > ali,
+			"The Restless Ghost sorts under R, so a leading \"The\" is dropped");
+
+		int monks = indexOfQuest(rows, "MONK'S FRIEND");
+		int madness = indexOfQuest(rows, "MONKEY MADNESS");
+		check(monks > 0 && madness > 0 && monks < madness,
+			"Monk's Friend sorts above Monkey Madness, so the punctuation is left in");
+
+		client.varps[GHOST_VARP] = wasGhost;
+		track(FEUD);
+		settle();
+	}
+
+	/**
+	 * Presses Change on the tracked quest's row, which puts the page back to the list - and does
+	 * nothing when the page is already the list.
+	 *
+	 * THE PAGE CAN BE THE LIST WITH NOBODY HAVING PRESSED ANYTHING: completing the tracked quest
+	 * drops the pin. Row 0 there is not Change, it is Track on whichever quest sorts first, so
+	 * pressing it blind tracked an arbitrary quest and the next track() went looking for a row the
+	 * page no longer had. The action on the row says which page this is; ask it.
+	 */
 	static void change() {
 		for (PluginManager.PanelSnapshot panel : manager.snapshotPanels()) {
 			if ("questhelper".equals(panel.entry.key) && !panel.rows.isEmpty()) {
-				panel.act(0);
+				if ("Change".equals(panel.rows.get(0).action)) {
+					panel.act(0);
+				}
 				return;
 			}
 		}

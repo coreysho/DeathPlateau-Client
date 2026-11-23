@@ -18,6 +18,8 @@ import jagex2.client.plugin.hub.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -313,23 +315,48 @@ public final class QuestHelperPlugin extends Plugin {
 	 */
 	private boolean browsing = false;
 
-	/** The quest list as the picker shows it: in progress first, then unstarted, then done. */
+	/**
+	 * The name the list sorts on: lowercased, with a leading "The " dropped, punctuation left
+	 * exactly as it is.
+	 *
+	 * THAT IS THE QUEST TAB'S OWN RULE AND NOT A GUESS AT IT. questlist.if is generated in the
+	 * order 474 draws the list, and both of its sections come back out of this key with nothing
+	 * out of place: "The Knight's Sword" sits under K between Imp Catcher and Pirate's Treasure,
+	 * and "Monk's Friend" sits ABOVE "Monkey Madness" because the apostrophe sorts below 'e'.
+	 * Strip the punctuation "to normalise" and that second pair swaps, which is how you can tell
+	 * the rule was taken from the interface rather than invented to look like it.
+	 */
+	private static String sortName(Quest q) {
+		String s = q.name == null ? "" : q.name.toLowerCase();
+		return s.startsWith("the ") ? s.substring(4) : s;
+	}
+
+	/**
+	 * The quest list as the picker shows it: the quest tab's own order, finished ones at the
+	 * bottom.
+	 *
+	 * IT USED TO SORT BY NOTHING A PLAYER CAN SEE. The three buckets were in table order, which is
+	 * alphabetical by the internal id - so the list read Fight Arena, Ernest the Chicken and The
+	 * Restless Ghost as "arena", "haunted" and "priest", scattered through a list that looked
+	 * unsorted because by name it was.
+	 *
+	 * FREE AND MEMBERS' QUESTS INTERLEAVE, which is the one way this still differs from the tab.
+	 * The tab draws them as two sections; quests.json does not record which a quest belongs to, so
+	 * there is nothing here to split on. One alphabetical run through 108 quests is easier to find
+	 * a name in than two anyway.
+	 */
 	private List<Quest> listed() {
-		List<Quest> running = new ArrayList<>();
-		List<Quest> fresh = new ArrayList<>();
-		List<Quest> over = new ArrayList<>();
-		for (Quest q : this.quests) {
-			if (this.finished(q)) {
-				over.add(q);
-			} else if (this.started(q)) {
-				running.add(q);
-			} else {
-				fresh.add(q);
+		List<Quest> all = new ArrayList<>(this.quests);
+		Collections.sort(all, new Comparator<Quest>() {
+			public int compare(Quest a, Quest b) {
+				boolean fa = finished(a);
+				boolean fb = finished(b);
+				if (fa != fb) {
+					return fa ? 1 : -1;
+				}
+				return sortName(a).compareTo(sortName(b));
 			}
-		}
-		List<Quest> all = new ArrayList<>(running);
-		all.addAll(fresh);
-		all.addAll(over);
+		});
 		return all;
 	}
 
@@ -645,6 +672,23 @@ public final class QuestHelperPlugin extends Plugin {
 				forget(q);
 			}
 			this.was[i] = now;
+			// THE QUEST YOU WERE FOLLOWING HAS JUST ENDED, so let go of it. Nothing used to:
+			// the page sat on the finished quest's last leg - the steps you had just taken,
+			// struck off, with nothing to say it was over - until the player thought to press
+			// Change. Letting go here puts the page back to the list, and the one-quest rule
+			// below may then pick up whatever is still going.
+			//
+			// ON THE MOVE AND NOT ON EVERY READ, which is the whole distinction: "it ended while
+			// I was following it" is not "the player picked a quest that was already done". The
+			// second is a pick like any other and is kept, and saved, as pickTests asks.
+			//
+			// AND NOT WHILE SETTLING, for the same reason `moved` is not: the values that arrive
+			// just after login are not things that happened. A pin saved last session pointing at
+			// a quest finished since is still the player's pin, and dropping it here would make
+			// Track on a finished quest stick for one session and not the next.
+			if (this.settling <= 0 && this.finished(q) && q.id.equals(this.trackedQuest)) {
+				this.follow(null);
+			}
 			if (this.settling <= 0 && now > 0 && !this.finished(q)) {
 				moved = q;
 			}
