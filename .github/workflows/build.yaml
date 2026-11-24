@@ -17,7 +17,20 @@ jobs:
     - uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
-        java-version: 8
+        # PINNED, and the pin is the point. Java 8 is NOT in the runner image's tool cache, so
+        # setup-java fetches it from Adoptium on every single run. On 2026-11-24 one CDN node
+        # served a corrupt tarball: the SHA256 check failed, the job died before a line of Java
+        # compiled, and the same version downloaded fine in a sibling job twenty seconds later.
+        # An exact version keeps that download reproducible and stops 'latest' walking onto a
+        # freshly published release whose checksum this action's index has wrong - which fails
+        # every job at once rather than one of them.
+        #
+        # JAVA 21 IN THIS REPOSITORY IS DELIBERATELY NOT PINNED, and that is not an oversight.
+        # It IS in the tool cache - /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9 -
+        # so setup-java takes it locally in 0s and downloads nothing. Pinning it to that exact
+        # version would stop matching the moment GitHub refreshes the image, turning a free
+        # local lookup into exactly the download this comment exists to complain about.
+        java-version: '8.0.514+1'
 
     # NO gradle-version. The wrapper in the repository is the one source of truth for which
     # Gradle builds this client; a pin here is a second one, and the two had already drifted -

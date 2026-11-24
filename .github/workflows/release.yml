@@ -27,7 +27,11 @@ jobs:
     - uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
-        java-version: 8
+        # Pinned for the reason written out in build.yaml: Java 8 is not in the runner's tool
+        # cache, so it is downloaded every run, and a corrupt download fails the SHA256 check
+        # and the whole job with it. Java 21 in this file stays unpinned on purpose - it comes
+        # from the tool cache and pinning it would force a download.
+        java-version: '8.0.514+1'
 
     # NO gradle-version: the wrapper in the repository decides, and it is the only thing that
     # does. See the comment in build.yaml - these two had drifted apart from it already.
