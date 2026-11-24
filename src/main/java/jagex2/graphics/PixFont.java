@@ -268,6 +268,50 @@ public class PixFont extends Pix2D {
 		}
 	}
 
+	/**
+	 * drawStringTag with a TRANSLUCENT drop shadow instead of an opaque one.
+	 *
+	 * WHY THIS EXISTS (DeathPlateau-Bugs#40, decided 25 November 2026). The top-left hover text is
+	 * drawn by two different paths: Client.drawTooltip sends an ordinary hover through
+	 * drawStringAntiMacro, which draws its one-pixel shadow at alpha 192, and a hover over
+	 * something carrying a chat icon through ChatIcons.draw and drawStringTag, which drew the same
+	 * shadow opaque. So the same sentence had a heavier shadow depending on what the cursor was
+	 * over - and magnified by the game scale, the heavy one stops reading as a shadow and starts
+	 * reading as a second copy of the text sitting behind the first. A player reported exactly that.
+	 *
+	 * A SEPARATE METHOD RATHER THAN A CHANGE TO drawStringTag, because that one has eight other
+	 * callers - interface component text with `shadowed` set, the plugin overlays, the title screen
+	 * - and 377 drew those with an opaque shadow. The two hover paths are what had to agree; the
+	 * rest of the client keeps the shadow it has always had.
+	 *
+	 * The alpha is the 192 already in use in drawStringAntiMacro rather than a new number.
+	 */
+	public void drawStringTagShadowTrans(int arg0, int arg1, int arg2, boolean arg3, String arg4) {
+		this.strikeout = false;
+		if (arg4 == null) {
+			return;
+		}
+		int var8 = arg2 - this.height;
+		for (int var9 = 0; var9 < arg4.length(); var9++) {
+			if (arg4.charAt(var9) == '@' && var9 + 4 < arg4.length() && arg4.charAt(var9 + 4) == '@') {
+				int var10 = this.evaluateTag(arg4.substring(var9 + 1, var9 + 4));
+				if (var10 != -1) {
+					arg0 = var10;
+				}
+				var9 += 4;
+			} else {
+				char var11 = arg4.charAt(var9);
+				if (var11 != ' ') {
+					if (arg3) {
+						this.plotLetterTrans(this.charOffsetX[var11] + arg1 + 1, 0, this.charMask[var11], this.charOffsetY[var11] + var8 + 1, this.charMaskHeight[var11], this.charMaskWidth[var11], 192);
+					}
+					this.plotLetter(this.charMask[var11], this.charOffsetX[var11] + arg1, this.charOffsetY[var11] + var8, this.charMaskWidth[var11], this.charMaskHeight[var11], arg0);
+				}
+				arg1 += this.charAdvance[var11];
+			}
+		}
+	}
+
 	@ObfuscatedName("JDPYRDAS.a(ZIIIILjava/lang/String;I)V")
 	public void drawStringAntiMacro(boolean arg0, int arg1, int arg2, int arg3, int arg4, String arg5) {
 		if (arg5 == null) {

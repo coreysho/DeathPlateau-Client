@@ -1417,6 +1417,7 @@ public class QuestHelperTest {
 		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
 
 		Client.localPlayer = new ClientPlayer();
+		Client.localPlayer.name = PLAYER_NAME;
 		Client.localPlayer.field1157 = MID_X * 128;
 		Client.localPlayer.field1158 = MID_Z * 128;
 
@@ -2183,8 +2184,9 @@ public class QuestHelperTest {
 		check(said(screen(), "Talk to " + RADIGAD_NAME),
 			"...and a conversation long afterwards does not finish it for him");
 
-		// AND IT IS THIS CHARACTER'S PROGRESS. Logging out forgets what was watched; the quest
-		// to follow is a saved setting and stays.
+		// AND IT IS THIS CHARACTER'S PROGRESS - which since DeathPlateau-Bugs#45 means it comes
+		// back for this character and for nobody else. Both halves are checked, because the second
+		// is the property the forgetting existed to protect and this must not have traded it away.
 		clickNpc(RADIGAD);
 		openDialogue(new String[] { "Yes.", "No." });
 		gameTicks(1);
@@ -2197,8 +2199,27 @@ public class QuestHelperTest {
 		gameTicks(8);
 		settle();
 		check(MYREQUE.equals(followed()), "logging out keeps the quest being followed");
+		check(!said(screen(), "Talk to " + HAROLD_NAME),
+			"...and the same character gets back the steps it watched them take");
+		check(!said(screen(), "Talk to " + RADIGAD_NAME),
+			"...both of them, not just the first");
+
+		// SOMEBODY ELSE AT THE SAME CLIENT. The marks are filed under the name that earned them,
+		// so a different character is shown a clean page - and the first player's marks are left
+		// where they are rather than wiped by the second one logging in, because two people
+		// sharing a client take turns.
+		logOut();
+		logIn("Someone Else");
+		gameTicks(8);
+		settle();
 		check(said(screen(), "Talk to " + HAROLD_NAME),
-			"...and forgets the steps it watched, because the next player may be somebody else");
+			"a different character is shown the leg from the start");
+		logOut();
+		logIn();
+		gameTicks(8);
+		settle();
+		check(!said(screen(), "Talk to " + HAROLD_NAME),
+			"...and the first character's marks survived somebody else's session");
 
 		// ARRIVING IS TAKING A WALK STEP, and it needs no click at all: The Feud's first leg is
 		// "go to the tile Ali is standing on, talk to Ali", and a player standing on it has made
@@ -2285,9 +2306,11 @@ public class QuestHelperTest {
 		wipeQuests();
 
 		// LOGGED OUT FIRST, because section 17 walked The Feud's first step and the plugin
-		// remembers that for as long as the character is logged in - which is the point of it.
-		// This section is about a player who has done none of it.
+		// remembers that - for as long as the character is logged in, and since
+		// DeathPlateau-Bugs#45 across a logout as well, which is the point of both. This section
+		// is about a player who has done none of it, so the saved marks go too.
 		logOut();
+		forgetSaved();
 		logIn();
 
 		// A TILE WITH NO FLOOR ON IT. 2677 of the table's tiles are a bare pair of coordinates,
@@ -2494,7 +2517,24 @@ public class QuestHelperTest {
 		manager.onClientTick(ticks++);
 	}
 
+	/** The name the suite plays as, unless a check asks for somebody else. */
+	static final String PLAYER_NAME = "Testy";
+
 	static void logIn() {
+		logIn(PLAYER_NAME);
+	}
+
+	/**
+	 * Log in as a named character.
+	 *
+	 * THE NAME MATTERS SINCE DeathPlateau-Bugs#45: the tick marks are filed under it, so a suite
+	 * that logs in with no name at all cannot tell the difference between "the marks came back"
+	 * and "the marks were dropped". It used to log in nameless.
+	 */
+	static void logIn(String who) {
+		if (Client.localPlayer != null) {
+			Client.localPlayer.name = who;
+		}
 		client.ingame = true;
 		manager.onClientTick(ticks++);
 	}
@@ -2529,6 +2569,23 @@ public class QuestHelperTest {
 		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
 			if ("tracked".equals(item.key)) {
 				entry.getConfig().set(item, questId);
+			}
+		}
+	}
+
+	/**
+	 * Throw away the saved tick marks, as a client that has never been played would have none.
+	 *
+	 * WHY A SECTION NEEDS THIS SINCE DeathPlateau-Bugs#45. Logging out and back in used to be how
+	 * a section got a player who had done none of it, because the marks were dropped on logout.
+	 * They are kept for the character that earned them now, so a section that wants a clean slate
+	 * has to say so - and saying so out loud is better than logging in under a made-up name and
+	 * leaving the next section to wonder who it is playing as.
+	 */
+	static void forgetSaved() {
+		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
+			if ("ticks".equals(item.key)) {
+				entry.getConfig().set(item, "");
 			}
 		}
 	}

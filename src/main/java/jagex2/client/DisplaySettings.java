@@ -29,7 +29,7 @@ public final class DisplaySettings {
 	private static int drawDistance = 25;                    // World3D.MIN_DISTANCE, 377's own
 	private static int panelScale = Layout.SCALE_FIXED;      // the HUD at 377's own pixel size
 	private static int gameScale = 100;                      // the whole frame at its own size
-	private static boolean smoothScale = true;               // bilinear rather than blocky
+	private static boolean smoothScale;                      // bilinear rather than blocky; off by default, see smoothScale()
 	private static boolean stretched;                        // the fixed screen fills the window
 	private static boolean stretchAspect = true;             // ...keeping its shape
 	private static boolean stretchInteger;                   // ...and by a whole number only
@@ -148,7 +148,7 @@ public final class DisplaySettings {
 			drawDistance = clampDistance(Integer.parseInt(p.getProperty("drawdistance", "" + drawDistance).trim()));
 			panelScale = clampScale(Integer.parseInt(p.getProperty("panelscale", "" + panelScale).trim()));
 			gameScale = clampGameScale(Integer.parseInt(p.getProperty("gamescale", "" + gameScale).trim()));
-			smoothScale = !"false".equals(p.getProperty("smoothscale", "true").trim());
+			smoothScale = "true".equals(p.getProperty("smoothscale", "false").trim());
 			stretched = "true".equals(p.getProperty("stretched", "false").trim());
 			stretchAspect = !"false".equals(p.getProperty("stretchaspect", "true").trim());
 			stretchInteger = "true".equals(p.getProperty("stretchinteger", "false").trim());
@@ -351,7 +351,19 @@ public final class DisplaySettings {
 		}
 	}
 
-	/** Bilinear rather than nearest neighbour when anything is stretched. */
+	/**
+	 * Bilinear rather than nearest neighbour when anything is stretched.
+	 *
+	 * OFF BY DEFAULT since 25 November 2026 (DeathPlateau-Bugs#24). It was on, and a player who
+	 * turned the game scale up saw everything go soft and reported it as the client blurring their
+	 * graphics - which is what bilinear filtering of a 2006 frame looks like if you did not ask for
+	 * it. Off is sharp pixels and uneven text; at 200% the two are the same picture, because the
+	 * offsets land on whole pixels. Anyone who prefers the soft version has the switch in the
+	 * Display panel, where this player was already standing.
+	 *
+	 * The hover text's one-pixel shadow is a separate thing and is translucent in both paths now
+	 * (ChatIcons, PixFont.plotLetterTrans) - DeathPlateau-Bugs#40.
+	 */
 	public static synchronized boolean smoothScale() {
 		if (!loaded) {
 			load();

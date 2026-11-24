@@ -304,6 +304,29 @@ public final class QuestHelperPlugin extends Plugin {
 	public String trackedQuest = "";
 
 	/**
+	 * The tick marks, kept across a logout and KEYED ON THE ACCOUNT NAME.
+	 *
+	 * WHAT THIS IS FOR (DeathPlateau-Bugs#45, decided 25 November 2026). Everything the page
+	 * struck off - "you have already talked to him" - was dropped on logout, deliberately: the
+	 * next player at this client may be somebody else, and the marks are a record of what THIS
+	 * character did. So a player who logged out mid-quest came back to a leg with nothing crossed
+	 * off and the page pointing at a step they had taken.
+	 *
+	 * Keying on the name keeps both halves. The marks are written with the name of the character
+	 * that earned them and restored only to that name, so the same player gets their progress back
+	 * and anybody else at the same client gets a clean page - which is the property the forgetting
+	 * was there to protect, and it is kept rather than traded away.
+	 *
+	 * FORMAT: name|questId:legIndex:doneTo;questId:legIndex:doneTo;... Only legs with a mark are
+	 * written, which is a handful mid-quest, and the whole thing is capped - a setting is not a
+	 * save file, and a player with a hundred legs marked loses the oldest rather than the plugin
+	 * writing an unbounded string into the config.
+	 */
+	@ConfigItem(keyName = "ticks", name = "Saved tick marks",
+		description = "Steps already taken, kept for the character that took them")
+	public String savedTicks = "";
+
+	/**
 	 * True while the page is showing the quest list instead of the tracked quest's steps.
 	 *
 	 * THE PAGE OPENS ON THE LIST when there is nothing to follow, and it is the player's pick
@@ -650,6 +673,16 @@ public final class QuestHelperPlugin extends Plugin {
 	 * started quest would look like it had just moved. Those ticks only record the values.
 	 */
 	private void followTheQuestYouAreDoing() {
+		// THE NAME, AND THE MARKS THAT GO WITH IT. Both are done here because this runs once a
+		// tick with the client in a known state: the name is not there on the first tick after
+		// logging in, so the restore waits for it rather than guessing.
+		String who = ctx == null ? "" : ctx.getPlayerName();
+		if (!who.isEmpty()) {
+			this.playingAs = who;
+			if (!this.restored) {
+				this.restoreTicks();
+			}
+		}
 		int n = this.quests.size();
 		if (this.was == null || this.was.length != n) {
 			this.was = new int[n];
@@ -751,6 +784,111 @@ public final class QuestHelperPlugin extends Plugin {
 	private static void forget(Quest q) {
 		for (Stage st : q.stages) {
 			st.doneTo = -1;
+		}
+	}
+
+	/**
+	 * The name of the character playing, remembered while they are logged in.
+	 *
+	 * READ EVERY TICK AND NOT AT LOGOUT, because by the time the logged-out event arrives
+	 * Client.localPlayer is gone and ctx.getPlayerName() answers "". The marks have to be filed
+	 * under a name, so the name is kept while there is one to keep.
+	 */
+	private String playingAs = "";
+
+	/** Whether this login has had its saved marks put back yet. */
+	private boolean restored;
+
+	/** The most tick marks that will be written into the setting. */
+	private static final int MARK_CAP = 200;
+
+	/**
+	 * Put back the marks saved for this character, once per login.
+	 *
+	 * ONLY FOR THE SAME NAME. A blob filed under somebody else is left where it is rather than
+	 * cleared: two people sharing a client take turns, and the second one logging in must not cost
+	 * the first one their marks.
+	 */
+	private void restoreTicks() {
+		this.restored = true;
+		String blob = this.savedTicks;
+		if (blob == null || blob.isEmpty() || this.playingAs.isEmpty()) {
+			return;
+		}
+		int bar = blob.indexOf('|');
+		if (bar <= 0 || !blob.substring(0, bar).equals(this.playingAs)) {
+			return;
+		}
+		String[] marks = blob.substring(bar + 1).split(";");
+		for (int i = 0; i < marks.length; i++) {
+			String[] bits = marks[i].split(":");
+			if (bits.length != 3) {
+				continue;
+			}
+			try {
+				int leg = Integer.parseInt(bits[1]);
+				int at = Integer.parseInt(bits[2]);
+				for (Quest q : this.quests) {
+					if (!q.id.equals(bits[0]) || leg < 0 || leg >= q.stages.size()) {
+						continue;
+					}
+					q.stages.get(leg).doneTo = at;
+					break;
+				}
+			} catch (Throwable ignored) {
+				// A mark this build cannot read is a mark not put back. The page is then merely
+				// as it was before this change, which is the right way for this to fail.
+			}
+		}
+		this.heldFor = null;
+	}
+
+	/** Write this character's marks into the setting, to be put back when they return. */
+	private void saveTicks() {
+		if (this.playingAs.isEmpty()) {
+			return;
+		}
+		StringBuilder out = new StringBuilder(this.playingAs).append('|');
+		int written = 0;
+		for (Quest q : this.quests) {
+			for (int leg = 0; leg < q.stages.size() && written < MARK_CAP; leg++) {
+				int at = q.stages.get(leg).doneTo;
+				if (at < 0) {
+					continue;
+				}
+				if (written > 0) {
+					out.append(';');
+				}
+				out.append(q.id).append(':').append(leg).append(':').append(at);
+				written++;
+			}
+		}
+		// NOBODY ELSE'S MARKS ARE CLEARED BY THIS. A character with nothing to save - somebody
+		// who logged in, looked around and left - must not wipe the blob the last player earned,
+		// because two people sharing a client take turns. So an empty save only clears the
+		// setting when the setting is already this character's.
+		if (written == 0) {
+			String blob = this.savedTicks == null ? "" : this.savedTicks;
+			int bar = blob.indexOf('|');
+			boolean mine = bar > 0 && blob.substring(0, bar).equals(this.playingAs);
+			if (!blob.isEmpty() && !mine) {
+				return;
+			}
+			this.savedTicks = "";
+		} else {
+			this.savedTicks = out.toString();
+		}
+		try {
+			List<PluginConfig.Item> items = this.config == null ? null : this.config.getItems();
+			for (int i = 0; items != null && i < items.size(); i++) {
+				if ("ticks".equals(items.get(i).key)) {
+					this.config.set(items.get(i), this.savedTicks);
+					return;
+				}
+			}
+		} catch (Throwable ignored) {
+			// Same as the tracked pin: a page that cannot write the setting still works for this
+			// session, and the marks are simply not there next time.
 		}
 	}
 
@@ -1622,11 +1760,18 @@ public final class QuestHelperPlugin extends Plugin {
 		if (event == null || event.isLoggedIn()) {
 			return;
 		}
+		// WRITTEN DOWN BEFORE IT IS FORGOTTEN (DeathPlateau-Bugs#45). The marks still leave this
+		// session's quests - the next player at this client gets a clean page, which is what the
+		// forgetting is for - but they are filed under the name of the character that earned them
+		// and come back when that character does.
+		this.saveTicks();
 		for (Quest q : this.quests) {
 			forget(q);
 		}
 		this.was = null;
 		this.waiting = null;
+		this.playingAs = "";
+		this.restored = false;
 	}
 
 	/**
