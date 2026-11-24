@@ -1013,10 +1013,43 @@ public final class QuestHelperPlugin extends Plugin {
 					}
 				}
 			} else if ("loc".equals(s.kind) && locs != null) {
-				for (SceneLoc l : locs) {
-					if (l.id == s.id && l.level == ctx.getPlane()) {
-						return at(s, l.sceneTileX, l.sceneTileZ, this.locName(s, l.id));
+				// A LOC DOES NOT WALK, so the tile the table recorded is the loc it meant. This
+				// took the FIRST loc of that id on the player's floor and marked that, which is
+				// right for the npc above - an npc has walked away from wherever the sim met it -
+				// and wrong for anything built. Melzar's Maze has THREE red doors, four orange and
+				// four yellow, and only one of each opens the way on: the helper was marking a red
+				// door, just not the player's. Reported as "dragon slayer quest helper highlights
+				// wrong maze doors" (DeathPlateau-Bugs#87), and it is not Dragon Slayer's bug -
+				// every one of the 1,745 loc steps in the table was being placed this way.
+				SceneLoc pick = null;
+				if (s.at != null) {
+					int wantX = ctx.worldToSceneX(s.at[0]);
+					int wantZ = ctx.worldToSceneZ(s.at[1]);
+					for (SceneLoc l : locs) {
+						// ITS FOOTPRINT AND NOT ITS ORIGIN. A loc two tiles wide is stored at one
+						// corner, and the tile the manifest clicked may be the other one.
+						if (l.id == s.id && l.level == ctx.getPlane()
+								&& wantX >= l.sceneTileX && wantX < l.sceneTileX + l.width
+								&& wantZ >= l.sceneTileZ && wantZ < l.sceneTileZ + l.length) {
+							pick = l;
+							break;
+						}
 					}
+				}
+				// AND THE FIRST ON THIS FLOOR IF IT IS NOT THERE, which is what this always did, so
+				// nothing that worked stops working: a multiloc whose varbit moved it, a step whose
+				// tile is where the sim stood rather than what it clicked, or a step the table gave
+				// no tile at all still gets a marker on something of the right kind.
+				if (pick == null) {
+					for (SceneLoc l : locs) {
+						if (l.id == s.id && l.level == ctx.getPlane()) {
+							pick = l;
+							break;
+						}
+					}
+				}
+				if (pick != null) {
+					return at(s, pick.sceneTileX, pick.sceneTileZ, this.locName(s, pick.id));
 				}
 			}
 		}
