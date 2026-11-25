@@ -84,8 +84,29 @@ MUTS = [
      '\t\t\tif (this.settling <= 0 && now > 0 && !this.finished(q)) {',
      '\t\t\tif (false) {'),
     (PLUGIN, 'the pin never written down, so the choice is lost when the client closes',
-     '\t\t\t\t\tthis.config.set(items.get(i), want);',
-     '\t\t\t\t\tthis.trackedQuest = want;'),
+     '\t\tthis.setSetting("tracked", want);', '\t\tthis.trackedQuest = want;'),
+
+    # ---- THE STEPS YOU HAD TICKED OFF, KEPT FOR THE ACCOUNT THAT TOOK THEM. doneTo is the only
+    # ---- record of a talk, logout throws it away on purpose, and the fix is to write it down
+    # ---- against the name of whoever took the steps. BOTH halves have to hold: the same player
+    # ---- gets them back, and a different player does not.
+    (PLUGIN, 'the progress never saved, so a logout still loses every talk',
+     '\t\tthis.saveProgress();\n\t\tfor (Quest q : this.quests) {', '\t\tfor (Quest q : this.quests) {'),
+    # THE ORDER IS THE WHOLE THING. progressFor reads the doneTo values the loop sets back to -1.
+    (PLUGIN, 'the progress saved after the wipe rather than before it, so it saves nothing',
+     '\t\tthis.saveProgress();\n\t\tfor (Quest q : this.quests) {\n\t\t\tforget(q);\n\t\t}',
+     '\t\tfor (Quest q : this.quests) {\n\t\t\tforget(q);\n\t\t}\n\t\tthis.saveProgress();'),
+    (PLUGIN, 'the progress never put back, so saving it changed nothing a player can see',
+     '\t\t\t\tthis.restoreProgress(who);', '\t\t\t\tthis.account = who;'),
+    # THE LEAK THE LOGOUT WIPE EXISTS TO PREVENT: one player's ticks shown to the next.
+    (PLUGIN, "the account name not checked, so one player's progress is given to the next",
+     "\t\tif (bar <= 0 || !saved.substring(0, bar).equals(who)) {", '\t\tif (bar <= 0) {'),
+    (PLUGIN, 'the account never caught while logged in, so there is no name to save under',
+     '\t\t\t\tthis.account = who;\n\t\t\t\tthis.restoreProgress(who);',
+     '\t\t\t\tthis.restoreProgress(who);'),
+    # A STEP INDEX PAST THE END OF A LEG THAT HAS SINCE GOT SHORTER.
+    (PLUGIN, 'the step index not clamped, so a stale line points past the end of the leg',
+     '\t\t\t\t\tint want = at > last ? last : at;', '\t\t\t\t\tint want = at;'),
 
     # ---- THE STEP YOU HAVE JUST TAKEN. A talk leaves no trace at all, so the click and the
     # ---- conversation it opens are the only record there is - and a click that led nowhere is
