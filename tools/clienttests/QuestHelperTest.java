@@ -135,7 +135,7 @@ public class QuestHelperTest {
 	 * The leg is "Rantz takes his shot and misses": a wait and a lucky roll, neither of which is
 	 * anything a player clicks, so the exporter has nothing to write for it.
 	 */
-	static final String HERO = "HEROES' QUEST (solo part)";
+	static final String HERO = "HEROES' QUEST (Black Arm side)";
 	static final int HERO_VARP = 188;
 	static final String CHOMPY = "BIG CHOMPY BIRD HUNTING";
 	static final int CHOMPY_VARP = 293;
@@ -2382,45 +2382,41 @@ public class QuestHelperTest {
 		check(!said(screen(), "No step recorded"), "a leg with no steps in it does not leave the panel empty");
 		check(said(screen(), "Rantz"), "...it gives what is next instead (Rantz, two steps later)");
 
-		// AND THE ONE LEG THE PANEL STILL CANNOT NAME, which is worth pinning rather than hiding.
-		// Everything above rescues a leg whose steps run out by walking the panel on to the next
-		// leg, and that only works while there IS a next leg. quest_hero_run.ts stops at stage 11
-		// on purpose - the candlestick needs a Phoenix player to kill Grip, so one player's route
-		// ends there - which leaves leg 11 bare, 0 steps and 0 headings, with nothing after it.
-		// A player at 11, 12 or 13 therefore reads "No step recorded for this stage."
+		// AND NO LEG IN THE TABLE THE PANEL CANNOT NAME, which is the state this section used to
+		// pin the opposite of. Everything above rescues a leg whose steps run out by walking the
+		// panel on to the next leg, and that only works while there IS a next leg. Heroes' Quest had
+		// the only two tails without one: each row is one gang's route and each ended where that
+		// player ran out - the Black Arm side at the deputy's post (11) and the Phoenix side at
+		// Charlie's secret door (4) - because the candlestick needs a player of each gang. A player
+		// at 11, 12 or 13 read "No step recorded for this stage."
 		//
-		// That is the LAST state in the whole table that does it, and it is the only shape left
-		// that could have a player saying the helper shows them nothing - the four reports on
-		// DeathPlateau-Bugs#4, #10, #15 and #17. It is not a throw: section 15b draws every
-		// legless value on all four overlays without one.
+		// Both are gone. DeathPlateau-Bugs#16's last piece taught the sim manifests to carry a second
+		// player, so each row now plays the heist with a partner and goes on to hand all three items
+		// to Achietties - ^hero_complete. The partner's own clicks are not in the table (they are not
+		// instructions for this panel), but the quest player's half of the heist is, and the final
+		// hand-in fills what used to be the bare tail.
 		wipeQuests();
 		track(HERO);
 		client.varps[HERO_VARP] = 11;
 		gameTicks(1);
 		settle();
-		check(said(screen(), "No step recorded"),
-			"Heroes' Quest 11 is bare, and the panel says so rather than going blank");
+		check(!said(screen(), "No step recorded"), "Heroes' Quest 11 is no longer bare");
+		check(said(screen(), "side entrance"), "...the panel sends them to the side door for the partner");
 		client.varps[HERO_VARP] = 13;
 		gameTicks(1);
 		settle();
-		check(said(screen(), "No step recorded"), "...and 13 falls back to it and reads the same");
+		check(!said(screen(), "No step recorded"), "...and 13 is not bare either");
+		check(said(screen(), "Guild"), "...it sends them back to the Heroes' Guild with all three");
 
-		// THE RATCHET ON IT. Counted from the table rather than driven, because the point is that
-		// these are rare and deliberate: a leg with nothing to do and no later leg to walk on to.
-		// If somebody fixes one this fails and the expectation comes down; if somebody adds one,
-		// it fails and names it. Either way it cannot arrive quietly.
+		// THE RATCHET ON IT, now at zero. Counted from the table rather than driven: a leg with
+		// nothing to do and no later leg to walk on to is the one shape that can still empty the
+		// panel, and the expectation being an EMPTY list means any new one fails here and is named.
+		// The engine's CI cannot see this check, so the pin here is the only thing that connects the
+		// two repositories on it.
 		//
-		// IT CAUGHT THE SECOND ONE, which is the entry below. Both are the same shape and the
-		// shape is not a bug: Heroes' Quest is a TWO-PLAYER quest, and each row of it is one
-		// player's route, so each row ends where that player runs out. The solo part stops at the
-		// deputy's post (11) and the Phoenix side at Charlie's secret door (4) - stage 5 is Grip
-		// dead and needs the other gang. A tail leg with nothing clickable is the honest panel for
-		// "you cannot go further alone", and "No step recorded" is what it says.
-		//
-		// Phoenix 4 arrived with DeathPlateau-Engine#128 and was given a wiki heading and
-		// deliberately no step, so legNow walks the panel on rather than parking it - the same
-		// treatment as Fight Arena 8. The engine's CI cannot see this check, so the pin here is
-		// the only thing that connects the two repositories on it.
+		// Fight Arena 8 and Big Chompy 30 and 35 are not in this list and never were: they have no
+		// step either, deliberately, but they have a later leg that does, so legNow walks the panel
+		// on. That is the difference the loop below measures.
 		List<String> bare = new ArrayList<String>();
 		for (Object element : questTable()) {
 			java.util.Map<?, ?> quest = (java.util.Map<?, ?>) element;
@@ -2447,10 +2443,8 @@ public class QuestHelperTest {
 		}
 		java.util.Collections.sort(bare);
 		List<String> wantBare = new ArrayList<String>();
-		wantBare.add("HEROES' QUEST (Phoenix side) 4");
-		wantBare.add("HEROES' QUEST (solo part) 11");
 		check(bare.equals(wantBare),
-			"and they are the only two legs in the table the panel cannot name (" + bare.size() + ")");
+			"and there is no leg left in the table the panel cannot name (" + bare.size() + ")");
 
 		clearNpcs();
 		wipeQuests();
