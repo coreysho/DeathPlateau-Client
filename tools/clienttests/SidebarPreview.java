@@ -208,6 +208,63 @@ public class SidebarPreview {
 				Thread.sleep(250);
 			}
 		}
+		// The Loot tracker's page, fed as the server feeds it: hidden loot lines through the
+		// manager's own game-message path, so what is drawn is what a real kill would draw - two
+		// black dragons grouped into one box, a casket, and a kill whose drop was split in two.
+		if (args.length > 1 && args[1].equals("loottracker")) {
+			primeLoot(client);
+			// PluginContext looks an obj up only below the cache's count; with no cache that is
+			// none, so the primed names and prices would never be reached. Every lookup here hits
+			// the ten primed types, so nothing is ever read through these offsets.
+			jagex2.config.ObjType.field824 = new int[1000];
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("loot-tracker")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				manager.onGameMessage("n|1|0|227|Black dragon|900,1;902,196;901,1:loot:");
+				manager.onGameMessage("n|2|0|227|Black dragon|900,1;902,88:loot:");
+				manager.onGameMessage("e|3|1|0|Clue scroll (hard)|901,1:loot:");
+				manager.onGameMessage("e|3|0|0|Clue scroll (hard)|902,5000;904,4:loot:");
+				manager.onGameMessage("n|4|0|2|Goblin|903,1;902,5:loot:");
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException("no rail tab for loot-tracker");
+				}
+				// The rail was read when the plugin started, before any loot had arrived. The
+				// sidebar asks again every 600ms - on the game thread, so the ask only lands on
+				// the next client tick, which a preview has to supply itself.
+				for (int i = 0; i < 3; i++) {
+					Thread.sleep(700);
+					manager.onClientTick(0);
+				}
+				Thread.sleep(400);
+			}
+		}
+		// The Hiscores page after a Lookup on somebody, which is a real request to the site in
+		// LOSTCITY_SITE (a local dev server); without one the page shows the failure it would.
+		if (args.length > 1 && args[1].equals("hiscores")) {
+			client.ingame = true;
+			Client.localPlayer = new jagex2.dash3d.ClientPlayer();
+			for (PluginManager.Entry entry : manager.getPlugins()) {
+				if (!entry.key.equals("hiscores")) {
+					continue;
+				}
+				manager.setEnabled(entry, true);
+				manager.onClientTick(0);
+				manager.onPlayerMenuOption("Lookup", args.length > 2 ? args[2] : "Elite Sudam");
+				Thread.sleep(3000);
+				manager.onClientTick(0);
+				Thread.sleep(250);
+				if (!sidebar.openPanel(entry.key)) {
+					throw new IllegalStateException("no rail tab for hiscores");
+				}
+				manager.onClientTick(0);
+				Thread.sleep(700);
+			}
+		}
 		// The Clue scroll page: four scrolls in one bag, which is the whole shape of it. Each
 		// row is a scroll, with its words, where it wants the player and what is waiting there.
 		if (args.length > 1 && args[1].equals("clue")) {

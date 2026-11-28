@@ -421,6 +421,19 @@ public final class PluginContext {
 	}
 
 	/**
+	 * What one of an obj is worth: its value in the cache, the figure a general store starts from
+	 * and high alchemy pays 60% of. 0 for an id the cache does not have.
+	 *
+	 * THE ONLY PRICE THE CLIENT HAS. There is no Grand Exchange here and the Trading Post's prices
+	 * live on the server, so this is what a loot tracker can add up - the same number the ground
+	 * items plugin's value rules already use.
+	 */
+	public int getObjValue(int objId) {
+		ObjType type = objType(objId);
+		return type == null ? 0 : type.field827;
+	}
+
+	/**
 	 * How many objs this cache defines. Indices below this are safe to pass to the rest.
 	 *
 	 * Here so a plugin can WALK the obj table rather than be told an id. A page that wants the
@@ -688,6 +701,21 @@ public final class PluginContext {
 	 */
 	public void requestChatRedraw() {
 		this.client.redrawChatback = true;
+	}
+
+	/**
+	 * The website's address, without a trailing slash (Client.SITE_URL). Where the hiscores are,
+	 * so a plugin reading them asks the same site the client's own ::vote and ::hiscores open.
+	 */
+	public String getSiteUrl() {
+		return Client.SITE_URL;
+	}
+
+	/** Opens a plugin's page on the sidebar. See {@link Plugin#openPanel()}. */
+	void openPanelFor(String pluginKey) {
+		if (this.manager != null) {
+			this.manager.openPanel(pluginKey);
+		}
 	}
 
 	/**

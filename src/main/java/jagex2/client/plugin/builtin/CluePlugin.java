@@ -70,6 +70,10 @@ public final class CluePlugin extends Plugin {
 		description = "A ring where the clue in your bag wants you.")
 	public boolean markOnMap = true;
 
+	@ConfigItem(keyName = "showBox", name = "Show the clue on the game screen",
+		description = "A box over the game with what your clues say and where they point, as RuneLite's.")
+	public boolean showBox = true;
+
 	/**
 	 * The bag, and the slots of it holding clues, as of the last time the page asked how many
 	 * rows there were.
@@ -336,6 +340,145 @@ public final class CluePlugin extends Plugin {
 			// No rail pages in this client; nothing else here depends on one.
 		}
 		this.addOverlay(new PuzzleOverlay());
+		this.addOverlay(new ClueBox());
+	}
+
+	// ------------------------------------------------------------------ the box on the screen
+
+	/**
+	 * Where the box sits until the player drags it: the left edge, under the boosts box (6, 6)
+	 * and the quest helper's (6, 60), which are the two other panels that live on that side.
+	 */
+	static final int BOX_X = 6;
+	static final int BOX_Y = 130;
+
+	/** How wide the words may run before they wrap, in pixels. RuneLite's box is about this. */
+	static final int BOX_WRAP = 190;
+
+	/** The scroll's name: the colour RuneLite's clue box and the quest helper's both use. */
+	static final int TITLE = 0xFFB000;
+
+	/**
+	 * The clue on the game screen, so a player does not have to keep the sidebar open to read it:
+	 * RuneLite's clue scroll box.
+	 *
+	 * THE SAME WORDS AS THE PAGE, from the same methods - wordsOf, guidance and reading - so the
+	 * box and the sidebar row cannot say two different things about one scroll. Every clue in the
+	 * bag gets a block, in slot order, as the page lists them.
+	 *
+	 * Movable, like every other panel on the screen, and wrapped to a fixed width so a long riddle
+	 * makes the box taller rather than wider than the game.
+	 */
+	final class ClueBox extends Overlay {
+
+		public int layer() {
+			return Overlay.LAYER_SCREEN;
+		}
+
+		public void render(OverlayGraphics g) {
+			if (!CluePlugin.this.showBox || CluePlugin.this.ctx == null || !CluePlugin.this.ctx.isLoggedIn()) {
+				return;
+			}
+			// A puzzle box open is a clue being solved on the window itself; the words would only
+			// sit on top of the pieces.
+			if (CluePlugin.this.ctx.getOpenInterfaceId() == PuzzlePieces.WINDOW) {
+				return;
+			}
+			int[] bag = CluePlugin.this.carrying();
+			int[] slots = clueSlots(bag);
+			if (slots.length == 0) {
+				return;
+			}
+			g.setFont(OverlayGraphics.FONT_SMALL);
+			java.util.List<String> lines = CluePlugin.this.boxLines(g, slots, bag);
+			if (lines.isEmpty()) {
+				return;
+			}
+			// RAISED TO FIT, rather than run off the bottom: a bag of three scrolls is a tall box,
+			// and the screen is only 334 high in fixed mode. The panel's own sums - four of
+			// padding each side and two between lines.
+			int tall = 8 + lines.size() * (g.lineHeight() + 2);
+			int y = Math.max(4, Math.min(BOX_Y, g.height() - tall - 4));
+			g.panel(BOX_X, y, null, lines.toArray(new String[0]), TITLE, 0xFFFFFF);
+		}
+	}
+
+	/**
+	 * The box's lines, colour tags and all: for each scroll its name, its words wrapped, then where
+	 * to go and the reading, as the page's two lower lines say them.
+	 */
+	java.util.List<String> boxLines(OverlayGraphics g, int[] slots, int[] bag) {
+		java.util.List<String> lines = new java.util.ArrayList<String>();
+		int x = this.ctx.getWorldX();
+		int z = this.ctx.getWorldZ();
+		int plane = this.ctx.getPlane();
+		for (int row = 0; row < slots.length; row++) {
+			int step = stepAt(slots, bag, row);
+			if (step < 0) {
+				continue;
+			}
+			if (!lines.isEmpty()) {
+				lines.add("");
+			}
+			String name = this.ctx.getObjName(ClueSteps.ID[step]);
+			lines.add("@or1@" + (name == null || name.length() == 0 ? "Clue scroll" : name));
+			for (String line : wrap(g, wordsOf(step), BOX_WRAP)) {
+				lines.add(line);
+			}
+			String where = guidance(step, x, z, plane, this.showDistance, this.showAnswers, this.showGuardian);
+			if (where.length() > 0) {
+				String first = Character.toUpperCase(where.charAt(0)) + where.substring(1);
+				for (String line : wrap(g, first, BOX_WRAP)) {
+					lines.add("@yel@" + line);
+				}
+			}
+			// THE PLACE, NOT THE ANSWER: a challenge scroll's line above already says "the answer
+			// is 6859", and the page's reading column is the only place that number needed to be
+			// said a second time.
+			if (ClueSteps.ANSWER[step].length() == 0) {
+				String reading = reading(step, this.showAnswers);
+				if (reading.length() > 0) {
+					lines.add("@gre@Location: " + reading);
+				}
+			}
+		}
+		return lines;
+	}
+
+	/**
+	 * Words broken into lines no wider than the width, at spaces. A single word wider than the
+	 * line is left whole on a line of its own rather than chopped mid-word.
+	 */
+	static java.util.List<String> wrap(OverlayGraphics g, String text, int width) {
+		java.util.List<String> out = new java.util.ArrayList<String>();
+		if (text == null || text.length() == 0) {
+			return out;
+		}
+		String[] words = text.split(" ");
+		StringBuilder line = new StringBuilder();
+		for (int i = 0; i < words.length; i++) {
+			if (words[i].length() == 0) {
+				continue;
+			}
+			String tried = line.length() == 0 ? words[i] : line + " " + words[i];
+			if (line.length() > 0 && measure(g, tried) > width) {
+				out.add(line.toString());
+				line.setLength(0);
+				line.append(words[i]);
+			} else {
+				line.setLength(0);
+				line.append(tried);
+			}
+		}
+		if (line.length() > 0) {
+			out.add(line.toString());
+		}
+		return out;
+	}
+
+	/** The width of some text, or a fair guess at it with no font to ask (the tests). */
+	private static int measure(OverlayGraphics g, String text) {
+		return g == null ? text.length() * 5 : g.textWidth(text);
 	}
 
 	// ------------------------------------------------------------------ the world map

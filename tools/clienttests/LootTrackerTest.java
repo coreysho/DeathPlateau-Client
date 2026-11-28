@@ -1,27 +1,27 @@
 /*
  * Headless test for the loot tracker.
  *
- * WHAT THIS GUARDS. The client is never told that anything died, so the kill is INFERRED: an npc
- * was standing on a tile, it is not standing there now, and loot has landed on it. Every part of
- * that inference is a rule nobody can see working. A tracker whose window is a tick too short
- * credits nothing and looks like a tracker with nothing to report; one a tick too long credits
- * the next kill to whatever died there before; one that counts a kill per ITEM reports three
- * kills for one drop of bones, coins and a herb - and all three failures produce a page full of
- * plausible numbers that nobody can check against anything.
+ * WHAT THIS GUARDS. The server now says what each kill dropped (LootReceived, carried in a hidden
+ * game message LootMessage reads back), so the tracker no longer has to guess a kill - but every
+ * part of what it does with one is still a rule nobody can see working. A kill counted per item
+ * reports three kills for one drop; a merge that overwrites instead of adding turns 4,000 coins into
+ * the last 12; a save that drops a line forgets a boss; an ignored item still in the total makes the
+ * total a lie; a split loot line read as two kills doubles the count. Each of those produces a page
+ * full of plausible numbers that nobody can check against anything.
  *
- * So the rules are a model with no client in it ({@link LootTracker}), and they are tested as
- * arithmetic: tiles in, loot in, totals out. The plugin on top is wiring, and the one thing in it
- * that cannot be checked by running it - that the npcs are read BEFORE the floor, without which
- * no kill is ever credited - is read out of the source, the way JaggrabTest reads openUrl.
- *
- * THE VALUE RULE IS DELIBERATELY NOT GroundItem.worth(). That multiplies only for a stackable,
- * because it decides whether a PILE deserves a lootbeam. A tracker is adding up what a player
- * walked away with, so twenty swords are worth twenty swords, and this is asserted rather than
- * assumed because the two sitting side by side invite someone to "fix" one of them.
+ * So the rules are a model with no client in it (LootTracker), the wire is a parser with no client
+ * in it (LootMessage), and both are tested as arithmetic. The page the plugin lays out is tested
+ * without a client too: with no context every item is worth 0 and nothing is ignored, which is
+ * enough to see which rows there are, in what order, and what the buttons do.
  */
 package jagex2.client.plugin.builtin;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+
+import jagex2.client.plugin.LootMessage;
+import jagex2.client.plugin.event.LootReceived;
 
 public class LootTrackerTest {
 
@@ -34,443 +34,264 @@ public class LootTrackerTest {
 		}
 	}
 
+	static List<LootTracker.Item> items(long... idCount) {
+		List<LootTracker.Item> out = new ArrayList<LootTracker.Item>();
+		for (int i = 0; i + 1 < idCount.length; i += 2) {
+			out.add(new LootTracker.Item((int) idCount[i], idCount[i + 1]));
+		}
+		return out;
+	}
+
+	static long count(List<LootTracker.Item> items, int id) {
+		long n = 0;
+		for (LootTracker.Item item : items) {
+			if (item.id == id) {
+				n += item.count;
+			}
+		}
+		return n;
+	}
+
+	/** Coins 1 each, a sword 100, bones nothing: enough to tell an order and a total apart. */
+	static final LootTracker.Prices PRICES = new LootTracker.Prices() {
+		public long value(int objId) {
+			return objId == 995 ? 1 : objId == 1333 ? 100 : 0;
+		}
+	};
+
 	public static void main(String[] args) {
-		System.out.println("1. what counts as a kill");
-		killTests();
+		System.out.println("1. a kill");
+		kills();
 		System.out.println();
-		System.out.println("2. how long a tile stays creditable");
-		windowTests();
+		System.out.println("2. what it is worth");
+		values();
 		System.out.println();
-		System.out.println("3. one kill, however many items");
-		dropTests();
+		System.out.println("3. kept between sessions");
+		saving();
 		System.out.println();
-		System.out.println("4. what a drop is worth");
-		valueTests();
+		System.out.println("4. the line from the server");
+		wire();
 		System.out.println();
-		System.out.println("5. tiles are told apart, including by plane");
-		tileTests();
+		System.out.println("5. the page");
+		page();
 		System.out.println();
-		System.out.println("6. reading it back");
-		readingTests();
+		System.out.println("6. the numbers on it");
+		numbers();
 		System.out.println();
-		System.out.println("7. it does not grow without limit");
-		boundsTests();
-		System.out.println();
-		System.out.println("8. numbers a sidebar row has space for");
-		formatTests();
-		System.out.println();
-		System.out.println("9. the page");
-		pageTests();
-		System.out.println();
-		System.out.println("10. the order of the tick, which no run of it can state");
-		orderTests();
-
-		System.out.println();
-		if (fails == 0) {
-			System.out.println("all checks passed");
-		} else {
-			System.out.println(fails + " CHECK(S) FAILED");
+		if (fails > 0) {
+			System.out.println(fails + " FAILED");
+			System.exit(1);
 		}
-		System.exit(fails == 0 ? 0 : 1);
+		System.out.println("all passed");
 	}
 
-	static final long T = LootTracker.tileKey(3200, 3200, 0);
-	static final long U = LootTracker.tileKey(3201, 3200, 0);
+	static void kills() {
+		LootTracker t = new LootTracker();
+		t.record("npc", "Goblin", 2, 1000, items(526, 1, 995, 5, 995, 7));
+		LootTracker.Source goblin = t.source(LootTracker.keyOf("npc", "Goblin"));
+		check(goblin != null && goblin.kills == 1, "one drop of three things is one kill");
+		check(goblin != null && count(goblin.items(), 995) == 12, "two stacks of coins in one drop are 12 coins");
+		check(t.kills().size() == 1 && count(t.kills().get(0).items, 995) == 12, "and the kill itself says 12");
 
-	/** A tick with one npc standing on one tile. */
-	static void tickWith(LootTracker loot, long tile, String name) {
-		loot.beginTick();
-		loot.standing(tile, name);
-		loot.endTick();
-	}
+		t.record("npc", "Goblin", 2, 2000, items(995, 4000));
+		check(goblin.kills == 2, "a second goblin is a second kill of the same box");
+		check(count(goblin.items(), 995) == 4012, "its coins are added to the first goblin's, not put in their place");
 
-	/** A tick with nothing in the scene at all. */
-	static void emptyTick(LootTracker loot) {
-		loot.beginTick();
-		loot.endTick();
-	}
+		t.record("npc", "Cow", 2, 3000, items(526, 1));
+		check(t.sources().get(0).name.equals("Cow"), "the box that paid out last is at the top");
+		t.record("npc", "Goblin", 2, 4000, items(526, 1));
+		check(t.sources().get(0).name.equals("Goblin"), "and moves there again when it pays out again");
+		check(t.kills().get(0).name.equals("Goblin") && t.kills().get(1).name.equals("Cow"),
+			"the per-kill list is newest first");
+		check(t.totalKills() == 4, "four kills in all");
 
-	// ------------------------------------------------------------------ 1. the kill
+		t.record("player", "Goblin", 3, 5000, items(995, 1));
+		check(t.sources().size() == 3, "a player called Goblin is not the npc Goblin's box");
 
-	static void killTests() {
-		LootTracker loot = new LootTracker();
-		tickWith(loot, T, "Goblin");
-		emptyTick(loot);
-		check("Goblin".equals(loot.record(T, 526, "Bones", 1, 100)),
-			"an npc that was standing here, is not now, and left loot is a kill");
-		check(loot.kills() == 1, "...counted once");
-		check(loot.unattributed() == 0, "...and not counted as unattributed as well");
+		t.record("npc", "Chicken", 1, 6000, null);
+		LootTracker.Source chicken = t.source(LootTracker.keyOf("npc", "Chicken"));
+		check(chicken != null && chicken.kills == 1 && chicken.items().isEmpty(),
+			"a kill that dropped nothing is still a kill");
+		check(t.record("npc", "  ", 1, 7000, items(995, 1)) == null, "a kill with no name is not filed");
+		t.record("npc", "Rat", 1, 8000, items(995, 0, 995, -3, -1, 5));
+		check(t.source(LootTracker.keyOf("npc", "Rat")).items().isEmpty(),
+			"no item with a count of nothing, a negative count or no id");
 
-		// Still alive. The commonest way to be wrong, because loot does land next to living npcs.
-		LootTracker alive = new LootTracker();
-		tickWith(alive, T, "Goblin");
-		tickWith(alive, T, "Goblin");
-		check(alive.record(T, 526, "Bones", 1, 100) == null,
-			"an npc still standing there has not died, whatever lands on it");
-		check(alive.kills() == 0 && alive.unattributed() == 1, "...so that drop is unattributed");
-
-		// Walked off. Nothing died, and nothing may be invented.
-		LootTracker walked = new LootTracker();
-		tickWith(walked, T, "Goblin");
-		tickWith(walked, U, "Goblin");
-		check(walked.kills() == 0, "an npc that walks away is not a kill");
-		check(walked.vacatedBy(T) != null, "...though the tile it left is remembered");
-		check(walked.vacatedBy(U) == null, "...and the one it walked onto is not");
-
-		// Never there at all.
-		LootTracker never = new LootTracker();
-		emptyTick(never);
-		check(never.record(T, 995, "Coins", 50, 1) == null, "loot where nothing has been is nobody's");
-		check(never.unattributed() == 1 && never.unattributedValue() == 50,
-			"...and is counted and valued separately rather than dropped");
-
-		// The loot has to land where the thing died, not merely nearby.
-		LootTracker elsewhere = new LootTracker();
-		tickWith(elsewhere, T, "Goblin");
-		emptyTick(elsewhere);
-		check(elsewhere.record(U, 526, "Bones", 1, 100) == null, "loot on the next tile over is not its drop");
-	}
-
-	// ------------------------------------------------------------------ 2. the window
-
-	/**
-	 * How many ticks the window is, written down here as well as in LootTracker.
-	 *
-	 * DELIBERATELY A SECOND COPY, for the reason GameStateTest pins the inventory component: the
-	 * first version of this read VACATED_TICKS and checked the behaviour against it, so moving
-	 * the constant moved the expectation with it and a window of two - or of ten - passed clean.
-	 * A test that reads the number it is checking cannot disagree with it.
-	 */
-	static final int WINDOW = 3;
-
-	static void windowTests() {
-		check(LootTracker.VACATED_TICKS == WINDOW,
-			"the window is " + WINDOW + " ticks (it says " + LootTracker.VACATED_TICKS + ")");
-
-		// The drop and the removal do not arrive together, so the tile stays creditable for a
-		// few ticks. Checked at every tick of the window and the first one past it, because
-		// "about three" is how a window ends up two or four.
-		for (int wait = 0; wait <= WINDOW; wait++) {
-			LootTracker loot = new LootTracker();
-			tickWith(loot, T, "Goblin");
-			emptyTick(loot);                      // the tick it vanished
-			for (int i = 0; i < wait; i++) {
-				emptyTick(loot);
-			}
-			boolean credited = "Goblin".equals(loot.record(T, 526, "Bones", 1, 100));
-			boolean shouldBe = wait < WINDOW;
-			check(credited == shouldBe, "loot " + wait + " ticks after it vanished is "
-				+ (shouldBe ? "still credited" : "too late to credit"));
+		t.forget(LootTracker.keyOf("npc", "Goblin"));
+		check(t.source(LootTracker.keyOf("npc", "Goblin")) == null, "Reset forgets the box");
+		boolean anyGoblin = false;
+		for (LootTracker.Kill kill : t.kills()) {
+			anyGoblin |= kill.key().equals(LootTracker.keyOf("npc", "Goblin"));
 		}
+		check(!anyGoblin, "and its kills from the per-kill list with it");
 
-		// And the tile is clear afterwards, rather than crediting the next thing to die there.
-		LootTracker later = new LootTracker();
-		tickWith(later, T, "Goblin");
-		for (int i = 0; i <= WINDOW; i++) {
-			emptyTick(later);
+		LootTracker bounded = new LootTracker();
+		for (int i = 0; i < LootTracker.MAX_KILLS + 30; i++) {
+			bounded.record("npc", "Rat", 1, i, items(526, 1));
 		}
-		check(later.vacatedBy(T) == null, "and the tile is forgotten once the window is up");
-	}
-
-	// ------------------------------------------------------------------ 3. one kill, many items
-
-	static void dropTests() {
-		LootTracker loot = new LootTracker();
-		tickWith(loot, T, "Goblin");
-		emptyTick(loot);
-		loot.record(T, 526, "Bones", 1, 100);
-		loot.record(T, 995, "Coins", 40, 1);
-		loot.record(T, 199, "Grimy guam", 1, 300);
-		check(loot.kills() == 1, "bones, coins and a herb off one goblin is ONE kill");
-		List<LootTracker.Source> sources = loot.bySource();
-		check(sources.size() == 1 && sources.get(0).items().size() == 3, "...and three kinds of item");
-		check(sources.get(0).value == 440, "...worth the three of them added up");
-
-		// A second goblin dying on the same tile later is a second kill.
-		tickWith(loot, T, "Goblin");
-		emptyTick(loot);
-		loot.record(T, 526, "Bones", 1, 100);
-		check(loot.kills() == 2, "a second goblin dying on the same tile is a second kill");
-		check(loot.bySource().get(0).items().size() == 3, "...and its bones join the bones already there");
-		LootTracker.Item bones = null;
-		for (LootTracker.Item item : loot.bySource().get(0).items()) {
-			if (item.id == 526) {
-				bones = item;
-			}
-		}
-		check(bones != null && bones.count == 2, "...as two of them rather than two rows");
-	}
-
-	// ------------------------------------------------------------------ 4. value
-
-	static void valueTests() {
-		LootTracker loot = new LootTracker();
-		tickWith(loot, T, "Goblin");
-		emptyTick(loot);
-		loot.record(T, 995, "Coins", 100, 1);
-		check(loot.total() == 100, "a hundred coins at a gp each is a hundred");
-
-		LootTracker swords = new LootTracker();
-		tickWith(swords, T, "Knight");
-		emptyTick(swords);
-		swords.record(T, 1277, "Bronze sword", 20, 500);
-		// GroundItem.worth() answers 500 here, and is right to for its own purpose: it decides
-		// whether a PILE is worth a lootbeam. This is a different question.
-		check(swords.total() == 10000,
-			"twenty unstackable swords are worth twenty swords, not one");
-
-		LootTracker nothing = new LootTracker();
-		tickWith(nothing, T, "Goblin");
-		emptyTick(nothing);
-		check(nothing.record(T, 526, "Bones", 0, 100) == null, "a drop of nothing is not a drop");
-		check(nothing.kills() == 0, "...and does not count a kill");
-	}
-
-	// ------------------------------------------------------------------ 5. tiles
-
-	static void tileTests() {
-		check(LootTracker.tileKey(3200, 3200, 0) == LootTracker.tileKey(3200, 3200, 0),
-			"the same tile is the same key");
-		check(LootTracker.tileKey(3200, 3200, 0) != LootTracker.tileKey(3201, 3200, 0),
-			"one tile east is a different key");
-		check(LootTracker.tileKey(3200, 3200, 0) != LootTracker.tileKey(3200, 3201, 0),
-			"one tile north is a different key");
-		check(LootTracker.tileKey(3200, 3200, 0) != LootTracker.tileKey(3200, 3200, 1),
-			"the same tile upstairs is a different key");
-
-		// A SWEEP OVER DISTINCT TILES, not just over planes of the same one. A packing whose x
-		// and z overlap still gives different answers for the four tiles anybody checks by hand
-		// and collides a few tiles away, which credits a kill to something that died in another
-		// room. Every one of 16,384 real tiles has to have a key of its own.
-		java.util.Set<Long> keys = new java.util.HashSet<Long>();
-		int clashes = 0;
-		for (int x = 0; x < 64; x++) {
-			for (int z = 0; z < 64; z++) {
-				for (int plane = 0; plane < 4; plane++) {
-					if (!keys.add(Long.valueOf(LootTracker.tileKey(3000 + x, 3000 + z, plane)))) {
-						clashes++;
-					}
-				}
-			}
-		}
-		check(clashes == 0, "and no two of 16,384 tiles across four planes share a key");
-		check(keys.size() == 64 * 64 * 4, "...which is 16,384 different keys");
-
-		// The floor above is not the floor below, which a tracker that ignored plane would miss.
-		LootTracker loot = new LootTracker();
-		tickWith(loot, LootTracker.tileKey(3200, 3200, 0), "Goblin");
-		emptyTick(loot);
-		check(loot.record(LootTracker.tileKey(3200, 3200, 1), 526, "Bones", 1, 100) == null,
-			"a drop one floor up is not the goblin that died below it");
-	}
-
-	// ------------------------------------------------------------------ 6. reading it back
-
-	static void readingTests() {
-		LootTracker loot = new LootTracker();
-		drop(loot, T, "Goblin", 526, "Bones", 1, 100);
-		drop(loot, T, "Hill giant", 532, "Big bones", 1, 500);
-		drop(loot, T, "Hill giant", 526, "Bones", 1, 100);
-
-		List<LootTracker.Source> sources = loot.bySource();
-		check(sources.size() == 2, "two things have died");
-		check("Hill giant".equals(sources.get(0).name), "the richer one is first");
-		check(sources.get(0).value == 600 && sources.get(1).value == 100, "...with its own total");
-		check(loot.total() == 700, "and the totals add up");
-		check(loot.kills() == 3, "three kills between them");
-
-		// The item view merges the same item across different sources, which is the whole reason
-		// it is a second view rather than a sorted version of the first.
-		List<LootTracker.Item> items = loot.byItem();
-		check(items.size() == 2, "two kinds of item in all");
-		check("Big bones".equals(items.get(0).name), "the more valuable kind first");
-		LootTracker.Item plain = items.get(1);
-		check("Bones".equals(plain.name) && plain.count == 2,
-			"and bones from two different sources are two bones, not two rows");
-
-		check("Big bones".equals(sources.get(0).best().name), "a source knows its best drop");
-		check(loot.bySource().get(1).best() != null, "...and so does the other one");
-
-		loot.forget("Hill giant");
-		check(loot.bySource().size() == 1 && loot.total() == 100, "forgetting one leaves the other");
-		loot.reset();
-		check(loot.bySource().isEmpty() && loot.total() == 0 && loot.kills() == 0, "and a reset clears it");
-	}
-
-	/** A kill on a tile, with one item off it. */
-	static void drop(LootTracker loot, long tile, String who, int id, String item, int count, int price) {
-		tickWith(loot, tile, who);
-		emptyTick(loot);
-		loot.record(tile, id, item, count, price);
-	}
-
-	// ------------------------------------------------------------------ 7. bounds
-
-	static void boundsTests() {
-		LootTracker loot = new LootTracker();
-		// Every source worth more than the last, then one more. The cheapest must be the one
-		// that goes, or a long session ends up remembering the first 64 things it ever saw.
-		for (int i = 0; i < LootTracker.MAX_SOURCES; i++) {
-			drop(loot, T, "Thing " + i, 995, "Coins", 1, 100 + i);
-		}
-		check(loot.bySource().size() == LootTracker.MAX_SOURCES, "it holds as many sources as it says");
-		drop(loot, T, "One more", 995, "Coins", 1, 9999);
-		check(loot.bySource().size() == LootTracker.MAX_SOURCES, "...and no more than that");
-		boolean kept = false;
-		boolean cheapestGone = true;
-		for (LootTracker.Source source : loot.bySource()) {
-			if ("One more".equals(source.name)) {
-				kept = true;
-			}
-			if ("Thing 0".equals(source.name)) {
-				cheapestGone = false;
-			}
-		}
-		check(kept, "the new one is kept");
-		check(cheapestGone, "...and the least valuable one is what made room for it");
+		check(bounded.kills().size() == LootTracker.MAX_KILLS, "the per-kill list stops at " + LootTracker.MAX_KILLS);
+		check(bounded.source(LootTracker.keyOf("npc", "Rat")).kills == LootTracker.MAX_KILLS + 30,
+			"but the box keeps counting every one");
 
 		LootTracker many = new LootTracker();
-		tickWith(many, T, "Hoarder");
-		emptyTick(many);
-		for (int i = 0; i < LootTracker.MAX_ITEMS + 20; i++) {
-			many.record(T, 1000 + i, "Item " + i, 1, 10);
+		for (int i = 0; i < LootTracker.MAX_SOURCES; i++) {
+			many.record("npc", "Npc " + i, 1, 1000 + i, items(526, 1));
 		}
-		check(many.bySource().get(0).items().size() == LootTracker.MAX_ITEMS,
-			"and a single source holds a bounded number of item kinds");
-		check(many.kills() == 1, "...still off one kill");
+		many.record("npc", "Npc 0", 1, 99999, items(526, 1));
+		many.record("npc", "Newcomer", 1, 100000, items(526, 1));
+		check(many.sources().size() == LootTracker.MAX_SOURCES, "the sources stop at " + LootTracker.MAX_SOURCES);
+		check(many.source(LootTracker.keyOf("npc", "Npc 1")) == null,
+			"and the one longest unseen is the one that goes");
+		check(many.source(LootTracker.keyOf("npc", "Npc 0")) != null,
+			"not the oldest-made one, which has paid out since");
 	}
 
-	// ------------------------------------------------------------------ 8. formatting
+	static void values() {
+		List<LootTracker.Item> drop = items(995, 50, 1333, 2, 526, 1);
+		check(LootTracker.total(drop, PRICES, null) == 250, "two swords are worth two swords: 50 + 200");
+		LootTracker.Ignored swords = new LootTracker.Ignored() {
+			public boolean is(int objId) {
+				return objId == 1333;
+			}
+		};
+		check(LootTracker.total(drop, PRICES, swords) == 50, "an ignored item is out of the total");
+		List<LootTracker.Item> sorted = LootTracker.sorted(drop, PRICES, null);
+		check(sorted.get(0).id == 1333 && sorted.get(1).id == 995, "most valuable stack first");
+		List<LootTracker.Item> ignoredLast = LootTracker.sorted(drop, PRICES, swords);
+		check(ignoredLast.get(ignoredLast.size() - 1).id == 1333, "and an ignored one at the end, however valuable");
 
-	static void formatTests() {
-		check("0".equals(LootTracker.gp(0)), "nothing is 0");
-		check("999".equals(LootTracker.gp(999)), "small numbers are themselves");
-		check("9,999".equals(LootTracker.gp(9999)), "...with separators, up to ten thousand");
-		check("10K".equals(LootTracker.gp(10000)), "ten thousand is where it shortens");
-		check("12.3K".equals(LootTracker.gp(12345)), "...to one decimal place");
-		check("999.9K".equals(LootTracker.gp(999999)), "...up to a million");
-		check("1M".equals(LootTracker.gp(1000000)), "a round million has no trailing .0");
-		check("1.2M".equals(LootTracker.gp(1234567)), "and an unround one has a tenth");
-		check("18.1M".equals(LootTracker.gp(18141940)), "a real drop reads plainly");
-		check("1B".equals(LootTracker.gp(1000000000L)), "and a billion is a billion");
-		check("2.1B".equals(LootTracker.gp(2147483647L)), "...past what an int could hold");
-		check("-5,500".equals(LootTracker.gp(-5500)),
-			"a negative under the threshold keeps its sign and its separators");
-		check("-12.3K".equals(LootTracker.gp(-12345)), "...and one over it keeps its sign too");
+		LootTracker t = new LootTracker();
+		t.record("npc", "Goblin", 2, 1, items(995, 10));
+		t.record("npc", "Guard", 21, 2, items(1333, 1));
+		check(t.total(PRICES, null, null) == 110, "the grand total is every box");
+		java.util.Set<String> hidden = new java.util.HashSet<String>(Arrays.asList("guard"));
+		check(t.total(PRICES, null, hidden) == 10, "less the hidden ones");
 
-		check("0".equals(LootTracker.commas(0)), "commas: zero");
-		check("100".equals(LootTracker.commas(100)), "commas: under a thousand, none");
-		check("1,000".equals(LootTracker.commas(1000)), "commas: a thousand, one");
-		check("1,000,000".equals(LootTracker.commas(1000000)), "commas: a million, two");
-		check("-1,000".equals(LootTracker.commas(-1000)), "commas: and a negative keeps its sign");
+		check(LootTrackerPlugin.matches("bones", "bones"), "an ignore by name");
+		check(!LootTrackerPlugin.matches("bones", "big bones"), "and only that name");
+		check(LootTrackerPlugin.matches("*bones", "big bones"), "* at the front");
+		check(LootTrackerPlugin.matches("grimy *", "grimy ranarr"), "* at the end");
+		check(LootTrackerPlugin.matches("*rune*", "adamant rune scimitar"), "* both ends");
+		check(!LootTrackerPlugin.matches("rune*", "adamant rune"), "a pattern still has to start where it starts");
+		check(LootTrackerPlugin.splitList(" Bones, ,Big BONES ").equals(Arrays.asList("bones", "big bones")),
+			"the setting split on commas, trimmed, any case");
 	}
 
-	// ------------------------------------------------------------------ 9. the page
+	static void saving() {
+		LootTracker t = new LootTracker();
+		t.record("npc", "Black dragon", 227, 1111, items(536, 1, 1747, 1, 995, 196));
+		t.record("npc", "Black dragon", 227, 2222, items(536, 1));
+		t.record("event", "Clue scroll (hard)", 0, 3333, items(1333, 1));
+		t.record("player", "Lord | Fooby", 99, 4444, items(995, 1000000));
+		String text = t.save();
 
-	static void pageTests() {
-		LootTrackerPlugin plugin = new LootTrackerPlugin();
-		check(plugin.rowCount() == 0, "an empty tracker has no rows, so the page shows its message");
+		LootTracker back = new LootTracker();
+		back.load(text);
+		LootTracker.Source dragon = back.source(LootTracker.keyOf("npc", "Black dragon"));
+		check(dragon != null && dragon.kills == 2 && dragon.level == 227, "a box comes back with its kills and level");
+		check(dragon != null && count(dragon.items(), 536) == 2 && count(dragon.items(), 995) == 196,
+			"and every item in it");
+		check(back.source(LootTracker.keyOf("player", "Lord | Fooby")) != null, "a name with a bar in it still reads");
+		check(back.kills().size() == 4 && back.kills().get(0).time == 4444, "the kills, newest first, at their times");
+		check(back.save().equals(text), "and saving it again writes the same file");
 
-		LootTracker loot = plugin.tracker();
-		drop(loot, T, "Goblin", 526, "Bones", 1, 100);
-		drop(loot, T, "Hill giant", 532, "Big bones", 1, 500);
+		String broken = text.replace("I|1747|1", "I|17x7|1").replace("S|event|1|", "S|event|q|");
+		LootTracker partial = new LootTracker();
+		partial.load(broken);
+		check(partial.source(LootTracker.keyOf("npc", "Black dragon")) != null, "a broken line costs that line");
+		check(partial.source(LootTracker.keyOf("event", "Clue scroll (hard)")) == null, "and the box it starts");
+		check(partial.source(LootTracker.keyOf("player", "Lord | Fooby")) != null, "but not the rest of the file");
+		LootTracker none = new LootTracker();
+		none.load("not a loot file\nS|npc|1|1|1|x\n");
+		check(none.isEmpty(), "a file of another kind is not read at all");
 
-		// Two sources, a total, and no unattributed row because there is nothing unattributed.
-		check(plugin.rowCount() == 3, "two sources and a total");
-		// "Zulrah x 13": the kill count rides with the name, where the eye already is, leaving
-		// the value column for the gp.
-		check(plugin.label(0).indexOf("Hill giant") == 0 && plugin.label(1).indexOf("Goblin") == 0,
-			"the richer source is the first row");
-		check(plugin.label(0).indexOf("x 1") > 0, "...and its name carries the kill count");
-		check("500".equals(plugin.value(0)), "a row shows what that source gave");
-		check("Total".equals(plugin.label(2)) && "600".equals(plugin.value(2)), "and the last row totals them");
-		check("2 kills".equals(plugin.detail(2)), "...with the kill count under it");
-		check(plugin.detail(0).indexOf("1 kill") == 0, "one kill is singular");
-		// The best drop used to be named here. It is a picture under the row now, so saying it
-		// in words as well would be the same thing twice in a column this narrow.
-		check(plugin.detail(0).indexOf("Big bones") < 0,
-			"...and does not also name the best drop, which is drawn under the row");
-
-		// The unattributed row only exists when there is something in it, and it is IN the list
-		// rather than somewhere a player reading the total would miss it.
-		loot.record(LootTracker.tileKey(9000, 9000, 0), 995, "Coins", 7, 1);
-		check(plugin.rowCount() == 4, "a drop nothing was standing on adds a row");
-		check(plugin.label(3).indexOf("Nothing was standing") == 0, "...saying so");
-		check("7".equals(plugin.value(3)), "...and what it was worth");
-		check(plugin.detail(3).indexOf("1 drops") == 0, "...and how many there were");
-		plugin.showUnattributed = false;
-		check(plugin.rowCount() == 3, "which can be turned off");
-		plugin.showUnattributed = true;
-
-		// The item view is the same data counted the other way.
-		plugin.groupBy = "Item";
-		check(plugin.rowCount() == 4, "by item: two kinds, a total and the unattributed row");
-		check("Big bones".equals(plugin.label(0)), "the more valuable kind leads");
-		check(plugin.detail(0).indexOf("1 of them") == 0, "...and a row counts them");
-		check("Total".equals(plugin.label(2)), "the total is still there");
-		plugin.groupBy = "Source";
-
-		// THE DROPS AS A GRID, which is what this page was sent back to do: a row names the
-		// source and the kills, and the drops themselves are pictures under it. The icons need
-		// a cache to draw, which a headless run has none of, so what is checked here is the
-		// shape - one cell per kind of item, richest first, nothing under a total row.
-		check(plugin.gridItems(0) != null && plugin.gridItems(0).size() == 1,
-			"a source's row carries one cell per kind of item it dropped");
-		drop(loot, T, "Hill giant", 526, "Bones", 1, 100);
-		drop(loot, T, "Hill giant", 995, "Coins", 50, 1);
-		check(plugin.gridItems(0).size() == 3, "...growing as it drops more kinds");
-		check(plugin.gridItems(plugin.rowCount() - 1) == null, "the total row carries no drops");
-		check(plugin.gridItems(99) == null, "nor does a row that is not there");
-
-
-		// Removing a row forgets that source, and only in the view where a row IS a source.
-		plugin.forget(0);
-		check(plugin.sources().size() == 1 && plugin.label(0).indexOf("Goblin") == 0,
-			"removing a row forgets that source");
-		plugin.groupBy = "Item";
-		plugin.forget(0);
-		check(plugin.sources().size() == 1, "...and does nothing in the item view, where a row is not one");
-		plugin.groupBy = "Source";
-
-		// A haul of a hundred kinds must not push the rest of the page off the bottom. Last,
-		// because filling a source up reorders the page and the checks above are about order.
-		for (int i = 0; i < LootTrackerPlugin.MAX_ICONS + 5; i++) {
-			loot.record(T, 2000 + i, "Thing " + i, 1, 5);
-		}
-		check(plugin.gridItems(0).size() <= LootTrackerPlugin.MAX_ICONS,
-			"and a row stops at " + LootTrackerPlugin.MAX_ICONS + " of them");
-		check(plugin.detail(0).indexOf("showing") > 0, "...saying so when it does");
+		String file = LootTrackerPlugin.fileFor("Lord Fooby");
+		check(file.startsWith("loot-") && file.endsWith(".txt") && file.toLowerCase().indexOf("fooby") < 0,
+			"an account's file does not have the name in it");
+		check(file.equals(LootTrackerPlugin.fileFor("lord_fooby")), "and is the same file however the name is written");
+		check(!file.equals(LootTrackerPlugin.fileFor("Lord Foobar")), "and another account's is another file");
 	}
 
-	// ------------------------------------------------------------------ 10. the order
+	static void wire() {
+		LootMessage m = new LootMessage();
+		LootReceived one = m.read("n|7|0|227|Black dragon|536,1;995,196:loot:");
+		check(one != null && LootReceived.NPC.equals(one.type) && one.name.equals("Black dragon")
+			&& one.combatLevel == 227 && one.items.size() == 2, "one line, one kill");
+		check(one != null && one.items.get(1).id == 995 && one.items.get(1).count == 196, "with its counts");
 
-	static void orderTests() {
-		// THE ONE THING A RUN CANNOT STATE. The npc's removal and its drop share a tick, so the
-		// tiles it left have to be worked out before the floor is read. The other way round, the
-		// loot arrives at a tile not yet marked vacated and EVERY kill goes uncredited - a
-		// tracker that works perfectly and reports nothing.
-		String src = read("src/main/java/jagex2/client/plugin/builtin/LootTrackerPlugin.java");
-		int tick = src.indexOf("public void onGameTick(");
-		String body = tick < 0 ? "" : src.substring(tick, src.indexOf("\n\t}", tick));
-		int npcs = body.indexOf("this.readNpcs()");
-		int floor = body.indexOf("this.readFloor()");
-		check(npcs >= 0 && floor >= 0, "the tick reads the npcs and the floor");
-		check(npcs < floor, "...and the npcs first, or nothing is ever credited");
+		check(m.read("e|9|1|0|Clue scroll (hard)|1333,1:loot:") == null, "a line saying more is coming is held");
+		LootReceived joined = m.read("e|9|0|0|Clue scroll (hard)|995,5000:loot:");
+		check(joined != null && joined.items.size() == 2 && LootReceived.EVENT.equals(joined.type),
+			"and joined to the rest of its kill, as one kill");
 
-		// And the line the API is drawn on: this plugin reads and draws, it does not act.
-		check(src.indexOf("consume()") < 0, "the tracker does not consume anything the player clicked");
-		check(src.indexOf("setLeftClick") < 0 && src.indexOf("swapMenuEntries") < 0,
-			"...nor reorder their menu");
+		m.read("p|11|1|90|Somebody|995,1:loot:");
+		LootReceived after = m.read("n|12|0|2|Goblin|526,1:loot:");
+		check(after != null && after.name.equals("Goblin") && after.items.size() == 1,
+			"a kill whose last piece never came is dropped, not glued to the next");
+
+		check(m.read("n|13|0|2|A | name|526,1:loot:").name.equals("A | name"), "a name with a bar in it");
+		LootReceived empty = m.read("n|15|0|2|Rat|:loot:");
+		check(empty != null && empty.items.isEmpty(), "a kill with no items is still a kill");
+		LootReceived bad = m.read("n|16|0|2|Rat|x,1;526,y;526,0;526,2:loot:");
+		check(bad != null && bad.items.size() == 1 && bad.items.get(0).count == 2, "broken items skipped, good ones kept");
+		check(m.read("z|1|0|0|What|1,1:loot:") == null, "an unknown type is nothing");
+		check(!LootMessage.isLoot("Oh dear, you are dead!") && LootMessage.isLoot("x:loot:"),
+			"only a line ending :loot: is one");
 	}
 
-	/** A source file, for the checks that are about what the source says. */
-	static String read(String path) {
-		try {
-			byte[] bytes = java.nio.file.Files.readAllBytes(
-				java.nio.file.Paths.get(System.getProperty("dp.root", "."), path));
-			return new String(bytes, "UTF-8");
-		} catch (Throwable missing) {
-			return "";
-		}
+	static void page() {
+		LootTrackerPlugin p = new LootTrackerPlugin();
+		check(p.layOut().isEmpty(), "no loot, no rows - the page says how to get some");
+
+		p.tracker.record("npc", "Goblin", 2, System.currentTimeMillis() - 5000, items(526, 1, 995, 3));
+		p.tracker.record("npc", "Cow", 2, System.currentTimeMillis(), items(526, 1, 1739, 1));
+		List<LootTrackerPlugin.Box> rows = p.layOut();
+		check(rows.size() == 4, "the total, two boxes and the reset");
+		check(rows.get(0).label.equals("Total") && rows.get(0).detail.startsWith("2 kills"), "the total first");
+		check(rows.get(1).label.equals("Cow (lvl-2) x 1"), "the newest box next, named as RuneLite names one");
+		check(rows.get(2).items.size() == 2, "a box carries its drops");
+		check(rows.get(3).label.equals("Reset all"), "the reset last");
+
+		p.hiddenSources = "cow";
+		rows = p.layOut();
+		check(rows.size() == 3 && rows.get(1).label.startsWith("Goblin"), "a hidden source has no box");
+		check(rows.get(0).detail.indexOf("1 hidden") >= 0, "and the total says something is hidden");
+		p.hiddenSources = "";
+
+		p.press(p.layOut().get(0));
+		check(!p.grouped(), "the button on the total switches to one box per kill");
+		rows = p.layOut();
+		check(rows.get(1).label.equals("Cow (lvl-2)") && rows.get(1).detail.startsWith("just now"),
+			"a kill's box has no count, and says when");
+		p.press(p.layOut().get(0));
+		check(p.grouped(), "and back");
+
+		LootTrackerPlugin.Box goblinBox = p.layOut().get(2);
+		p.press(goblinBox);
+		check(p.tracker.source(LootTracker.keyOf("npc", "Goblin")) != null, "one press of Reset resets nothing");
+		check(p.layOut().get(2).action.equals("Confirm"), "it asks to be pressed again");
+		p.press(p.layOut().get(2));
+		check(p.tracker.source(LootTracker.keyOf("npc", "Goblin")) == null, "and the second press resets the box");
+
+		List<LootTrackerPlugin.Box> now = p.layOut();
+		p.press(now.get(now.size() - 1));
+		check(!p.tracker.isEmpty(), "Reset all asks first too");
+		now = p.layOut();
+		p.press(now.get(now.size() - 1));
+		check(p.tracker.isEmpty(), "and then empties the page");
+
+		check(LootTrackerPlugin.title("Clue scroll (hard)", 0).equals("Clue scroll (hard)"), "a casket has no level");
+	}
+
+	static void numbers() {
+		check(LootTracker.gp(9999).equals("9,999"), "exact under ten thousand");
+		check(LootTracker.gp(12345).equals("12.3K"), "thousands past it");
+		check(LootTracker.gp(1900000).equals("1.9M"), "a tenth of a million");
+		check(LootTracker.gp(5000000).equals("5M"), "no trailing .0");
+		check(LootTracker.commas(1234567).equals("1,234,567"), "thousands separators");
+		check(LootTracker.ago(0, 30000).equals("just now"), "under a minute is just now");
+		check(LootTracker.ago(0, 61000).equals("1 minute ago"), "one minute");
+		check(LootTracker.ago(0, 3 * 3600000L).equals("3 hours ago"), "hours");
+		check(LootTracker.ago(0, 49 * 3600000L).equals("2 days ago"), "days");
 	}
 }

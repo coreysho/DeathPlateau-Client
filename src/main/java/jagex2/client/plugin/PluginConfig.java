@@ -170,6 +170,11 @@ public final class PluginConfig {
 		this.store = store;
 	}
 
+	/** The key of the plugin these settings belong to. */
+	String pluginKey() {
+		return this.pluginKey;
+	}
+
 	/**
 	 * Finds the annotated fields on a plugin and loads their saved values. A field of a type that
 	 * is not supported, or one that cannot be made accessible, is skipped with a log line and the

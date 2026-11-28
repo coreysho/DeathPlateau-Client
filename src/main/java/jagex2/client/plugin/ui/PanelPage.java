@@ -35,6 +35,29 @@ public final class PanelPage extends JPanel {
 	private final PluginManager manager;
 	private final JPanel rows = new JPanel();
 
+	/**
+	 * The search box, for a page that asks for one (ConfigList.searchHint). Built once and kept,
+	 * NOT rebuilt with the rows: the rows are thrown away whenever the plugin's numbers move, and a
+	 * box thrown away with them would lose what was being typed in it.
+	 */
+	private final JPanel searchBar = new JPanel(new BorderLayout());
+	private final HintField search = new HintField();
+
+	/** The text the plugin last put in the box, so a change of its own can be told from typing. */
+	private String pluginSearchText;
+
+	/** Which page the box was last filled for, so moving to another page starts it afresh. */
+	private String searchPage;
+
+	/**
+	 * What the rows were last built from, as text. The rows are rebuilt only when it changes.
+	 *
+	 * WHY NOT EVERY TIME, which is what this page did: a hover tooltip belongs to the component
+	 * under the mouse, and a page rebuilt every 600ms throws that component away under it - so the
+	 * tooltip on a loot icon or a skill blinked off before anybody could read it.
+	 */
+	private String builtFrom;
+
 	/** What is being shown, kept so the page can be rebuilt when the plugin's numbers move. */
 	private PluginManager.PanelSnapshot snapshot;
 
@@ -46,6 +69,94 @@ public final class PanelPage extends JPanel {
 		this.rows.setLayout(new BoxLayout(this.rows, BoxLayout.Y_AXIS));
 		this.rows.setBackground(Theme.BACKGROUND);
 		this.add(Sidebar.scroll(this.rows), BorderLayout.CENTER);
+
+		this.search.setBackground(Theme.ROW);
+		this.search.setForeground(Theme.TEXT);
+		this.search.setCaretColor(Theme.TEXT);
+		this.search.setFont(Theme.FONT);
+		this.search.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 4));
+		this.search.addActionListener(new ActionListener() {
+
+			public void actionPerformed(ActionEvent event) {
+				PanelPage.this.runSearch(PanelPage.this.search.getText());
+			}
+		});
+		JLabel magnifier = new JLabel(Icons.search(13, Theme.TEXT_DIM));
+		magnifier.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 2));
+		JPanel box = new JPanel(new BorderLayout());
+		box.setBackground(Theme.ROW);
+		box.add(magnifier, BorderLayout.WEST);
+		box.add(this.search, BorderLayout.CENTER);
+		this.searchBar.setBackground(Theme.DARKER);
+		this.searchBar.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+		this.searchBar.add(box, BorderLayout.CENTER);
+		this.searchBar.setVisible(false);
+		this.add(this.searchBar, BorderLayout.NORTH);
+	}
+
+	/** A text field that says what it is for while it is empty, in grey. */
+	private static final class HintField extends javax.swing.JTextField {
+
+		String hint = "";
+
+		protected void paintComponent(Graphics g) {
+			super.paintComponent(g);
+			if (this.getText().length() == 0 && this.hint.length() > 0) {
+				g.setColor(Theme.TEXT_DIM);
+				g.setFont(this.getFont());
+				java.awt.Insets in = this.getInsets();
+				g.drawString(this.hint, in.left + 2, in.top + g.getFontMetrics().getAscent());
+			}
+		}
+	}
+
+	/** Enter in the box: hand the text to the plugin, on the game thread. */
+	private void runSearch(final String text) {
+		final PluginManager.PanelSnapshot acting = this.snapshot;
+		if (acting == null) {
+			return;
+		}
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				try {
+					acting.search(text);
+				} catch (Throwable error) {
+					jagex2.client.DevLog.log("PLUGIN", "a panel search threw", error);
+				}
+			}
+		});
+	}
+
+	/**
+	 * Shows the box for a page that wants one and fills it when the PLUGIN changed its text.
+	 *
+	 * Typing never comes back through here: the plugin's text only moves when it is told to search
+	 * or looks somebody up itself, so a box the player is typing in is left alone until then.
+	 */
+	private void applySearch() {
+		PluginManager.PanelSnapshot shown = this.snapshot;
+		boolean wanted = shown != null && shown.searchHint != null;
+		if (this.searchBar.isVisible() != wanted) {
+			this.searchBar.setVisible(wanted);
+			this.revalidate();
+		}
+		if (!wanted) {
+			return;
+		}
+		String page = shown.entry.key + "/" + shown.title;
+		if (!page.equals(this.searchPage)) {
+			this.searchPage = page;
+			this.pluginSearchText = null;
+		}
+		this.search.hint = shown.searchHint;
+		if (!shown.searchText.equals(this.pluginSearchText)) {
+			this.pluginSearchText = shown.searchText;
+			if (!this.search.getText().equals(shown.searchText)) {
+				this.search.setText(shown.searchText);
+			}
+		}
+		this.search.repaint();
 	}
 
 	PluginManager.PanelSnapshot getSnapshot() {
@@ -54,6 +165,7 @@ public final class PanelPage extends JPanel {
 
 	void show(PluginManager.PanelSnapshot snapshot) {
 		this.snapshot = snapshot;
+		this.applySearch();
 		this.rebuild();
 	}
 
@@ -61,6 +173,11 @@ public final class PanelPage extends JPanel {
 		if (this.snapshot == null) {
 			return;
 		}
+		String from = signature(this.snapshot);
+		if (from.equals(this.builtFrom)) {
+			return;
+		}
+		this.builtFrom = from;
 		this.rows.removeAll();
 
 		JPanel heading = new JPanel(new BorderLayout());
@@ -145,9 +262,21 @@ public final class PanelPage extends JPanel {
 		top.setMaximumSize(new Dimension(Integer.MAX_VALUE, top.getPreferredSize().height));
 		panel.add(top);
 
-		if (row.icons.length > 0) {
+		if (row.clickable) {
+			top.addMouseListener(new java.awt.event.MouseAdapter() {
+
+				public void mouseClicked(java.awt.event.MouseEvent event) {
+					if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+						PanelPage.this.clickRow(row.index);
+					}
+				}
+			});
+			top.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+		}
+
+		if (row.icons.length > 0 && !row.collapsed) {
 			panel.add(javax.swing.Box.createVerticalStrut(5));
-			panel.add(iconGrid(row.icons));
+			panel.add(this.iconGrid(row));
 		}
 
 		if (row.progress >= 0) {
@@ -178,6 +307,89 @@ public final class PanelPage extends JPanel {
 				}
 			}
 		});
+	}
+
+	/** A row's heading clicked, on the game thread, as {@link #press} does a button. */
+	private void clickRow(final int index) {
+		final PluginManager.PanelSnapshot acting = this.snapshot;
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				try {
+					acting.click(index);
+				} catch (Throwable error) {
+					jagex2.client.DevLog.log("PLUGIN", "a panel row click threw", error);
+				}
+			}
+		});
+	}
+
+	/** A picture's right-click word chosen, on the game thread. */
+	private void iconAction(final int index, final int icon) {
+		final PluginManager.PanelSnapshot acting = this.snapshot;
+		this.manager.invokeOnClientThread(new Runnable() {
+
+			public void run() {
+				try {
+					acting.iconAction(index, icon);
+				} catch (Throwable error) {
+					jagex2.client.DevLog.log("PLUGIN", "a panel icon action threw", error);
+				}
+			}
+		});
+	}
+
+	/**
+	 * Everything the rows show, as one string, so an unchanged page can be left standing.
+	 *
+	 * THE PICTURES BY THEIR PIXELS. An item's stack number is drawn into its icon by the cache, so
+	 * a loot icon going from 4 to 5 changes nothing but pixels - and a page that compared words
+	 * alone would keep showing 4.
+	 */
+	static String signature(PluginManager.PanelSnapshot snapshot) {
+		StringBuilder out = new StringBuilder(256);
+		out.append(snapshot.entry.key).append('/').append(snapshot.title).append('\t')
+			.append(snapshot.emptyMessage).append('\t').append(snapshot.selectedTab);
+		for (int i = 0; i < snapshot.tabTips.length; i++) {
+			out.append("\ntab ").append(snapshot.tabTips[i]).append(' ').append(pixels(snapshot.tabs[i]));
+		}
+		for (int i = 0; i < snapshot.rows.size(); i++) {
+			ConfigList.Row row = snapshot.rows.get(i);
+			out.append("\nrow ").append(row.index).append('\t').append(row.label)
+				.append('\t').append(row.detail).append('\t').append(row.value)
+				.append('\t').append(row.action).append('\t').append(row.progress)
+				.append('\t').append(row.iconAction).append('\t').append(row.clickable)
+				.append('\t').append(row.collapsed).append('\t').append(pixels(row.icon));
+			for (int j = 0; j < row.icons.length; j++) {
+				out.append("\n icon ").append(pixels(row.icons[j]));
+				if (row.captions != null && j < row.captions.length) {
+					out.append("\tc ").append(row.captions[j]);
+				}
+				if (row.tips != null && j < row.tips.length) {
+					out.append("\tt ").append(row.tips[j]);
+				}
+				if (row.faded != null && j < row.faded.length) {
+					out.append(row.faded[j] ? "\tfaded" : "\tclear");
+				}
+			}
+		}
+		return out.toString();
+	}
+
+	/** A cheap fingerprint of an image's pixels: enough to see a stack number change. */
+	private static String pixels(java.awt.image.BufferedImage image) {
+		if (image == null) {
+			return "-";
+		}
+		int w = image.getWidth();
+		int h = image.getHeight();
+		int hash = w * 31 + h;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				hash = hash * 31 + image.getRGB(x, y);
+			}
+		}
+		return Integer.toHexString(hash);
 	}
 
 	/** A progress bar: a track and a fill, in the client's own colours and nothing else. */
@@ -271,6 +483,9 @@ public final class PanelPage extends JPanel {
 	/** How many icons fit across a page before the grid wraps. */
 	static final int GRID_COLUMNS = 5;
 
+	/** The same, when each picture has words beside it - a skill and its level. */
+	static final int CAPTION_COLUMNS = 3;
+
 	/**
 	 * A block of item pictures under a row, five to a line.
 	 *
@@ -282,21 +497,77 @@ public final class PanelPage extends JPanel {
 	 * The last line is padded with empty cells so the ones above it stay square - a GridLayout
 	 * with a short final row stretches every cell in it otherwise.
 	 */
-	private static Component iconGrid(java.awt.image.BufferedImage[] icons) {
-		int rows = (icons.length + GRID_COLUMNS - 1) / GRID_COLUMNS;
-		JPanel grid = new JPanel(new java.awt.GridLayout(rows, GRID_COLUMNS, 2, 2));
+	private Component iconGrid(final ConfigList.Row row) {
+		java.awt.image.BufferedImage[] icons = row.icons;
+		boolean captioned = row.captions != null;
+		int columns = captioned ? CAPTION_COLUMNS : GRID_COLUMNS;
+		int rows = (icons.length + columns - 1) / columns;
+		JPanel grid = new JPanel(new java.awt.GridLayout(rows, columns, 2, 2));
 		grid.setOpaque(false);
 		grid.setAlignmentX(LEFT_ALIGNMENT);
-		for (int i = 0; i < rows * GRID_COLUMNS; i++) {
+		for (int i = 0; i < rows * columns; i++) {
 			JLabel cell = new JLabel();
 			cell.setOpaque(false);
-			cell.setHorizontalAlignment(JLabel.CENTER);
-			if (i < icons.length && icons[i] != null) {
-				cell.setIcon(new javax.swing.ImageIcon(icons[i]));
+			cell.setHorizontalAlignment(captioned ? JLabel.LEFT : JLabel.CENTER);
+			if (i < icons.length) {
+				boolean faded = row.faded != null && i < row.faded.length && row.faded[i];
+				if (icons[i] != null) {
+					cell.setIcon(new javax.swing.ImageIcon(faded ? fade(icons[i]) : icons[i]));
+				}
+				if (captioned && i < row.captions.length && row.captions[i] != null) {
+					cell.setText(row.captions[i]);
+					cell.setFont(Theme.FONT_BOLD);
+					cell.setForeground(faded ? Theme.TEXT_DIM : Theme.TEXT);
+					cell.setIconTextGap(4);
+				}
+				if (row.tips != null && i < row.tips.length && row.tips[i] != null && row.tips[i].length() > 0) {
+					cell.setToolTipText(row.tips[i]);
+				}
+				if (row.iconAction != null && row.iconAction.length() > 0) {
+					final int which = i;
+					final String word = row.iconAction;
+					cell.addMouseListener(new java.awt.event.MouseAdapter() {
+
+						public void mousePressed(java.awt.event.MouseEvent event) {
+							this.menu(event);
+						}
+
+						public void mouseReleased(java.awt.event.MouseEvent event) {
+							this.menu(event);
+						}
+
+						private void menu(java.awt.event.MouseEvent event) {
+							if (!event.isPopupTrigger()) {
+								return;
+							}
+							javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
+							javax.swing.JMenuItem item = new javax.swing.JMenuItem(word);
+							item.addActionListener(new ActionListener() {
+
+								public void actionPerformed(ActionEvent e) {
+									PanelPage.this.iconAction(row.index, which);
+								}
+							});
+							popup.add(item);
+							popup.show(event.getComponent(), event.getX(), event.getY());
+						}
+					});
+				}
 			}
 			grid.add(cell);
 		}
 		return grid;
+	}
+
+	/** A picture at a third of its strength, for an item the player has said to ignore. */
+	private static java.awt.image.BufferedImage fade(java.awt.image.BufferedImage image) {
+		java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(image.getWidth(),
+			image.getHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = out.createGraphics();
+		g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.35f));
+		g.drawImage(image, 0, 0, null);
+		g.dispose();
+		return out;
 	}
 
 	private static final class Bar extends JComponent {

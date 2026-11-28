@@ -69,6 +69,28 @@ public abstract class ConfigList {
 		 */
 		public final java.awt.image.BufferedImage[] icons;
 
+		/**
+		 * Words beside each picture in the grid, or null for pictures alone. With them the grid
+		 * goes three across rather than five, the way the game's stat tab lays out a skill and
+		 * its level - the words need the room.
+		 */
+		public final String[] captions;
+
+		/** What hovering each picture says, or null. A name, a price, a rank. */
+		public final String[] tips;
+
+		/** Which pictures are drawn faded - a loot tracker's ignored items. Null for none. */
+		public final boolean[] faded;
+
+		/** What right-clicking a picture offers, or null for nothing. One word for all of them. */
+		public final String iconAction;
+
+		/** Whether clicking the row itself does something: folding a loot box away. */
+		public final boolean clickable;
+
+		/** Whether the grid under this row is folded away. */
+		public final boolean collapsed;
+
 		Row(int index, String label, String detail, String action, boolean removable,
 			String value, int progress) {
 			this(index, label, detail, action, removable, value, progress, null, null);
@@ -76,6 +98,19 @@ public abstract class ConfigList {
 
 		Row(int index, String label, String detail, String action, boolean removable,
 			String value, int progress, Sprite icon, Sprite[] icons) {
+			this(index, label, detail, action, removable, value, progress, icon, icons,
+				null, null, null, null, false, false);
+		}
+
+		Row(int index, String label, String detail, String action, boolean removable,
+			String value, int progress, Sprite icon, Sprite[] icons, String[] captions,
+			String[] tips, boolean[] faded, String iconAction, boolean clickable, boolean collapsed) {
+			this.captions = captions == null ? null : captions.clone();
+			this.tips = tips == null ? null : tips.clone();
+			this.faded = faded == null ? null : faded.clone();
+			this.iconAction = iconAction;
+			this.clickable = clickable;
+			this.collapsed = collapsed;
 			this.icon = icon == null ? null : icon.toImage();
 			this.icons = copy(icons);
 			this.index = index;
@@ -119,6 +154,78 @@ public abstract class ConfigList {
 	/** A grid of pictures to draw under a row, or null for none. */
 	public Sprite[] icons(int index) {
 		return null;
+	}
+
+	/*
+	 * WHAT A GRID CAN SAY BESIDES ITS PICTURES, added for the hiscore panel and the loot tracker,
+	 * which are RuneLite's two pages built most of a grid: a skill beside its level, an item with
+	 * its price on hover, an ignored item drawn faded and un-ignored from a right-click.
+	 *
+	 * Every one of them is indexed like icons(): entry i belongs to picture i, and a shorter
+	 * array simply leaves the later pictures without one.
+	 */
+
+	/** Words beside each picture of a row's grid - a level beside a skill - or null. */
+	public String[] iconCaptions(int index) {
+		return null;
+	}
+
+	/** What hovering each picture says, or null. */
+	public String[] iconTips(int index) {
+		return null;
+	}
+
+	/** Which pictures to draw faded, or null for none. */
+	public boolean[] iconFaded(int index) {
+		return null;
+	}
+
+	/** The word right-clicking a picture of this row offers - "Toggle ignore" - or null. */
+	public String iconAction(int index) {
+		return null;
+	}
+
+	/** That word was clicked on picture {@code icon} of row {@code index}. On the game thread. */
+	public void onIconAction(int index, int icon) {
+	}
+
+	/** Whether clicking the row's heading does something. */
+	public boolean clickable(int index) {
+		return false;
+	}
+
+	/** The row's heading was clicked. On the game thread. */
+	public void onClick(int index) {
+	}
+
+	/** Whether the row's grid is folded away, so only its heading shows. */
+	public boolean collapsed(int index) {
+		return false;
+	}
+
+	/*
+	 * A SEARCH BOX across the top of the page, for a page that is about one thing at a time and
+	 * has to be told which: the hiscores, which show one player.
+	 *
+	 * THE BOX BELONGS TO THE PAGE, NOT TO A ROW. Rows are rebuilt whenever the plugin's numbers
+	 * move, and a text field rebuilt under somebody's fingers loses what they were typing and
+	 * where the caret was. So the page keeps one box for as long as it is showing this plugin,
+	 * and only writes into it when the PLUGIN changed the text - a Lookup from a right-click -
+	 * and never while the player is typing in it.
+	 */
+
+	/** The grey words in an empty search box, or null for a page with no box. */
+	public String searchHint() {
+		return null;
+	}
+
+	/** What the box should hold, as the plugin last set it. "" for empty. */
+	public String searchText() {
+		return "";
+	}
+
+	/** The player pressed Enter in the box. On the game thread. */
+	public void onSearch(String text) {
 	}
 
 	/*
@@ -231,7 +338,9 @@ public abstract class ConfigList {
 					continue;
 				}
 				rows.add(new Row(i, label, this.detail(i), this.action(i), this.removable(i),
-					this.value(i), this.progress(i), this.icon(i), this.icons(i)));
+					this.value(i), this.progress(i), this.icon(i), this.icons(i),
+					this.iconCaptions(i), this.iconTips(i), this.iconFaded(i), this.iconAction(i),
+					this.clickable(i), this.collapsed(i)));
 			} catch (Throwable ignored) {
 				// One bad row, not a blank page.
 			}

@@ -146,6 +146,30 @@ public final class Sidebar extends JPanel {
 				Sidebar.this.refreshLater();
 			}
 		});
+
+		// A plugin asking for its own page - the hiscores, after a Lookup on somebody. From the
+		// game thread, so it crosses to Swing's. If the page is not on the rail yet (the plugin
+		// was switched on this frame) the rail is read again first and the open retried once.
+		manager.setPanelOpener(new PluginManager.PanelOpener() {
+
+			public void open(final String pluginKey) {
+				SwingUtilities.invokeLater(new Runnable() {
+
+					public void run() {
+						if (!Sidebar.this.openPanel(pluginKey)) {
+							Sidebar.this.readPanels();
+							new javax.swing.Timer(700, new java.awt.event.ActionListener() {
+
+								public void actionPerformed(java.awt.event.ActionEvent event) {
+									((javax.swing.Timer) event.getSource()).stop();
+									Sidebar.this.openPanel(pluginKey);
+								}
+							}).start();
+						}
+					}
+				});
+			}
+		});
 	}
 
 	/** One tab on the rail: an icon, a hover, and a bar down its inner edge when it is open. */

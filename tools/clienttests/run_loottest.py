@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Headless test for the loot tracker.
 
-The client is never told that anything died, so the kill is inferred: an npc was standing on a
-tile, it is not standing there now, and loot has landed on it. Every part of that is a rule
-nobody can see working - a window a tick too short credits nothing and looks like a quiet night,
-a kill counted per item reports three kills for one drop - and every failure produces a page of
-plausible numbers.
+The server now says what each kill dropped, in a hidden game message the client reads back
+(LootMessage), so nothing is guessed any more - but every rule after that is still one nobody can
+see working. A kill counted per item reports three kills for one drop; a merge that overwrites
+turns 4,000 coins into the last 12; a save that drops a line forgets a boss; a split line read as
+two kills doubles the count. Every failure produces a page of plausible numbers.
 
-So the rules live in a model with no client in it and are tested as arithmetic. The one thing a
-run cannot state, that the npcs are read before the floor, is read out of the source.
+So the model, the wire and the page are tested as arithmetic, with no client under them.
 
 Needs no display, no network and no cache.
 

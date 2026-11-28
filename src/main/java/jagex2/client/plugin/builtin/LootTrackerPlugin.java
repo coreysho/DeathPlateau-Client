@@ -1,364 +1,641 @@
 package jagex2.client.plugin.builtin;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-import jagex2.client.plugin.Actor;
 import jagex2.client.plugin.ConfigItem;
 import jagex2.client.plugin.ConfigList;
-import jagex2.client.plugin.GroundItem;
-import jagex2.client.plugin.GroundItemPile;
 import jagex2.client.plugin.Plugin;
+import jagex2.client.plugin.PluginConfig;
 import jagex2.client.plugin.PluginDescriptor;
+import jagex2.client.plugin.Sprite;
 import jagex2.client.plugin.Subscribe;
+import jagex2.client.plugin.event.GameStateChanged;
 import jagex2.client.plugin.event.GameTick;
+import jagex2.client.plugin.event.LootReceived;
 
 /**
- * What has died near you this session, and what it dropped.
+ * Everything you have been given, kill by kill: RuneLite's loot tracker.
  *
- * THE CLIENT IS NEVER TOLD THAT ANYTHING DIED. RuneLite's loot tracker listens for an npc
- * despawning while dead and takes the items that spawn on its tile; it can do that because the
- * live client publishes both events. Nothing here does. A plugin sees the npcs in the scene and
- * the items on the floor, one snapshot per tick, and that is all - so the kill is INFERRED, by
- * {@link LootTracker}, from an npc that was standing somewhere, is not standing there now, and
- * has left loot behind.
+ * WHERE THE LOOT COMES FROM. The server says what each kill dropped (LootReceived, from a hidden
+ * game message the engine sends at the end of the tick the drop is rolled), so a box here is
+ * exactly a kill the game credited to you, with exactly what it dropped - not, as this plugin used
+ * to be, a guess from an npc vanishing beside a fresh pile on the floor. Npc kills, players you
+ * kill, clue caskets and the Barrows chest all arrive the same way.
  *
- * WHAT THAT GETS WRONG, said plainly because a tracker that looks precise and is not is worse
- * than one that admits it: a kill made by somebody ELSE next to you is indistinguishable from
- * one of yours, because nothing in the scene says whose it was. In a crowded place this will
- * count kills you had no part in. It does not invent loot out of nothing - an npc that walks
- * away leaves none - and drops it could not attribute to anything are counted separately and
- * shown, rather than quietly left out of the totals.
+ * THE PAGE IS RUNELITE'S. A total across the top; then one box per source, the one that paid out
+ * last at the top, its kill count in the heading and its value on the right, its drops as the
+ * game's own icons with the stack number in them, most valuable first. Click a heading to fold the
+ * box away. Hover an item for its value; right-click it to ignore it, which fades it and takes it
+ * out of every total. The button on the total switches between grouped boxes and one box per
+ * kill, and the last row resets the lot.
  *
- * THE ORDER OF THE TICK MATTERS. The npcs are read and the tiles they left worked out BEFORE the
- * floor is scanned, because an npc's removal and its drop usually land in the same tick: do it
- * the other way round and the loot arrives at a tile that has not been marked vacated yet, and
- * every kill goes uncredited.
+ * KEPT BETWEEN SESSIONS, per account, as RuneLite keeps it - in a file of this plugin's own under
+ * the client's folder, named by a hash of the account rather than the name itself. Switch it off
+ * and each login starts empty, as the session-only tracker did.
  *
- * SESSION ONLY. Nothing here is written to disk. No builtin plugin persists anything but its
- * settings today, and a loot history is a bigger thing than a settings file - it wants to
- * survive a crash, to be per character, and to be trimmed. Worth doing, and worth doing on
- * purpose rather than as a side effect of this.
+ * VALUES ARE THE CACHE'S. There is no Grand Exchange price in this client, so a stack is worth its
+ * store value (the cache's cost) or its high alchemy (60% of that), or the tooltip says both.
  */
 @PluginDescriptor(
 	name = "Loot tracker",
-	description = "What has died near you, and what it dropped",
+	description = "Every kill, casket and chest, and what it dropped, as RuneLite's loot tracker",
 	key = "loot-tracker",
-	apiLevel = 4
+	enabledByDefault = true,
+	apiLevel = 14
 )
 public final class LootTrackerPlugin extends Plugin {
 
-	/** The widest the scene goes, and so the most a radius can usefully be. */
-	static final int MAX_RADIUS = 104;
+	static final String VIEW_GROUPED = "Grouped";
+	static final String VIEW_KILLS = "Per kill";
 
-	@ConfigItem(keyName = "radius", name = "How far away drops are counted",
-		description = "In tiles. Drops further out than this are not seen at all.")
-	public int radius = 12;
+	static final String PRICE_VALUE = "Store value";
+	static final String PRICE_ALCH = "High alch";
+	static final String PRICE_BOTH = "Both";
 
-	@ConfigItem(keyName = "groupBy", name = "List the page by",
-		choices = { "Source", "Item" },
-		description = "One row per thing that died, or one row per kind of item.")
-	public String groupBy = "Source";
+	@ConfigItem(keyName = "view", name = "Show loot",
+		choices = { VIEW_GROUPED, VIEW_KILLS },
+		description = "One box per source with everything it has dropped, or one box per kill.")
+	public String view = VIEW_GROUPED;
 
-	@ConfigItem(keyName = "showUnattributed", name = "Show drops nothing was standing on",
-		description = "Loot that landed where nothing had just died, which the totals leave out.")
-	public boolean showUnattributed = true;
+	@ConfigItem(keyName = "priceType", name = "Value items by",
+		choices = { PRICE_VALUE, PRICE_ALCH, PRICE_BOTH },
+		description = "Store value, high alchemy, or both on hover (totals then use store value).")
+	public String priceType = PRICE_BOTH;
 
-	private final LootTracker tracker = new LootTracker();
+	@ConfigItem(keyName = "saveLoot", name = "Remember loot between sessions",
+		description = "Keep this account's loot when you log out, as RuneLite does.")
+	public boolean saveLoot = true;
 
-	private final GroundItemArrivals arrivals = new GroundItemArrivals();
+	@ConfigItem(keyName = "showIgnored", name = "Show ignored items",
+		description = "Draw ignored items faded at the end of a box, rather than leaving them out.")
+	public boolean showIgnored = true;
+
+	@ConfigItem(keyName = "ignoredItems", name = "Ignored items",
+		description = "Item names to leave out of the totals, separated by commas. * matches anything.")
+	public String ignoredItems = "";
+
+	@ConfigItem(keyName = "hiddenSources", name = "Hidden sources",
+		description = "Names whose boxes are not shown, separated by commas: \"Cow, Chicken\".")
+	public String hiddenSources = "";
+
+	@ConfigItem(keyName = "chatValue", name = "Say what each drop is worth",
+		description = "A chat line after every kill: \"Your loot is worth around 1,234 coins.\"")
+	public boolean chatValue = false;
+
+	final LootTracker tracker = new LootTracker();
+
+	/** The account the history on the page belongs to, "" before one is known. */
+	private String account = "";
+
+	/** Unsaved changes. Written within a few ticks, and on logout and shutdown. */
+	private boolean dirty;
+	private int ticksSinceSave;
+	static final int SAVE_EVERY_TICKS = 50;
+
+	/** Boxes folded away, by source key - or by kill time, in the per-kill view. */
+	private final Set<String> collapsed = new HashSet<String>();
+
+	/** A reset button pressed once, waiting for the second press: what it was, and when. */
+	private String armed;
+	private long armedAt;
+	static final long CONFIRM_MS = 4000;
+
+	/** The rows as last laid out. Taken in size() so a frame's rows agree with each other. */
+	private List<Box> boxes = new ArrayList<Box>();
 
 	@Override
 	protected void startUp() {
-		try {
-			this.addPanel("Loot", "bag", new ConfigList() {
+		this.addPanel("Loot tracker", "bag", new ConfigList() {
 
-				public int size() {
-					return LootTrackerPlugin.this.rowCount();
-				}
+			public int size() {
+				LootTrackerPlugin.this.boxes = LootTrackerPlugin.this.layOut();
+				return LootTrackerPlugin.this.boxes.size();
+			}
 
-				public String label(int index) {
-					return LootTrackerPlugin.this.label(index);
-				}
+			public String label(int index) {
+				Box box = this.box(index);
+				return box == null ? null : box.label;
+			}
 
-				public String detail(int index) {
-					return LootTrackerPlugin.this.detail(index);
-				}
+			public String detail(int index) {
+				Box box = this.box(index);
+				return box == null ? null : box.detail;
+			}
 
-				public String value(int index) {
-					return LootTrackerPlugin.this.value(index);
-				}
+			public String value(int index) {
+				Box box = this.box(index);
+				return box == null ? null : box.value;
+			}
 
-				public jagex2.client.plugin.Sprite[] icons(int index) {
-					return LootTrackerPlugin.this.icons(index);
-				}
+			public String action(int index) {
+				Box box = this.box(index);
+				return box == null ? null : box.action;
+			}
 
-				public boolean removable(int index) {
-					return LootTrackerPlugin.this.bySource() && index < LootTrackerPlugin.this.sources().size();
+			public void onAction(int index) {
+				Box box = this.box(index);
+				if (box != null) {
+					LootTrackerPlugin.this.press(box);
 				}
+			}
 
-				public void onRemove(int index) {
-					LootTrackerPlugin.this.forget(index);
-				}
+			public boolean removable(int index) {
+				return false;
+			}
 
-				public String emptyMessage() {
-					return "Nothing has died near you yet.";
+			public Sprite[] icons(int index) {
+				Box box = this.box(index);
+				if (box == null || box.items == null || LootTrackerPlugin.this.ctx == null) {
+					return null;
 				}
-			});
-		} catch (Throwable olderClient) {
-			// No rail pages in this client. The tracker still records; there is just nowhere to
-			// show it, which is the same bargain every other panel in here makes.
+				Sprite[] out = new Sprite[box.items.size()];
+				for (int i = 0; i < out.length; i++) {
+					LootTracker.Item item = box.items.get(i);
+					long n = item.count;
+					out[i] = LootTrackerPlugin.this.ctx.getObjIcon(item.id, n > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) n);
+				}
+				return out;
+			}
+
+			public String[] iconTips(int index) {
+				Box box = this.box(index);
+				if (box == null || box.items == null) {
+					return null;
+				}
+				String[] out = new String[box.items.size()];
+				for (int i = 0; i < out.length; i++) {
+					out[i] = LootTrackerPlugin.this.tip(box.items.get(i));
+				}
+				return out;
+			}
+
+			public boolean[] iconFaded(int index) {
+				Box box = this.box(index);
+				return box == null ? null : box.faded;
+			}
+
+			public String iconAction(int index) {
+				Box box = this.box(index);
+				return box == null || box.items == null ? null : "Toggle ignore";
+			}
+
+			public void onIconAction(int index, int icon) {
+				Box box = this.box(index);
+				if (box != null && box.items != null && icon >= 0 && icon < box.items.size()) {
+					LootTrackerPlugin.this.toggleIgnore(box.items.get(icon).id);
+				}
+			}
+
+			public boolean clickable(int index) {
+				Box box = this.box(index);
+				return box != null && box.foldKey != null;
+			}
+
+			public void onClick(int index) {
+				Box box = this.box(index);
+				if (box != null && box.foldKey != null) {
+					if (!LootTrackerPlugin.this.collapsed.remove(box.foldKey)) {
+						LootTrackerPlugin.this.collapsed.add(box.foldKey);
+					}
+				}
+			}
+
+			public boolean collapsed(int index) {
+				Box box = this.box(index);
+				return box != null && box.foldKey != null && LootTrackerPlugin.this.collapsed.contains(box.foldKey);
+			}
+
+			public String emptyMessage() {
+				return "Nothing yet. Kill something, open a casket or loot the Barrows chest, and "
+					+ "what it gave you is listed here.";
+			}
+
+			private Box box(int index) {
+				List<Box> all = LootTrackerPlugin.this.boxes;
+				return index >= 0 && index < all.size() ? all.get(index) : null;
+			}
+		});
+	}
+
+	@Override
+	protected void shutDown() {
+		this.saveNow();
+	}
+
+	// ------------------------------------------------------------------ loot coming in
+
+	@Subscribe
+	public void onLootReceived(LootReceived event) {
+		this.claimAccount();
+		List<LootTracker.Item> items = new ArrayList<LootTracker.Item>();
+		for (LootReceived.Item item : event.items) {
+			items.add(new LootTracker.Item(item.id, item.count));
+		}
+		LootTracker.Source source = this.tracker.record(event.type, event.name, event.combatLevel,
+			System.currentTimeMillis(), items);
+		if (source == null) {
+			return;
+		}
+		this.dirty = true;
+		if (this.chatValue && this.ctx != null) {
+			long worth = LootTracker.total(items, this.prices(), this.ignored());
+			this.ctx.addChatMessage("Your loot is worth around " + LootTracker.commas(worth) + " coins.");
 		}
 	}
 
 	@Subscribe
 	public void onGameTick(GameTick tick) {
-		if (!this.ctx.isLoggedIn()) {
+		this.claimAccount();
+		if (this.dirty && ++this.ticksSinceSave >= SAVE_EVERY_TICKS) {
+			this.saveNow();
+		}
+	}
+
+	/**
+	 * Logging out writes the history and empties the page: the next person at this client may be
+	 * somebody else, and the page is theirs once they log in.
+	 */
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event) {
+		if (event.state == GameStateChanged.LOGIN_SCREEN) {
+			this.saveNow();
+			this.tracker.reset();
+			this.collapsed.clear();
+			this.account = "";
+		}
+	}
+
+	/**
+	 * Whose history this is, caught the first tick a name is known, and that account's saved loot
+	 * put back. The name is not there yet when the login event fires, which is why it is asked here.
+	 */
+	private void claimAccount() {
+		if (this.ctx == null || !this.ctx.isLoggedIn() || this.account.length() > 0) {
 			return;
 		}
-		// THE NPCS FIRST. See the class comment: the drop and the removal share a tick, so the
-		// tile has to be marked vacated before the floor is read or nothing is ever credited.
-		this.readNpcs();
-		this.readFloor();
-	}
-
-	/** Every tile an npc covers right now, in world coordinates. */
-	private void readNpcs() {
-		this.tracker.beginTick();
-		int plane = this.ctx.getPlane();
-		List<Actor> npcs = this.ctx.getNpcs();
-		for (int i = 0; i < npcs.size(); i++) {
-			Actor npc = npcs.get(i);
-			if (!npc.isNpc()) {
-				continue;
-			}
-			// A BIG NPC COVERS A SQUARE OF TILES and its drop can land on any of them, so all of
-			// them are declared. Its tile is the south-west one, which is the corner the client
-			// positions it from.
-			int size = npc.size < 1 ? 1 : npc.size;
-			for (int dx = 0; dx < size; dx++) {
-				for (int dz = 0; dz < size; dz++) {
-					this.tracker.standing(LootTracker.tileKey(
-						this.ctx.sceneToWorldX(npc.sceneTileX + dx),
-						this.ctx.sceneToWorldZ(npc.sceneTileZ + dz),
-						plane), npc.name);
+		String who = this.ctx.getPlayerName();
+		if (who == null || who.length() == 0) {
+			return;
+		}
+		this.account = who;
+		if (this.saveLoot) {
+			// Loot that arrived before the name did - a kill on the very first tick - is kept and
+			// added on top of what was saved, rather than thrown away by the load.
+			String pending = this.tracker.isEmpty() ? null : this.tracker.save();
+			this.tracker.load(this.readData(fileFor(who)));
+			if (pending != null) {
+				LootTracker extra = new LootTracker();
+				extra.load(pending);
+				for (int i = extra.kills().size() - 1; i >= 0; i--) {
+					LootTracker.Kill kill = extra.kills().get(i);
+					this.tracker.record(kill.type, kill.name, kill.level, kill.time, kill.items);
 				}
 			}
 		}
-		this.tracker.endTick();
 	}
 
-	/** Everything that has appeared on the floor since the last look. */
-	private void readFloor() {
-		int radius = this.radius < 1 ? 1 : this.radius > MAX_RADIUS ? MAX_RADIUS : this.radius;
-		int plane = this.ctx.getPlane();
-		List<GroundItemPile> piles = this.ctx.getGroundItemPiles(radius);
-		this.arrivals.begin();
-		for (int i = 0; i < piles.size(); i++) {
-			GroundItemPile pile = piles.get(i);
-			int worldX = this.ctx.sceneToWorldX(pile.sceneTileX);
-			int worldZ = this.ctx.sceneToWorldZ(pile.sceneTileZ);
-			for (int j = 0; j < pile.items.size(); j++) {
-				GroundItem item = pile.items.get(j);
-				if (!this.arrivals.add(GroundItemArrivals.key(worldX, worldZ, plane, item.id))) {
-					continue;
+	/** The file an account's history is kept in: a hash of the name, so no name is written down. */
+	static String fileFor(String account) {
+		String name = account.trim().toLowerCase().replace(' ', '_');
+		try {
+			java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
+			byte[] hash = sha.digest(name.getBytes("UTF-8"));
+			StringBuilder out = new StringBuilder("loot-");
+			for (int i = 0; i < 8; i++) {
+				out.append(String.format("%02x", hash[i] & 0xFF));
+			}
+			return out.append(".txt").toString();
+		} catch (Exception e) {
+			return "loot-" + Integer.toHexString(name.hashCode()) + ".txt";
+		}
+	}
+
+	private void saveNow() {
+		this.ticksSinceSave = 0;
+		if (!this.dirty) {
+			return;
+		}
+		this.dirty = false;
+		if (this.saveLoot && this.account.length() > 0) {
+			this.writeData(fileFor(this.account), this.tracker.save());
+		}
+	}
+
+	// ------------------------------------------------------------------ prices and ignores
+
+	/** What one of an item is worth, by the setting. Totals use store value when it is "Both". */
+	LootTracker.Prices prices() {
+		final boolean alch = PRICE_ALCH.equals(this.priceType);
+		return new LootTracker.Prices() {
+			public long value(int objId) {
+				long value = LootTrackerPlugin.this.ctx == null ? 0 : LootTrackerPlugin.this.ctx.getObjValue(objId);
+				return alch ? value * 6 / 10 : value;
+			}
+		};
+	}
+
+	/** The ignored-items setting, read as RuneLite reads its own: names, any case, * for anything. */
+	LootTracker.Ignored ignored() {
+		final List<String> patterns = splitList(this.ignoredItems);
+		return new LootTracker.Ignored() {
+			public boolean is(int objId) {
+				if (patterns.isEmpty() || LootTrackerPlugin.this.ctx == null) {
+					return false;
 				}
-				this.tracker.record(LootTracker.tileKey(worldX, worldZ, plane),
-					item.id, item.name, item.count, item.price);
+				String name = LootTrackerPlugin.this.ctx.getObjName(objId).toLowerCase();
+				for (String pattern : patterns) {
+					if (matches(pattern, name)) {
+						return true;
+					}
+				}
+				return false;
 			}
+		};
+	}
+
+	static List<String> splitList(String text) {
+		List<String> out = new ArrayList<String>();
+		if (text == null) {
+			return out;
 		}
-		this.arrivals.finish();
-	}
-
-	// ------------------------------------------------------------------ the page
-
-	boolean bySource() {
-		return !"Item".equals(this.groupBy);
-	}
-
-	List<LootTracker.Source> sources() {
-		return this.tracker.bySource();
-	}
-
-	List<LootTracker.Item> items() {
-		return this.tracker.byItem();
-	}
-
-	/** The tracker itself, for the test - the plugin is the wiring, the rules are in there. */
-	LootTracker tracker() {
-		return this.tracker;
-	}
-
-	/**
-	 * Rows: the loot, then a total, then the drops nothing could be credited for.
-	 *
-	 * The two trailing rows are part of the list rather than a header because a ConfigList is all
-	 * there is - and the unattributed row has to be IN the list, where a player reading the
-	 * totals will see it, rather than somewhere it can be missed.
-	 */
-	int rowCount() {
-		int rows = this.bySource() ? this.sources().size() : this.items().size();
-		if (rows == 0) {
-			return 0;
-		}
-		return rows + 1 + (this.unattributedRow() ? 1 : 0);
-	}
-
-	private boolean unattributedRow() {
-		return this.showUnattributed && this.tracker.unattributed() > 0;
-	}
-
-	/** Which trailing row this index is: 1 the total, 2 the unattributed one, 0 a loot row. */
-	int trailing(int index) {
-		int rows = this.bySource() ? this.sources().size() : this.items().size();
-		if (index < rows) {
-			return 0;
-		}
-		if (index == rows) {
-			return 1;
-		}
-		return index == rows + 1 && this.unattributedRow() ? 2 : -1;
-	}
-
-	String label(int index) {
-		int trailing = this.trailing(index);
-		if (trailing == 1) {
-			return "Total";
-		}
-		if (trailing == 2) {
-			return "Nothing was standing there";
-		}
-		if (trailing != 0) {
-			return "";
-		}
-		if (this.bySource()) {
-			List<LootTracker.Source> sources = this.sources();
-			if (index >= sources.size()) {
-				return "";
+		for (String part : text.split(",")) {
+			String clean = part.trim().toLowerCase();
+			if (clean.length() > 0) {
+				out.add(clean);
 			}
-			LootTracker.Source source = sources.get(index);
-			// "Zulrah x 13" - the count belongs beside the name, where the eye already is,
-			// rather than in the value column, which is the gp.
-			return source.name + "  x " + source.kills;
-		}
-		List<LootTracker.Item> items = this.items();
-		return index < items.size() ? items.get(index).name : "";
-	}
-
-	String value(int index) {
-		int trailing = this.trailing(index);
-		if (trailing == 1) {
-			return LootTracker.gp(this.tracker.total());
-		}
-		if (trailing == 2) {
-			return LootTracker.gp(this.tracker.unattributedValue());
-		}
-		if (trailing != 0) {
-			return "";
-		}
-		if (this.bySource()) {
-			List<LootTracker.Source> sources = this.sources();
-			return index < sources.size() ? LootTracker.gp(sources.get(index).value) : "";
-		}
-		List<LootTracker.Item> items = this.items();
-		return index < items.size() ? LootTracker.gp(items.get(index).value) : "";
-	}
-
-	String detail(int index) {
-		int trailing = this.trailing(index);
-		if (trailing == 1) {
-			return this.tracker.kills() + (this.tracker.kills() == 1 ? " kill" : " kills");
-		}
-		if (trailing == 2) {
-			return this.tracker.unattributed() + " drops, not counted above";
-		}
-		if (trailing != 0) {
-			return "";
-		}
-		if (this.bySource()) {
-			List<LootTracker.Source> sources = this.sources();
-			if (index >= sources.size()) {
-				return "";
-			}
-			LootTracker.Source source = sources.get(index);
-			// The drops are drawn under this line now, so naming the best one here would say
-			// twice what the picture already says once.
-			int kinds = source.items().size();
-			String kills = source.kills + (source.kills == 1 ? " kill" : " kills");
-			return kinds > MAX_ICONS ? kills + ", showing " + MAX_ICONS + " of " + kinds + " drops" : kills;
-		}
-		List<LootTracker.Item> items = this.items();
-		if (index >= items.size()) {
-			return "";
-		}
-		return LootTracker.commas(items.get(index).count) + " of them";
-	}
-
-	/**
-	 * The drops to draw under a row, as the game's own inventory icons.
-	 *
-	 * PICTURES RATHER THAN A LIST OF NAMES, which is what this page showed first and what sent
-	 * it back for another go. A kill's drops are a thing a player glances at - twelve icons in
-	 * a block are read at once, where "2947 x Zulrah's scales, 30 x Grimy ranarr weed, ..." has
-	 * to be read a word at a time and does not fit in the column anyway. The stack number is
-	 * drawn into the icon by the cache, in the game's own numerals, so a row looks like the
-	 * drop did on the floor.
-	 *
-	 * Most valuable first, as the rows are, and capped so one enormous haul cannot push the
-	 * rest of the page off the bottom.
-	 */
-	jagex2.client.plugin.Sprite[] icons(int index) {
-		List<LootTracker.Item> items = this.gridItems(index);
-		if (items == null || this.ctx == null) {
-			return null;
-		}
-		jagex2.client.plugin.Sprite[] out = new jagex2.client.plugin.Sprite[items.size()];
-		for (int i = 0; i < out.length; i++) {
-			LootTracker.Item item = items.get(i);
-			long n = item.count;
-			out[i] = this.ctx.getObjIcon(item.id, n > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) n);
 		}
 		return out;
 	}
 
-	/**
-	 * WHICH drops a row's grid shows, in order, before any of them are drawn.
-	 *
-	 * Split from {@link #icons} so the choice can be tested: the icons themselves need a cache
-	 * to draw and a headless run has none, but which items are picked, in what order, and how
-	 * many of them, is arithmetic over the tracker and is where this can go wrong.
-	 */
-	List<LootTracker.Item> gridItems(int index) {
-		if (index < 0 || this.trailing(index) != 0) {
-			return null;
+	/** A name against a pattern where * matches any run of characters. Both already lower case. */
+	static boolean matches(String pattern, String name) {
+		if (pattern.indexOf('*') < 0) {
+			return pattern.equals(name);
 		}
-		List<LootTracker.Item> items;
-		if (this.bySource()) {
-			List<LootTracker.Source> sources = this.sources();
-			if (index >= sources.size()) {
-				return null;
+		String[] parts = pattern.split("\\*", -1);
+		int at = 0;
+		for (int i = 0; i < parts.length; i++) {
+			String part = parts[i];
+			if (part.length() == 0) {
+				continue;
 			}
-			items = sources.get(index).items();
-		} else {
-			List<LootTracker.Item> all = this.items();
-			if (index >= all.size()) {
-				return null;
+			int found = name.indexOf(part, at);
+			if (found < 0 || i == 0 && found != 0) {
+				return false;
 			}
-			// In the item view a row IS one kind, so its grid is that one icon.
-			items = all.subList(index, index + 1);
+			at = found + part.length();
 		}
-		return items.size() > MAX_ICONS ? items.subList(0, MAX_ICONS) : items;
+		String last = parts[parts.length - 1];
+		return last.length() == 0 || name.endsWith(last);
 	}
 
-	/** As many drops as a row shows before it stops, so one haul cannot fill the page. */
-	static final int MAX_ICONS = 25;
-
-	void forget(int index) {
-		if (!this.bySource()) {
+	/** Ignores an item by name, or stops ignoring it, and saves the setting. */
+	void toggleIgnore(int objId) {
+		if (this.ctx == null) {
 			return;
 		}
-		List<LootTracker.Source> sources = this.sources();
-		if (index >= 0 && index < sources.size()) {
-			this.tracker.forget(sources.get(index).name);
+		String name = this.ctx.getObjName(objId);
+		if (name.length() == 0) {
+			return;
+		}
+		List<String> list = splitList(this.ignoredItems);
+		String key = name.toLowerCase();
+		List<String> kept = new ArrayList<String>();
+		boolean removed = false;
+		for (String entry : list) {
+			if (entry.equals(key)) {
+				removed = true;
+			} else {
+				kept.add(entry);
+			}
+		}
+		StringBuilder out = new StringBuilder();
+		for (String entry : this.originalCase(kept)) {
+			out.append(out.length() == 0 ? "" : ", ").append(entry);
+		}
+		if (!removed) {
+			out.append(out.length() == 0 ? "" : ", ").append(name);
+		}
+		this.saveSetting("ignoredItems", out.toString());
+	}
+
+	/** The entries as the player typed them, kept in their own capitals. */
+	private List<String> originalCase(List<String> lower) {
+		List<String> out = new ArrayList<String>();
+		for (String part : this.ignoredItems.split(",")) {
+			String clean = part.trim();
+			if (clean.length() > 0 && lower.contains(clean.toLowerCase())) {
+				out.add(clean);
+			}
+		}
+		return out;
+	}
+
+	private void saveSetting(String key, String value) {
+		if ("ignoredItems".equals(key)) {
+			this.ignoredItems = value;
+		}
+		if (this.config == null) {
+			return;
+		}
+		List<PluginConfig.Item> items = this.config.getItems();
+		for (int i = 0; i < items.size(); i++) {
+			if (key.equals(items.get(i).key)) {
+				this.config.set(items.get(i), value);
+				return;
+			}
+		}
+	}
+
+	/** An item's hover: what it is, how many, and what they are worth by the setting. */
+	String tip(LootTracker.Item item) {
+		if (this.ctx == null) {
+			return "";
+		}
+		String name = this.ctx.getObjName(item.id);
+		long each = this.ctx.getObjValue(item.id);
+		long alch = each * 6 / 10;
+		StringBuilder out = new StringBuilder("<html>");
+		out.append(escape(name)).append(" x ").append(LootTracker.commas(item.count));
+		if (!PRICE_ALCH.equals(this.priceType)) {
+			out.append("<br>Store value: ").append(LootTracker.commas(item.count * each));
+			if (item.count > 1) {
+				out.append(" (").append(LootTracker.commas(each)).append(" ea)");
+			}
+		}
+		if (!PRICE_VALUE.equals(this.priceType)) {
+			out.append("<br>High alch: ").append(LootTracker.commas(item.count * alch));
+			if (item.count > 1) {
+				out.append(" (").append(LootTracker.commas(alch)).append(" ea)");
+			}
+		}
+		if (this.ignored().is(item.id)) {
+			out.append("<br><i>Ignored</i>");
+		}
+		return out.append("</html>").toString();
+	}
+
+	private static String escape(String text) {
+		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	// ------------------------------------------------------------------ the page
+
+	/** One row of the page. */
+	static final class Box {
+
+		String label;
+		String detail;
+		String value;
+		String action;
+		/** What the action button does: "view", "reset-all", or a source key to reset. */
+		String does;
+		/** What folding it remembers it by, or null for a row that does not fold. */
+		String foldKey;
+		List<LootTracker.Item> items;
+		boolean[] faded;
+	}
+
+	boolean grouped() {
+		return !VIEW_KILLS.equals(this.view);
+	}
+
+	/** The rows: the total, the boxes, and the reset. Nothing at all until there is loot. */
+	List<Box> layOut() {
+		List<Box> out = new ArrayList<Box>();
+		if (this.tracker.isEmpty()) {
+			return out;
+		}
+		LootTracker.Prices prices = this.prices();
+		LootTracker.Ignored ignored = this.ignored();
+		Set<String> hidden = new HashSet<String>(splitList(this.hiddenSources));
+		long now = System.currentTimeMillis();
+		this.disarmIfStale(now);
+
+		Box total = new Box();
+		int kills = this.tracker.totalKills();
+		int hiddenCount = 0;
+		for (LootTracker.Source source : this.tracker.sources()) {
+			if (hidden.contains(source.name.toLowerCase())) {
+				hiddenCount++;
+			}
+		}
+		total.label = "Total";
+		total.detail = LootTracker.commas(kills) + (kills == 1 ? " kill" : " kills")
+			+ (hiddenCount > 0 ? ", " + hiddenCount + " hidden" : "");
+		total.value = LootTracker.gp(this.tracker.total(prices, ignored, hidden));
+		total.action = this.grouped() ? VIEW_GROUPED : VIEW_KILLS;
+		total.does = "view";
+		out.add(total);
+
+		if (this.grouped()) {
+			for (LootTracker.Source source : this.tracker.sources()) {
+				if (hidden.contains(source.name.toLowerCase())) {
+					continue;
+				}
+				Box box = this.itemsBox(source.items(), prices, ignored);
+				box.label = title(source.name, source.level) + " x " + LootTracker.commas(source.kills);
+				box.value = LootTracker.gp(LootTracker.total(source.items(), prices, ignored));
+				box.foldKey = source.key();
+				box.does = source.key();
+				box.action = source.key().equals(this.armed) ? "Confirm" : "Reset";
+				out.add(box);
+			}
+		} else {
+			List<LootTracker.Kill> list = this.tracker.kills();
+			for (int i = 0; i < list.size(); i++) {
+				LootTracker.Kill kill = list.get(i);
+				if (hidden.contains(kill.name.toLowerCase())) {
+					continue;
+				}
+				Box box = this.itemsBox(kill.items, prices, ignored);
+				box.label = title(kill.name, kill.level);
+				box.detail = LootTracker.ago(kill.time, now) + (box.detail == null ? "" : ", " + box.detail);
+				box.value = LootTracker.gp(LootTracker.total(kill.items, prices, ignored));
+				box.foldKey = "kill:" + kill.time + ":" + kill.key();
+				out.add(box);
+			}
+		}
+
+		Box reset = new Box();
+		reset.label = "Reset all";
+		reset.detail = this.saveLoot ? "Every box, and this account's saved loot" : "Every box";
+		reset.action = "reset-all".equals(this.armed) ? "Confirm" : "Reset";
+		reset.does = "reset-all";
+		out.add(reset);
+		return out;
+	}
+
+	/** A box's grid: its items sorted, the ignored ones faded at the end or left out. */
+	private Box itemsBox(List<LootTracker.Item> items, LootTracker.Prices prices, LootTracker.Ignored ignored) {
+		Box box = new Box();
+		List<LootTracker.Item> sorted = LootTracker.sorted(items, prices, ignored);
+		List<LootTracker.Item> shown = new ArrayList<LootTracker.Item>();
+		int left = 0;
+		for (LootTracker.Item item : sorted) {
+			if (ignored.is(item.id) && !this.showIgnored) {
+				left++;
+				continue;
+			}
+			shown.add(item);
+		}
+		box.items = shown;
+		box.faded = new boolean[shown.size()];
+		for (int i = 0; i < shown.size(); i++) {
+			box.faded[i] = ignored.is(shown.get(i).id);
+		}
+		if (shown.isEmpty() && left == 0) {
+			box.detail = "Nothing dropped";
+		} else if (left > 0) {
+			box.detail = left + (left == 1 ? " ignored item hidden" : " ignored items hidden");
+		}
+		return box;
+	}
+
+	/** "Black dragon (lvl-227)", or the name alone for a casket, a chest or a level of 0. */
+	static String title(String name, int level) {
+		return level > 0 ? name + " (lvl-" + level + ")" : name;
+	}
+
+	/**
+	 * A button pressed. The view switch acts at once; a reset asks twice - the first press turns
+	 * the button into "Confirm" for a few seconds, and only a second press inside that resets -
+	 * because a page with no undo should not be one stray click from empty.
+	 */
+	void press(Box box) {
+		long now = System.currentTimeMillis();
+		this.disarmIfStale(now);
+		if ("view".equals(box.does)) {
+			this.view = this.grouped() ? VIEW_KILLS : VIEW_GROUPED;
+			this.saveSetting("view", this.view);
+			return;
+		}
+		if (box.does == null) {
+			return;
+		}
+		if (!box.does.equals(this.armed)) {
+			this.armed = box.does;
+			this.armedAt = now;
+			return;
+		}
+		this.armed = null;
+		if ("reset-all".equals(box.does)) {
+			this.tracker.reset();
+			this.collapsed.clear();
+		} else {
+			this.tracker.forget(box.does);
+			this.collapsed.remove(box.does);
+		}
+		this.dirty = true;
+		this.saveNow();
+	}
+
+	private void disarmIfStale(long now) {
+		if (this.armed != null && now - this.armedAt > CONFIRM_MS) {
+			this.armed = null;
 		}
 	}
 }
