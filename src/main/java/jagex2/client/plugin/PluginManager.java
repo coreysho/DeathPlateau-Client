@@ -71,7 +71,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.FarmPatchesPlugin",
 		"jagex2.client.plugin.builtin.SlayerPlugin",
 		"jagex2.client.plugin.builtin.CluePlugin",
-		"jagex2.client.plugin.builtin.QuestHelperPlugin"
+		"jagex2.client.plugin.builtin.QuestHelperPlugin",
+		"jagex2.client.plugin.builtin.CannonPlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */
