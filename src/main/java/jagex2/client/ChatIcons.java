@@ -119,6 +119,11 @@ public final class ChatIcons {
 	 * Draw a line with its icons, starting at x in the given colour. An icon whose sprite did not
 	 * load (a cache older than this client) takes no space, so the line closes up around it rather
 	 * than leaving a gap.
+	 *
+	 * THE @sh1@ SHADOW IS TRANSLUCENT (DeathPlateau-Bugs#40): drawStringTagShadowTrans rather than
+	 * drawStringTag, so the hover text drawn through here matches the one drawn through
+	 * drawStringAntiMacro when there is no icon to place. The two used to differ, and the opaque
+	 * one read as a duplicate of the text once the game scale magnified its one-pixel offset.
 	 */
 	public static void draw(PixFont font, Pix8[] icons, int x, int y, int colour, String text) {
 		boolean shadow = false;
@@ -131,7 +136,7 @@ public final class ChatIcons {
 			}
 			if (i > start) {
 				String piece = text.substring(start, i);
-				font.drawStringTag(colour, x, y, shadow, piece);
+				font.drawStringTagShadowTrans(colour, x, y, shadow, piece);
 				x += font.stringWidTag(piece);
 				colour = endColour(font, piece, colour);
 			}
@@ -147,7 +152,7 @@ public final class ChatIcons {
 			start = i + 1;
 		}
 		if (start < text.length()) {
-			font.drawStringTag(colour, x, y, shadow, text.substring(start));
+			font.drawStringTagShadowTrans(colour, x, y, shadow, text.substring(start));
 		}
 	}
 
