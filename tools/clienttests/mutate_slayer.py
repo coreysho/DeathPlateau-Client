@@ -54,8 +54,8 @@ MUTS = [
 
     # ---- THE MASTER.
     (PLUGIN, 'the master list off by one, so every task is credited to the master below',
-     '\tstatic final String[] MASTER = { "", "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel" };',
-     '\tstatic final String[] MASTER = { "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel", "" };'),
+     '\tstatic final String[] MASTER = { "", "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel", "the One-armed veteran" };',
+     '\tstatic final String[] MASTER = { "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel", "the One-armed veteran", "" };'),
     (PLUGIN, 'an unrecorded master named as somebody, rather than as nobody',
      '\t\treturn master < 0 || master >= MASTER.length ? "" : MASTER[master];',
      '\t\treturn master < 0 || master >= MASTER.length ? "Turael" : MASTER[master];'),

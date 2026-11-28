@@ -19,7 +19,7 @@ public final class SlayerTasks {
 	}
 
 	/** Indexed by slayer_target; "" for a number no task uses. */
-	static final String[] NAME = new String[81];
+	static final String[] NAME = new String[88];
 
 	static {
 		for (int i = 0; i < NAME.length; i++) {
@@ -105,6 +105,13 @@ public final class SlayerTasks {
 		NAME[78] = "Aviansies";
 		NAME[79] = "Ankou";
 		NAME[80] = "Lava Dragons";
+		NAME[81] = "Bandits";
+		NAME[82] = "Chaos Druids";
+		NAME[83] = "Dark Warriors";
+		NAME[84] = "Magic Axes";
+		NAME[85] = "Pirates";
+		NAME[86] = "Rogues";
+		NAME[87] = "Black Knights";
 	}
 
 	/** How many tasks the content defines. */
