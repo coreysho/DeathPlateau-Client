@@ -304,6 +304,48 @@ public final class QuestHelperPlugin extends Plugin {
 	public String trackedQuest = "";
 
 	/**
+	 * How far through each leg this ACCOUNT had got, kept across a logout.
+	 *
+	 * WHY IT IS KEYED ON A NAME. Stage.doneTo is what the player was SEEN to do - the clicks this
+	 * session watched - and logging out threw all of it away on purpose: "the next player at this
+	 * client may be somebody else entirely, and 'you have already talked to him' is the last thing
+	 * they need to be told about a quest they have not started." That reasoning is sound and it is
+	 * kept. What was wrong was the price: the SAME player came back and a leg made of plain talk
+	 * steps restarted at its first step, because a talk leaves no trace in the game for
+	 * {@link #reached} to find - no item, nothing worn, no mark. Reported as "quest helper
+	 * restarts from the beginning of a quest after logout" (DeathPlateau-Bugs#45).
+	 *
+	 * So the progress is saved WITH the name of the account it belongs to, and put back only for
+	 * that account. The same player resumes; the next person at that client is read as not
+	 * matching and gets nothing, which is the behaviour the logout handler was protecting.
+	 *
+	 * ONE ACCOUNT, NOT A LIST, and that is deliberate rather than lazy. Keeping every account's
+	 * marks would write other people's names into a file on a shared machine - a thing at rest
+	 * that is not there today - to spare an alt-switcher some tick marks. Switching accounts
+	 * drops the previous one's progress, which is exactly what happens today anyway.
+	 *
+	 * NOT MEANT TO BE EDITED, but it is text in a text file like every other setting, so
+	 * {@link #restoreProgress} treats every part of it as untrusted: an unknown quest id, a leg
+	 * that is no longer in the table, a number that is not one, a step index past the end of the
+	 * leg. None of those may throw, and none of them may put a step in front of the player that
+	 * they have not reached.
+	 */
+	@ConfigItem(keyName = "progress", name = "Saved step progress",
+		description = "Which steps you had ticked off, for one account - written by the plugin")
+	public String savedProgress = "";
+
+	/**
+	 * The account the progress belongs to, caught while logged IN.
+	 *
+	 * Because the logout handler cannot ask: isLoggedIn() is already false by the time it runs
+	 * and getPlayerName() is "" - the name has to be in hand before the thing that needs it.
+	 */
+	private String account = "";
+
+	/** False until this login's saved progress has been put back, so it is put back once. */
+	private boolean restored;
+
+	/**
 	 * True while the page is showing the quest list instead of the tracked quest's steps.
 	 *
 	 * THE PAGE OPENS ON THE LIST when there is nothing to follow, and it is the player's pick
@@ -615,17 +657,7 @@ public final class QuestHelperPlugin extends Plugin {
 		this.trackedQuest = want;
 		// The pending click belonged to the quest we have just left.
 		this.waiting = null;
-		try {
-			List<PluginConfig.Item> items = this.config == null ? null : this.config.getItems();
-			for (int i = 0; items != null && i < items.size(); i++) {
-				if ("tracked".equals(items.get(i).key)) {
-					this.config.set(items.get(i), want);
-					return;
-				}
-			}
-		} catch (Throwable ignored) {
-			// A page that cannot save the pin still follows the quest for this session.
-		}
+		this.setSetting("tracked", want);
 	}
 
 	/**
@@ -1390,6 +1422,24 @@ public final class QuestHelperPlugin extends Plugin {
 			return;
 		}
 		this.tick = tick.count;
+		// WHO IS PLAYING, asked every tick and acted on once.
+		//
+		// NOT IN onGameStateChanged: a login fires that handler before the name has arrived, so
+		// getPlayerName() is still "" there and the account could not be matched. Here the name is
+		// in hand by definition - onGameTick has already returned unless isLoggedIn() - and the
+		// restore costs one string compare a tick once it has happened.
+		//
+		// BEFORE followTheQuestYouAreDoing, because doneTo is what legNow reads to decide which
+		// leg to show: restoring after it would show the player the first step of a leg they had
+		// finished, for one tick, on every login.
+		if (!this.restored) {
+			String who = ctx.getPlayerName();
+			if (!who.isEmpty()) {
+				this.account = who;
+				this.restoreProgress(who);
+				this.restored = true;
+			}
+		}
 		// BEFORE THE HIGHLIGHT CHECK, both of them: which quest the player is in the middle of
 		// and how far into it they are have nothing to do with whether they want a box drawn
 		// round the target, and a player with the highlight off was left with a page that never
@@ -1610,6 +1660,148 @@ public final class QuestHelperPlugin extends Plugin {
 	}
 
 	/**
+	 * This account's ticked-off steps as one line, or "" when there are none to keep.
+	 *
+	 * `account|questid:legFrom=doneTo,legFrom=doneTo;questid:...`
+	 *
+	 * LEGS ARE NAMED BY THEIR `from` VALUE and not by their position in the list. The table is
+	 * regenerated from the content whenever a quest changes, and a leg inserted in the middle of
+	 * one would silently shift every index after it - so a saved file would start handing a
+	 * player progress through a leg they had never seen. `from` is the stage var value the leg
+	 * belongs to, which is the one thing about it that cannot move without it being a different
+	 * leg.
+	 *
+	 * Only legs with something to say are written, so the line stays short: a player part-way
+	 * through one quest writes one quest.
+	 */
+	private String progressFor(String who) {
+		if (who == null || who.isEmpty()) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		for (Quest q : this.quests) {
+			StringBuilder legs = new StringBuilder();
+			for (Stage st : q.stages) {
+				if (st.doneTo < 0) {
+					continue;
+				}
+				if (legs.length() > 0) {
+					legs.append(',');
+				}
+				legs.append(st.from).append('=').append(st.doneTo);
+			}
+			if (legs.length() == 0) {
+				continue;
+			}
+			if (out.length() > 0) {
+				out.append(';');
+			}
+			out.append(q.id).append(':').append(legs);
+		}
+		// NOTHING TO SAY IS AN EMPTY SETTING, not a bare account name. A name on its own would be
+		// one more person written to disk on a shared machine for no benefit at all.
+		if (out.length() == 0) {
+			return "";
+		}
+		return who + "|" + out;
+	}
+
+	/** Write the progress for whoever is logged in, over whatever was there. */
+	private void saveProgress() {
+		this.setSetting("progress", this.progressFor(this.account));
+	}
+
+	/**
+	 * Put this account's saved steps back, if the saved line belongs to this account.
+	 *
+	 * RAISES, NEVER LOWERS. doneTo is a floor under {@link #reached} - the bag and the quest's
+	 * flags may say more than the clicks did, never less - so a saved value is merged in with
+	 * max() rather than assigned. A file claiming less than the player can prove cannot drag them
+	 * backwards, and one claiming more than the leg has steps for is clamped.
+	 */
+	private void restoreProgress(String who) {
+		String saved = this.savedProgress;
+		if (saved == null || saved.isEmpty() || who == null || who.isEmpty()) {
+			return;
+		}
+		int bar = saved.indexOf('|');
+		// SOMEBODY ELSE'S LINE IS NOT READ. This is the whole reason the name is in there, and
+		// the reason the logout wipe can be kept exactly as it was.
+		if (bar <= 0 || !saved.substring(0, bar).equals(who)) {
+			return;
+		}
+		for (String entry : saved.substring(bar + 1).split(";")) {
+			int colon = entry.indexOf(':');
+			if (colon <= 0) {
+				continue;
+			}
+			Quest q = this.questById(entry.substring(0, colon));
+			// A QUEST THAT IS NO LONGER IN THE TABLE, renamed or dropped between releases.
+			if (q == null) {
+				continue;
+			}
+			for (String pair : entry.substring(colon + 1).split(",")) {
+				int eq = pair.indexOf('=');
+				if (eq <= 0) {
+					continue;
+				}
+				int from;
+				int at;
+				try {
+					from = Integer.parseInt(pair.substring(0, eq).trim());
+					at = Integer.parseInt(pair.substring(eq + 1).trim());
+				} catch (RuntimeException notANumber) {
+					continue;
+				}
+				if (at < 0) {
+					continue;
+				}
+				for (Stage st : q.stages) {
+					if (st.from != from) {
+						continue;
+					}
+					int last = st.steps.size() - 1;
+					int want = at > last ? last : at;
+					if (want > st.doneTo) {
+						st.doneTo = want;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	/** The quest with this id, or null - the saved line may name one that has since gone. */
+	private Quest questById(String id) {
+		for (Quest q : this.quests) {
+			if (q.id.equals(id)) {
+				return q;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Write one setting through the config, so it reaches the file as well as the field.
+	 *
+	 * Pulled out of {@link #follow}, which did this inline for "tracked" alone. A page that
+	 * cannot save still works for this session.
+	 */
+	private void setSetting(String key, String value) {
+		try {
+			List<PluginConfig.Item> items = this.config == null ? null : this.config.getItems();
+			for (int i = 0; items != null && i < items.size(); i++) {
+				if (key.equals(items.get(i).key)) {
+					this.config.set(items.get(i), value);
+					return;
+				}
+			}
+		} catch (Throwable ignored) {
+			// A page that cannot save the setting still has it for this session.
+		}
+	}
+
+	/**
 	 * Logging out is the end of this character's progress.
 	 *
 	 * WHAT THE CLICKS SAID GOES WITH THEM. The next player at this client may be somebody else
@@ -1622,11 +1814,17 @@ public final class QuestHelperPlugin extends Plugin {
 		if (event == null || event.isLoggedIn()) {
 			return;
 		}
+		// WRITTEN DOWN BEFORE IT IS THROWN AWAY, and in that order: progressFor reads the very
+		// doneTo values the loop below sets back to -1, so saving after it would save nothing.
+		this.saveProgress();
 		for (Quest q : this.quests) {
 			forget(q);
 		}
 		this.was = null;
 		this.waiting = null;
+		// The next login is a different character until it proves otherwise.
+		this.restored = false;
+		this.account = "";
 	}
 
 	/**
