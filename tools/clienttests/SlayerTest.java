@@ -118,6 +118,9 @@ public class SlayerTest {
 	static void masterTests() {
 		check("Turael".equals(SlayerPlugin.masterName(1)), "1 is Turael");
 		check("Duradel".equals(SlayerPlugin.masterName(5)), "5 is Duradel");
+		check("the One-armed veteran".equals(SlayerPlugin.masterName(6)), "6 is the One-armed veteran, the Wilderness master");
+		check("40 left, from the One-armed veteran".equals(SlayerPlugin.taskDetail(40, 6)),
+			"and his task reads as a sentence");
 		check("".equals(SlayerPlugin.masterName(0)),
 			"0 is a task from before the master was recorded, and names nobody");
 		check("".equals(SlayerPlugin.masterName(9)) && "".equals(SlayerPlugin.masterName(-1)),

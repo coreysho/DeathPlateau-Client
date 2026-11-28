@@ -48,13 +48,16 @@ public final class SlayerPlugin extends Plugin {
 	static final int VARP_MASTER = 867;
 
 	/**
-	 * Who gives tasks, in the order slayer.varp numbers them: 1 Turael through 5 Duradel.
+	 * Who gives tasks, in the order slayer.varp numbers them: 1 Turael through 5 Duradel, and 6
+	 * the One-armed veteran, the Wilderness master (content's ^slayer_master_veteran).
 	 *
-	 * Five names written out rather than looked up. Everything else here comes from the content
-	 * because there is a lot of it and it moves; this is five words that have not changed since
-	 * 2005, and a generator for them would be more machinery than the thing it generates.
+	 * Six names written out rather than looked up. Everything else here comes from the content
+	 * because there is a lot of it and it moves; these are six words that change once in a blue
+	 * moon, and a generator for them would be more machinery than the thing it generates. The
+	 * veteran's carries its article because it is read in a sentence: "40 left, from the
+	 * One-armed veteran".
 	 */
-	static final String[] MASTER = { "", "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel" };
+	static final String[] MASTER = { "", "Turael", "Mazchna", "Vannaka", "Chaeldar", "Duradel", "the One-armed veteran" };
 
 	@ConfigItem(keyName = "showStreak", name = "Show the streak and points",
 		description = "Turn off for just the task and what is left of it.")
