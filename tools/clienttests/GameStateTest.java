@@ -443,10 +443,10 @@ public class GameStateTest {
 	// ------------------------------------------------------------------ 7. the level
 
 	static void levelTests() {
-		check(PluginApi.LEVEL == 13, "this client is API level 13 (" + PluginApi.LEVEL + ")");
-		check(PluginApi.supports(13), "a plugin asking for 13 runs here");
-		check(PluginApi.supports(12), "...and one asking for 12 still does");
-		check(!PluginApi.supports(14), "one asking for 14 does not");
+		check(PluginApi.LEVEL == 14, "this client is API level 14 (" + PluginApi.LEVEL + ")");
+		check(PluginApi.supports(14), "a plugin asking for 14 runs here");
+		check(PluginApi.supports(13), "...and one asking for 13 still does");
+		check(!PluginApi.supports(15), "one asking for 15 does not");
 
 		// THE LINE THE API IS DRAWN ON, which no run of it can state. A varp is the server's copy
 		// of the truth; a plugin that could write the client's could make a quest look finished

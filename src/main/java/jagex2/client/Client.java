@@ -4546,6 +4546,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// name just the same, so the card is still there to click.
 				LoginProfiles.remember(arg0);
 				this.out.pos = 0;
+				this.sendLootFeedHello();
 				this.in.pos = 0;
 				this.ptype = -1;
 				this.ptype0 = -1;
@@ -4727,6 +4728,7 @@ public class Client extends GameShell implements PixMap.Target {
 				// name just the same, so the card is still there to click.
 				LoginProfiles.remember(arg0);
 				this.out.pos = 0;
+				this.sendLootFeedHello();
 				this.in.pos = 0;
 				this.ptype = -1;
 				this.ptype0 = -1;
@@ -5944,6 +5946,7 @@ public class Client extends GameShell implements PixMap.Target {
 		this.menuOption[0] = "Cancel";
 		this.menuAction[0] = 1016;
 		this.menuSize = 1;
+		this.pluginMenuNames.clear();
 		// The overrides go with the rows they belonged to. Kept, they would colour whatever ends
 		// up at the same index in the next menu - which is a different thing entirely.
 		for (int row = 0; row < this.menuColour.length; row++) {
@@ -10843,6 +10846,17 @@ public class Client extends GameShell implements PixMap.Target {
 			if (this.ptype == 63) {
 				// MESSAGE_GAME
 				String var45 = this.in.gjstr();
+				// custom (2026-11-28) - the server's loot line for the loot tracker (LootMessage):
+				// data for the plugins, never words for the chatbox, plugins on or off. Tested by
+				// its suffix here rather than through LootMessage so a build without the plugin
+				// tree (the browser client) still hides it.
+				if (var45.endsWith(":loot:")) {
+					if (this.plugins != null) {
+						this.plugins.onGameMessage(var45);
+					}
+					this.ptype = -1;
+					return true;
+				}
 				if (var45.endsWith(":tradereq:")) {
 					String var46 = var45.substring(0, var45.indexOf(":"));
 					long var47 = JString.toBase37(var46);
@@ -13159,6 +13173,17 @@ public class Client extends GameShell implements PixMap.Target {
 		if (var5 >= 2000) {
 			var5 -= 2000;
 		}
+		// A plugin's own row ("Lookup"): nothing is sent and nobody moves - the plugins are told,
+		// and that is the whole of what the row does.
+		if (var5 == PLUGIN_NAME_ACTION) {
+			String who = var6 >= 0 && var6 < this.pluginMenuNames.size() ? this.pluginMenuNames.get(var6) : null;
+			String row = this.menuOption[arg0];
+			int cut = row == null ? -1 : row.indexOf(" @whi@");
+			if (who != null && cut > 0 && this.plugins != null) {
+				this.plugins.onPlayerMenuOption(row.substring(0, cut), who);
+			}
+			return;
+		}
 		// DEV: log every menu-driven interaction (walk, attack, use, examine, trade, bank, equip,
 		// spell-on-target, drop, etc. all funnel through here) with its human-readable menu text,
 		// the player's own world position, and (best-effort) the id/coords of whatever was clicked.
@@ -14150,6 +14175,9 @@ public class Client extends GameShell implements PixMap.Target {
 			this.menuParamC[this.menuSize] = arg1;
 			this.menuSize++;
 		} else if (this.spellSelected != 1) {
+			// Added first, so they draw below the game's own options - the menu is stored upside
+			// down, and the last row added is the top one.
+			this.addPluginNameOptions(arg3.name, var6, 0);
 			for (int var7 = 4; var7 >= 0; var7--) {
 				if (this.playerOps[var7] != null) {
 					this.menuOption[this.menuSize] = this.playerOps[var7] + " @whi@" + var6;
@@ -15459,6 +15487,7 @@ public class Client extends GameShell implements PixMap.Target {
 			} else {
 				var4--;
 			}
+			this.addPluginNameOptions(this.friendName[var4], this.friendName[var4], 0);
 			this.menuOption[this.menuSize] = "Remove @whi@" + this.friendName[var4];
 			this.menuAction[this.menuSize] = 775;
 			this.menuSize++;
@@ -16816,6 +16845,7 @@ public class Client extends GameShell implements PixMap.Target {
 	 * overlay, which useMenuOption subtracts back off.
 	 */
 	public void addSocialMenuOptions(String name, int offset) {
+		this.addPluginNameOptions(name, name, offset);
 		if (this.isOnIgnoreList(name)) {
 			this.menuOption[this.menuSize] = "Remove ignore @whi@" + name;
 			this.menuAction[this.menuSize] = offset + 859;
@@ -16832,6 +16862,53 @@ public class Client extends GameShell implements PixMap.Target {
 			this.menuAction[this.menuSize] = offset + 762;
 		}
 		this.menuSize++;
+	}
+
+	/**
+	 * The menu action of a row a plugin put on a player ("Lookup"). Unused by the game, and under
+	 * 2000 so the split private chat's 2000 offset still comes off it.
+	 */
+	public static final int PLUGIN_NAME_ACTION = 1777;
+
+	/**
+	 * The names the plugins' rows in the menu being built belong to; a row's paramA indexes this.
+	 *
+	 * A LIST, NOT THE ROW'S TEXT, because the text is the name dressed for display - rank icons,
+	 * a colour tag, "(level-83)" - and taking it apart again is how a name with a space in it, or
+	 * one that looks like a tag, comes out wrong. Cleared when the menu is rebuilt, and the menu
+	 * is not rebuilt while it is open, so the index is good for as long as the row can be clicked.
+	 */
+	private final java.util.ArrayList<String> pluginMenuNames = new java.util.ArrayList<String>();
+
+	/** One row per word the running plugins asked for, on this name. */
+	private void addPluginNameOptions(String name, String shown, int offset) {
+		if (this.plugins == null || name == null || name.length() == 0) {
+			return;
+		}
+		java.util.List<String> options = this.plugins.playerMenuOptions();
+		for (int i = 0; i < options.size() && this.menuSize < 400; i++) {
+			this.menuOption[this.menuSize] = options.get(i) + " @whi@" + shown;
+			this.menuAction[this.menuSize] = offset + PLUGIN_NAME_ACTION;
+			this.menuParamA[this.menuSize] = this.pluginMenuNames.size();
+			this.menuParamB[this.menuSize] = 0;
+			this.menuParamC[this.menuSize] = 0;
+			this.pluginMenuNames.add(name);
+			this.menuSize++;
+		}
+	}
+
+	/**
+	 * Asks the server for its loot lines (LootMessage), as a CLIENT_CHEAT it answers silently.
+	 *
+	 * ASKED FOR, NOT ASSUMED, so a client from before them is never sent one: an older client
+	 * would print "n|4821|0|83|Black dragon|...:loot:" into the chatbox, and a client that cannot
+	 * update while it is open is exactly the one still running when the server is.
+	 */
+	private void sendLootFeedHello() {
+		String line = "lootfeed";
+		this.out.p1isaac(56);
+		this.out.p1(line.length() + 1);
+		this.out.pjstr(line);
 	}
 
 	@ObfuscatedName("client.b(JI)V")

@@ -133,8 +133,8 @@ MUTS = [
 
     # ---- THE LEVEL. A level that does not move is a jar built for this client running on the
     # last one and throwing NoSuchMethodError mid-frame.
-    (API, 'the level left where it was, so a plugin built for 13 is refused here',
-     '\tpublic static final int LEVEL = 13;',
+    (API, 'the level left where it was, so a plugin built for 14 is refused here',
+     '\tpublic static final int LEVEL = 14;',
      '\tpublic static final int LEVEL = 10;'),
 ]
 

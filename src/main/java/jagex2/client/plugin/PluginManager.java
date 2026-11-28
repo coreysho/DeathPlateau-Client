@@ -14,8 +14,10 @@ import jagex2.client.plugin.event.ClientTick;
 import jagex2.client.plugin.event.GameStateChanged;
 import jagex2.client.plugin.event.GameTick;
 import jagex2.client.plugin.event.KeyPressed;
+import jagex2.client.plugin.event.LootReceived;
 import jagex2.client.plugin.event.MenuBuilt;
 import jagex2.client.plugin.event.MenuOptionClicked;
+import jagex2.client.plugin.event.PlayerMenuOptionClicked;
 import jagex2.client.plugin.event.SettingsMenuOpening;
 import jagex2.client.plugin.event.StatChanged;
 import jagex2.graphics.PixFont;
@@ -72,7 +74,8 @@ public final class PluginManager {
 		"jagex2.client.plugin.builtin.SlayerPlugin",
 		"jagex2.client.plugin.builtin.CluePlugin",
 		"jagex2.client.plugin.builtin.QuestHelperPlugin",
-		"jagex2.client.plugin.builtin.CannonPlugin"
+		"jagex2.client.plugin.builtin.CannonPlugin",
+		"jagex2.client.plugin.builtin.HiscorePlugin"
 	};
 
 	/** The panel's action rows, matched by label when one is clicked. */
@@ -345,6 +348,104 @@ public final class PluginManager {
 	/** Set by the sidebar so it can refresh when a plugin starts, stops, or is reloaded. */
 	public void setChangeListener(Runnable listener) {
 		this.changeListener = listener;
+	}
+
+	/** Opens a plugin's page on the sidebar. Set by the sidebar; there is none in some builds. */
+	public interface PanelOpener {
+
+		void open(String pluginKey);
+	}
+
+	private volatile PanelOpener panelOpener;
+
+	/** Set by the sidebar, which is the only thing that knows how to show a page. */
+	public void setPanelOpener(PanelOpener opener) {
+		this.panelOpener = opener;
+	}
+
+	/** A plugin asked for its own page to be shown. Quietly nothing without a sidebar. */
+	void openPanel(String pluginKey) {
+		PanelOpener opener = this.panelOpener;
+		if (opener == null || pluginKey == null) {
+			return;
+		}
+		try {
+			opener.open(pluginKey);
+		} catch (Throwable error) {
+			DevLog.log("PLUGIN", "the sidebar threw opening " + pluginKey + "'s page", error);
+		}
+	}
+
+	/**
+	 * Where plugins keep files of their own (Plugin.readData): a folder beside the plugins folder,
+	 * one folder in it per plugin.
+	 */
+	static File dataDirectory() {
+		File plugins = findPluginDirectory();
+		File parent = plugins.getAbsoluteFile().getParentFile();
+		return new File(parent == null ? plugins : parent, "plugin-data");
+	}
+
+	// ------------------------------------------------------------------ rows on players' menus
+
+	/**
+	 * Every word the running plugins have asked to put on other players' menus, in the order the
+	 * plugins are listed, each once. Asked by the client while it builds a menu, on the game thread.
+	 */
+	public List<String> playerMenuOptions() {
+		List<String> out = null;
+		for (int i = 0; i < this.entries.size(); i++) {
+			Entry entry = this.entries.get(i);
+			if (!entry.enabled) {
+				continue;
+			}
+			List<String> options = entry.plugin.getPlayerMenuOptions();
+			for (int j = 0; j < options.size(); j++) {
+				if (out == null) {
+					out = new ArrayList<String>(2);
+				}
+				if (!out.contains(options.get(j))) {
+					out.add(options.get(j));
+				}
+			}
+		}
+		return out == null ? Collections.<String>emptyList() : out;
+	}
+
+	/** One of those rows was clicked, on this player. */
+	public void onPlayerMenuOption(String option, String playerName) {
+		if (this.idle()) {
+			return;
+		}
+		this.bus.post(new PlayerMenuOptionClicked(option, playerName));
+	}
+
+	// ------------------------------------------------------------------ loot the server reports
+
+	private final LootMessage loot = new LootMessage();
+
+	/**
+	 * A game message, before it reaches the chatbox. True when it was one of the server's hidden
+	 * loot lines - see {@link LootMessage} - and must not be shown.
+	 *
+	 * SWALLOWED WHETHER OR NOT ANY PLUGIN IS ON. The line is not words for a person; with the loot
+	 * tracker switched off it is still not something to print in somebody's chat.
+	 */
+	public boolean onGameMessage(String text) {
+		if (!LootMessage.isLoot(text)) {
+			return false;
+		}
+		LootReceived event;
+		try {
+			event = this.loot.read(text);
+		} catch (Throwable error) {
+			DevLog.log("PLUGIN", "a loot line could not be read: " + text, error);
+			return true;
+		}
+		if (event != null && !this.idle()) {
+			this.bus.post(event);
+		}
+		return true;
 	}
 
 	/** Called after anything the UI shows has changed. Never throws into the game loop. */
@@ -1246,6 +1347,10 @@ public final class PluginManager {
 		public final String[] tabTips;
 		public final int selectedTab;
 
+		/** The search box's hint, or null for a page without one; and what the plugin put in it. */
+		public final String searchHint;
+		public final String searchText;
+
 		private final ConfigList list;
 
 		PanelSnapshot(Entry entry, Plugin.Panel panel) {
@@ -1264,6 +1369,25 @@ public final class PluginManager {
 				this.tabTips[i] = tip == null ? "" : tip;
 			}
 			this.selectedTab = panel.list.selectedTab();
+			String hint = panel.list.searchHint();
+			String text = hint == null ? null : panel.list.searchText();
+			this.searchHint = hint;
+			this.searchText = text == null ? "" : text;
+		}
+
+		/** Enter in the search box. CALL ON THE GAME THREAD. */
+		public void search(String text) {
+			this.list.onSearch(text == null ? "" : text);
+		}
+
+		/** A row's heading clicked. CALL ON THE GAME THREAD. */
+		public void click(int index) {
+			this.list.onClick(index);
+		}
+
+		/** A picture's right-click word chosen. CALL ON THE GAME THREAD. */
+		public void iconAction(int index, int icon) {
+			this.list.onIconAction(index, icon);
 		}
 
 		/** Shows a tab. CALL ON THE GAME THREAD. */

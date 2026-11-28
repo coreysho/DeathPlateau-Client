@@ -153,6 +153,125 @@ public abstract class Plugin {
 		}
 	}
 
+	/** The rows this plugin has put on other players' right-click menus. */
+	private final List<String> playerMenuOptions = new ArrayList<String>();
+
+	/**
+	 * Puts a row on every other player's right-click menu - in the world, on their name in the
+	 * chatbox, and in the friends list - for as long as the plugin is on. "Lookup", for the
+	 * hiscores.
+	 *
+	 * THE ROW DOES NOTHING IN THE CLIENT. It sends nothing to the server, walks nobody anywhere and
+	 * cannot be made to: clicking it posts a {@link jagex2.client.plugin.event.PlayerMenuOptionClicked}
+	 * to the plugins, and that is all. Which is why this is allowed where relabelling an existing
+	 * row is not (PluginApi, level 6) - a plugin can only add a word of its own, never put its
+	 * word on something the game does.
+	 *
+	 * Call it from startUp(); the rows go when the plugin stops, like overlays.
+	 */
+	protected final void addPlayerMenuOption(String option) {
+		if (option != null && option.trim().length() > 0 && !this.playerMenuOptions.contains(option.trim())) {
+			this.playerMenuOptions.add(option.trim());
+		}
+	}
+
+	/** Takes a row off again - a setting that turns "Lookup" off without turning the plugin off. */
+	protected final void removePlayerMenuOption(String option) {
+		if (option != null) {
+			this.playerMenuOptions.remove(option.trim());
+		}
+	}
+
+	final List<String> getPlayerMenuOptions() {
+		return this.playerMenuOptions;
+	}
+
+	/**
+	 * Opens this plugin's first page on the sidebar, as clicking its icon on the rail does. For a
+	 * page the player has just asked for by some other route - a Lookup on somebody's name.
+	 *
+	 * Does nothing where there is no sidebar, or while the page is not on the rail yet.
+	 */
+	protected final void openPanel() {
+		if (this.ctx != null && this.config != null) {
+			this.ctx.openPanelFor(this.config.pluginKey());
+		}
+	}
+
+	/**
+	 * A file of this plugin's own, read back whole, or "" when there is none.
+	 *
+	 * FOR WHAT A SETTING IS THE WRONG SHAPE FOR - a loot history, which is hundreds of rows that
+	 * change every kill. Settings are one line each in a file every plugin shares; this is a file
+	 * per name, in a folder per plugin, under the client's own folder in the player's home.
+	 *
+	 * The name is the plugin's choice and is made safe here - letters, digits, dot, dash and
+	 * underscore - so no name can point outside the plugin's folder.
+	 */
+	protected final String readData(String name) {
+		java.io.File file = this.dataFile(name);
+		if (file == null || !file.isFile()) {
+			return "";
+		}
+		try {
+			byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+			return new String(bytes, "UTF-8");
+		} catch (Throwable error) {
+			return "";
+		}
+	}
+
+	/**
+	 * Writes one of this plugin's files, whole. Returns false when it could not be written.
+	 *
+	 * WRITTEN BESIDE AND MOVED INTO PLACE, so a crash halfway through a write leaves the last good
+	 * copy rather than half of a new one.
+	 */
+	protected final boolean writeData(String name, String text) {
+		java.io.File file = this.dataFile(name);
+		if (file == null) {
+			return false;
+		}
+		try {
+			java.io.File dir = file.getParentFile();
+			if (!dir.isDirectory() && !dir.mkdirs()) {
+				return false;
+			}
+			java.io.File temp = new java.io.File(dir, file.getName() + ".tmp");
+			java.nio.file.Files.write(temp.toPath(), (text == null ? "" : text).getBytes("UTF-8"));
+			java.nio.file.Files.move(temp.toPath(), file.toPath(),
+				java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			return true;
+		} catch (Throwable error) {
+			jagex2.client.DevLog.log("PLUGIN", "could not write " + name, error);
+			return false;
+		}
+	}
+
+	private java.io.File dataFile(String name) {
+		if (name == null || this.config == null) {
+			return null;
+		}
+		String safe = safeName(name);
+		String key = safeName(this.config.pluginKey());
+		if (safe.length() == 0 || key.length() == 0) {
+			return null;
+		}
+		return new java.io.File(new java.io.File(PluginManager.dataDirectory(), key), safe);
+	}
+
+	/** Letters, digits, dot, dash and underscore; anything else becomes an underscore. */
+	static String safeName(String name) {
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < name.length() && out.length() < 64; i++) {
+			char c = name.charAt(i);
+			boolean ok = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+				|| c == '-' || c == '_' || c == '.' && i > 0;
+			out.append(ok ? c : '_');
+		}
+		return out.toString();
+	}
+
 	final List<Overlay> getOverlays() {
 		return this.overlays;
 	}
@@ -172,6 +291,7 @@ public abstract class Plugin {
 		this.overlays.clear();
 		this.configLists.clear();
 		this.panels.clear();
+		this.playerMenuOptions.clear();
 	}
 
 	public final boolean isRunning() {

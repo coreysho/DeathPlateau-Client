@@ -319,7 +319,7 @@ public final class Icons {
 	 * client's furniture, and so the rail reads as one set of icons rather than as a row of
 	 * everybody's. Adding to the set is adding a case here.
 	 */
-	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "pin", "list" };
+	public static final String[] KNOWN = { "chart", "coins", "bag", "sprout", "skull", "scroll", "bell", "wrench", "download", "move", "refresh", "pin", "list", "trophy" };
 
 	/**
 	 * Whether the set has an icon of this name, which is what stops two pages wearing the same
@@ -376,7 +376,30 @@ public final class Icons {
 		if ("pin".equals(name)) {
 			return pin(size, colour);
 		}
+		if ("trophy".equals(name)) {
+			return trophy(size, colour);
+		}
 		return list(size, colour);
+	}
+
+	/** A cup on a stem: the hiscores, as RuneLite marks its own hiscore page. */
+	public static Icon trophy(int size, Color colour) {
+		return new Vector(size, colour) {
+
+			void draw(Graphics2D g, int s) {
+				// The bowl, flat across the top and rounded underneath.
+				g.fill(new java.awt.geom.Arc2D.Double(s * 0.25, s * 0.02, s * 0.50, s * 0.56, 180, 180,
+					java.awt.geom.Arc2D.CHORD));
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.25, s * 0.18, s * 0.50, s * 0.12));
+				// The handles, as open rings either side.
+				g.setStroke(new java.awt.BasicStroke(Math.max(1f, s / 14f)));
+				g.draw(new Ellipse2D.Double(s * 0.12, s * 0.22, s * 0.18, s * 0.18));
+				g.draw(new Ellipse2D.Double(s * 0.70, s * 0.22, s * 0.18, s * 0.18));
+				// The stem and the foot.
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.45, s * 0.56, s * 0.10, s * 0.18));
+				g.fill(new java.awt.geom.Rectangle2D.Double(s * 0.30, s * 0.74, s * 0.40, s * 0.10));
+			}
+		};
 	}
 
 	/** Three rising bars, for a plugin that keeps a count of something. */

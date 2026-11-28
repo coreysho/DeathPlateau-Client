@@ -141,6 +141,22 @@ package jagex2.client.plugin;
  *     WHAT IT IS FOR. A click is the only record of a step that leaves no trace - a talk, a
  *     door - which is how the quest helper can move on to the next step the moment you take
  *     one, rather than when the quest's own progress catches up a leg later.</dd>
+ * <dt>14</dt><dd>RuneLite's hiscore panel and loot tracker, which needed four things:
+ *     <ul>
+ *     <li>{@code Plugin.addPlayerMenuOption}: a word of the plugin's own on other players'
+ *         right-click menus - in the world, in the chatbox, in the friends list - and
+ *         {@link jagex2.client.plugin.event.PlayerMenuOptionClicked} when it is chosen. The row
+ *         does nothing in the client; it cannot send, move or act, only tell the plugin. Which
+ *         is why it is allowed where relabelling one of the game's rows is not.</li>
+ *     <li>{@link jagex2.client.plugin.event.LootReceived}: what a kill dropped, as the SERVER
+ *         says it - who, what level, every item - rather than inferred from the floor.</li>
+ *     <li>A page's search box ({@code ConfigList.searchHint/searchText/onSearch}), words,
+ *         tooltips and fading on a row's pictures ({@code iconCaptions}, {@code iconTips},
+ *         {@code iconFaded}), a right-click word on them ({@code iconAction}) and a row
+ *         heading that folds ({@code clickable/onClick/collapsed}).</li>
+ *     <li>{@code Plugin.openPanel}, {@code Plugin.readData/writeData} for a file of the
+ *         plugin's own, and {@code ctx.getSiteUrl}.</li>
+ *     </ul></dd>
  * </dl>
  */
 public final class PluginApi {
@@ -149,7 +165,7 @@ public final class PluginApi {
 	 * The highest API level this client provides. Compared against
 	 * {@link PluginDescriptor#apiLevel()} before a plugin is constructed.
 	 */
-	public static final int LEVEL = 13;
+	public static final int LEVEL = 14;
 
 	private PluginApi() {
 	}
