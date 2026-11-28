@@ -29,7 +29,7 @@ public final class DisplaySettings {
 	private static int drawDistance = 25;                    // World3D.MIN_DISTANCE, 377's own
 	private static int panelScale = Layout.SCALE_FIXED;      // the HUD at 377's own pixel size
 	private static int gameScale = 100;                      // the whole frame at its own size
-	private static boolean smoothScale;                      // bilinear rather than blocky; off by default, see smoothScale()
+	private static boolean smoothScale;                      // bilinear rather than blocky; off by default
 	private static boolean stretched;                        // the fixed screen fills the window
 	private static boolean stretchAspect = true;             // ...keeping its shape
 	private static boolean stretchInteger;                   // ...and by a whole number only
@@ -352,17 +352,19 @@ public final class DisplaySettings {
 	}
 
 	/**
-	 * Bilinear rather than nearest neighbour when anything is stretched.
+	 * Bilinear rather than nearest neighbour when anything is stretched. OFF by default.
 	 *
-	 * OFF BY DEFAULT since 25 November 2026 (DeathPlateau-Bugs#24). It was on, and a player who
-	 * turned the game scale up saw everything go soft and reported it as the client blurring their
-	 * graphics - which is what bilinear filtering of a 2006 frame looks like if you did not ask for
-	 * it. Off is sharp pixels and uneven text; at 200% the two are the same picture, because the
-	 * offsets land on whole pixels. Anyone who prefers the soft version has the switch in the
-	 * Display panel, where this player was already standing.
+	 * It was on, and a player who turned the game scale up saw the whole picture go soft - text,
+	 * icons and world together - and read that as the client being broken rather than as a
+	 * setting they had changed. Reported as "using display on side panel blurs your graphics"
+	 * (DeathPlateau-Bugs#24); the owner's call was off.
 	 *
-	 * The hover text's one-pixel shadow is a separate thing and is translucent in both paths now
-	 * (ChatIcons, PixFont.plotLetterTrans) - DeathPlateau-Bugs#40.
+	 * OFF ONLY REACHES A PLAYER WITH NO SETTINGS FILE, which is worth knowing before reading too
+	 * much into the change: save() writes every key whenever any one of them changes, so anybody
+	 * who has ever resized the window has `smoothscale=true` on disk and keeps the smoothing.
+	 * There is no migration here on purpose - nothing on disk can tell a deliberate choice apart
+	 * from the old default having been written out, and silently flipping a saved setting is
+	 * worse than leaving it.
 	 */
 	public static synchronized boolean smoothScale() {
 		if (!loaded) {

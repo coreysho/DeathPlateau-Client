@@ -346,6 +346,8 @@ public class QuestHelperTest {
 		stepTests();
 		System.out.println("18. the shapes in the table that left the panel with nothing to say");
 		shapeTests();
+		System.out.println("19. the steps you had ticked off, kept for the account that took them");
+		accountProgressTests();
 
 		System.out.println();
 		System.out.println(fails == 0 ? (passes + " CHECKS, ALL PASS") : (fails + " FAILED of " + (passes + fails)));
@@ -1417,7 +1419,6 @@ public class QuestHelperTest {
 		client.sceneBaseTileZ = BAZAAR_Z - MID_Z;
 
 		Client.localPlayer = new ClientPlayer();
-		Client.localPlayer.name = PLAYER_NAME;
 		Client.localPlayer.field1157 = MID_X * 128;
 		Client.localPlayer.field1158 = MID_Z * 128;
 
@@ -2184,9 +2185,8 @@ public class QuestHelperTest {
 		check(said(screen(), "Talk to " + RADIGAD_NAME),
 			"...and a conversation long afterwards does not finish it for him");
 
-		// AND IT IS THIS CHARACTER'S PROGRESS - which since DeathPlateau-Bugs#45 means it comes
-		// back for this character and for nobody else. Both halves are checked, because the second
-		// is the property the forgetting existed to protect and this must not have traded it away.
+		// AND IT IS THIS CHARACTER'S PROGRESS. Logging out forgets what was watched; the quest
+		// to follow is a saved setting and stays.
 		clickNpc(RADIGAD);
 		openDialogue(new String[] { "Yes.", "No." });
 		gameTicks(1);
@@ -2199,27 +2199,8 @@ public class QuestHelperTest {
 		gameTicks(8);
 		settle();
 		check(MYREQUE.equals(followed()), "logging out keeps the quest being followed");
-		check(!said(screen(), "Talk to " + HAROLD_NAME),
-			"...and the same character gets back the steps it watched them take");
-		check(!said(screen(), "Talk to " + RADIGAD_NAME),
-			"...both of them, not just the first");
-
-		// SOMEBODY ELSE AT THE SAME CLIENT. The marks are filed under the name that earned them,
-		// so a different character is shown a clean page - and the first player's marks are left
-		// where they are rather than wiped by the second one logging in, because two people
-		// sharing a client take turns.
-		logOut();
-		logIn("Someone Else");
-		gameTicks(8);
-		settle();
 		check(said(screen(), "Talk to " + HAROLD_NAME),
-			"a different character is shown the leg from the start");
-		logOut();
-		logIn();
-		gameTicks(8);
-		settle();
-		check(!said(screen(), "Talk to " + HAROLD_NAME),
-			"...and the first character's marks survived somebody else's session");
+			"...and forgets the steps it watched, because the next player may be somebody else");
 
 		// ARRIVING IS TAKING A WALK STEP, and it needs no click at all: The Feud's first leg is
 		// "go to the tile Ali is standing on, talk to Ali", and a player standing on it has made
@@ -2306,11 +2287,9 @@ public class QuestHelperTest {
 		wipeQuests();
 
 		// LOGGED OUT FIRST, because section 17 walked The Feud's first step and the plugin
-		// remembers that - for as long as the character is logged in, and since
-		// DeathPlateau-Bugs#45 across a logout as well, which is the point of both. This section
-		// is about a player who has done none of it, so the saved marks go too.
+		// remembers that for as long as the character is logged in - which is the point of it.
+		// This section is about a player who has done none of it.
 		logOut();
-		forgetSaved();
 		logIn();
 
 		// A TILE WITH NO FLOOR ON IT. 2677 of the table's tiles are a bare pair of coordinates,
@@ -2496,6 +2475,150 @@ public class QuestHelperTest {
 	 * which is what makes "two quests under way" a fact about these two rather than about
 	 * whatever the section before this one left behind.
 	 */
+	/**
+	 * THE STEPS YOU HAD TICKED OFF, KEPT FOR THE ACCOUNT THAT TOOK THEM.
+	 *
+	 * WHAT A PLAYER REPORTED: the helper "restarts from the beginning of a quest after logout".
+	 * It did, and only for legs made of plain talk steps - a talk leaves nothing in the game for
+	 * reached() to find, so the only record of it was Stage.doneTo, and logging out threw every
+	 * doneTo away on purpose: the next player at this client must not be told they have already
+	 * talked to somebody in a quest they have not started.
+	 *
+	 * BOTH HALVES HAVE TO HOLD AT ONCE, which is why this section exists rather than one check:
+	 * the same player gets their ticks back, and a different player does not. A fix that only did
+	 * the first would be the leak the logout handler was written to prevent.
+	 */
+	static void accountProgressTests() throws Exception {
+		clearNpcs();
+		emptyBag();
+		wipeQuests();
+		stand(MID_X, MID_Z);
+		setPin("");
+		setProgress("");
+		name("Zezima");
+		track(MYREQUE);
+		client.varps[MYREQUE_VARP] = 4;
+		spawn(HAROLD_NAME, HAROLD, MID_X, MID_Z);
+		spawn(RADIGAD_NAME, RADIGAD, MID_X + 2, MID_Z);
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME), "the leg opens on the first of its five people");
+
+		// THE TALK ITSELF, driven the way section 17 drives it: the click is the player saying
+		// they are doing the step, and the conversation closing is it finishing.
+		clickNpc(HAROLD);
+		gameTicks(1);
+		openDialogue(new String[] { "Yes.", "No." });
+		gameTicks(1);
+		closeDialogue();
+		gameTicks(1);
+		settle();
+		check(said(screen(), "Talk to " + RADIGAD_NAME), "...and talking to him moves it on to the next");
+
+		logOut();
+		// ON DISK, not just in the field: the whole report is about what survives the client
+		// closing, and a field would survive nothing.
+		check(store().indexOf("Zezima") >= 0, "logging out writes this account's progress to the plugin store");
+		check(progressLine().startsWith("Zezima|"), "...keyed on the account that took the steps (" + progressLine() + ")");
+
+		// THE REAL LINE, READ BACK HERE AND NOT LATER, so the malformed cases further down name
+		// the quest the table actually calls this. Two things went wrong before it was read here:
+		//
+		//   - The first draft spelled the id out as "myreque", because the constant in this file
+		//     is MYREQUE and reads that way. The table calls it `routequest`. Every malformed case
+		//     still passed - an id that is not in the table is one of the things they test - and
+		//     the one case that needed a REAL id quietly tested nothing.
+		//   - The second draft read it after the different-account block below, by which time it
+		//     was "". That is the one-account rule working as intended: logging out as somebody
+		//     else writes THEIR progress over the line, and they had none.
+		String real = progressLine();
+		int bar = real.indexOf('|');
+		int colon = real.indexOf(':');
+		int eq = real.indexOf('=');
+		check(bar > 0 && colon > bar && eq > colon,
+			"the saved line is account|quest:leg=step, which the cases below are built from (" + real + ")");
+		// NOT substring'd BEFORE THE SHAPE IS CHECKED: the draft that did threw out of the test
+		// instead of failing it, and a suite that throws hides its own tally.
+		String qid = "";
+		String leg = "";
+		if (bar > 0 && colon > bar && eq > colon) {
+			qid = real.substring(bar + 1, colon);
+			leg = real.substring(colon + 1, eq);
+		}
+
+		logIn();
+		gameTicks(8);
+		settle();
+		// THE REPORT, answered. Before this it read "Talk to Harold" again.
+		check(said(screen(), "Talk to " + RADIGAD_NAME),
+			"logging back in keeps the talk ticked off, rather than restarting the leg");
+
+		// AND THE NEXT PERSON AT THIS CLIENT GETS NOTHING, which is the half that must not break.
+		logOut();
+		name("Somebody Else");
+		logIn();
+		gameTicks(8);
+		settle();
+		check(said(screen(), "Talk to " + HAROLD_NAME),
+			"a different account on the same client starts the leg again");
+
+		// A LINE THAT CANNOT BE READ IS NOT A CRASH AND NOT A GIFT. It is text in a text file, so
+		// a player can edit it, and most of these are shapes a stale file really takes: a quest
+		// renamed out of the table, a leg no longer at that value, a number that is not one.
+		String[] junk = {
+			"Zezima|",
+			"Zezima|nosuchquest:" + leg + "=2",
+			"Zezima|" + qid + ":999=2",
+			"Zezima|" + qid + ":" + leg + "=notanumber",
+			"Zezima|" + qid + ":" + leg + "=-5",
+			"garbage",
+			"",
+			"|" + qid + ":" + leg + "=2"
+		};
+		int survived = 0;
+		for (int i = 0; i < junk.length; i++) {
+			logOut();
+			name("Zezima");
+			setProgress(junk[i]);
+			logIn();
+			gameTicks(8);
+			settle();
+			// NONE OF THESE MAY BE READ, so every one of them leaves the leg at its first step -
+			// which is also the state the bug used to leave a returning player in, and here it is
+			// the right answer rather than the wrong one.
+			if (said(screen(), "Talk to " + HAROLD_NAME)) {
+				survived++;
+			}
+		}
+		check(survived == junk.length,
+			"a saved line that cannot be read gives nothing away (" + survived + " of " + junk.length + ")");
+
+		// THE CLAMP, on its own, because it is the one that could put a step in front of somebody
+		// they have not reached: a leg that has got shorter since the line was written. With a
+		// REAL quest id this time, which is the whole point of reading it back above.
+		logOut();
+		name("Zezima");
+		setProgress("Zezima|" + qid + ":" + leg + "=9999");
+		logIn();
+		gameTicks(8);
+		settle();
+		check(!said(screen(), "Talk to " + HAROLD_NAME),
+			"a step index past the end of the leg does not restart the leg");
+		check(!screen().isEmpty(), "...and the panel still has something to say");
+		// THE CLAMP ITSELF, asked where it can actually be seen. Through the panel it cannot be:
+		// reached() starts at doneTo + 1, so `last` and 9999 both put the leg behind the player
+		// and read identically - the first draft asserted on the panel and the mutation that
+		// removed the clamp survived. What the clamp does is normalise the value, so the stale
+		// number is not written back to the file on every logout from here on.
+		logOut();
+		check(progressLine().indexOf("9999") < 0,
+			"...and the clamped value is what gets saved again, not the stale one (" + progressLine() + ")");
+
+		setProgress("");
+		setPin("");
+		name("Zezima");
+	}
+
 	static void wipeQuests() {
 		java.util.Arrays.fill(client.varps, 0);
 	}
@@ -2517,24 +2640,7 @@ public class QuestHelperTest {
 		manager.onClientTick(ticks++);
 	}
 
-	/** The name the suite plays as, unless a check asks for somebody else. */
-	static final String PLAYER_NAME = "Testy";
-
 	static void logIn() {
-		logIn(PLAYER_NAME);
-	}
-
-	/**
-	 * Log in as a named character.
-	 *
-	 * THE NAME MATTERS SINCE DeathPlateau-Bugs#45: the tick marks are filed under it, so a suite
-	 * that logs in with no name at all cannot tell the difference between "the marks came back"
-	 * and "the marks were dropped". It used to log in nameless.
-	 */
-	static void logIn(String who) {
-		if (Client.localPlayer != null) {
-			Client.localPlayer.name = who;
-		}
 		client.ingame = true;
 		manager.onClientTick(ticks++);
 	}
@@ -2565,27 +2671,34 @@ public class QuestHelperTest {
 	}
 
 	/** Writes the plugin's saved pin, which is the only way to put the page back to none. */
-	static void setPin(String questId) {
+	/** The account the harness is logged in as, which is what the saved progress is keyed on. */
+	static void name(String who) {
+		Client.localPlayer.name = who;
+	}
+
+	/** The saved progress line, set the way the plugin itself sets it. */
+	static void setProgress(String line) {
 		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
-			if ("tracked".equals(item.key)) {
-				entry.getConfig().set(item, questId);
+			if ("progress".equals(item.key)) {
+				entry.getConfig().set(item, line);
 			}
 		}
 	}
 
-	/**
-	 * Throw away the saved tick marks, as a client that has never been played would have none.
-	 *
-	 * WHY A SECTION NEEDS THIS SINCE DeathPlateau-Bugs#45. Logging out and back in used to be how
-	 * a section got a player who had done none of it, because the marks were dropped on logout.
-	 * They are kept for the character that earned them now, so a section that wants a clean slate
-	 * has to say so - and saying so out loud is better than logging in under a made-up name and
-	 * leaving the next section to wonder who it is playing as.
-	 */
-	static void forgetSaved() {
+	/** What the saved progress line says right now, straight off the plugin. */
+	static String progressLine() {
 		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
-			if ("ticks".equals(item.key)) {
-				entry.getConfig().set(item, "");
+			if ("progress".equals(item.key)) {
+				return item.stringValue();
+			}
+		}
+		return "no such setting";
+	}
+
+	static void setPin(String questId) {
+		for (jagex2.client.plugin.PluginConfig.Item item : entry.getConfig().getItems()) {
+			if ("tracked".equals(item.key)) {
+				entry.getConfig().set(item, questId);
 			}
 		}
 	}

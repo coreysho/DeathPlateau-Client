@@ -87,6 +87,7 @@ jobs:
           - apilevel
           - clue
           - configtest
+          - displaysettings
           - dragtest
           - farm
           - gamestate
