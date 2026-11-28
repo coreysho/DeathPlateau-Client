@@ -6,8 +6,16 @@
 # order, so it always takes whatever GitHub calls latest - including after a revert.
 name: release
 
+# A RELEASE WAITS FOR THE BUILD. It used to run on the push itself, in parallel with build.yaml, so a
+# commit whose test suites failed was published anyway - on 28 November client-289 and client-290
+# went out from commits where run_helpertabletest failed. It now runs when build.yaml has FINISHED
+# on a push to dev-logging, and only if every job in it passed (a failed, cancelled or skipped run
+# publishes nothing). It builds and tags the exact commit that build tested, not whatever
+# dev-logging has moved on to since. workflow_dispatch stays for publishing by hand.
 on:
-  push:
+  workflow_run:
+    workflows: [".github/workflows/build.yaml"]
+    types: [completed]
     branches: [dev-logging]
   workflow_dispatch:
 
@@ -20,9 +28,12 @@ concurrency:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
     - uses: actions/setup-java@v6
       with:
@@ -105,7 +116,7 @@ jobs:
         # GitHub turns spaces in an asset's file name into dots, so the name players see on the
         # release page is the label after the #
         gh release create "$TAG" client.jar "Death-Plateau-Launcher.jar#Death Plateau Launcher" \
-          --target "${{ github.sha }}" \
+          --target "${{ github.event.workflow_run.head_sha || github.sha }}" \
           --title "Client $TAG" \
           --notes "$(git log -1 --format=%s)" \
           --latest
